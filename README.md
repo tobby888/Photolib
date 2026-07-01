@@ -105,6 +105,92 @@ npm run dev
 VITE_API_BASE_URL=https://example.com/api/v1
 ```
 
+## 阿里云 OSS 初始化
+
+生产环境默认使用阿里云 OSS 保存图片、缩略图、批量上传文件和导出文件。后端已经集成 OSS SDK，并通过预签名 URL 让浏览器直接上传文件，无需额外编写 OSS 初始化代码。
+
+### 1. 创建 Bucket
+
+在阿里云 OSS 控制台创建 Bucket：
+
+- Bucket 名称：例如 `photolib-prod`。
+- 地域：选择靠近后端服务器的地域，例如杭州。
+- 存储类型：标准存储。
+- 读写权限：私有。
+- 服务端加密：生产环境建议开启。
+
+记录 Bucket 名称和对应地域的公网 Endpoint。例如杭州地域的 Endpoint 为：
+
+```text
+https://oss-cn-hangzhou.aliyuncs.com
+```
+
+`OSS_ENDPOINT` 应填写地域 Endpoint，不要填写包含 Bucket 名称的访问域名。
+
+### 2. 创建并授权 RAM 用户
+
+不要使用阿里云主账号的 AccessKey。创建一个仅供 PhotoLib 后端使用、允许 OpenAPI 调用的 RAM 用户，并为其创建 AccessKey。
+
+按照最小权限原则，为 RAM 用户添加以下自定义权限策略。将 `photolib-prod` 替换为实际 Bucket 名称：
+
+```json
+{
+  "Version": "1",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "oss:PutObject",
+        "oss:GetObject",
+        "oss:DeleteObject"
+      ],
+      "Resource": [
+        "acs:oss:*:*:photolib-prod/*"
+      ]
+    }
+  ]
+}
+```
+
+AccessKey Secret 仅在创建时显示一次，请立即保存到安全的密钥管理服务中。不要将 AccessKey 写入源码或提交到版本库。
+
+### 3. 配置 Bucket 跨域访问
+
+前端使用后端生成的预签名 URL 直接向 OSS 发起 `PUT` 请求，因此必须在 Bucket 的跨域设置中添加 CORS 规则：
+
+| 配置项 | 建议值 |
+| --- | --- |
+| 来源（Origins） | 本地前端地址和生产前端域名，例如 `http://localhost:5173`、`https://photo.example.com` |
+| 允许 Methods | `PUT`、`GET`、`HEAD` |
+| 允许 Headers | `*` |
+| 暴露 Headers | `ETag`、`x-oss-request-id` |
+| 缓存时间 | `600` 秒 |
+
+生产环境应填写实际前端域名，避免长期使用 `*` 作为允许来源。
+
+### 4. 配置后端环境变量
+
+在 `backend/.env` 中写入：
+
+```properties
+STORAGE_MODE=oss
+OSS_BUCKET=photolib-prod
+OSS_ENDPOINT=https://oss-cn-hangzhou.aliyuncs.com
+OSS_ACCESS_KEY_ID=your_access_key_id
+OSS_ACCESS_KEY_SECRET=your_access_key_secret
+```
+
+请确保 Bucket 与 Endpoint 属于同一地域。启动生产服务时不要启用 `local` Spring Profile，否则后端会切换到本地磁盘存储。
+
+从 `backend` 目录启动服务，使 Spring Boot 能正确读取该目录下的 `.env`：
+
+```powershell
+cd backend
+.\mvnw.cmd spring-boot:run
+```
+
+启动后可访问 `http://localhost:8080/api/v1/actuator/health` 检查服务状态。上传文件时，前端 `PUT` 请求的 `Content-Type` 必须与后端生成预签名 URL 时返回的 `contentType` 完全一致，否则 OSS 会拒绝签名。
+
 ## 生产配置
 
 生产环境默认使用阿里云 OSS。敏感配置只应通过环境变量或安全的密钥管理服务注入，不要提交到版本库。
@@ -168,4 +254,3 @@ PhotoLib/
 - [接口文档](./API.md)：认证、数据结构、接口、状态流转及校验规则。
 - [项目说明](./HELP.md)：角色、业务线与技术栈的原始说明。
 - [后端说明](./backend/README.md)：后端启动方式与当前实现范围。
-
