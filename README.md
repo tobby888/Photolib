@@ -170,7 +170,7 @@ AccessKey Secret 仅在创建时显示一次，请立即保存到安全的密钥
 
 ### 4. 配置后端环境变量
 
-在 `backend/.env` 中写入：
+开发时可在 `backend/.env` 中写入；使用 JAR 部署到 Linux 时，应将相同配置写入 JAR 所在目录的 `.env`：
 
 ```properties
 STORAGE_MODE=oss
@@ -182,14 +182,14 @@ OSS_ACCESS_KEY_SECRET=your_access_key_secret
 
 请确保 Bucket 与 Endpoint 属于同一地域。启动生产服务时不要启用 `local` Spring Profile，否则后端会切换到本地磁盘存储。
 
-从 `backend` 目录启动服务，使 Spring Boot 能正确读取该目录下的 `.env`：
+本地开发时从 `backend` 目录启动服务：
 
 ```powershell
 cd backend
 .\mvnw.cmd spring-boot:run
 ```
 
-启动后可访问 `http://localhost:8080/api/v1/actuator/health` 检查服务状态。上传文件时，前端 `PUT` 请求的 `Content-Type` 必须与后端生成预签名 URL 时返回的 `contentType` 完全一致，否则 OSS 会拒绝签名。
+Linux 服务器应按照下方“Linux 服务端部署”章节运行编译好的 JAR。上传文件时，前端 `PUT` 请求的 `Content-Type` 必须与后端生成预签名 URL 时返回的 `contentType` 完全一致，否则 OSS 会拒绝签名。
 
 ## 生产配置
 
@@ -206,6 +206,163 @@ cd backend
 | `ADMIN_INITIAL_PASSWORD` | 首次启动管理员密码 |
 
 建议使用独立的私有 Bucket，并遵循最小权限原则配置 RAM 账号。生产环境还应设置 `AUTH_SECURE_COOKIE=true`，并在 HTTPS 反向代理后运行服务。
+
+## Linux 服务端部署
+
+推荐在开发机完成编译，将生成的 JAR 上传到 Linux 服务器，再由 systemd 管理进程。服务器只需要安装 Java 21，无需安装 Maven 或复制源代码。
+
+### 1. 在开发机编译
+
+在项目根目录执行：
+
+Windows PowerShell：
+
+```powershell
+cd backend
+.\mvnw.cmd clean package
+```
+
+macOS 或 Linux：
+
+```bash
+cd backend
+./mvnw clean package
+```
+
+测试通过后将生成：
+
+```text
+backend/target/photolib-backend-0.1.0-SNAPSHOT.jar
+```
+
+### 2. 准备 Linux 服务器
+
+安装 Java 21，并确认版本：
+
+```bash
+java -version
+```
+
+创建专用系统用户和部署目录：
+
+```bash
+sudo useradd --system --home /opt/photolib --shell /usr/sbin/nologin photolib
+sudo install -d -o photolib -g photolib /opt/photolib
+```
+
+不同 Linux 发行版的 `java` 路径可能不同，可通过 `command -v java` 查看。
+
+### 3. 上传 JAR
+
+在开发机执行，替换服务器用户名和地址：
+
+```bash
+scp backend/target/photolib-backend-0.1.0-SNAPSHOT.jar user@server:/tmp/photolib.jar
+```
+
+登录服务器后安装 JAR：
+
+```bash
+sudo install -o photolib -g photolib -m 0644 /tmp/photolib.jar /opt/photolib/photolib.jar
+rm /tmp/photolib.jar
+```
+
+### 4. 创建生产环境配置
+
+在服务器创建 `/opt/photolib/.env`：
+
+```properties
+SERVER_PORT=8080
+
+DB_URL=jdbc:mysql://127.0.0.1:3306/photolib?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+DB_USERNAME=photolib
+DB_PASSWORD=replace_with_database_password
+
+ADMIN_USERNAME=admin
+ADMIN_INITIAL_PASSWORD=replace_with_a_strong_password
+ADMIN_DISPLAY_NAME=系统管理员
+AUTH_SECURE_COOKIE=true
+
+STORAGE_MODE=oss
+OSS_BUCKET=photolib-prod
+OSS_ENDPOINT=https://oss-cn-hangzhou.aliyuncs.com
+OSS_ACCESS_KEY_ID=your_access_key_id
+OSS_ACCESS_KEY_SECRET=your_access_key_secret
+
+DIRECTMAIL_REGION_ID=cn-hangzhou
+DIRECTMAIL_ACCOUNT_NAME=
+DIRECTMAIL_ACCESS_KEY_ID=
+DIRECTMAIL_ACCESS_KEY_SECRET=
+```
+
+限制配置文件权限，避免其他用户读取数据库密码和 AccessKey：
+
+```bash
+sudo chown photolib:photolib /opt/photolib/.env
+sudo chmod 600 /opt/photolib/.env
+```
+
+应用会从当前工作目录读取 `.env`，因此后续 systemd 配置中的 `WorkingDirectory` 必须指向 `/opt/photolib`。生产环境不要设置 `SPRING_PROFILES_ACTIVE=local`。
+
+### 5. 配置 systemd 服务
+
+创建 `/etc/systemd/system/photolib.service`：
+
+```ini
+[Unit]
+Description=PhotoLib Backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=photolib
+Group=photolib
+WorkingDirectory=/opt/photolib
+ExecStart=/usr/bin/java -jar /opt/photolib/photolib.jar
+Restart=on-failure
+RestartSec=5
+SuccessExitStatus=143
+
+[Install]
+WantedBy=multi-user.target
+```
+
+如果 `command -v java` 的结果不是 `/usr/bin/java`，请修改 `ExecStart`。加载配置并启动：
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now photolib
+sudo systemctl status photolib
+```
+
+查看实时日志：
+
+```bash
+sudo journalctl -u photolib -f
+```
+
+在服务器本机验证健康状态：
+
+```bash
+curl --fail http://127.0.0.1:8080/api/v1/actuator/health
+```
+
+建议只允许反向代理访问后端的 `8080` 端口，并通过 Nginx 或其他反向代理提供 HTTPS。启用 `AUTH_SECURE_COOKIE=true` 时，客户端必须通过 HTTPS 访问。
+
+### 6. 更新版本
+
+在开发机重新执行构建并上传新 JAR，然后在服务器替换文件并重启：
+
+```bash
+sudo systemctl stop photolib
+sudo install -o photolib -g photolib -m 0644 /tmp/photolib.jar /opt/photolib/photolib.jar
+rm /tmp/photolib.jar
+sudo systemctl start photolib
+sudo systemctl status photolib
+```
+
+更新前建议备份当前 JAR，以便在新版本启动失败时快速回滚。数据库结构由 Flyway 在应用启动时自动升级，生产数据库应同时做好备份。
 
 ## 关键业务约束
 
