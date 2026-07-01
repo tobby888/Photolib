@@ -15,7 +15,10 @@ public class StorageConfig {
 
     @Bean
     ObjectStorageService objectStorageService(StorageProperties properties) {
-        if (properties.configured()) {
+        if (properties.local()) {
+            return new LocalObjectStorageService(properties);
+        }
+        if (properties.ossConfigured()) {
             return new AliyunObjectStorageService(properties);
         }
         return new ObjectStorageService() {

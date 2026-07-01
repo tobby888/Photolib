@@ -4,6 +4,8 @@ server:
     context-path: /api/v1
 
 spring:
+  config:
+    import: optional:file:.env[.properties]
   application:
     name: photolib-backend
   datasource:
@@ -47,10 +49,14 @@ photolib:
     admin-password: ${ADMIN_INITIAL_PASSWORD:ChangeMe123!}
     admin-display-name: ${ADMIN_DISPLAY_NAME:系统管理员}
   storage:
+    mode: ${STORAGE_MODE:oss}
     bucket: ${OSS_BUCKET:}
     endpoint: ${OSS_ENDPOINT:}
     access-key-id: ${OSS_ACCESS_KEY_ID:}
     access-key-secret: ${OSS_ACCESS_KEY_SECRET:}
+    local-directory: ${LOCAL_STORAGE_DIRECTORY:./data/object-storage}
+    public-base-url: ${LOCAL_STORAGE_PUBLIC_BASE_URL:http://localhost:${SERVER_PORT:8080}/api/v1/local-storage/objects}
+    signing-secret: ${LOCAL_STORAGE_SIGNING_SECRET:photolib-local-development-secret}
     upload-url-ttl: 15m
     download-url-ttl: 15m
     original-retention: 30d

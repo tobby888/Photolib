@@ -1,0 +1,3 @@
+photolib:
+  storage:
+    mode: local

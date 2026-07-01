@@ -49,7 +49,7 @@ Authorization: Bearer <access_token>
 - 请求与响应：`application/json; charset=utf-8`
 - 时间：ISO 8601，示例 `2026-07-01T10:30:00+08:00`
 - 日期：`YYYY-MM-DD`
-- 数据库主键：正整数，JSON 中使用 `number`
+- 数据库主键：正整数；超过 JavaScript 安全整数范围（`2^53-1`）时，JSON 中使用十进制 `string`，客户端不得转换为 `number`
 - 时长：统一使用分钟，字段后缀为 `Minutes`
 - 分页从第 `1` 页开始
 - 删除默认采用逻辑删除
@@ -536,7 +536,7 @@ OSS 的 `bucket`、`objectKey` 等内部存储信息不直接暴露给普通客�
 
 权限：同项目列表。
 
-响应中应包含需求数量、已提交图片数、已采用图片数等汇总字段。
+响应中包含 `requestCount`、`photoCount`、`adoptionCount` 等汇总字段。
 
 ### 7.4 更新项目
 

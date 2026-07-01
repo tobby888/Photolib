@@ -15,6 +15,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
+import java.time.LocalDateTime;
+
 @Service
 @RequiredArgsConstructor
 public class ProjectService {
@@ -51,6 +53,25 @@ public class ProjectService {
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "项目不存在");
         }
         return project;
+    }
+
+    public ProjectDetail getDetail(Long id) {
+        ProjectEntity project = get(id);
+        ProjectSummary summary = jdbc.sql("""
+                SELECT
+                    (SELECT COUNT(*) FROM photo_request WHERE project_id=:id AND deleted=0) AS request_count,
+                    (SELECT COUNT(*) FROM photo WHERE project_id=:id AND deleted=0) AS photo_count,
+                    (SELECT COUNT(*) FROM adoption WHERE project_id=:id AND deleted=0) AS adoption_count
+                """)
+                .param("id", id)
+                .query((rs, rowNum) -> new ProjectSummary(
+                        rs.getLong("request_count"),
+                        rs.getLong("photo_count"),
+                        rs.getLong("adoption_count")))
+                .single();
+        return new ProjectDetail(project.getId(), project.getTitle(), project.getDescription(),
+                project.getStatus(), project.getCreatedBy(), project.getCreatedAt(), project.getUpdatedAt(),
+                project.getVersion(), summary.requestCount(), summary.photoCount(), summary.adoptionCount());
     }
 
     @Transactional
@@ -122,5 +143,13 @@ public class ProjectService {
         if (mapper.updateById(project) != 1) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "项目已被其他操作修改");
         }
+    }
+
+    private record ProjectSummary(long requestCount, long photoCount, long adoptionCount) {
+    }
+
+    public record ProjectDetail(Long id, String title, String description, ProjectStatus status,
+                                Long createdBy, LocalDateTime createdAt, LocalDateTime updatedAt,
+                                Integer version, long requestCount, long photoCount, long adoptionCount) {
     }
 }

@@ -39,8 +39,8 @@ public class ProjectController {
     }
 
     @GetMapping("/{id}")
-    ApiResponse<ProjectEntity> get(@PathVariable Long id) {
-        return ApiResponse.ok(service.get(id));
+    ApiResponse<ProjectService.ProjectDetail> get(@PathVariable Long id) {
+        return ApiResponse.ok(service.getDetail(id));
     }
 
     @PutMapping("/{id}")
