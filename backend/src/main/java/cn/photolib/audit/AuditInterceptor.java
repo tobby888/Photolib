@@ -1,0 +1,48 @@
+package cn.photolib.audit;
+
+import cn.photolib.auth.AuthenticatedUser;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Component;
+import org.springframework.web.servlet.HandlerInterceptor;
+
+import java.time.LocalDateTime;
+import java.util.Set;
+import java.util.UUID;
+
+@Component
+@RequiredArgsConstructor
+public class AuditInterceptor implements HandlerInterceptor {
+    private static final Set<String> WRITES = Set.of("POST", "PUT", "PATCH", "DELETE");
+    private final AuditLogMapper mapper;
+
+    @Override
+    public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
+        request.setAttribute("requestId", UUID.randomUUID().toString());
+        return true;
+    }
+
+    @Override
+    public void afterCompletion(HttpServletRequest request, HttpServletResponse response,
+                                Object handler, Exception ex) {
+        if (!WRITES.contains(request.getMethod()) || request.getRequestURI().contains("/auth/login")
+                || request.getRequestURI().contains("/auth/refresh")) return;
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        Long userId = auth != null && auth.getPrincipal() instanceof AuthenticatedUser user ? user.id() : null;
+        AuditLogEntity log = new AuditLogEntity();
+        log.setOperatorId(userId);
+        log.setAction(request.getMethod());
+        String[] segments = request.getRequestURI().split("/");
+        log.setResourceType(segments.length > 3 ? segments[3].toUpperCase() : "UNKNOWN");
+        log.setResourceId(segments.length > 4 ? segments[4] : null);
+        log.setRequestId(String.valueOf(request.getAttribute("requestId")));
+        log.setDetailJson("{\"path\":\"" + request.getRequestURI().replace("\"", "") +
+                "\",\"status\":" + response.getStatus() + "}");
+        log.setIpAddress(request.getRemoteAddr());
+        log.setCreatedAt(LocalDateTime.now());
+        try { mapper.insert(log); } catch (Exception ignored) { }
+    }
+}
