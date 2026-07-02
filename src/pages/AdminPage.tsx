@@ -1,17 +1,27 @@
 import {
-  App, Button, Card, Form, Input, Modal, Select, Space, Switch, Table, Tabs, Tag, Typography,
+  App, Button, Card, Form, Input, Modal, Select, Space, Switch, Table, Tabs, Tag, Typography, Upload,
 } from 'antd'
-import { PlusOutlined, SafetyCertificateOutlined, TeamOutlined } from '@ant-design/icons'
+import {
+  AimOutlined, BgColorsOutlined, BulbOutlined, CameraOutlined, PictureOutlined,
+  PlusOutlined, SafetyCertificateOutlined, StarOutlined, TeamOutlined, UploadOutlined,
+} from '@ant-design/icons'
 import { useState } from 'react'
 import { api, emptyPage } from '../api'
-import type { Campus, PageData, Role, User } from '../types'
+import type { BrandingSettings, Campus, PageData, User } from '../types'
 import { DataState, PageTitle, roleName } from '../components'
 import { useLoad } from '../hooks'
+
+interface BrandingFormValues {
+  title: string
+  slogan: string
+  iconChoice: BrandingSettings['builtinIcon'] | 'custom'
+}
 
 export default function AdminPage() {
   const { message, modal } = App.useApp()
   const [userForm] = Form.useForm()
   const [campusForm] = Form.useForm()
+  const [brandingForm] = Form.useForm<BrandingFormValues>()
   const [userOpen, setUserOpen] = useState(false)
   const [campusOpen, setCampusOpen] = useState(false)
   const { data: users, loading, error, reload } = useLoad(
@@ -20,6 +30,42 @@ export default function AdminPage() {
   const { data: campuses, reload: reloadCampuses } = useLoad(
     () => api<Campus[]>({ url: '/campuses' }), [] as Campus[], [],
   )
+  const { data: branding, loading: brandingLoading, error: brandingError, reload: reloadBranding } = useLoad(
+    () => api<BrandingSettings>({ url: '/branding' }),
+    { title: 'PhotoLib', iconType: 'builtin', builtinIcon: 'camera', slogan: '摄影工作站' } as BrandingSettings, [],
+  )
+  const saveBranding = async () => {
+    try {
+      const values = await brandingForm.validateFields()
+      await api<BrandingSettings>({ method: 'PUT', url: '/branding', data: {
+        title: values.title,
+        slogan: values.slogan,
+        iconType: values.iconChoice === 'custom' ? 'custom' : 'builtin',
+        builtinIcon: values.iconChoice === 'custom' ? branding.builtinIcon : values.iconChoice,
+      } })
+      window.dispatchEvent(new Event('branding-updated'))
+      message.success('面板品牌设置已保存')
+      await reloadBranding()
+    } catch (e) { message.error((e as Error).message) }
+  }
+  const uploadIcon = async (file: File) => {
+    if (!['image/png', 'image/jpeg'].includes(file.type)) {
+      message.error('图标仅支持 PNG 或 JPEG')
+      return
+    }
+    if (file.size > 512 * 1024) {
+      message.error('图标不能超过 512 KB')
+      return
+    }
+    try {
+      const data = new FormData()
+      data.append('file', file)
+      await api<BrandingSettings>({ method: 'POST', url: '/branding/icon', data })
+      window.dispatchEvent(new Event('branding-updated'))
+      message.success('自定义图标已上传并启用')
+      await reloadBranding()
+    } catch (e) { message.error((e as Error).message) }
+  }
   const createUser = async () => {
     try {
       const result = await api<{ user: User; initialPassword: string }>({ method: 'POST', url: '/users', data: await userForm.validateFields() })
@@ -43,6 +89,55 @@ export default function AdminPage() {
     <PageTitle eyebrow="ADMINISTRATION" title="系统管理" description="维护账号、校区和系统运行秩序。" />
     <Card>
       <Tabs items={[
+        { key: 'branding', label: <span><BgColorsOutlined /> 面板品牌</span>, children:
+          <DataState loading={brandingLoading} error={brandingError} onRetry={reloadBranding}>
+            <div className="branding-settings">
+              <div className="tab-toolbar"><div>
+                <Typography.Title level={4}>面板标识</Typography.Title>
+                <Typography.Text type="secondary">修改左侧导航栏显示的品牌名称、Slogan 和图标，保存后立即生效。</Typography.Text>
+              </div></div>
+              <Form form={brandingForm} layout="vertical" initialValues={{
+                title: branding.title,
+                slogan: branding.slogan,
+                iconChoice: branding.iconType === 'custom' ? 'custom' : branding.builtinIcon,
+              }} key={`${branding.title}-${branding.iconType}-${branding.builtinIcon}-${branding.slogan}-${branding.customIconUrl || ''}`}
+                className="branding-form">
+                <Form.Item label="品牌名称" name="title" rules={[
+                  { required: true, whitespace: true, message: '请输入品牌名称' },
+                  { max: 40, message: '品牌名称不能超过 40 个字符' },
+                ]}>
+                  <Input showCount maxLength={40} placeholder="例如：PhotoLib" />
+                </Form.Item>
+                <Form.Item label="面板图标" name="iconChoice" rules={[{ required: true }]}>
+                  <Select size="large" options={[
+                    { value: 'camera', label: <Space><CameraOutlined />相机</Space> },
+                    { value: 'aperture', label: <Space><AimOutlined />光圈</Space> },
+                    { value: 'picture', label: <Space><PictureOutlined />图片</Space> },
+                    { value: 'bulb', label: <Space><BulbOutlined />灵感</Space> },
+                    { value: 'star', label: <Space><StarOutlined />星标</Space> },
+                    ...(branding.customIconUrl ? [{ value: 'custom', label: '已上传的自定义图片' }] : []),
+                  ]} />
+                </Form.Item>
+                <Form.Item label="上传自定义图标" extra="支持 PNG、JPEG；文件不超过 512 KB，尺寸不超过 1024 × 1024 像素。">
+                  <Upload accept="image/png,image/jpeg" maxCount={1} showUploadList={false}
+                    beforeUpload={file => { void uploadIcon(file); return false }}>
+                    <Button icon={<UploadOutlined />}>选择图片并上传</Button>
+                  </Upload>
+                  {branding.customIconUrl && <div className="custom-icon-preview">
+                    <img src={branding.customIconUrl} alt="当前自定义图标" />
+                    <Typography.Text type="secondary">当前已上传的图标</Typography.Text>
+                  </div>}
+                </Form.Item>
+                <Form.Item label="Slogan" name="slogan" rules={[
+                  { required: true, whitespace: true, message: '请输入 Slogan' },
+                  { max: 80, message: 'Slogan 不能超过 80 个字符' },
+                ]}>
+                  <Input showCount maxLength={80} placeholder="例如：摄影工作站" />
+                </Form.Item>
+                <Button type="primary" onClick={() => void saveBranding()}>保存品牌设置</Button>
+              </Form>
+            </div>
+          </DataState> },
         { key: 'users', label: <span><TeamOutlined /> 账号管理</span>, children: <>
           <div className="tab-toolbar"><div><Typography.Title level={4}>成员账号</Typography.Title><Typography.Text type="secondary">系统不开放注册，账号均由管理员创建。</Typography.Text></div>
             <Button type="primary" icon={<PlusOutlined />} onClick={() => setUserOpen(true)}>创建账号</Button></div>

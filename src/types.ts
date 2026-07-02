@@ -99,3 +99,11 @@ export interface MemberStats {
   retouchingMinutes: number
   totalMinutes: number
 }
+
+export interface BrandingSettings {
+  title: string
+  iconType: 'builtin' | 'custom'
+  builtinIcon: 'camera' | 'aperture' | 'picture' | 'bulb' | 'star'
+  customIconUrl?: string | null
+  slogan: string
+}
