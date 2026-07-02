@@ -101,6 +101,9 @@ export interface MemberStats {
 }
 
 export interface BrandingSettings {
-  icon: 'camera' | 'aperture' | 'picture' | 'bulb' | 'star'
+  title: string
+  iconType: 'builtin' | 'custom'
+  builtinIcon: 'camera' | 'aperture' | 'picture' | 'bulb' | 'star'
+  customIconUrl?: string | null
   slogan: string
 }

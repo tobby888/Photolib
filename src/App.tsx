@@ -25,7 +25,9 @@ const StatisticsPage = lazy(() => import('./pages/StatisticsPage'))
 const AdminPage = lazy(() => import('./pages/AdminPage'))
 
 const { Header, Sider, Content } = Layout
-const defaultBranding: BrandingSettings = { icon: 'camera', slogan: '摄影工作站' }
+const defaultBranding: BrandingSettings = {
+  title: 'PhotoLib', iconType: 'builtin', builtinIcon: 'camera', slogan: '摄影工作站',
+}
 const brandIcons = {
   camera: <CameraOutlined />, aperture: <AimOutlined />, picture: <PictureOutlined />,
   bulb: <BulbOutlined />, star: <StarOutlined />,
@@ -72,8 +74,12 @@ function Shell() {
     <Sider className="side-nav" width={236} collapsedWidth={mobile ? 0 : 76}
       collapsed={mobile ? collapsed : collapsed} breakpoint="md" trigger={null}>
       <div className="brand" onClick={() => navigate('/')}>
-        <div className="brand-mark">{brandIcons[branding.icon] || brandIcons.camera}</div>
-        {!collapsed && <div><strong>PhotoLib</strong><span>{branding.slogan}</span></div>}
+        <div className={`brand-mark ${branding.iconType === 'custom' ? 'brand-mark-custom' : ''}`}>
+          {branding.iconType === 'custom' && branding.customIconUrl
+            ? <img src={branding.customIconUrl} alt="" />
+            : brandIcons[branding.builtinIcon] || brandIcons.camera}
+        </div>
+        {!collapsed && <div><strong>{branding.title}</strong><span>{branding.slogan}</span></div>}
       </div>
       {!collapsed && <Typography.Text className="nav-section">工作空间</Typography.Text>}
       <Menu theme="dark" mode="inline" selectedKeys={[selected]} items={nav}

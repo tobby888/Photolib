@@ -13,7 +13,11 @@ import java.time.LocalDateTime;
 public class BrandingSettingEntity {
     @TableId
     private Integer id;
-    private String icon;
+    private String title;
+    private String iconType;
+    private String builtinIcon;
+    private byte[] customIcon;
+    private String customIconContentType;
     private String slogan;
     private LocalDateTime updatedAt;
 }
