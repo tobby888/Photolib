@@ -241,10 +241,12 @@ class RequestServiceTests {
                 .param("sha256", "a".repeat(64))
                 .update();
 
-        requestService.submit(request.getId(), 2, managerUser);
+        int submitVersion = requestService.get(request.getId()).getVersion();
+        requestService.submit(request.getId(), submitVersion, managerUser);
 
         // When: 完成需求
-        var completed = requestService.complete(request.getId(), 3);
+        int completeVersion = requestService.get(request.getId()).getVersion();
+        var completed = requestService.complete(request.getId(), completeVersion);
 
         // Then: 状态应该变为已完成
         assertThat(completed.getStatus()).isEqualTo(RequestStatus.COMPLETED);

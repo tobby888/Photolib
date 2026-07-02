@@ -18,10 +18,14 @@ export default function InitialPasswordPage() {
   const [loading, setLoading] = useState(false)
   const [strength, setStrength] = useState(0)
 
-  const changePassword = async ({ confirmPassword: _, ...values }: PasswordValues) => {
+  const changePassword = async (values: PasswordValues) => {
     setLoading(true)
     try {
-      const result = await api<LoginResult>({ method: 'PUT', url: '/auth/initial-password', data: values })
+      const result = await api<LoginResult>({
+        method: 'PUT',
+        url: '/auth/initial-password',
+        data: { initialPassword: values.initialPassword, newPassword: values.newPassword },
+      })
       updateSession(result)
       message.success('密码修改成功，欢迎使用 PhotoLib')
       navigate('/', { replace: true })

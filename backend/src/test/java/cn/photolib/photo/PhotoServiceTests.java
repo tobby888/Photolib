@@ -121,7 +121,7 @@ class PhotoServiceTests {
                     (request_id, project_id, title, photographer_student_id, photographer_name,
                      uploaded_by, campus_id, taken_at, size, content_type, object_key, sha256, status)
                 VALUES
-                    (null, :projectId, '其他人的照片', '20230001', '张三', 999, :campusId,
+                    (null, :projectId, '其他人的照片', '20230001', '张三', 200, :campusId,
                      NOW(), 1000, 'image/jpeg', 'photos/2026/other.jpg', :sha256, 'AVAILABLE')
                 """)
                 .param("projectId", testProject.getId())
@@ -162,7 +162,7 @@ class PhotoServiceTests {
                     (request_id, project_id, title, photographer_student_id, photographer_name,
                      uploaded_by, campus_id, taken_at, size, content_type, object_key, sha256, status)
                 VALUES
-                    (null, :projectId, '照片1', '20230001', '张三', 999, :campusId,
+                    (null, :projectId, '照片1', '20230001', '张三', 200, :campusId,
                      NOW(), 1000, 'image/jpeg', 'photos/2026/photo1.jpg', :sha256_1, 'AVAILABLE'),
                     (null, :projectId, '照片2', '20230002', '李四', :userId, :campusId,
                      NOW(), 1000, 'image/jpeg', 'photos/2026/photo2.jpg', :sha256_2, 'AVAILABLE')
@@ -191,7 +191,7 @@ class PhotoServiceTests {
                     (id, request_id, project_id, title, photographer_student_id, photographer_name,
                      uploaded_by, campus_id, taken_at, size, content_type, object_key, sha256, status)
                 VALUES
-                    (1000, null, :projectId, '其他人的照片', '20230001', '张三', 999, :campusId,
+                    (1000, null, :projectId, '其他人的照片', '20230001', '张三', 200, :campusId,
                      NOW(), 1000, 'image/jpeg', 'photos/2026/other.jpg', :sha256, 'AVAILABLE')
                 """)
                 .param("projectId", testProject.getId())
@@ -282,6 +282,6 @@ class PhotoServiceTests {
         // Then: 照片应该被逻辑删除
         assertThatThrownBy(() -> photoService.get(1003L, managerUser))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("照片不存在");
+                .hasMessageContaining("图片不存在");
     }
 }

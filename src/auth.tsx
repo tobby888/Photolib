@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, type PropsWithChildren } from 'react'
+import { createContext, useContext, useEffect, useState, type PropsWithChildren } from 'react'
 import { api, type LoginResult } from './api'
 import type { User } from './types'
 
@@ -46,7 +46,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       setUser(null)
     }
   }
-  return <AuthContext.Provider value={useMemo(() => ({ user, login, updateSession, logout }), [user])}>{children}</AuthContext.Provider>
+  return <AuthContext.Provider value={{ user, login, updateSession, logout }}>{children}</AuthContext.Provider>
 }
 
 export function useAuth() {

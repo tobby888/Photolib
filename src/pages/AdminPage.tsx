@@ -7,7 +7,7 @@ import {
 } from '@ant-design/icons'
 import { useState } from 'react'
 import { api, emptyPage } from '../api'
-import type { BrandingSettings, Campus, PageData, Role, User } from '../types'
+import type { BrandingSettings, Campus, PageData, User } from '../types'
 import { DataState, PageTitle, roleName } from '../components'
 import { useLoad } from '../hooks'
 

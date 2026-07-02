@@ -35,6 +35,10 @@ public class UserService {
     @Transactional
     public CreatedUser create(CreateUser command) {
         validateCampus(command.role(), command.campusId());
+        if (userMapper.selectCount(Wrappers.<UserEntity>lambdaQuery()
+                .eq(UserEntity::getUsername, command.username())) > 0) {
+            throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE, "资源已存在");
+        }
         String initialPassword = randomPassword();
         UserEntity user = new UserEntity();
         user.setUsername(command.username());
@@ -119,7 +123,7 @@ public class UserService {
 
     private void validateCampus(UserRole role, Long campusId) {
         if (role == UserRole.CAMPUS_MANAGER && campusId == null) {
-            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "校区负责人必须关联校区");
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "校区负责人必须指定校区");
         }
         if (campusId != null) {
             CampusEntity campus = campusMapper.selectById(campusId);

@@ -4,6 +4,7 @@ import cn.photolib.campus.mapper.CampusMapper;
 import cn.photolib.campus.model.CampusEntity;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,8 +18,13 @@ public class CampusService {
 
     @Transactional
     public CampusEntity create(String code, String name) {
+        String normalizedCode = code.toUpperCase();
+        if (mapper.selectCount(Wrappers.<CampusEntity>lambdaQuery()
+                .eq(CampusEntity::getCode, normalizedCode)) > 0) {
+            throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE, "资源已存在");
+        }
         CampusEntity campus = new CampusEntity();
-        campus.setCode(code.toUpperCase());
+        campus.setCode(normalizedCode);
         campus.setName(name);
         campus.setEnabled(true);
         mapper.insert(campus);
