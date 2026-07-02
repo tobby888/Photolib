@@ -209,7 +209,7 @@ Linux 服务器应按照下方“Linux 服务端部署”章节运行编译好�
 
 ## Linux 服务端部署
 
-推荐在开发机完成编译，将生成的 JAR 上传到 Linux 服务器，再由 systemd 管理进程。服务器只需要安装 Java 21，无需安装 Maven 或复制源代码。
+推荐在开发机完成编译，将生成的 JAR 上传到 Linux 服务器，再由 systemd 管理进程。Maven 会自动执行 `npm ci` 和 React 生产构建，并将前端文件写入 JAR 的 `static` 目录。服务器只需要安装 Java 21，无需安装 Node.js、npm、Maven，也不需要复制源代码或单独运行前端服务。
 
 ### 1. 在开发机编译
 
@@ -234,6 +234,8 @@ cd backend
 ```text
 backend/target/photolib-backend-0.1.0-SNAPSHOT.jar
 ```
+
+该 JAR 同时包含 Spring Boot 后端和 React 前端。构建过程使用 Maven 管理的隔离 Node.js 环境，不依赖开发机全局安装的 Node.js。
 
 ### 2. 准备 Linux 服务器
 
@@ -348,7 +350,15 @@ sudo journalctl -u photolib -f
 curl --fail http://127.0.0.1:8080/api/v1/actuator/health
 ```
 
-建议只允许反向代理访问后端的 `8080` 端口，并通过 Nginx 或其他反向代理提供 HTTPS。启用 `AUTH_SECURE_COOKIE=true` 时，客户端必须通过 HTTPS 访问。
+浏览器访问以下地址即可打开打包在 JAR 中的 React 前端：
+
+```text
+http://服务器地址:8080/api/v1/
+```
+
+前端使用 Hash 路由，页面地址形如 `/api/v1/#/projects`，刷新页面不需要额外配置 SPA 回退。
+
+生产环境建议只允许反向代理访问 `8080` 端口，并通过 Nginx 或其他反向代理提供 HTTPS。反向代理只需将请求转发给这个 Spring Boot 服务，不需要运行 Node.js。启用 `AUTH_SECURE_COOKIE=true` 时，客户端必须通过 HTTPS 访问。
 
 ### 6. 更新版本
 

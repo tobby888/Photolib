@@ -26,7 +26,8 @@ public class SecurityConfig {
                 .cors(cors -> {})
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/auth/login", "/auth/refresh", "/actuator/health",
+                        .requestMatchers("/", "/index.html", "/assets/**", "/favicon.ico",
+                                "/auth/login", "/auth/refresh", "/actuator/health",
                                 "/local-storage/objects/**").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(errors -> errors.authenticationEntryPoint((request, response, ex) -> {

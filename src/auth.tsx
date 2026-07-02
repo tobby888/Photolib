@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useState, type PropsWithChildren } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState, type PropsWithChildren } from 'react'
 import { api, type LoginResult } from './api'
 import type { User } from './types'
 
@@ -22,6 +22,13 @@ function readUser(): User | null {
 
 export function AuthProvider({ children }: PropsWithChildren) {
   const [user, setUser] = useState<User | null>(readUser)
+  useEffect(() => {
+    if (!localStorage.getItem('photolib_access_token')) return
+    void api<User>({ url: '/auth/me' }).then(current => {
+      localStorage.setItem('photolib_user', JSON.stringify(current))
+      setUser(current)
+    }).catch(() => undefined)
+  }, [])
   const updateSession = (result: LoginResult) => {
     localStorage.setItem('photolib_access_token', result.accessToken)
     localStorage.setItem('photolib_user', JSON.stringify(result.user))
