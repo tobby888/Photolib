@@ -58,7 +58,7 @@ class AdoptionServiceTests {
                 "进行中项目", "描述", ProjectStatus.ACTIVE, adminUser);
         completedProject = projectService.create(
                 "已完成项目", "描述", ProjectStatus.ACTIVE, adminUser);
-        projectService.complete(completedProject.getId(), adminUser);
+        projectService.changeStatus(completedProject.getId(), ProjectStatus.COMPLETED, 1, adminUser);
 
         // 创建测试照片
         jdbc.sql("""

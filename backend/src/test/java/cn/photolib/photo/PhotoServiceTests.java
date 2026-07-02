@@ -78,7 +78,7 @@ class PhotoServiceTests {
 
         // Then: 应该返回预签名上传 URL
         assertThat(ticket.photoId()).isNotNull();
-        assertThat(ticket.url()).isNotEmpty();
+        assertThat(ticket.uploadUrl()).isNotEmpty();
         assertThat(ticket.method()).isEqualTo("PUT");
         assertThat(ticket.contentType()).isEqualTo("image/jpeg");
     }
