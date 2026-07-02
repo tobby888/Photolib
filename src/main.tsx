@@ -17,7 +17,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         colorWarning: '#c57a3d',
         colorError: '#b34f4f',
         borderRadius: 10,
-        fontFamily: '"Inter", "PingFang SC", "Microsoft YaHei", sans-serif',
+        fontFamily: '"PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", system-ui, sans-serif',
       },
       components: {
         Layout: { bodyBg: '#f6f4ef', siderBg: '#173b35', headerBg: '#f6f4ef' },

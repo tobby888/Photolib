@@ -2,14 +2,16 @@ import {
   App as AntApp, Avatar, Badge, Button, Dropdown, Grid, Layout, Menu, Space, Typography,
 } from 'antd'
 import {
-  BarChartOutlined, BellOutlined, BookOutlined, CameraOutlined, DashboardOutlined,
+  AimOutlined, BarChartOutlined, BellOutlined, BookOutlined, BulbOutlined, CameraOutlined, DashboardOutlined,
   FolderOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SettingOutlined,
-  TeamOutlined, UnorderedListOutlined, UserOutlined,
+  PictureOutlined, StarOutlined, UnorderedListOutlined, UserOutlined,
 } from '@ant-design/icons'
-import { lazy, Suspense, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from './auth'
 import { roleName, NotFound } from './components'
+import { api } from './api'
+import type { BrandingSettings } from './types'
 
 const LoginPage = lazy(() => import('./pages/LoginPage'))
 const InitialPasswordPage = lazy(() => import('./pages/InitialPasswordPage'))
@@ -23,6 +25,11 @@ const StatisticsPage = lazy(() => import('./pages/StatisticsPage'))
 const AdminPage = lazy(() => import('./pages/AdminPage'))
 
 const { Header, Sider, Content } = Layout
+const defaultBranding: BrandingSettings = { icon: 'camera', slogan: '摄影工作站' }
+const brandIcons = {
+  camera: <CameraOutlined />, aperture: <AimOutlined />, picture: <PictureOutlined />,
+  bulb: <BulbOutlined />, star: <StarOutlined />,
+}
 
 function Shell() {
   const { user, logout } = useAuth()
@@ -31,7 +38,15 @@ function Shell() {
   const location = useLocation()
   const screens = Grid.useBreakpoint()
   const [collapsed, setCollapsed] = useState(false)
+  const [branding, setBranding] = useState<BrandingSettings>(defaultBranding)
   const mobile = !screens.md
+  useEffect(() => {
+    const loadBranding = () => void api<BrandingSettings>({ url: '/branding' })
+      .then(setBranding).catch(() => setBranding(defaultBranding))
+    loadBranding()
+    window.addEventListener('branding-updated', loadBranding)
+    return () => window.removeEventListener('branding-updated', loadBranding)
+  }, [])
   const nav = useMemo(() => {
     const common = [
       { key: '/', icon: <DashboardOutlined />, label: '工作台' },
@@ -57,8 +72,8 @@ function Shell() {
     <Sider className="side-nav" width={236} collapsedWidth={mobile ? 0 : 76}
       collapsed={mobile ? collapsed : collapsed} breakpoint="md" trigger={null}>
       <div className="brand" onClick={() => navigate('/')}>
-        <div className="brand-mark"><CameraOutlined /></div>
-        {!collapsed && <div><strong>PhotoLib</strong><span>摄影工作站</span></div>}
+        <div className="brand-mark">{brandIcons[branding.icon] || brandIcons.camera}</div>
+        {!collapsed && <div><strong>PhotoLib</strong><span>{branding.slogan}</span></div>}
       </div>
       {!collapsed && <Typography.Text className="nav-section">工作空间</Typography.Text>}
       <Menu theme="dark" mode="inline" selectedKeys={[selected]} items={nav}
