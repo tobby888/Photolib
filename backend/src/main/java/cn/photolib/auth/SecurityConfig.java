@@ -31,6 +31,7 @@ public class SecurityConfig {
                                 "/api/v1/auth/login", "/api/v1/auth/refresh",
                                 "/api/v1/actuator/health",
                                 "/api/v1/local-storage/objects/**",
+                                "/api/v1/notifications/images/**",
                                 "/api/v1/branding/icon").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(errors -> errors.authenticationEntryPoint((request, response, ex) -> {

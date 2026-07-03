@@ -18,6 +18,8 @@ public class UserNotificationEntity {
     private String title;
     private String content;
     private String actionUrl;
+    private Long senderId;
+    private String contentHtml;
     private LocalDateTime readAt;
     private LocalDateTime createdAt;
 }
