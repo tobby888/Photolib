@@ -3,6 +3,7 @@ package cn.photolib.common.error;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -35,6 +36,12 @@ public class GlobalExceptionHandler {
     ResponseEntity<ErrorResponse> handleDuplicate(DuplicateKeyException ex, HttpServletRequest request) {
         return ResponseEntity.status(ErrorCode.DUPLICATE_RESOURCE.status()).body(new ErrorResponse(
                 ErrorCode.DUPLICATE_RESOURCE.name(), "资源已存在", List.of(), requestId(request)));
+    }
+
+    @ExceptionHandler(AccessDeniedException.class)
+    ResponseEntity<ErrorResponse> handleAccessDenied(AccessDeniedException ex, HttpServletRequest request) {
+        return ResponseEntity.status(ErrorCode.FORBIDDEN.status()).body(new ErrorResponse(
+                ErrorCode.FORBIDDEN.name(), "无权执行该操作", List.of(), requestId(request)));
     }
 
     @ExceptionHandler(Exception.class)

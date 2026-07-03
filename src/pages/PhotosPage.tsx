@@ -68,7 +68,7 @@ export default function PhotosPage() {
         {data.items.map(photo => <Col xs={24} sm={12} lg={8} xxl={6} key={photo.id}>
           <Card className="photo-card" hoverable cover={<div className="photo-cover" onClick={() => setSelected(photo)}>
             {photo.thumbnailUrl ? <Image preview={false} src={photo.thumbnailUrl} alt={photo.title} /> : <div className="image-placeholder"><span>{photo.title?.slice(0, 1) || '图'}</span></div>}
-            <div className="photo-overlay"><StatusTag value={photo.status} /><Button shape="circle" icon={<DownloadOutlined />} onClick={e => { e.stopPropagation(); void download(photo) }} /></div>
+            <div className="photo-overlay"><Space><StatusTag value={photo.status} />{!!photo.adoptionCount && <Tag color="gold">已采用 × {photo.adoptionCount}</Tag>}</Space><Button shape="circle" icon={<DownloadOutlined />} onClick={e => { e.stopPropagation(); void download(photo) }} /></div>
           </div>}>
             <Typography.Title level={5} ellipsis>{photo.title || '未命名图片'}</Typography.Title>
             <Space size={4} wrap>{photo.tags?.slice(0, 3).map(tag => <Tag variant="filled" key={tag}>{tag}</Tag>)}</Space>
@@ -102,6 +102,7 @@ export default function PhotosPage() {
         <Typography.Paragraph type="secondary">{selected.description || '暂无图片说明'}</Typography.Paragraph>
         <Descriptions column={1} size="small" items={[
           { key: 'status', label: '状态', children: <StatusTag value={selected.status} /> },
+          { key: 'adoption', label: '采用状态', children: selected.adoptionCount ? <Tag color="gold">已采用 × {selected.adoptionCount}</Tag> : '未采用' },
           { key: 'photographer', label: '拍摄者', children: `${selected.photographerName} · ${selected.photographerStudentId}` },
           { key: 'taken', label: '拍摄时间', children: dayjs(selected.takenAt).format('YYYY-MM-DD HH:mm') },
           { key: 'size', label: '文件信息', children: `${selected.width || '-'} × ${selected.height || '-'} · ${formatBytes(selected.size)}` },

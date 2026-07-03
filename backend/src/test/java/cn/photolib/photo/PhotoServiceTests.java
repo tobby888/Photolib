@@ -291,6 +291,44 @@ class PhotoServiceTests {
     }
 
     @Test
+    void listAndGet_shouldReturnActiveAdoptionCount() {
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, project_id, title, photographer_student_id, photographer_name,
+                     uploaded_by, campus_id, taken_at, size, content_type, object_key, sha256, status)
+                VALUES
+                    (1012, :projectId, 'adoption count photo', '20230001', 'photographer',
+                     :userId, :campusId, NOW(), 1000, 'image/jpeg', 'photos/adoption-count.jpg',
+                     :sha256, 'AVAILABLE')
+                """)
+                .param("projectId", testProject.getId())
+                .param("userId", adminUser.id())
+                .param("campusId", testCampus.getId())
+                .param("sha256", "l".repeat(64))
+                .update();
+        jdbc.sql("""
+                INSERT INTO adoption
+                    (project_id, photo_id, photographer_student_id, photographer_name,
+                     adopted_by, adopted_at, deleted)
+                VALUES
+                    (:projectId, 1012, '20230001', 'photographer', :adminId, NOW(), false)
+                """)
+                .param("projectId", testProject.getId())
+                .param("adminId", adminUser.id())
+                .update();
+
+        var listed = photoService.list(
+                1, 20, null, testProject.getId(), null, null, null,
+                null, null, PhotoStatus.AVAILABLE, adminUser);
+
+        assertThat(listed.items()).filteredOn(photo -> photo.id().equals(1012L))
+                .singleElement()
+                .extracting(PhotoService.PhotoView::adoptionCount)
+                .isEqualTo(1L);
+        assertThat(photoService.get(1012L, adminUser).adoptionCount()).isEqualTo(1L);
+    }
+
+    @Test
     void archivePhoto_asMinister_shouldChangeStatus() {
         // Given: 可用的照片
         jdbc.sql("""
