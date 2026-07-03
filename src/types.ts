@@ -114,6 +114,8 @@ export interface Notification {
   title: string
   content?: string | null
   actionUrl?: string | null
+  senderId?: EntityId | null
+  contentHtml?: string | null
   readAt?: string | null
   createdAt: string
 }

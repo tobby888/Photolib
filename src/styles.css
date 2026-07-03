@@ -210,6 +210,21 @@ button, input, textarea, select { font-family: inherit; }
 .notification-item > div:last-child { min-width: 0; flex: 1; }
 .notification-item .ant-typography { margin-bottom: 3px; font-size: 12px; }
 .notification-item p.ant-typography { margin-top: 4px; color: #68736f; }
+.message-list-item { cursor: pointer; gap: 14px; padding: 18px 10px !important; }
+.message-list-item:hover { background: #faf9f6; }
+.message-list-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 12px; background: #edf3f0; color: #28594f; font-size: 18px; }
+.message-list-main { flex: 1; min-width: 0; }
+.message-list-main p.ant-typography { margin: 5px 0 2px; }
+.rich-editor { overflow: hidden; border: 1px solid #d9d9d9; border-radius: 8px; background: white; }
+.rich-editor:focus-within { border-color: #3f7b65; box-shadow: 0 0 0 2px rgba(40,89,79,.1); }
+.rich-editor-toolbar { width: 100%; padding: 6px 8px; border-bottom: 1px solid #ece9e3; background: #faf9f6; }
+.rich-editor-content { min-height: 240px; max-height: 440px; overflow: auto; padding: 16px; outline: none; line-height: 1.7; }
+.rich-editor-content:empty::before { content: attr(data-placeholder); color: #aaa; pointer-events: none; }
+.rich-editor-content img, .message-content img { display: block; max-width: 100%; height: auto; margin: 14px auto; border-radius: 8px; }
+.message-detail { max-width: 900px; margin: 0 auto; }
+.message-detail > .ant-btn { margin: 0 0 12px -12px; }
+.message-content { min-height: 240px; font-size: 15px; line-height: 1.8; color: #27342f; }
+.message-content > :first-child { margin-top: 0; }
 
 .login-page { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); background: #f6f4ef; }
 .login-story {

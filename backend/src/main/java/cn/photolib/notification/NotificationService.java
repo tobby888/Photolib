@@ -13,6 +13,8 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
+import org.jsoup.Jsoup;
+import org.jsoup.safety.Safelist;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
@@ -29,6 +31,11 @@ public class NotificationService {
     private final AdminAlertMapper alertMapper;
     private final MailGateway gateway;
     private final ApplicationEventPublisher events;
+
+    private static final Safelist MESSAGE_HTML = Safelist.basic()
+            .addTags("p", "div", "h1", "h2", "h3", "img")
+            .addAttributes("img", "src", "alt", "title")
+            .preserveRelativeLinks(true);
 
     @Transactional
     public void notifyUser(Long userId, String event, String subject, String html) {
@@ -118,6 +125,17 @@ public class NotificationService {
                 .isNull(UserNotificationEntity::getReadAt));
     }
 
+    public UserNotificationEntity getForUser(Long id, Long userId) {
+        UserNotificationEntity notification = userNotificationMapper.selectOne(
+                Wrappers.<UserNotificationEntity>lambdaQuery()
+                        .eq(UserNotificationEntity::getId, id)
+                        .eq(UserNotificationEntity::getUserId, userId));
+        if (notification == null) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "通知不存在");
+        }
+        return notification;
+    }
+
     @Transactional
     public void markRead(Long id, Long userId) {
         UserNotificationEntity notification = userNotificationMapper.selectOne(
@@ -140,6 +158,46 @@ public class NotificationService {
         userNotificationMapper.update(update, Wrappers.<UserNotificationEntity>lambdaUpdate()
                 .eq(UserNotificationEntity::getUserId, userId)
                 .isNull(UserNotificationEntity::getReadAt));
+    }
+
+    @Transactional
+    public int sendMessage(Long senderId, Long targetUserId, boolean broadcast,
+                           String title, String contentHtml) {
+        String cleaned = Jsoup.clean(contentHtml, "", MESSAGE_HTML,
+                new org.jsoup.nodes.Document.OutputSettings().prettyPrint(false));
+        org.jsoup.nodes.Document document = Jsoup.parseBodyFragment(cleaned);
+        document.select("img").removeIf(image -> !image.attr("src")
+                .matches("^/api/v1/notifications/images/[0-9A-HJKMNP-TV-Z]{26}$"));
+        String safeHtml = document.body().html();
+        String plainText = Jsoup.parse(safeHtml).text();
+        if (plainText.isBlank() && !safeHtml.contains("<img")) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "消息内容不能为空");
+        }
+        List<UserEntity> recipients;
+        if (broadcast) {
+            recipients = userMapper.selectList(Wrappers.<UserEntity>lambdaQuery()
+                    .eq(UserEntity::getEnabled, true));
+        } else {
+            UserEntity target = targetUserId == null ? null : userMapper.selectById(targetUserId);
+            if (target == null || !Boolean.TRUE.equals(target.getEnabled())) {
+                throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "接收成员不存在或已停用");
+            }
+            recipients = List.of(target);
+        }
+        LocalDateTime now = LocalDateTime.now();
+        for (UserEntity recipient : recipients) {
+            UserNotificationEntity notification = new UserNotificationEntity();
+            notification.setUserId(recipient.getId());
+            notification.setSenderId(senderId);
+            notification.setEventType(broadcast ? "BROADCAST_MESSAGE" : "DIRECT_MESSAGE");
+            notification.setTitle(title.trim());
+            notification.setContent(plainText);
+            notification.setContentHtml(safeHtml);
+            notification.setActionUrl(null);
+            notification.setCreatedAt(now);
+            userNotificationMapper.insert(notification);
+        }
+        return recipients.size();
     }
 
     private String actionUrl(String event) {
