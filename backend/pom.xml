@@ -148,7 +148,7 @@
                             <goal>npm</goal>
                         </goals>
                         <configuration>
-                            <arguments>run build -- --base=/api/v1/</arguments>
+                            <arguments>run build -- --base=/</arguments>
                         </configuration>
                     </execution>
                 </executions>

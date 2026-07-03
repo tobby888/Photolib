@@ -1,7 +1,5 @@
 server:
   port: ${SERVER_PORT:8080}
-  servlet:
-    context-path: /api/v1
 
 spring:
   config:
@@ -35,6 +33,7 @@ mybatis-plus:
 management:
   endpoints:
     web:
+      base-path: /api/v1/actuator
       exposure:
         include: health,info
 
