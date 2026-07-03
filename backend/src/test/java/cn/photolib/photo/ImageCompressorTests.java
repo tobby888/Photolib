@@ -42,6 +42,42 @@ class ImageCompressorTests {
         assertThat(result.contentType()).isEqualTo("image/jpeg");
     }
 
+    @Test
+    void slightlyOversizedJpegKeepsOriginalDimensions() throws Exception {
+        BufferedImage image = noisyImage(1200, 800);
+        byte[] source = compressor.thumbnail(encode(image, "jpg"), "image/jpeg", 1200).bytes();
+        long target = compressor.thumbnail(source, "image/jpeg", 1200).bytes().length;
+
+        ImageCompressor.Result result = compressor.compress(source, "image/jpeg", target);
+
+        assertThat((long) result.bytes().length).isLessThanOrEqualTo(target);
+        assertThat(result.width()).isEqualTo(1200);
+        assertThat(result.height()).isEqualTo(800);
+    }
+
+    @Test
+    void heavilyCompressedJpegPrefersModerateQualityAndAdaptiveResize() throws Exception {
+        BufferedImage image = noisyImage(1600, 1200);
+        byte[] source = encode(image, "jpg");
+
+        ImageCompressor.Result result = compressor.compress(source, "image/jpeg", 180_000);
+
+        assertThat(result.bytes().length).isLessThanOrEqualTo(180_000);
+        assertThat(result.width()).isLessThan(1600).isGreaterThan(320);
+        assertThat(result.height()).isLessThan(1200).isGreaterThan(320);
+    }
+
+    private BufferedImage noisyImage(int width, int height) {
+        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+        for (int x = 0; x < width; x++) {
+            for (int y = 0; y < height; y++) {
+                image.setRGB(x, y, new Color((x * 31 + y) & 255, (x + y * 17) & 255,
+                        (x * y) & 255).getRGB());
+            }
+        }
+        return image;
+    }
+
     private byte[] encode(BufferedImage image, String format) throws Exception {
         try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             ImageIO.write(image, format, output);
