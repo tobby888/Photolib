@@ -4,8 +4,13 @@ import com.aliyun.oss.HttpMethod;
 import com.aliyun.oss.OSS;
 import com.aliyun.oss.OSSClientBuilder;
 import com.aliyun.oss.model.GeneratePresignedUrlRequest;
+import com.aliyun.oss.model.CannedAccessControlList;
+import com.aliyun.oss.model.CreateBucketRequest;
+import com.aliyun.oss.model.ListObjectsRequest;
 import com.aliyun.oss.model.ObjectMetadata;
+import com.aliyun.oss.model.ObjectListing;
 import com.aliyun.oss.model.OSSObject;
+import com.aliyun.oss.model.OSSObjectSummary;
 import com.aliyun.oss.model.PutObjectRequest;
 import jakarta.annotation.PreDestroy;
 
@@ -14,6 +19,8 @@ import java.net.URL;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Date;
+import java.util.ArrayList;
+import java.util.List;
 
 public class AliyunObjectStorageService implements ObjectStorageService {
     private final StorageProperties properties;
@@ -23,6 +30,33 @@ public class AliyunObjectStorageService implements ObjectStorageService {
         this.properties = properties;
         this.client = new OSSClientBuilder().build(properties.endpoint(),
                 properties.accessKeyId(), properties.accessKeySecret());
+    }
+
+    @Override
+    public void initialize() {
+        if (!client.doesBucketExist(properties.bucket())) {
+            CreateBucketRequest request = new CreateBucketRequest(properties.bucket());
+            request.setCannedACL(CannedAccessControlList.Private);
+            client.createBucket(request);
+        }
+    }
+
+    @Override
+    public List<StoredObject> list(String prefix) {
+        List<StoredObject> objects = new ArrayList<>();
+        String marker = null;
+        do {
+            ListObjectsRequest request = new ListObjectsRequest(properties.bucket());
+            request.setPrefix(prefix == null ? "" : prefix);
+            request.setMarker(marker);
+            request.setMaxKeys(1000);
+            ObjectListing listing = client.listObjects(request);
+            for (OSSObjectSummary item : listing.getObjectSummaries()) {
+                objects.add(new StoredObject(item.getKey(), item.getSize()));
+            }
+            marker = listing.isTruncated() ? listing.getNextMarker() : null;
+        } while (marker != null);
+        return objects;
     }
 
     @Override

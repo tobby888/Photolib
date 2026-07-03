@@ -14,6 +14,8 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.List;
+import java.util.stream.Stream;
 
 public class LocalObjectStorageService implements ObjectStorageService {
     private final Path root;
@@ -28,6 +30,36 @@ public class LocalObjectStorageService implements ObjectStorageService {
             Files.createDirectories(root);
         } catch (IOException ex) {
             throw new IllegalStateException("无法创建本地对象存储目录: " + root, ex);
+        }
+    }
+
+    @Override
+    public void initialize() {
+        try {
+            Files.createDirectories(root);
+        } catch (IOException ex) {
+            throw new IllegalStateException("无法初始化本地对象存储目录: " + root, ex);
+        }
+    }
+
+    @Override
+    public List<StoredObject> list(String prefix) {
+        String effectivePrefix = prefix == null ? "" : prefix;
+        try (Stream<Path> paths = Files.walk(root)) {
+            return paths.filter(Files::isRegularFile)
+                    .filter(path -> !path.getFileName().toString().endsWith(".content-type"))
+                    .map(path -> {
+                        String key = root.relativize(path).toString().replace('\\', '/');
+                        try {
+                            return new StoredObject(key, Files.size(path));
+                        } catch (IOException ex) {
+                            throw new IllegalStateException("无法读取本地对象大小: " + key, ex);
+                        }
+                    })
+                    .filter(object -> object.objectKey().startsWith(effectivePrefix))
+                    .toList();
+        } catch (IOException ex) {
+            throw new IllegalStateException("无法枚举本地对象存储: " + root, ex);
         }
     }
 
