@@ -132,4 +132,65 @@ class NotificationServiceTests {
                 .allSatisfy(item -> assertThat(item.getReadAt()).isNotNull());
         assertThat(service.unreadCount(USER_B)).isEqualTo(1);
     }
+
+    @Test
+    void sendMessage_directMessage_shouldOnlyReachTargetAndSanitizeHtml() {
+        int recipients = service.sendMessage(USER_A, USER_B, false, "  定向通知  ",
+                "<h2>安排</h2><script>alert(1)</script><p><b>今晚</b>值班</p>"
+                        + "<img src=\"/api/v1/notifications/images/0123456789ABCDEFGHJKMNPQRS\" onerror=\"alert(2)\">");
+
+        assertThat(recipients).isEqualTo(1);
+        assertThat(service.listForUser(USER_A, false)).isEmpty();
+        assertThat(service.listForUser(USER_B, false)).singleElement().satisfies(item -> {
+            assertThat(item.getSenderId()).isEqualTo(USER_A);
+            assertThat(item.getEventType()).isEqualTo("DIRECT_MESSAGE");
+            assertThat(item.getTitle()).isEqualTo("定向通知");
+            assertThat(item.getContent()).isEqualTo("安排 今晚值班");
+            assertThat(item.getContentHtml())
+                    .contains("<h2>安排</h2>", "<b>今晚</b>",
+                            "/api/v1/notifications/images/0123456789ABCDEFGHJKMNPQRS")
+                    .doesNotContain("<script", "onerror");
+        });
+    }
+
+    @Test
+    void sendMessage_broadcast_shouldCreateIndependentNotificationForEveryEnabledUser() {
+        int recipients = service.sendMessage(USER_A, null, true, "全员通知", "<p>请查收</p>");
+
+        assertThat(recipients).isEqualTo(2);
+        assertThat(service.unreadCount(USER_A)).isEqualTo(1);
+        assertThat(service.unreadCount(USER_B)).isEqualTo(1);
+        assertThat(service.unreadCount(DISABLED_USER)).isZero();
+
+        service.markAllRead(USER_A);
+        assertThat(service.unreadCount(USER_A)).isZero();
+        assertThat(service.unreadCount(USER_B)).isEqualTo(1);
+    }
+
+    @Test
+    void sendMessage_toDisabledUser_shouldFail() {
+        assertThatThrownBy(() -> service.sendMessage(
+                USER_A, DISABLED_USER, false, "通知", "<p>内容</p>"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("接收成员不存在或已停用");
+    }
+
+    @Test
+    void sendMessage_withUnsafeEmptyContent_shouldFail() {
+        assertThatThrownBy(() -> service.sendMessage(
+                USER_A, USER_B, false, "通知", "<script>alert(1)</script>"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("消息内容不能为空");
+    }
+
+    @Test
+    void getForUser_shouldRejectAnotherUsersMessage() {
+        service.sendMessage(USER_A, USER_B, false, "通知", "<p>内容</p>");
+        var notification = service.listForUser(USER_B, false).getFirst();
+
+        assertThat(service.getForUser(notification.getId(), USER_B).getTitle()).isEqualTo("通知");
+        assertThatThrownBy(() -> service.getForUser(notification.getId(), USER_A))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("通知不存在");
+    }
 }

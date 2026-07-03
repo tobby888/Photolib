@@ -24,6 +24,7 @@
         <aliyun-oss.version>3.18.3</aliyun-oss.version>
         <aliyun-dm.version>3.3.2</aliyun-dm.version>
         <poi.version>5.4.1</poi.version>
+        <jsoup.version>1.18.3</jsoup.version>
         <frontend-maven-plugin.version>1.15.1</frontend-maven-plugin.version>
         <node.version>v20.19.4</node.version>
         <npm.version>10.8.2</npm.version>
@@ -93,6 +94,11 @@
             <groupId>org.apache.poi</groupId>
             <artifactId>poi-ooxml</artifactId>
             <version>${poi.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.jsoup</groupId>
+            <artifactId>jsoup</artifactId>
+            <version>${jsoup.version}</version>
         </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>

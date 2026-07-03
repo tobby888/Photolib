@@ -4,7 +4,7 @@ import {
 import {
   AimOutlined, BarChartOutlined, BellOutlined, BookOutlined, BulbOutlined, CameraOutlined, DashboardOutlined,
   FolderOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SettingOutlined,
-  PictureOutlined, StarOutlined, UnorderedListOutlined, UserOutlined,
+  MessageOutlined, PictureOutlined, StarOutlined, UnorderedListOutlined, UserOutlined,
 } from '@ant-design/icons'
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
@@ -24,6 +24,8 @@ const PhotosPage = lazy(() => import('./pages/PhotosPage'))
 const WorklogsPage = lazy(() => import('./pages/WorklogsPage'))
 const StatisticsPage = lazy(() => import('./pages/StatisticsPage'))
 const AdminPage = lazy(() => import('./pages/AdminPage'))
+const NotificationsPage = lazy(() => import('./pages/NotificationsPage'))
+const NotificationDetailPage = lazy(() => import('./pages/NotificationDetailPage'))
 
 const { Header, Sider, Content } = Layout
 const defaultBranding: BrandingSettings = {
@@ -77,7 +79,10 @@ function Shell() {
         value.id === item.id ? { ...value, readAt: new Date().toISOString() } : value))
       setUnreadCount((count) => Math.max(0, count - 1))
     }
-    if (item.actionUrl) {
+    if (item.contentHtml) {
+      setNotificationOpen(false)
+      navigate(`/notifications/${item.id}`)
+    } else if (item.actionUrl) {
       setNotificationOpen(false)
       navigate(item.actionUrl)
     }
@@ -94,6 +99,7 @@ function Shell() {
       { key: '/requests', icon: <UnorderedListOutlined />, label: '图片需求' },
       { key: '/photos', icon: <CameraOutlined />, label: '图片库' },
       { key: '/worklogs', icon: <BookOutlined />, label: '工时记录' },
+      { key: '/notifications', icon: <MessageOutlined />, label: '消息中心' },
     ]
     if (user?.role !== 'CAMPUS_MANAGER') common.push(
       { key: '/statistics', icon: <BarChartOutlined />, label: '数据统计' },
@@ -156,6 +162,9 @@ function Shell() {
                     <Typography.Text type="secondary">{dayjs(item.createdAt).format('MM-DD HH:mm')}</Typography.Text>
                   </div>
                 </List.Item>} />}
+            <Button block type="link" onClick={() => { setNotificationOpen(false); navigate('/notifications') }}>
+              查看全部消息
+            </Button>
           </div>}>
             <Badge count={unreadCount} size="small" overflowCount={99}>
               <Button aria-label="消息通知" type="text" shape="circle" icon={<BellOutlined />} />
@@ -182,6 +191,8 @@ function Shell() {
           <Route path="/requests" element={<RequestsPage />} />
           <Route path="/photos" element={<PhotosPage />} />
           <Route path="/worklogs" element={<WorklogsPage />} />
+          <Route path="/notifications" element={<NotificationsPage />} />
+          <Route path="/notifications/:notificationId" element={<NotificationDetailPage />} />
           <Route path="/statistics" element={user.role === 'CAMPUS_MANAGER' ? <Navigate to="/" /> : <StatisticsPage />} />
           <Route path="/admin" element={user.role === 'ADMIN' ? <AdminPage /> : <Navigate to="/" />} />
           <Route path="*" element={<NotFound />} />
