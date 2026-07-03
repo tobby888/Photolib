@@ -1,6 +1,6 @@
 # PhotoLib 全流程测试方案与执行报告
 
-> 文档版本：v1.0
+> 文档版本：v1.1
 > 编写日期：2026-07-02
 > 测试对象：PhotoLib 当前工作区版本
 > 执行原则：先完成测试设计，再在独立测试数据库中执行；不修改现有业务库数据。
@@ -27,7 +27,7 @@
 
 - 前端：React 页面、路由守卫、角色菜单、表单与状态展示。
 - 后端：REST API、鉴权、业务状态机、校验、异步任务。
-- 数据库：Flyway V1～V3 初始化、约束与业务数据持久化。
+- 数据库：Flyway V1～V5 初始化、约束与业务数据持久化。
 - 文件：使用 `local` 存储模式验证与 OSS 相同的上传票据、PUT、下载 URL 和导出流程。
 - 回归：前端生产构建、后端自动化测试。
 
@@ -106,7 +106,7 @@
 
 ## 6. 端到端执行顺序
 
-1. 创建空测试库，启动隔离后端，确认 Flyway V1～V3 和唯一管理员。
+1. 创建空测试库，启动隔离后端，确认 Flyway V1～V5 和唯一管理员。
 2. 管理员登录并完成首次改密。
 3. 管理员创建 QA-A 校区、部长 M、校区负责人 C1；验证两账号首次改密。
 4. M 创建并激活项目，创建 QA-A 需求草稿并发布。
@@ -127,7 +127,7 @@
 
 | ID | P | 场景与步骤 | 预期结果 | 状态 |
 |---|---|---|---|---|
-| INIT-01 | P0 | 使用空数据库启动后端 | V1～V3 顺序执行；服务启动成功；健康检查为 `UP` | 待执行 |
+| INIT-01 | P0 | 使用空数据库启动后端 | V1～V5 顺序执行；服务启动成功；健康检查为 `UP` | 待执行 |
 | INIT-02 | P0 | 查询空库初始化用户 | 仅存在一个启用的 `ADMIN`；`mustChangePassword=true` | 待执行 |
 | INIT-03 | P0 | 使用错误密码登录 | 返回 401；不泄露账号是否存在 | 待执行 |
 | INIT-04 | P0 | 管理员用初始密码登录 | 登录成功，但只能进入首次改密流程 | 待执行 |
@@ -261,6 +261,20 @@
 | AUDIT-01 | P0 | 管理员查询测试期间审计日志 | 登录/管理/下载/关键写操作按设计留痕 | 待执行 |
 | AUDIT-02 | P1 | M/C1 查询审计日志 | 返回 403 | 待执行 |
 
+#### 7.8.1 消息通知自动化测试
+
+自动化测试类：`backend/src/test/java/cn/photolib/notification/NotificationServiceTests.java`。测试使用 H2 隔离数据库和事务回滚，不发送真实邮件。
+
+| ID | 对应测试方法 | 覆盖内容 | 预期结果 |
+|---|---|---|---|
+| NT-UNIT-01 | `notifyUser_withoutEmail_shouldStillCreateInAppNotification` | 无邮箱用户的站内通知、HTML 文本转换、需求跳转地址 | 生成一条未读消息，内容和 `/requests` 跳转正确 |
+| NT-UNIT-02 | `notifyUser_withEmail_shouldCreateInAppNotificationAndMailLog` | 站内消息与邮件日志双通道 | 站内消息生成，邮件日志为 `PENDING`，工时跳转为 `/worklogs` |
+| NT-UNIT-03 | `notifyUser_forDisabledUser_shouldNotCreateNotification` | 停用用户过滤 | 不产生消息，未读数为 0 |
+| NT-UNIT-04 | `listForUser_shouldIsolateUsersAndFilterUnreadNotifications` | 用户隔离、未读筛选 | 仅返回当前用户数据，未读列表排除已读消息 |
+| NT-UNIT-05 | `markRead_shouldBeIdempotentAndDecreaseUnreadCountOnce` | 单条已读及重复操作 | 首次设置 `readAt`，重复操作不改变时间，未读数为 0 |
+| NT-UNIT-06 | `markRead_shouldNotAllowReadingAnotherUsersNotification` | 跨用户越权保护 | 返回“通知不存在”，目标用户消息保持未读 |
+| NT-UNIT-07 | `markAllRead_shouldOnlyUpdateCurrentUsersNotifications` | 全部已读的用户边界与幂等性 | 当前用户全部已读，其他用户不受影响，重复操作安全 |
+
 ### 7.9 UI、兼容性与回归
 
 | ID | P | 场景与步骤 | 预期结果 | 状态 |
@@ -373,3 +387,22 @@ PhotoLib 的核心数据链路可运行：系统能从空库初始化，管理�
 2. 用户明确要求的图片“被引/已采用”标记在 API 和 UI 中均不存在。
 
 建议先修复 BUG-001、BUG-002，并补齐对应自动化测试；随后修复版本字段和 XLSX 列宽问题，再重跑本报告中的失败用例和剩余 P0/P1 用例。真实 OSS 与 DirectMail 的 4 个云验收用例仍需在专用测试账号下补测。
+
+### 9.7 消息通知自动化补测（2026-07-03）
+
+执行命令：
+
+```powershell
+cd backend
+.\mvnw.cmd -Dtest=NotificationServiceTests test
+.\mvnw.cmd test
+```
+
+执行结果：
+
+| 测试范围 | 通过 | 失败 | 错误 | 跳过 | 结论 |
+|---|---:|---:|---:|---:|---|
+| 消息通知专项测试 | 7 | 0 | 0 | 0 | 通过 |
+| 后端完整回归 | 86 | 0 | 0 | 1 | 通过 |
+
+完整回归共发现 87 个测试，其中 86 个通过、1 个阿里云 OSS 集成测试因无专用云凭据按设计跳过。Flyway 已在空 H2 数据库中成功执行至 V5；消息通知专项用例全部通过，未发现新增回归缺陷。

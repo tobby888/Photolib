@@ -24,6 +24,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class NotificationService {
     private final NotificationLogMapper mapper;
+    private final UserNotificationMapper userNotificationMapper;
     private final UserMapper userMapper;
     private final AdminAlertMapper alertMapper;
     private final MailGateway gateway;
@@ -32,7 +33,17 @@ public class NotificationService {
     @Transactional
     public void notifyUser(Long userId, String event, String subject, String html) {
         UserEntity user = userMapper.selectById(userId);
-        if (user == null || user.getEmail() == null || user.getEmail().isBlank()) return;
+        if (user == null || !Boolean.TRUE.equals(user.getEnabled())) return;
+        UserNotificationEntity notification = new UserNotificationEntity();
+        notification.setUserId(userId);
+        notification.setEventType(event);
+        notification.setTitle(subject);
+        notification.setContent(toPlainText(html));
+        notification.setActionUrl(actionUrl(event));
+        notification.setCreatedAt(LocalDateTime.now());
+        userNotificationMapper.insert(notification);
+
+        if (user.getEmail() == null || user.getEmail().isBlank()) return;
         NotificationLogEntity log = new NotificationLogEntity();
         log.setUserId(userId);
         log.setEmail(user.getEmail());
@@ -91,6 +102,55 @@ public class NotificationService {
         log.setStatus("RETRYING");
         mapper.updateById(log);
         deliver(log);
+    }
+
+    public List<UserNotificationEntity> listForUser(Long userId, boolean unreadOnly) {
+        return userNotificationMapper.selectList(Wrappers.<UserNotificationEntity>lambdaQuery()
+                .eq(UserNotificationEntity::getUserId, userId)
+                .isNull(unreadOnly, UserNotificationEntity::getReadAt)
+                .orderByDesc(UserNotificationEntity::getCreatedAt)
+                .last("LIMIT 50"));
+    }
+
+    public long unreadCount(Long userId) {
+        return userNotificationMapper.selectCount(Wrappers.<UserNotificationEntity>lambdaQuery()
+                .eq(UserNotificationEntity::getUserId, userId)
+                .isNull(UserNotificationEntity::getReadAt));
+    }
+
+    @Transactional
+    public void markRead(Long id, Long userId) {
+        UserNotificationEntity notification = userNotificationMapper.selectOne(
+                Wrappers.<UserNotificationEntity>lambdaQuery()
+                        .eq(UserNotificationEntity::getId, id)
+                        .eq(UserNotificationEntity::getUserId, userId));
+        if (notification == null) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "通知不存在");
+        }
+        if (notification.getReadAt() == null) {
+            notification.setReadAt(LocalDateTime.now());
+            userNotificationMapper.updateById(notification);
+        }
+    }
+
+    @Transactional
+    public void markAllRead(Long userId) {
+        UserNotificationEntity update = new UserNotificationEntity();
+        update.setReadAt(LocalDateTime.now());
+        userNotificationMapper.update(update, Wrappers.<UserNotificationEntity>lambdaUpdate()
+                .eq(UserNotificationEntity::getUserId, userId)
+                .isNull(UserNotificationEntity::getReadAt));
+    }
+
+    private String actionUrl(String event) {
+        if (event.startsWith("REQUEST_")) return "/requests";
+        if (event.startsWith("WORKLOG_")) return "/worklogs";
+        return null;
+    }
+
+    private String toPlainText(String html) {
+        if (html == null) return null;
+        return html.replaceAll("<[^>]+>", "").replace("&nbsp;", " ").trim();
     }
 
     private void createAlert(NotificationLogEntity log) {

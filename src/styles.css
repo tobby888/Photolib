@@ -199,6 +199,17 @@ button, input, textarea, select { font-family: inherit; }
 .rank-3 { background: #ead8c4; }
 .tab-toolbar { display: flex; align-items: center; justify-content: space-between; margin: 8px 0 20px; }
 .tab-toolbar h4 { margin: 0; }
+.notification-panel { width: min(380px, calc(100vw - 32px)); max-height: 520px; overflow: auto; }
+.notification-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px; }
+.notification-panel .ant-divider { margin: 6px 0; }
+.notification-item { position: relative; align-items: flex-start !important; gap: 10px; padding: 13px 8px !important; cursor: pointer; border-radius: 8px; }
+.notification-item:hover { background: #f6f4ef; }
+.notification-item.unread { background: #f1f7f4; }
+.notification-dot { flex: 0 0 7px; width: 7px; height: 7px; margin-top: 7px; border-radius: 50%; background: transparent; }
+.notification-item.unread .notification-dot { background: #b66d31; }
+.notification-item > div:last-child { min-width: 0; flex: 1; }
+.notification-item .ant-typography { margin-bottom: 3px; font-size: 12px; }
+.notification-item p.ant-typography { margin-top: 4px; color: #68736f; }
 
 .login-page { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); background: #f6f4ef; }
 .login-story {
