@@ -16,6 +16,9 @@ import java.io.IOException;
 
 @Component
 public class ImageCompressor {
+    private static final float JPEG_MIN_QUALITY = 0.82f;
+    private static final float JPEG_MAX_QUALITY = 0.97f;
+    private static final int MIN_DIMENSION = 320;
 
     public Result compress(byte[] source, String contentType, long targetBytes) throws IOException {
         BufferedImage image = ImageIO.read(new ByteArrayInputStream(source));
@@ -45,52 +48,69 @@ public class ImageCompressor {
     private byte[] compressJpeg(BufferedImage image, long target) throws IOException {
         BufferedImage current = toRgb(image);
         while (true) {
-            byte[] best = null;
-            float low = 0.15f;
-            float high = 0.95f;
-            for (int i = 0; i < 9; i++) {
-                float quality = (low + high) / 2;
-                byte[] candidate = writeJpeg(current, quality);
-                if (candidate.length <= target) {
-                    best = candidate;
-                    low = quality;
-                } else {
-                    high = quality;
-                }
-            }
+            byte[] best = highestQualityJpeg(current, target, JPEG_MIN_QUALITY, JPEG_MAX_QUALITY);
             if (best != null) return best;
-            current = resize(current, 0.85);
-            if (current.getWidth() < 320 || current.getHeight() < 320) {
-                return writeJpeg(current, 0.15f);
+
+            byte[] minimumQuality = writeJpeg(current, JPEG_MIN_QUALITY);
+            double scale = Math.sqrt((double) target / minimumQuality.length) * 0.98;
+            scale = Math.max(0.75, Math.min(0.95, scale));
+            if (scaledBelowMinimum(current, scale)) {
+                BufferedImage minimumSize = resizeToMinimum(current);
+                byte[] lastResort = highestQualityJpeg(minimumSize, target, 0.40f, JPEG_MIN_QUALITY);
+                return lastResort != null ? lastResort : writeJpeg(minimumSize, 0.40f);
             }
+            current = resize(current, scale);
         }
     }
 
     private byte[] compressPng(BufferedImage image, long target) throws IOException {
         BufferedImage current = image;
         byte[] output = writePng(current);
-        while (output.length > target && current.getWidth() >= 320 && current.getHeight() >= 320) {
-            double low = 0.5;
-            double high = 0.95;
-            byte[] best = null;
-            BufferedImage bestImage = null;
-            for (int i = 0; i < 7; i++) {
-                double scale = (low + high) / 2;
-                BufferedImage candidateImage = resize(current, scale);
-                byte[] candidate = writePng(candidateImage);
-                if (candidate.length <= target) {
-                    best = candidate;
-                    bestImage = candidateImage;
-                    low = scale;
-                } else {
-                    high = scale;
-                }
+        if (output.length <= target) return output;
+        while (current.getWidth() > MIN_DIMENSION && current.getHeight() > MIN_DIMENSION) {
+            double scale = Math.sqrt((double) target / output.length) * 0.98;
+            scale = Math.max(0.75, Math.min(0.95, scale));
+            if (scaledBelowMinimum(current, scale)) {
+                current = resizeToMinimum(current);
+            } else {
+                current = resize(current, scale);
             }
-            if (best != null) return best;
-            current = bestImage == null ? resize(current, 0.5) : bestImage;
             output = writePng(current);
+            if (output.length <= target) return output;
         }
         return output;
+    }
+
+    private byte[] highestQualityJpeg(BufferedImage image, long target,
+                                      float minimumQuality, float maximumQuality) throws IOException {
+        byte[] minimum = writeJpeg(image, minimumQuality);
+        if (minimum.length > target) return null;
+
+        byte[] best = minimum;
+        float low = minimumQuality;
+        float high = maximumQuality;
+        for (int i = 0; i < 9; i++) {
+            float quality = (low + high) / 2;
+            byte[] candidate = writeJpeg(image, quality);
+            if (candidate.length <= target) {
+                best = candidate;
+                low = quality;
+            } else {
+                high = quality;
+            }
+        }
+        return best;
+    }
+
+    private boolean scaledBelowMinimum(BufferedImage image, double scale) {
+        return image.getWidth() * scale < MIN_DIMENSION
+                || image.getHeight() * scale < MIN_DIMENSION;
+    }
+
+    private BufferedImage resizeToMinimum(BufferedImage image) {
+        double scale = Math.max((double) MIN_DIMENSION / image.getWidth(),
+                (double) MIN_DIMENSION / image.getHeight());
+        return scale < 1.0 ? resize(image, scale) : image;
     }
 
     private byte[] writeJpeg(BufferedImage image, float quality) throws IOException {
