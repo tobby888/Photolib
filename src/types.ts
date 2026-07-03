@@ -107,3 +107,13 @@ export interface BrandingSettings {
   customIconUrl?: string | null
   slogan: string
 }
+
+export interface Notification {
+  id: EntityId
+  eventType: string
+  title: string
+  content?: string | null
+  actionUrl?: string | null
+  readAt?: string | null
+  createdAt: string
+}

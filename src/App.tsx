@@ -1,5 +1,5 @@
 import {
-  App as AntApp, Avatar, Badge, Button, Dropdown, Grid, Layout, Menu, Space, Typography,
+  App as AntApp, Avatar, Badge, Button, Divider, Dropdown, Empty, Grid, Layout, List, Menu, Popover, Space, Typography,
 } from 'antd'
 import {
   AimOutlined, BarChartOutlined, BellOutlined, BookOutlined, BulbOutlined, CameraOutlined, DashboardOutlined,
@@ -11,7 +11,8 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-
 import { useAuth } from './auth'
 import { roleName, NotFound } from './components'
 import { api } from './api'
-import type { BrandingSettings } from './types'
+import type { BrandingSettings, Notification } from './types'
+import dayjs from 'dayjs'
 
 const LoginPage = lazy(() => import('./pages/LoginPage'))
 const InitialPasswordPage = lazy(() => import('./pages/InitialPasswordPage'))
@@ -41,6 +42,9 @@ function Shell() {
   const screens = Grid.useBreakpoint()
   const [collapsed, setCollapsed] = useState(false)
   const [branding, setBranding] = useState<BrandingSettings>(defaultBranding)
+  const [notifications, setNotifications] = useState<Notification[]>([])
+  const [unreadCount, setUnreadCount] = useState(0)
+  const [notificationOpen, setNotificationOpen] = useState(false)
   const mobile = !screens.md
   useEffect(() => {
     const loadBranding = () => void api<BrandingSettings>({ url: '/branding' })
@@ -49,6 +53,40 @@ function Shell() {
     window.addEventListener('branding-updated', loadBranding)
     return () => window.removeEventListener('branding-updated', loadBranding)
   }, [])
+  const loadNotifications = async () => {
+    try {
+      const [items, unread] = await Promise.all([
+        api<Notification[]>({ url: '/notifications' }),
+        api<{ count: number }>({ url: '/notifications/unread-count' }),
+      ])
+      setNotifications(items)
+      setUnreadCount(unread.count)
+    } catch {
+      // The shell stays usable during a temporary notification service failure.
+    }
+  }
+  useEffect(() => {
+    void loadNotifications()
+    const timer = window.setInterval(() => void loadNotifications(), 30_000)
+    return () => window.clearInterval(timer)
+  }, [])
+  const markRead = async (item: Notification) => {
+    if (!item.readAt) {
+      await api<void>({ method: 'post', url: `/notifications/${item.id}/read` })
+      setNotifications((current) => current.map((value) =>
+        value.id === item.id ? { ...value, readAt: new Date().toISOString() } : value))
+      setUnreadCount((count) => Math.max(0, count - 1))
+    }
+    if (item.actionUrl) {
+      setNotificationOpen(false)
+      navigate(item.actionUrl)
+    }
+  }
+  const markAllRead = async () => {
+    await api<void>({ method: 'post', url: '/notifications/read-all' })
+    setNotifications((current) => current.map((item) => ({ ...item, readAt: item.readAt || new Date().toISOString() })))
+    setUnreadCount(0)
+  }
   const nav = useMemo(() => {
     const common = [
       { key: '/', icon: <DashboardOutlined />, label: '工作台' },
@@ -96,7 +134,33 @@ function Shell() {
           icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
           onClick={() => setCollapsed(!collapsed)} />
         <div className="topbar-actions">
-          <Badge dot><Button type="text" shape="circle" icon={<BellOutlined />} /></Badge>
+          <Popover open={notificationOpen} onOpenChange={(open) => {
+            setNotificationOpen(open)
+            if (open) void loadNotifications()
+          }} trigger="click" placement="bottomRight" content={<div className="notification-panel">
+            <div className="notification-head">
+              <Typography.Text strong>消息通知</Typography.Text>
+              <Button type="link" size="small" disabled={!unreadCount} onClick={() => void markAllRead()}>
+                全部已读
+              </Button>
+            </div>
+            <Divider />
+            {notifications.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无消息" /> :
+              <List dataSource={notifications} renderItem={(item) =>
+                <List.Item className={`notification-item ${item.readAt ? '' : 'unread'}`}
+                  onClick={() => void markRead(item)}>
+                  <div className="notification-dot" />
+                  <div>
+                    <Typography.Text strong={!item.readAt}>{item.title}</Typography.Text>
+                    {item.content && <Typography.Paragraph ellipsis={{ rows: 2 }}>{item.content}</Typography.Paragraph>}
+                    <Typography.Text type="secondary">{dayjs(item.createdAt).format('MM-DD HH:mm')}</Typography.Text>
+                  </div>
+                </List.Item>} />}
+          </div>}>
+            <Badge count={unreadCount} size="small" overflowCount={99}>
+              <Button aria-label="消息通知" type="text" shape="circle" icon={<BellOutlined />} />
+            </Badge>
+          </Popover>
           <Dropdown menu={{ items: [
             { key: 'profile', icon: <UserOutlined />, label: user.displayName },
             { type: 'divider' },
