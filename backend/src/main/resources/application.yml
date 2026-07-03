@@ -67,3 +67,8 @@ photolib:
     account-name: ${DIRECTMAIL_ACCOUNT_NAME:}
     access-key-id: ${DIRECTMAIL_ACCESS_KEY_ID:}
     access-key-secret: ${DIRECTMAIL_ACCESS_KEY_SECRET:}
+  migration:
+    enabled: ${IS_MIGRATE:false}
+    database-url: ${OLD_DATABASE_URL:${LEGACY_DATABASE_URL:}}
+    database-username: ${OLD_DB_USERNAME:}
+    database-password: ${OLD_DB_PASSWORD:}

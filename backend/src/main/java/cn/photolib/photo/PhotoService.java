@@ -1,6 +1,7 @@
 package cn.photolib.photo;
 
 import cn.photolib.auth.AuthenticatedUser;
+import cn.photolib.campus.CampusService;
 import cn.photolib.common.api.PageResponse;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
@@ -37,6 +38,7 @@ public class PhotoService {
     private final StorageProperties properties;
     private final ApplicationEventPublisher events;
     private final JdbcClient jdbc;
+    private final CampusService campusService;
 
     @Transactional
     public UploadTicket createTicket(CreateTicket command, AuthenticatedUser user) {
@@ -142,6 +144,32 @@ public class PhotoService {
         return toView(require(id));
     }
 
+    @Transactional
+    public PhotoView updateCampus(Long id, Long campusId, int version, AuthenticatedUser user) {
+        if (user.role() != UserRole.ADMIN) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "仅管理员可修改图片校区");
+        }
+        PhotoEntity photo = require(id);
+        if (campusId != null) {
+            campusService.get(campusId);
+        }
+        int updated = jdbc.sql("""
+                UPDATE photo
+                SET campus_id=:campusId, version=version+1, updated_at=CURRENT_TIMESTAMP
+                WHERE id=:id AND version=:version AND deleted=0
+                """)
+                .param("campusId", campusId)
+                .param("id", id)
+                .param("version", version)
+                .update();
+        if (updated != 1) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "图片已被其他操作修改");
+        }
+        photo.setCampusId(campusId);
+        photo.setVersion(version + 1);
+        return toView(photo);
+    }
+
     public DownloadUrl download(Long id, AuthenticatedUser user) {
         PhotoEntity photo = require(id);
         if (photo.getStatus() != PhotoStatus.AVAILABLE && photo.getStatus() != PhotoStatus.ARCHIVED) {
@@ -172,7 +200,7 @@ public class PhotoService {
         requireUploaderOrAdmin(photo, user);
         long adopted = jdbc.sql("SELECT COUNT(*) FROM adoption WHERE photo_id=:id AND deleted=0")
                 .param("id", id).query(Long.class).single();
-        if (adopted > 0) {
+        if (adopted > 0 && user.role() != UserRole.ADMIN) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "已被采用的图片只能归档");
         }
         mapper.deleteById(id);

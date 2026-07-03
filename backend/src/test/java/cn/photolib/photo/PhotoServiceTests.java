@@ -236,6 +236,61 @@ class PhotoServiceTests {
     }
 
     @Test
+    void updateCampus_shouldOnlyAllowAdminAndSupportClearing() {
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, project_id, title, photographer_student_id, photographer_name,
+                     uploaded_by, campus_id, taken_at, size, content_type, object_key, sha256, status, version)
+                VALUES
+                    (1010, :projectId, 'legacy photo', 'legacy-1010', 'legacy user',
+                     :userId, null, NOW(), 1000, 'image/jpeg', 'photos/legacy.jpg', :sha256, 'AVAILABLE', 1)
+                """)
+                .param("projectId", testProject.getId())
+                .param("userId", managerUser.id())
+                .param("sha256", "j".repeat(64))
+                .update();
+
+        assertThatThrownBy(() -> photoService.updateCampus(
+                1010L, testCampus.getId(), 1, managerUser))
+                .isInstanceOf(BusinessException.class);
+
+        var assigned = photoService.updateCampus(1010L, testCampus.getId(), 1, adminUser);
+        assertThat(assigned.campusId()).isEqualTo(testCampus.getId());
+
+        var cleared = photoService.updateCampus(1010L, null, assigned.version(), adminUser);
+        assertThat(cleared.campusId()).isNull();
+    }
+
+    @Test
+    void deleteAdoptedPhoto_shouldAllowAdmin() {
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, project_id, title, photographer_student_id, photographer_name,
+                     uploaded_by, taken_at, size, content_type, object_key, sha256, status)
+                VALUES
+                    (1011, :projectId, 'adopted photo', '20230001', 'photographer',
+                     :userId, NOW(), 1000, 'image/jpeg', 'photos/adopted.jpg', :sha256, 'AVAILABLE')
+                """)
+                .param("projectId", testProject.getId())
+                .param("userId", managerUser.id())
+                .param("sha256", "k".repeat(64))
+                .update();
+        jdbc.sql("""
+                INSERT INTO adoption
+                    (project_id, photo_id, photographer_student_id, photographer_name,
+                     adopted_by, adopted_at, deleted)
+                VALUES (:projectId, 1011, '20230001', 'photographer', :adminId, NOW(), false)
+                """)
+                .param("projectId", testProject.getId())
+                .param("adminId", adminUser.id())
+                .update();
+
+        assertThatCode(() -> photoService.delete(1011L, adminUser)).doesNotThrowAnyException();
+        assertThatThrownBy(() -> photoService.get(1011L, adminUser))
+                .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
     void archivePhoto_asMinister_shouldChangeStatus() {
         // Given: 可用的照片
         jdbc.sql("""
