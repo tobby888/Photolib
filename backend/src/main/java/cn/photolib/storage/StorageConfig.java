@@ -26,6 +26,8 @@ public class StorageConfig {
                 return new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "OSS 尚未配置");
             }
 
+            public void initialize() { throw unavailable(); }
+            public java.util.List<StoredObject> list(String prefix) { throw unavailable(); }
             public SignedUrl presignPut(String key, String type, Duration ttl) { throw unavailable(); }
             public SignedUrl presignGet(String key, String name, Duration ttl) { throw unavailable(); }
             public ObjectInfo stat(String key) { throw unavailable(); }
