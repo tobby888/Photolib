@@ -27,8 +27,11 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/", "/index.html", "/assets/**", "/favicon.ico",
-                                "/auth/login", "/auth/refresh", "/actuator/health",
-                                "/local-storage/objects/**", "/branding/icon").permitAll()
+                                "/api", "/api/",
+                                "/api/v1/auth/login", "/api/v1/auth/refresh",
+                                "/api/v1/actuator/health",
+                                "/api/v1/local-storage/objects/**",
+                                "/api/v1/branding/icon").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(errors -> errors.authenticationEntryPoint((request, response, ex) -> {
                     response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);

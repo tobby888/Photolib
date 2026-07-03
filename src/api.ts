@@ -41,7 +41,7 @@ http.interceptors.response.use(
     } catch {
       localStorage.removeItem('photolib_access_token')
       localStorage.removeItem('photolib_user')
-      window.location.href = '/login'
+      window.location.href = '/#/login'
       return Promise.reject(error)
     }
   },

@@ -45,8 +45,8 @@ public class AccessTokenFilter extends OncePerRequestFilter {
     }
 
     private boolean isAllowedBeforePasswordChange(String path) {
-        return path.equals("/auth/me")
-                || path.equals("/auth/initial-password")
-                || path.equals("/auth/logout");
+        return path.equals("/api/v1/auth/me")
+                || path.equals("/api/v1/auth/initial-password")
+                || path.equals("/api/v1/auth/logout");
     }
 }

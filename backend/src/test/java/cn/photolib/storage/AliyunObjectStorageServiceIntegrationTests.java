@@ -5,23 +5,29 @@ import com.aliyun.oss.OSSClientBuilder;
 import com.aliyun.oss.model.ObjectMetadata;
 import com.aliyun.oss.model.OSSObject;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
+import org.junit.jupiter.api.condition.EnabledIf;
 
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Properties;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@EnabledIfEnvironmentVariable(named = "OSS_INTEGRATION_TEST", matches = "true")
+@EnabledIf("hasConfiguredDotEnv")
 class AliyunObjectStorageServiceIntegrationTests {
 
     @Test
     void configuredCredentialsCanReadWriteAndDeleteObjects() throws Exception {
-        String endpoint = requiredEnvironmentVariable("OSS_ENDPOINT");
-        String bucket = requiredEnvironmentVariable("OSS_BUCKET");
-        String accessKeyId = requiredEnvironmentVariable("OSS_ACCESS_KEY_ID");
-        String accessKeySecret = requiredEnvironmentVariable("OSS_ACCESS_KEY_SECRET");
+        Properties dotEnv = loadDotEnv();
+        String endpoint = dotEnv.getProperty("OSS_ENDPOINT");
+        String bucket = dotEnv.getProperty("OSS_BUCKET");
+        String accessKeyId = dotEnv.getProperty("OSS_ACCESS_KEY_ID");
+        String accessKeySecret = dotEnv.getProperty("OSS_ACCESS_KEY_SECRET");
         String objectKey = "photolib-integration-test/" + UUID.randomUUID() + ".txt";
         byte[] expected = "PhotoLib OSS integration test".getBytes(StandardCharsets.UTF_8);
 
@@ -54,10 +60,36 @@ class AliyunObjectStorageServiceIntegrationTests {
         }
     }
 
-    private static String requiredEnvironmentVariable(String name) {
-        String value = System.getenv(name);
-        assertNotNull(value, name + " is missing");
-        assertFalse(value.isBlank(), name + " is empty");
-        return value;
+    static boolean hasConfiguredDotEnv() {
+        Properties dotEnv = loadDotEnv();
+        return "true".equalsIgnoreCase(dotEnv.getProperty("OSS_INTEGRATION_TEST"))
+                && configured(dotEnv, "OSS_ENDPOINT")
+                && configured(dotEnv, "OSS_BUCKET")
+                && configured(dotEnv, "OSS_ACCESS_KEY_ID")
+                && configured(dotEnv, "OSS_ACCESS_KEY_SECRET");
+    }
+
+    private static boolean configured(Properties properties, String name) {
+        String value = properties.getProperty(name);
+        return value != null && !value.isBlank();
+    }
+
+    private static Properties loadDotEnv() {
+        Path dotEnvPath = Path.of(".env");
+        if (!Files.isRegularFile(dotEnvPath)) {
+            dotEnvPath = Path.of("backend", ".env");
+        }
+
+        Properties properties = new Properties();
+        if (!Files.isRegularFile(dotEnvPath)) {
+            return properties;
+        }
+
+        try (InputStream input = Files.newInputStream(dotEnvPath)) {
+            properties.load(input);
+            return properties;
+        } catch (IOException exception) {
+            throw new IllegalStateException("Unable to read " + dotEnvPath, exception);
+        }
     }
 }

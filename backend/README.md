@@ -44,3 +44,23 @@ PhotoLib 后端基于 Spring Boot 4、Spring Security、MyBatis-Plus、Flyway �
 - 图片采用、排行、成员工时统计
 - XLSX 统计导出及最多 200 张图片 ZIP 导出
 - DirectMail 通知、三次重试、管理员告警与写操作审计
+# 旧 PhotoWarehouse 数据迁移
+
+新后端启动时可选择从旧 PhotoWarehouse PostgreSQL 数据库迁移用户、项目、照片及照片标签。
+照片沿用旧记录中的 OSS object key，不会重新上传。迁移具有幂等性，重复启动不会重复导入。
+
+```text
+IS_MIGRATE=true
+OLD_DATABASE_URL=postgresql://user:password@legacy-db:5432/photowarehouse
+```
+
+也可以使用 JDBC URL，并分开提供凭据：
+
+```text
+OLD_DATABASE_URL=jdbc:postgresql://legacy-db:5432/photowarehouse
+OLD_DB_USERNAME=user
+OLD_DB_PASSWORD=password
+```
+
+迁移失败不会阻止新后端启动。错误会写入服务日志，并以
+`LEGACY_MIGRATION_FAILED` 类型写入管理员告警。修复连接或数据问题后重启即可继续迁移。

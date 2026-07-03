@@ -63,6 +63,14 @@ public class PhotoController {
         return ApiResponse.ok(service.update(id, request.command(), user));
     }
 
+    @PatchMapping("/{id}/campus")
+    @PreAuthorize("hasRole('ADMIN')")
+    ApiResponse<PhotoService.PhotoView> updateCampus(@PathVariable Long id,
+                                                     @Valid @RequestBody CampusRequest request,
+                                                     @AuthenticationPrincipal AuthenticatedUser user) {
+        return ApiResponse.ok(service.updateCampus(id, request.campusId(), request.version(), user));
+    }
+
     @PostMapping("/{id}/download-url")
     ApiResponse<PhotoService.DownloadUrl> download(@PathVariable Long id,
                                                    @AuthenticationPrincipal AuthenticatedUser user) {
@@ -119,4 +127,6 @@ public class PhotoController {
                     photographerName, takenAt, tags, version);
         }
     }
+
+    record CampusRequest(Long campusId, @Min(1) int version) {}
 }
