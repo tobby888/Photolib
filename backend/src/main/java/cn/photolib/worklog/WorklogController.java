@@ -68,19 +68,22 @@ public class WorklogController {
     }
 
     @DeleteMapping("/worklogs/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN','MINISTER','CAMPUS_MANAGER')")
     ApiResponse<Void> delete(@PathVariable Long id, @AuthenticationPrincipal AuthenticatedUser user) {
         service.delete(id, user);
         return ApiResponse.ok();
     }
 
     record WorklogRequest(@NotNull @PastOrPresent LocalDate workDate,
+                          @NotNull Long memberContactId,
                           @Min(0) @Max(1440) int shootingMinutes,
                           @Min(0) @Max(1440) int retouchingMinutes,
                           @Size(max = 1000) String remark,
                           @NotNull WorklogStatus status) {
         WorklogService.WorklogCommand command() {
             return new WorklogService.WorklogCommand(
-                    workDate, shootingMinutes, retouchingMinutes, remark, status);
+                    workDate, memberContactId,
+                    shootingMinutes, retouchingMinutes, remark, status);
         }
     }
 

@@ -60,13 +60,23 @@ public class RequestService {
 
     public PageResponse<PhotoRequestEntity> list(int page, int pageSize, Long projectId,
                                                  RequestStatus status, Long campusId,
+                                                 Long participantId,
                                                  AuthenticatedUser user) {
         Long effectiveCampus = user.role() == UserRole.CAMPUS_MANAGER ? user.campusId() : campusId;
+        Long effectiveParticipant = participantId == null ? null
+                : user.role() == UserRole.CAMPUS_MANAGER ? user.id() : participantId;
+        List<Long> participatedRequestIds = effectiveParticipant == null ? null
+                : participantMapper.selectList(Wrappers.<RequestParticipantEntity>lambdaQuery()
+                        .eq(RequestParticipantEntity::getUserId, effectiveParticipant))
+                        .stream().map(RequestParticipantEntity::getRequestId).toList();
         Page<PhotoRequestEntity> result = mapper.selectPage(Page.of(page, pageSize),
                 Wrappers.<PhotoRequestEntity>lambdaQuery()
                         .eq(projectId != null, PhotoRequestEntity::getProjectId, projectId)
                         .eq(status != null, PhotoRequestEntity::getStatus, status)
                         .eq(effectiveCampus != null, PhotoRequestEntity::getCampusId, effectiveCampus)
+                        .in(effectiveParticipant != null, PhotoRequestEntity::getId,
+                                participatedRequestIds == null || participatedRequestIds.isEmpty()
+                                        ? List.of(-1L) : participatedRequestIds)
                         .orderByDesc(PhotoRequestEntity::getCreatedAt));
         return PageResponse.from(result);
     }

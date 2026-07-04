@@ -38,8 +38,9 @@ public class RequestController {
             @RequestParam(required = false) Long projectId,
             @RequestParam(required = false) RequestStatus status,
             @RequestParam(required = false) Long campusId,
+            @RequestParam(required = false) Long participantId,
             @AuthenticationPrincipal AuthenticatedUser user) {
-        return ApiResponse.ok(service.list(page, pageSize, projectId, status, campusId, user));
+        return ApiResponse.ok(service.list(page, pageSize, projectId, status, campusId, participantId, user));
     }
 
     @GetMapping("/requests/{id}")

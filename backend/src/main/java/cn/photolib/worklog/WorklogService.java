@@ -4,10 +4,16 @@ import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.PageResponse;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
+import cn.photolib.directory.CampusMemberEntity;
+import cn.photolib.directory.CampusMemberService;
 import cn.photolib.request.RequestService;
 import cn.photolib.notification.NotificationService;
+import cn.photolib.request.mapper.PhotoRequestMapper;
 import cn.photolib.request.mapper.RequestParticipantMapper;
+import cn.photolib.request.model.PhotoRequestEntity;
 import cn.photolib.request.model.RequestParticipantEntity;
+import cn.photolib.user.mapper.UserMapper;
+import cn.photolib.user.model.UserEntity;
 import cn.photolib.user.model.UserRole;
 import cn.photolib.worklog.mapper.WorklogMapper;
 import cn.photolib.worklog.model.WorklogEntity;
@@ -20,24 +26,33 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class WorklogService {
     private final WorklogMapper mapper;
     private final RequestParticipantMapper participantMapper;
+    private final PhotoRequestMapper requestMapper;
+    private final UserMapper userMapper;
     private final RequestService requestService;
+    private final CampusMemberService campusMemberService;
     private final NotificationService notifications;
 
     @Transactional
     public WorklogEntity create(Long requestId, WorklogCommand command, AuthenticatedUser user) {
-        requestService.get(requestId);
+        PhotoRequestEntity request = requestService.get(requestId);
         requireParticipant(requestId, user);
         validate(command);
+        CampusMemberEntity member = campusMemberService.getForWorklog(
+                command.memberContactId(), request.getCampusId());
         WorklogEntity worklog = new WorklogEntity();
         worklog.setRequestId(requestId);
         worklog.setUserId(user.id());
-        apply(worklog, command);
+        apply(worklog, command, member);
         worklog.setStatus(command.status() == WorklogStatus.DRAFT
                 ? WorklogStatus.DRAFT : WorklogStatus.SUBMITTED);
         mapper.insert(worklog);
@@ -56,6 +71,7 @@ public class WorklogService {
                         .ge(from != null, WorklogEntity::getWorkDate, from)
                         .le(to != null, WorklogEntity::getWorkDate, to)
                         .orderByDesc(WorklogEntity::getWorkDate));
+        populateDisplayNames(result.getRecords());
         return PageResponse.from(result);
     }
 
@@ -66,7 +82,10 @@ public class WorklogService {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "当前工时不可编辑");
         }
         validate(command);
-        apply(worklog, command);
+        PhotoRequestEntity request = requestService.get(worklog.getRequestId());
+        CampusMemberEntity member = campusMemberService.getForWorklog(
+                command.memberContactId(), request.getCampusId());
+        apply(worklog, command, member);
         worklog.setStatus(WorklogStatus.DRAFT);
         worklog.setRejectReason(null);
         worklog.setVersion(version);
@@ -122,11 +141,31 @@ public class WorklogService {
 
     @Transactional
     public void delete(Long id, AuthenticatedUser user) {
-        WorklogEntity worklog = requireOwned(id, user);
-        if (worklog.getStatus() != WorklogStatus.DRAFT && worklog.getStatus() != WorklogStatus.REJECTED) {
+        WorklogEntity worklog = require(id);
+        boolean reviewer = user.role() == UserRole.ADMIN || user.role() == UserRole.MINISTER;
+        if (!reviewer && !worklog.getUserId().equals(user.id())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权删除该工时");
+        }
+        if (!reviewer && worklog.getStatus() != WorklogStatus.DRAFT && worklog.getStatus() != WorklogStatus.REJECTED) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "当前工时不可删除");
         }
         mapper.deleteById(id);
+    }
+
+    private void populateDisplayNames(List<WorklogEntity> worklogs) {
+        if (worklogs.isEmpty()) return;
+        Map<Long, PhotoRequestEntity> requests = requestMapper.selectBatchIds(
+                        worklogs.stream().map(WorklogEntity::getRequestId).distinct().toList())
+                .stream().collect(Collectors.toMap(PhotoRequestEntity::getId, Function.identity()));
+        Map<Long, UserEntity> users = userMapper.selectBatchIds(
+                        worklogs.stream().map(WorklogEntity::getUserId).distinct().toList())
+                .stream().collect(Collectors.toMap(UserEntity::getId, Function.identity()));
+        worklogs.forEach(worklog -> {
+            PhotoRequestEntity request = requests.get(worklog.getRequestId());
+            UserEntity member = users.get(worklog.getUserId());
+            worklog.setRequestTitle(request == null ? "已删除的需求" : request.getTitle());
+            worklog.setUserDisplayName(member == null ? "已删除的成员" : member.getDisplayName());
+        });
     }
 
     private void validate(WorklogCommand command) {
@@ -138,8 +177,10 @@ public class WorklogService {
         }
     }
 
-    private void apply(WorklogEntity target, WorklogCommand command) {
+    private void apply(WorklogEntity target, WorklogCommand command, CampusMemberEntity member) {
         target.setWorkDate(command.workDate());
+        target.setMemberName(member.getName());
+        target.setMemberStudentId(member.getStudentId());
         target.setShootingMinutes(command.shootingMinutes());
         target.setRetouchingMinutes(command.retouchingMinutes());
         target.setRemark(command.remark());
@@ -174,7 +215,8 @@ public class WorklogService {
         }
     }
 
-    public record WorklogCommand(LocalDate workDate, int shootingMinutes, int retouchingMinutes,
+    public record WorklogCommand(LocalDate workDate, Long memberContactId,
+                                 int shootingMinutes, int retouchingMinutes,
                                  String remark, WorklogStatus status) {
     }
 }
