@@ -116,6 +116,7 @@ public class NotificationService {
                 .eq(UserNotificationEntity::getUserId, userId)
                 .isNull(unreadOnly, UserNotificationEntity::getReadAt)
                 .orderByDesc(UserNotificationEntity::getCreatedAt)
+                .orderByDesc(UserNotificationEntity::getId)
                 .last("LIMIT 50"));
     }
 

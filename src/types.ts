@@ -119,3 +119,17 @@ export interface Notification {
   readAt?: string | null
   createdAt: string
 }
+
+export interface AuditLog {
+  id: EntityId
+  operatorId?: EntityId | null
+  operatorUsername?: string | null
+  operatorDisplayName?: string | null
+  action: 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+  resourceType: string
+  resourceId?: string | null
+  requestId: string
+  detailJson?: string | null
+  ipAddress?: string | null
+  createdAt: string
+}
