@@ -50,7 +50,7 @@ export default function WorklogsPage() {
     </Card>
     <Card>
       <DataState loading={loading} error={error} empty={!data.items.length} onRetry={reload}>
-        <Table rowKey="id" dataSource={data.items} pagination={false} scroll={{ x: 850 }} columns={[
+        <Table rowKey="id" dataSource={data.items} pagination={false} scroll={{ x: 'max-content' }} columns={[
           { title: '日期', dataIndex: 'workDate', render: value => dayjs(value).format('YYYY-MM-DD') },
           { title: '需求', dataIndex: 'requestId', render: value => `需求 #${value}` },
           { title: '填报人', dataIndex: 'userId', render: value => value === user?.id ? '我' : `成员 #${value}` },
@@ -58,7 +58,7 @@ export default function WorklogsPage() {
           { title: '修图', dataIndex: 'retouchingMinutes', render: formatMinutes },
           { title: '说明', dataIndex: 'remark', ellipsis: true },
           { title: '状态', dataIndex: 'status', render: value => <StatusTag value={value} /> },
-          { title: '操作', fixed: 'right', render: (_, item) => <Space>
+          { title: '操作', fixed: 'right', width: 320, render: (_, item) => <Space>
             {user?.role === 'CAMPUS_MANAGER' && ['DRAFT', 'REJECTED'].includes(item.status) && <Button onClick={() => void action(item, 'submit')}>提交</Button>}
             {user?.role !== 'CAMPUS_MANAGER' && item.status === 'SUBMITTED' && <>
               <Button type="primary" icon={<CheckOutlined />} onClick={() => void action(item, 'confirm')}>确认</Button>
