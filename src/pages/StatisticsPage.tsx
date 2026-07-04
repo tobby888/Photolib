@@ -27,10 +27,10 @@ export default function StatisticsPage() {
   }
   const maxAdopted = Math.max(1, ...data.members.map(m => m.adoptedCount))
   return <>
-    <PageTitle eyebrow="INSIGHTS" title="数据统计" description="看见图片的去向，也看见每个人的投入。"
+    <PageTitle eyebrow="INSIGHTS" title="数据统计" description="按选题结束时间统计工时，并对应每位成员的图片被引数。"
       extra={<Button type="primary" size="large" icon={<DownloadOutlined />} onClick={() => void exportData()}>导出 XLSX</Button>} />
     <Card className="filter-card">
-      <Space><span>统计周期</span><DatePicker.RangePicker value={[dayjs(range[0]), dayjs(range[1])]}
+      <Space><span>选题结束时间</span><DatePicker.RangePicker value={[dayjs(range[0]), dayjs(range[1])]}
         onChange={values => values?.[0] && values[1] && setRange([values[0].format('YYYY-MM-DD'), values[1].format('YYYY-MM-DD')])} /></Space>
     </Card>
     <DataState loading={loading} error={error} onRetry={reload}>
@@ -42,15 +42,15 @@ export default function StatisticsPage() {
       </Row>
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={9}><Card title="采纳贡献">
-          <div className="ranking-list">{data.members.slice().sort((a,b) => b.adoptedCount - a.adoptedCount).slice(0, 6).map((member, index) => <div className="ranking-item" key={member.userId}>
+          <div className="ranking-list">{data.members.slice().sort((a,b) => b.adoptedCount - a.adoptedCount).slice(0, 6).map((member, index) => <div className="ranking-item" key={`${member.studentId}-${member.campus}`}>
             <span className={`rank rank-${index + 1}`}>{index + 1}</span><div><strong>{member.displayName}</strong><Typography.Text type="secondary">{member.campus}</Typography.Text></div>
             <Progress percent={Math.round(member.adoptedCount / maxAdopted * 100)} showInfo={false} strokeColor="#e9b16c" />
             <strong>{member.adoptedCount} 张</strong>
           </div>)}</div>
         </Card></Col>
         <Col xs={24} xl={15}><Card title="成员工作统计">
-          <Table rowKey="userId" dataSource={data.members} pagination={false} columns={[
-            { title: '成员', dataIndex: 'displayName' }, { title: '校区', dataIndex: 'campus' },
+          <Table rowKey={member => `${member.studentId}-${member.campus}`} dataSource={data.members} pagination={false} columns={[
+            { title: '成员', dataIndex: 'displayName' }, { title: '学号', dataIndex: 'studentId' }, { title: '校区', dataIndex: 'campus' },
             { title: '被采纳', dataIndex: 'adoptedCount', render: value => `${value} 张`, sorter: (a,b) => a.adoptedCount - b.adoptedCount },
             { title: '拍摄', dataIndex: 'shootingMinutes', render: formatMinutes },
             { title: '修图', dataIndex: 'retouchingMinutes', render: formatMinutes },

@@ -5,7 +5,8 @@ import {
 import { CloudUploadOutlined, DownloadOutlined, InboxOutlined, SearchOutlined } from '@ant-design/icons'
 import { useState } from 'react'
 import dayjs from 'dayjs'
-import { api, emptyPage, http, qs } from '../api'
+import axios from 'axios'
+import { api, emptyPage, qs } from '../api'
 import type { PageData, Photo } from '../types'
 import { DataState, formatBytes, PageTitle, StatusTag } from '../components'
 import { useLoad } from '../hooks'
@@ -37,7 +38,7 @@ export default function PhotosPage() {
           takenAt: values.takenAt.format('YYYY-MM-DDTHH:mm:ss'),
         },
       })
-      await http.request({ method: ticket.method || 'PUT', url: ticket.uploadUrl, baseURL: '', data: file,
+      await axios.request({ method: ticket.method || 'PUT', url: ticket.uploadUrl, data: file,
         headers: { 'Content-Type': ticket.contentType }, transformRequest: [(value) => value] })
       await api({ method: 'POST', url: `/photos/${ticket.photoId}/complete-upload`,
         data: { title: values.title, description: values.description, tags: values.tags || [] } })

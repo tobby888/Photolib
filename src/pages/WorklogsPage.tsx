@@ -28,6 +28,11 @@ export default function WorklogsPage() {
   const [directoryForm] = Form.useForm()
   const [saving, setSaving] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [exportOpen, setExportOpen] = useState(false)
+  const [exportRange, setExportRange] = useState<[dayjs.Dayjs, dayjs.Dayjs]>([
+    dayjs().startOf('year'),
+    dayjs(),
+  ])
   const [selectedIds, setSelectedIds] = useState<EntityId[]>([])
   const [filters, setFilters] = useState({ page: 1, status: '' })
   const reviewer = user?.role === 'ADMIN' || user?.role === 'MINISTER'
@@ -151,14 +156,19 @@ export default function WorklogsPage() {
     try {
       const job = await api<{ id: string }>({
         method: 'POST',
-        url: '/statistics/members/export',
-        data: { from: null, to: null, projectId: null, campusId: null, format: 'XLSX' },
+        url: '/worklogs/export',
+        data: {
+          from: exportRange[0].format('YYYY-MM-DD'),
+          to: exportRange[1].format('YYYY-MM-DD'),
+          format: 'XLSX',
+        },
       })
       for (let attempt = 0; attempt < 30; attempt += 1) {
         const result = await api<ExportJobView>({ url: `/export-jobs/${job.id}` })
         if (result.job.status === 'SUCCEEDED' && result.downloadUrl) {
           window.location.assign(result.downloadUrl)
           message.success('工时文件已生成')
+          setExportOpen(false)
           return
         }
         if (result.job.status === 'FAILED') throw new Error(result.job.errorMessage || '导出失败')
@@ -181,7 +191,7 @@ export default function WorklogsPage() {
       description={user?.role === 'CAMPUS_MANAGER' ? '记录每一次拍摄与修图投入。' : '审核成员工时，让每份投入都有迹可循。'}
       extra={<Space>
         {reviewer && (
-          <Button size="large" icon={<DownloadOutlined />} loading={exporting} onClick={() => void exportWorklogs()}>
+          <Button size="large" icon={<DownloadOutlined />} loading={exporting} onClick={() => setExportOpen(true)}>
             导出工时
           </Button>
         )}
@@ -303,6 +313,28 @@ export default function WorklogsPage() {
         <Form.Item label="工作说明" name="remark"><Input.TextArea rows={3} placeholder="简要说明完成的工作" /></Form.Item>
         <Form.Item label="保存为" name="status">
           <Select options={[{ value: 'DRAFT', label: '草稿' }, { value: 'SUBMITTED', label: '直接提交' }]} />
+        </Form.Item>
+      </Form>
+    </Modal>
+    <Modal
+      title="导出工时"
+      open={exportOpen}
+      onCancel={() => setExportOpen(false)}
+      onOk={() => void exportWorklogs()}
+      okText="导出 XLSX"
+      confirmLoading={exporting}
+    >
+      <Form layout="vertical" requiredMark={false}>
+        <Form.Item label="工时日期范围">
+          <DatePicker.RangePicker
+            value={exportRange}
+            maxDate={dayjs()}
+            allowClear={false}
+            style={{ width: '100%' }}
+            onChange={values => {
+              if (values?.[0] && values[1]) setExportRange([values[0], values[1]])
+            }}
+          />
         </Form.Item>
       </Form>
     </Modal>

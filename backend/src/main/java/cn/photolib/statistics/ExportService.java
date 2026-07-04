@@ -61,6 +61,17 @@ public class ExportService {
         return job;
     }
 
+    @Transactional
+    public ExportJobEntity createWorklogs(LocalDate from, LocalDate to, AuthenticatedUser user) {
+        if (from == null || to == null || from.isAfter(to)) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "工时日期范围无效");
+        }
+        ExportJobEntity job = newJob("WORKLOGS", user.id());
+        mapper.insert(job);
+        events.publishEvent(new WorklogExportRequested(job.getId(), from, to));
+        return job;
+    }
+
     public JobView get(String id, AuthenticatedUser user) {
         ExportJobEntity job = mapper.selectById(id);
         if (job == null) throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "导出任务不存在");
@@ -84,20 +95,38 @@ public class ExportService {
     public void exportStatistics(StatisticsExportRequested event) {
         try (XSSFWorkbook workbook = new XSSFWorkbook(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             Sheet worklogs = workbook.createSheet("工时统计");
-            row(worklogs, 0, "负责人", "校区", "拍摄分钟", "修图分钟", "总分钟");
+            row(worklogs, 0, "姓名", "学号", "校区", "拍摄分钟", "修图分钟", "总分钟", "被引张数");
             int index = 1;
             for (var value : statistics.members(event.from(), event.to(), event.projectId(), event.campusId(), null)) {
-                row(worklogs, index++, value.displayName(), value.campus(),
-                        value.shootingMinutes(), value.retouchingMinutes(), value.totalMinutes());
-            }
-            Sheet adoptions = workbook.createSheet("被引图片");
-            row(adoptions, 0, "拍摄者学号", "拍摄者姓名", "被引张数");
-            index = 1;
-            for (var value : statistics.adoptions(event.from(), event.to(), event.projectId(), event.campusId())) {
-                row(adoptions, index++, value.photographerStudentId(), value.photographerName(), value.adoptedCount());
+                row(worklogs, index++, value.displayName(), value.studentId(), value.campus(),
+                        value.shootingMinutes(), value.retouchingMinutes(), value.totalMinutes(),
+                        value.adoptedCount());
             }
             workbook.write(output);
             save(event.jobId(), output.toByteArray(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx");
+        } catch (Exception ex) {
+            fail(event.jobId(), ex);
+        }
+    }
+
+    @Async
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void exportWorklogs(WorklogExportRequested event) {
+        try (XSSFWorkbook workbook = new XSSFWorkbook(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            Sheet worklogs = workbook.createSheet("工时统计");
+            row(worklogs, 0, "姓名", "学号", "校区", "拍摄分钟", "修图分钟", "总分钟", "被引张数");
+            int index = 1;
+            for (var value : statistics.worklogs(event.from(), event.to())) {
+                row(worklogs, index++, value.memberName(), value.studentId(), value.campus(),
+                        value.shootingMinutes(), value.retouchingMinutes(), value.totalMinutes(),
+                        value.adoptedCount());
+            }
+            for (int column = 0; column < 7; column++) {
+                worklogs.autoSizeColumn(column);
+            }
+            workbook.write(output);
+            save(event.jobId(), output.toByteArray(),
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx");
         } catch (Exception ex) {
             fail(event.jobId(), ex);
         }
@@ -178,6 +207,7 @@ public class ExportService {
 
     public record StatisticsExportRequested(String jobId, LocalDate from, LocalDate to,
                                             Long projectId, Long campusId) {}
+    public record WorklogExportRequested(String jobId, LocalDate from, LocalDate to) {}
     public record PhotoZipRequested(String jobId, List<Long> photoIds) {}
     public record JobView(ExportJobEntity job, String downloadUrl, java.time.Instant expiresAt) {}
 }

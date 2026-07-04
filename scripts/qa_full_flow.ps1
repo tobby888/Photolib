@@ -188,11 +188,13 @@ try {
     Expect-Status "FLOW-13" 409 "POST" "/requests/$($request.id)/submit" $campusToken @{ version = $request.version }
 
     Expect-Status "WORK-02A" 400 "POST" "/requests/$($request.id)/worklogs" $campusToken @{
-        workDate = (Get-Date).ToString("yyyy-MM-dd"); shootingMinutes = 0; retouchingMinutes = 0
+        workDate = (Get-Date).ToString("yyyy-MM-dd"); memberName = "测试成员"; memberStudentId = "QA2026001"
+        shootingMinutes = 0; retouchingMinutes = 0
         remark = "非法零工时"; status = "DRAFT"
     }
     Expect-Status "WORK-02B" 403 "POST" "/requests/$($request.id)/worklogs" $campusBToken @{
-        workDate = (Get-Date).ToString("yyyy-MM-dd"); shootingMinutes = 10; retouchingMinutes = 0
+        workDate = (Get-Date).ToString("yyyy-MM-dd"); memberName = "测试成员"; memberStudentId = "QA2026001"
+        shootingMinutes = 10; retouchingMinutes = 0
         remark = "非参与人"; status = "DRAFT"
     }
 
@@ -228,7 +230,8 @@ try {
     Assert-That "OSS-08" ($downloadHash -eq $sha) "原图下载成功且 SHA-256 一致"
 
     $worklog = Invoke-Api "POST" "/requests/$($request.id)/worklogs" $campusToken @{
-        workDate = (Get-Date).ToString("yyyy-MM-dd"); shootingMinutes = 60; retouchingMinutes = 30
+        workDate = (Get-Date).ToString("yyyy-MM-dd"); memberName = "测试成员"; memberStudentId = "QA2026001"
+        shootingMinutes = 60; retouchingMinutes = 30
         remark = "初次填报"; status = "DRAFT"
     }
     Assert-That "WORK-01" ($worklog.status -eq "DRAFT") "新增 60+30 分钟草稿工时"
@@ -237,14 +240,16 @@ try {
     $worklog = Invoke-Api "POST" "/worklogs/$($worklog.id)/submit" $campusToken @{ version = $worklog.version }
     Assert-That "WORK-04" ($worklog.status -eq "SUBMITTED") "工时提交"
     Expect-Status "WORK-05" 409 "PUT" "/worklogs/$($worklog.id)?version=$($worklog.version)" $campusToken @{
-        workDate = $worklog.workDate; shootingMinutes = 70; retouchingMinutes = 30; remark = "不应成功"; status = "DRAFT"
+        workDate = $worklog.workDate; memberName = $worklog.memberName; memberStudentId = $worklog.memberStudentId
+        shootingMinutes = 70; retouchingMinutes = 30; remark = "不应成功"; status = "DRAFT"
     }
     $worklog = Invoke-Api "POST" "/worklogs/$($worklog.id)/reject" $ministerToken @{
         reason = "请重新核对工时"; version = $worklog.version
     }
     Assert-That "WORK-06" ($worklog.status -eq "REJECTED" -and $worklog.rejectReason) "部长退回工时并记录原因"
     $worklog = Invoke-Api "PUT" "/worklogs/$($worklog.id)?version=$($worklog.version)" $campusToken @{
-        workDate = $worklog.workDate; shootingMinutes = 75; retouchingMinutes = 45
+        workDate = $worklog.workDate; memberName = $worklog.memberName; memberStudentId = $worklog.memberStudentId
+        shootingMinutes = 75; retouchingMinutes = 45
         remark = "复核后修改"; status = "DRAFT"
     }
     $worklog = Invoke-Api "POST" "/worklogs/$($worklog.id)/submit" $campusToken @{ version = $worklog.version }
