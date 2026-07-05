@@ -7,3 +7,6 @@ vite.config.d.ts
 .env
 .env.local
 DSC05132-DxO_DeepPRIME XD2s-1.jpg
+AGENTS.md
+.idea/
+**/target/

@@ -25,11 +25,16 @@ import java.util.List;
 public class AliyunObjectStorageService implements ObjectStorageService {
     private final StorageProperties properties;
     private final OSS client;
+    private final OSS signingClient;
 
     public AliyunObjectStorageService(StorageProperties properties) {
         this.properties = properties;
         this.client = new OSSClientBuilder().build(properties.endpoint(),
                 properties.accessKeyId(), properties.accessKeySecret());
+        this.signingClient = properties.endpoint().equals(properties.signingEndpoint())
+                ? client
+                : new OSSClientBuilder().build(properties.signingEndpoint(),
+                        properties.accessKeyId(), properties.accessKeySecret());
     }
 
     @Override
@@ -66,7 +71,7 @@ public class AliyunObjectStorageService implements ObjectStorageService {
                 properties.bucket(), objectKey, HttpMethod.PUT);
         request.setExpiration(Date.from(expires));
         request.setContentType(contentType);
-        URL url = client.generatePresignedUrl(request);
+        URL url = signingClient.generatePresignedUrl(request);
         return new SignedUrl(url, "PUT", expires);
     }
 
@@ -81,7 +86,7 @@ public class AliyunObjectStorageService implements ObjectStorageService {
                     "attachment; filename*=UTF-8''" + java.net.URLEncoder.encode(
                             downloadName, java.nio.charset.StandardCharsets.UTF_8));
         }
-        return new SignedUrl(client.generatePresignedUrl(request), "GET", expires);
+        return new SignedUrl(signingClient.generatePresignedUrl(request), "GET", expires);
     }
 
     @Override
@@ -111,6 +116,9 @@ public class AliyunObjectStorageService implements ObjectStorageService {
 
     @PreDestroy
     void close() {
+        if (signingClient != client) {
+            signingClient.shutdown();
+        }
         client.shutdown();
     }
 }

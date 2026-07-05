@@ -119,13 +119,17 @@ VITE_API_BASE_URL=https://example.com/api/v1
 - 读写权限：私有。
 - 服务端加密：生产环境建议开启。
 
-记录 Bucket 名称和对应地域的公网 Endpoint。例如杭州地域的 Endpoint 为：
+记录 Bucket 名称和对应地域的公网、内网 Endpoint。例如杭州地域为：
 
 ```text
-https://oss-cn-hangzhou.aliyuncs.com
+公网：https://oss-cn-hangzhou.aliyuncs.com
+内网：https://oss-cn-hangzhou-internal.aliyuncs.com
 ```
 
-`OSS_ENDPOINT` 应填写地域 Endpoint，不要填写包含 Bucket 名称的访问域名。
+`OSS_ENDPOINT` 供后端服务器访问 OSS，可填写同地域内网 Endpoint。`OSS_PUBLIC_ENDPOINT`
+用于生成浏览器直传、预览和下载的预签名 URL，必须填写公网 Endpoint。两者都应填写地域
+Endpoint，不要填写包含 Bucket 名称的访问域名。未设置 `OSS_PUBLIC_ENDPOINT` 时会兼容性
+回退到 `OSS_ENDPOINT`；因此仅在 `OSS_ENDPOINT` 本身是公网地址时才可省略。
 
 ### 2. 创建并授权 RAM 用户
 
@@ -175,7 +179,8 @@ AccessKey Secret 仅在创建时显示一次，请立即保存到安全的密钥
 ```properties
 STORAGE_MODE=oss
 OSS_BUCKET=photolib-prod
-OSS_ENDPOINT=https://oss-cn-hangzhou.aliyuncs.com
+OSS_ENDPOINT=https://oss-cn-hangzhou-internal.aliyuncs.com
+OSS_PUBLIC_ENDPOINT=https://oss-cn-hangzhou.aliyuncs.com
 OSS_ACCESS_KEY_ID=your_access_key_id
 OSS_ACCESS_KEY_SECRET=your_access_key_secret
 ```

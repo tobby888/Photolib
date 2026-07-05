@@ -51,6 +51,7 @@ photolib:
     mode: ${STORAGE_MODE:oss}
     bucket: ${OSS_BUCKET:}
     endpoint: ${OSS_ENDPOINT:}
+    public-endpoint: ${OSS_PUBLIC_ENDPOINT:}
     access-key-id: ${OSS_ACCESS_KEY_ID:}
     access-key-secret: ${OSS_ACCESS_KEY_SECRET:}
     local-directory: ${LOCAL_STORAGE_DIRECTORY:./data/object-storage}
