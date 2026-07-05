@@ -20,6 +20,7 @@ const DashboardPage = lazy(() => import('./pages/DashboardPage'))
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage'))
 const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage'))
 const RequestsPage = lazy(() => import('./pages/RequestsPage'))
+const RequestDeliveryPage = lazy(() => import('./pages/RequestDeliveryPage'))
 const PhotosPage = lazy(() => import('./pages/PhotosPage'))
 const WorklogsPage = lazy(() => import('./pages/WorklogsPage'))
 const StatisticsPage = lazy(() => import('./pages/StatisticsPage'))
@@ -48,6 +49,9 @@ function Shell() {
   const [unreadCount, setUnreadCount] = useState(0)
   const [notificationOpen, setNotificationOpen] = useState(false)
   const mobile = !screens.md
+  useEffect(() => {
+    setCollapsed(mobile)
+  }, [mobile])
   useEffect(() => {
     const loadBranding = () => void api<BrandingSettings>({ url: '/branding' })
       .then(setBranding).catch(() => setBranding(defaultBranding))
@@ -115,8 +119,8 @@ function Shell() {
   const selected = location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`
 
   return <Layout className="app-shell">
-    <Sider className="side-nav" width={236} collapsedWidth={mobile ? 0 : 76}
-      collapsed={mobile ? collapsed : collapsed} breakpoint="md" trigger={null}>
+    <Sider className="side-nav" width={258} collapsedWidth={mobile ? 0 : 76}
+      collapsed={collapsed} breakpoint="md" trigger={null}>
       <div className="brand" onClick={() => navigate('/')}>
         <div className={`brand-mark ${branding.iconType === 'custom' ? 'brand-mark-custom' : ''}`}>
           {branding.iconType === 'custom' && branding.customIconUrl
@@ -189,6 +193,7 @@ function Shell() {
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
           <Route path="/requests" element={<RequestsPage />} />
+          <Route path="/requests/:requestId" element={<RequestDeliveryPage />} />
           <Route path="/photos" element={<PhotosPage />} />
           <Route path="/worklogs" element={<WorklogsPage />} />
           <Route path="/notifications" element={<NotificationsPage />} />

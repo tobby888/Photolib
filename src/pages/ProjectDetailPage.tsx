@@ -1,17 +1,17 @@
 import {
-  App, Breadcrumb, Button, Card, Col, DatePicker, Form, Input, InputNumber,
+  App, Breadcrumb, Button, Card, Col, DatePicker, Form, Image, Input, InputNumber,
   Modal, Row, Select, Space, Statistic, Table, Tag, Typography,
 } from 'antd'
 import {
   ArrowLeftOutlined, CameraOutlined, CheckCircleOutlined, EditOutlined, FileImageOutlined,
-  PlusOutlined, RocketOutlined, StopOutlined, UnorderedListOutlined,
+  LinkOutlined, PlusOutlined, RocketOutlined, StopOutlined, UnorderedListOutlined,
 } from '@ant-design/icons'
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { useAuth } from '../auth'
 import { api, emptyPage } from '../api'
-import type { Campus, PageData, PhotoRequest, Project } from '../types'
+import type { Adoption, Campus, PageData, Photo, PhotoRequest, Project } from '../types'
 import { DataState, StatusTag } from '../components'
 import { useLoad } from '../hooks'
 
@@ -44,14 +44,68 @@ export default function ProjectDetailPage() {
   const [requestOpen, setRequestOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [markingPhotoId, setMarkingPhotoId] = useState<string | null>(null)
   const { data, loading, error, reload } = useLoad(async () => {
-    const [project, requests, campuses] = await Promise.all([
+    const [project, requests, campuses, firstPhotos, firstAdoptions] = await Promise.all([
       api<Project>({ url: `/projects/${projectId}` }),
       api<PageData<PhotoRequest>>({ url: '/requests', params: { page: 1, pageSize: 100, projectId } }),
       api<Campus[]>({ url: '/campuses', params: { enabled: true } }),
+      api<PageData<Photo>>({ url: '/photos', params: { page: 1, pageSize: 100, projectId, status: 'AVAILABLE' } }),
+      user?.role === 'CAMPUS_MANAGER'
+        ? Promise.resolve(emptyPage<Adoption>())
+        : api<PageData<Adoption>>({ url: `/projects/${projectId}/adoptions`, params: { page: 1, pageSize: 100 } }),
     ])
-    return { project, requests, campuses }
-  }, { project: null as Project | null, requests: emptyPage<PhotoRequest>(), campuses: [] as Campus[] }, [projectId])
+    const photoPages = await Promise.all(Array.from(
+      { length: Math.max(0, firstPhotos.totalPages - 1) },
+      (_, index) => api<PageData<Photo>>({
+        url: '/photos',
+        params: { page: index + 2, pageSize: 100, projectId, status: 'AVAILABLE' },
+      }),
+    ))
+    const adoptionPages = await Promise.all(Array.from(
+      { length: Math.max(0, firstAdoptions.totalPages - 1) },
+      (_, index) => api<PageData<Adoption>>({
+        url: `/projects/${projectId}/adoptions`,
+        params: { page: index + 2, pageSize: 100 },
+      }),
+    ))
+    return {
+      project,
+      requests,
+      campuses,
+      photos: [firstPhotos, ...photoPages].flatMap(page => page.items),
+      adoptions: [firstAdoptions, ...adoptionPages].flatMap(page => page.items),
+    }
+  }, {
+    project: null as Project | null,
+    requests: emptyPage<PhotoRequest>(),
+    campuses: [] as Campus[],
+    photos: [] as Photo[],
+    adoptions: [] as Adoption[],
+  }, [projectId, user?.role])
+
+  const toggleAdoption = async (photo: Photo) => {
+    const adoption = data.adoptions.find(item => item.photoId === photo.id)
+    setMarkingPhotoId(photo.id)
+    try {
+      if (adoption) {
+        await api({ method: 'DELETE', url: `/projects/${projectId}/adoptions/${adoption.id}` })
+        message.success('已取消被引标注')
+      } else {
+        await api({
+          method: 'POST',
+          url: `/projects/${projectId}/adoptions`,
+          data: { photoIds: [photo.id], remark: null },
+        })
+        message.success('已标注为被引图片')
+      }
+      await reload()
+    } catch (reason) {
+      message.error((reason as Error).message)
+    } finally {
+      setMarkingPhotoId(null)
+    }
+  }
 
   const changeStatus = async (status: Project['status']) => {
     if (!data.project) return
@@ -169,6 +223,54 @@ export default function ProjectDetailPage() {
             { title: '状态', dataIndex: 'status', render: value => <StatusTag value={value} /> },
             { title: '操作', render: (_, item) => <Button type="link" onClick={() => navigate(`/requests?projectId=${projectId}&requestId=${item.id}`)}>查看需求</Button> },
           ]} />
+      </Card>
+
+      <Card
+        title={`需求图片（${data.photos.length}）`}
+        extra={<Typography.Text type="secondary">汇总展示本选题下所有需求已上传的可用图片</Typography.Text>}
+      >
+        {data.photos.length ? <Row gutter={[16, 20]} className="photo-grid">
+          {data.photos.map(photo => {
+            const adopted = data.adoptions.some(item => item.photoId === photo.id)
+            const request = data.requests.items.find(item => item.id === photo.requestId)
+            return <Col xs={24} sm={12} lg={8} xxl={6} key={photo.id}>
+              <Card
+                className="photo-card"
+                cover={<div className="photo-cover">
+                  {photo.thumbnailUrl
+                    ? <Image src={photo.thumbnailUrl} alt={photo.title || '需求图片'} />
+                    : <div className="image-placeholder"><span>{photo.title?.slice(0, 1) || '图'}</span></div>}
+                  <div className="photo-overlay">
+                    <Space>
+                      <StatusTag value={photo.status} />
+                      {adopted && <Tag color="gold">已被引</Tag>}
+                    </Space>
+                  </div>
+                </div>}
+              >
+                <Typography.Title level={5} ellipsis>{photo.title || '未命名图片'}</Typography.Title>
+                <Typography.Text type="secondary" ellipsis>
+                  {request?.title || (photo.requestId ? `需求 #${photo.requestId}` : '未关联需求')}
+                </Typography.Text>
+                <div className="photo-meta">
+                  <span>{photo.photographerName}</span>
+                  <span>{dayjs(photo.takenAt).format('YYYY.MM.DD')}</span>
+                </div>
+                {canManage && <Button
+                  block
+                  type={adopted ? 'default' : 'primary'}
+                  danger={adopted}
+                  icon={<LinkOutlined />}
+                  loading={markingPhotoId === photo.id}
+                  disabled={project.status !== 'ACTIVE'}
+                  onClick={() => void toggleAdoption(photo)}
+                >
+                  {adopted ? '取消被引' : '标注图片被引'}
+                </Button>}
+              </Card>
+            </Col>
+          })}
+        </Row> : <div className="empty-state">这个选题的需求还没有上传可用图片</div>}
       </Card>
 
       <Modal title="新建图片需求" width={640} open={requestOpen} onCancel={() => setRequestOpen(false)}

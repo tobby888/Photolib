@@ -73,9 +73,25 @@ export interface Photo extends BaseEntity {
   adoptionCount?: number
 }
 
+export interface Adoption {
+  id: EntityId
+  projectId: EntityId
+  photoId: EntityId
+  photographerStudentId: string
+  photographerName: string
+  remark?: string
+  adoptedBy: EntityId
+  adoptedAt: string
+  createdAt: string
+}
+
 export interface Worklog extends BaseEntity {
   requestId: EntityId
+  requestTitle?: string
   userId: EntityId
+  userDisplayName?: string
+  memberName: string
+  memberStudentId: string
   workDate: string
   shootingMinutes: number
   retouchingMinutes: number
@@ -90,8 +106,16 @@ export interface Campus extends BaseEntity {
   enabled: boolean
 }
 
+export interface CampusMember extends BaseEntity {
+  campusId: EntityId
+  studentId: string
+  name: string
+  enabled: boolean
+}
+
 export interface MemberStats {
   userId: EntityId
+  studentId: string
   displayName: string
   campus: string
   adoptedCount: number

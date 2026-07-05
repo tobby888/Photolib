@@ -3,11 +3,13 @@ package cn.photolib.common.error;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.List;
@@ -30,6 +32,18 @@ public class GlobalExceptionHandler {
                 .toList();
         return ResponseEntity.badRequest().body(new ErrorResponse(
                 ErrorCode.VALIDATION_ERROR.name(), "请求参数不合法", details, requestId(request)));
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    ResponseEntity<ErrorResponse> handleUnreadable(HttpMessageNotReadableException ex, HttpServletRequest request) {
+        return ResponseEntity.badRequest().body(new ErrorResponse(
+                ErrorCode.VALIDATION_ERROR.name(), "请求内容无法解析", List.of(), requestId(request)));
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    ResponseEntity<ErrorResponse> handleMissingResource(NoResourceFoundException ex, HttpServletRequest request) {
+        return ResponseEntity.status(ErrorCode.RESOURCE_NOT_FOUND.status()).body(new ErrorResponse(
+                ErrorCode.RESOURCE_NOT_FOUND.name(), "资源不存在", List.of(), requestId(request)));
     }
 
     @ExceptionHandler(DuplicateKeyException.class)
