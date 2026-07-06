@@ -637,4 +637,82 @@ refreshing ??= http.post<Envelope<{ accessToken: string }>>('/auth/refresh')
 
 ---
 
+## Remediation Status (Updated 2026-07-06)
+
+### ✅ FIXED (Commit e617969)
+
+**HIGH Severity Issues:**
+- ✅ **H-1: SQL Injection** - Replaced string concatenation with JdbcClient parameterized queries in ProjectService.list()
+- ✅ **H-2: Path Traversal** - Added upfront validation (null bytes, "..", absolute paths) in LocalObjectStorageService.resolve()
+- ✅ **H-3: Race Condition (Photo Upload)** - Implemented optimistic locking with version check in PhotoService.complete()
+- ✅ **H-4: Missing Authorization** - Added requireVisible() method to verify campus manager access in photo download
+- ✅ **H-6: Weak Signing Secret** - Created StorageConfigValidator with 32-char minimum enforcement and weak secret rejection
+- ✅ **H-7: Missing Index** - Added V11 migration with indices on audit_log(operator_id, created_at) and (resource_type, resource_id)
+- ✅ **H-11: Audit Log JSON Injection** - Replaced string concatenation with ObjectMapper for safe JSON serialization
+- ✅ **H-12: Content-Type Validation** - Extended Token record with contentType field and validation in upload endpoint
+
+**Test Results:**
+- Backend: 113/113 tests passing (1 skipped OSS test)
+- Frontend: Build successful
+
+### ⏳ PENDING (Not Yet Fixed)
+
+**HIGH Severity Issues:**
+- ⏳ **H-5: No Rate Limiting** - CSRF disabled but auth endpoints lack rate limits (login, refresh, uploads)
+- ⏳ **H-8: Unbounded Export** - Audit log export loads up to 100k rows in memory, needs streaming or pagination
+- ⏳ **H-9: Resource Leaks** - InputStream from storage may not close on exceptions, needs try-with-resources
+- ⏳ **H-10: Adoption Duplicate Check Race** - SELECT-then-UPDATE without isolation in AdoptionService.adopt()
+- ⏳ **H-13: Session Table Growth** - auth_session table lacks cleanup job for expired sessions
+- ⏳ **H-14: Notification Image Access** - Any authenticated user can access any notification image by ID
+- ⏳ **H-15: Missing Version Checks** - Multiple update operations lack optimistic locking:
+  - RequestService.accept() line 113
+  - RequestService.leave() line 172
+  - RequestService.submit() line 206
+  - WorklogService.confirm() line 110
+  - WorklogService.reject() line 127
+- ⏳ **H-16: Time-Based SQL Injection Risk** - Verify AuditLogMapper uses `#{}` not `${}` for date parameters
+
+**MEDIUM Severity Issues:**
+- ⏳ **M-1: Overly Permissive Upload Size** - Multipart limit 1536MB should be reduced to ~110MB
+- ⏳ **M-2: Insecure Default Admin Password** - `ChangeMe123!` is weak and public, needs generation or force-change
+- ⏳ **M-3: Missing Pagination Limit** - Page number uncapped, allows offset-based DoS with page=999999
+- ⏳ **M-4: No Photo Deduplication** - SHA256 computed but not used to detect duplicates before upload
+- ⏳ **M-5: Weak Token Entropy** - Verify TokenSupport.randomToken() uses SecureRandom not Random
+- ⏳ **M-6: Missing Input Length Validation** - Tags JSON serialization length uncapped
+- ⏳ **M-7: Unbounded Ranking Query** - ranking() method returns all photographers without pagination
+- ⏳ **M-8: Missing DB Constraint** - required_count has controller validation but no DB CHECK constraint
+- ⏳ **M-9: Photo Status Not Validated** - status VARCHAR(32) without CHECK constraint or ENUM
+- ⏳ **M-10: Future Date Allowed** - Worklog validation doesn't reject future work dates
+- ⏳ **M-11: Missing Foreign Key Cascade** - Foreign keys lack ON DELETE rules, may orphan records
+- ⏳ **M-12: Frontend Token Refresh Race** - Single refresh failure logs out user, needs retry logic
+
+**Configuration Issues:**
+- ⏳ **C-1: Public Key Retrieval** - allowPublicKeyRetrieval=true in JDBC URL is production risk
+- ⏳ **C-2: SSL Disabled** - useSSL=false disables database encryption
+
+**Schema Improvements:**
+- ⏳ **S-1: Missing Index** - photo(uploaded_by, status) for campus manager queries
+- ⏳ **S-2: Missing Index** - request_participant(user_id) for participant lookups
+
+### Next Steps
+
+**Immediate Priority (Next Sprint):**
+1. H-5: Implement rate limiting (Spring RateLimiter or Redis-based)
+2. H-8: Convert audit export to streaming response
+3. H-9: Audit all storage InputStream usage for try-with-resources
+4. M-2: Add admin password strength validation or generation
+
+**Medium Priority:**
+- H-10, H-15: Add optimistic locking to remaining update operations
+- H-13: Create scheduled job for session cleanup
+- M-3, M-7: Add pagination caps and limits
+- M-10: Add date validation rules
+
+**Low Priority:**
+- Schema improvements (S-1, S-2)
+- Configuration hardening (C-1, C-2)
+- DB constraints (M-8, M-9)
+
+---
+
 **Report End**
