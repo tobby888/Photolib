@@ -299,3 +299,40 @@ button, input, textarea, select { font-family: inherit; }
   .ranking-item { grid-template-columns: 28px 90px 1fr; }
   .ranking-item > strong { display: none; }
 }
+.fatal-error {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #f6f4ef;
+  color: #173b35;
+  text-align: center;
+}
+
+.fatal-error section {
+  max-width: 460px;
+  padding: 36px;
+  border: 1px solid rgba(23, 59, 53, 0.12);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 16px 48px rgba(23, 59, 53, 0.1);
+}
+
+.fatal-error h1 {
+  margin: 0 0 12px;
+}
+
+.fatal-error p {
+  margin: 0 0 24px;
+  color: #5f6f6b;
+  line-height: 1.7;
+}
+
+.fatal-error button {
+  padding: 10px 20px;
+  border: 0;
+  border-radius: 10px;
+  background: #28594f;
+  color: #fff;
+  cursor: pointer;
+}

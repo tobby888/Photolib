@@ -9,6 +9,7 @@ public record StorageProperties(
         String mode,
         String bucket,
         String endpoint,
+        String publicEndpoint,
         String accessKeyId,
         String accessKeySecret,
         String localDirectory,
@@ -29,5 +30,9 @@ public record StorageProperties(
                 && endpoint != null && !endpoint.isBlank()
                 && accessKeyId != null && !accessKeyId.isBlank()
                 && accessKeySecret != null && !accessKeySecret.isBlank();
+    }
+
+    public String signingEndpoint() {
+        return publicEndpoint == null || publicEndpoint.isBlank() ? endpoint : publicEndpoint;
     }
 }

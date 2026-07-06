@@ -3,13 +3,14 @@ import {
 } from 'antd'
 import {
   AimOutlined, BgColorsOutlined, BulbOutlined, CameraOutlined, PictureOutlined,
-  PlusOutlined, SafetyCertificateOutlined, StarOutlined, TeamOutlined, UploadOutlined,
+  FileTextOutlined, PlusOutlined, SafetyCertificateOutlined, StarOutlined, TeamOutlined, UploadOutlined,
 } from '@ant-design/icons'
 import { useState } from 'react'
 import { api, emptyPage } from '../api'
 import type { BrandingSettings, Campus, PageData, User } from '../types'
 import { DataState, PageTitle, roleName } from '../components'
 import { useLoad } from '../hooks'
+import AuditLogsPanel from '../AuditLogsPanel'
 
 interface BrandingFormValues {
   title: string
@@ -163,6 +164,7 @@ export default function AdminPage() {
             { title: '版本', dataIndex: 'version', render: value => `v${value}` },
           ]} />
         </> },
+        { key: 'audit-logs', label: <span><FileTextOutlined /> 操作日志</span>, children: <AuditLogsPanel /> },
       ]} />
     </Card>
     <Modal title="创建成员账号" open={userOpen} onCancel={() => setUserOpen(false)} onOk={createUser} okText="创建账号">

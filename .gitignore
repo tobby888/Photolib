@@ -7,3 +7,11 @@ vite.config.d.ts
 .env
 .env.local
 DSC05132-DxO_DeepPRIME XD2s-1.jpg
+AGENTS.md
+.idea/
+**/target/
+__pycache__/
+*.pyc
+.venv/
+# 旧系统源码，仅用于迁移期本地参考，不纳入本仓库
+photowarehouse/

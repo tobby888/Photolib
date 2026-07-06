@@ -27,22 +27,28 @@ class ProjectServiceTests {
 
     private AuthenticatedUser adminUser;
     private AuthenticatedUser ministerUser;
+    private AuthenticatedUser managerUser;
 
     @BeforeEach
     void setUp() {
         // 创建测试用户
+        jdbc.sql("INSERT INTO campus (id, code, name, enabled) VALUES (901, 'PROJECT-TEST', '测试校区', true)")
+                .update();
         jdbc.sql("""
                 INSERT INTO app_user
-                    (id, username, password_hash, display_name, role, enabled, must_change_password)
+                    (id, username, password_hash, display_name, role, campus_id, enabled, must_change_password)
                 VALUES
-                    (100, 'test-admin', 'hash', '测试管理员', 'ADMIN', true, false),
-                    (101, 'test-minister', 'hash', '测试部长', 'MINISTER', true, false)
+                    (100, 'test-admin', 'hash', '测试管理员', 'ADMIN', null, true, false),
+                    (101, 'test-minister', 'hash', '测试部长', 'MINISTER', null, true, false),
+                    (102, 'test-manager', 'hash', '测试负责人', 'CAMPUS_MANAGER', 901, true, false)
                 """).update();
 
         adminUser = new AuthenticatedUser(
                 100L, "test-admin", "测试管理员", UserRole.ADMIN, null, false);
         ministerUser = new AuthenticatedUser(
                 101L, "test-minister", "测试部长", UserRole.MINISTER, null, false);
+        managerUser = new AuthenticatedUser(
+                102L, "test-manager", "测试负责人", UserRole.CAMPUS_MANAGER, 901L, false);
     }
 
     @Test
@@ -156,7 +162,7 @@ class ProjectServiceTests {
         projectService.changeStatus(completedProject.getId(), ProjectStatus.COMPLETED, 1, adminUser);
 
         // When: 查询进行中的项目
-        var activeProjects = projectService.list(1, 20, null, ProjectStatus.ACTIVE);
+        var activeProjects = projectService.list(1, 20, null, ProjectStatus.ACTIVE, adminUser);
 
         // Then: 应该只返回进行中的项目
         assertThat(activeProjects.items())
@@ -171,11 +177,43 @@ class ProjectServiceTests {
                 "测试项目", "描述", ProjectStatus.ACTIVE, adminUser);
 
         // When: 获取项目详情
-        var detail = projectService.getDetail(project.getId());
+        var detail = projectService.getDetail(project.getId(), adminUser);
 
         // Then: 应该包含请求统计信息
         assertThat(detail.id()).isEqualTo(project.getId());
         assertThat(detail.title()).isEqualTo("测试项目");
         assertThat(detail.requestCount()).isZero(); // 新项目没有需求
+    }
+
+    @Test
+    void campusManager_shouldOnlySeeProjectsWithAssignedRequests() {
+        var assigned = projectService.create("已指派项目", "描述", ProjectStatus.ACTIVE, adminUser);
+        var hidden = projectService.create("未指派项目", "描述", ProjectStatus.ACTIVE, adminUser);
+        jdbc.sql("""
+                INSERT INTO photo_request
+                    (id, project_id, title, campus_id, required_count, deadline, status, created_by)
+                VALUES
+                    (9101, :projectId, '已指派需求', 901, 1, DATEADD('DAY', 1, CURRENT_TIMESTAMP),
+                     'ACCEPTED', :adminId)
+                """)
+                .param("projectId", assigned.getId())
+                .param("adminId", adminUser.id())
+                .update();
+        jdbc.sql("""
+                INSERT INTO request_participant (request_id, user_id, accepted_at)
+                VALUES (9101, :userId, CURRENT_TIMESTAMP)
+                """)
+                .param("userId", managerUser.id())
+                .update();
+
+        var visible = projectService.list(1, 20, null, null, managerUser);
+
+        assertThat(visible.items()).extracting(project -> project.getId())
+                .contains(assigned.getId())
+                .doesNotContain(hidden.getId());
+        assertThat(projectService.getDetail(assigned.getId(), managerUser).id()).isEqualTo(assigned.getId());
+        assertThatThrownBy(() -> projectService.getDetail(hidden.getId(), managerUser))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("无权查看");
     }
 }

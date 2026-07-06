@@ -18,6 +18,8 @@ import cn.photolib.user.model.UserRole;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
@@ -31,6 +33,7 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class PhotoService {
+    private static final Logger log = LoggerFactory.getLogger(PhotoService.class);
     private final PhotoMapper mapper;
     private final RequestService requestService;
     private final RequestParticipantMapper participantMapper;
@@ -44,9 +47,11 @@ public class PhotoService {
     public UploadTicket createTicket(CreateTicket command, AuthenticatedUser user) {
         validateFile(command.fileName(), command.contentType(), command.size());
         Long campusId = user.campusId();
+        Long projectId = command.projectId();
         if (command.requestId() != null) {
             PhotoRequestEntity request = requestService.get(command.requestId());
             campusId = request.getCampusId();
+            projectId = request.getProjectId();
             if (user.role() == UserRole.CAMPUS_MANAGER && !isParticipant(command.requestId(), user.id())) {
                 throw new BusinessException(ErrorCode.FORBIDDEN, "仅需求参与人可上传图片");
             }
@@ -57,7 +62,7 @@ public class PhotoService {
         String finalKey = "photos/" + LocalDateTime.now().getYear() + "/" + id + "." + extension;
         PhotoEntity photo = new PhotoEntity();
         photo.setRequestId(command.requestId());
-        photo.setProjectId(command.projectId());
+        photo.setProjectId(projectId);
         photo.setPhotographerStudentId(command.photographerStudentId());
         photo.setPhotographerName(command.photographerName());
         photo.setUploadedBy(user.id());
@@ -197,15 +202,27 @@ public class PhotoService {
     @Transactional
     public void delete(Long id, AuthenticatedUser user) {
         PhotoEntity photo = require(id);
-        requireUploaderOrAdmin(photo, user);
-        long adopted = jdbc.sql("SELECT COUNT(*) FROM adoption WHERE photo_id=:id AND deleted=0")
-                .param("id", id).query(Long.class).single();
-        if (adopted > 0 && user.role() != UserRole.ADMIN) {
-            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "已被采用的图片只能归档");
+        requirePrivileged(user);
+        if (user.role() != UserRole.ADMIN) {
+            long adopted = adoptionCount(id);
+            if (adopted > 0) {
+                throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "已被采用的图片只能归档");
+            }
         }
         mapper.deleteById(id);
-        try { if (photo.getObjectKey() != null) storage.delete(photo.getObjectKey()); } catch (Exception ignored) {}
-        try { if (photo.getOriginalObjectKey() != null) storage.delete(photo.getOriginalObjectKey()); } catch (Exception ignored) {}
+        deleteObject(id, "成品图", photo.getObjectKey());
+        deleteObject(id, "缩略图", photo.getThumbnailObjectKey());
+        deleteObject(id, "原图", photo.getOriginalObjectKey());
+    }
+
+    private void deleteObject(Long photoId, String objectType, String objectKey) {
+        if (!StringUtils.hasText(objectKey)) return;
+        try {
+            storage.delete(objectKey);
+        } catch (RuntimeException exception) {
+            log.warn("数据库记录已删除，但{}清理失败（photoId={}, objectKey={}），需要人工或清理任务重试",
+                    objectType, photoId, objectKey, exception);
+        }
     }
 
     private void validateFile(String fileName, String contentType, long size) {

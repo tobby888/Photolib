@@ -1,5 +1,5 @@
 import {
-  App, Breadcrumb, Button, Card, Col, DatePicker, Form, Input, InputNumber,
+  App, Breadcrumb, Button, Card, Col, DatePicker, Form, Image, Input, InputNumber,
   Modal, Row, Select, Space, Statistic, Table, Tag, Typography,
 } from 'antd'
 import {
@@ -11,7 +11,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { useAuth } from '../auth'
 import { api, emptyPage } from '../api'
-import type { Campus, PageData, PhotoRequest, Project } from '../types'
+import type { Campus, PageData, Photo, PhotoRequest, Project } from '../types'
 import { DataState, StatusTag } from '../components'
 import { useLoad } from '../hooks'
 
@@ -43,6 +43,10 @@ export default function ProjectDetailPage() {
   const [editForm] = Form.useForm()
   const [requestOpen, setRequestOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
+  const [galleryOpen, setGalleryOpen] = useState(false)
+  const [galleryKeyword, setGalleryKeyword] = useState('')
+  const [selectedPhotoIds, setSelectedPhotoIds] = useState<string[]>([])
+  const [galleryRemark, setGalleryRemark] = useState('')
   const [saving, setSaving] = useState(false)
   const { data, loading, error, reload } = useLoad(async () => {
     const [project, requests, campuses] = await Promise.all([
@@ -52,6 +56,14 @@ export default function ProjectDetailPage() {
     ])
     return { project, requests, campuses }
   }, { project: null as Project | null, requests: emptyPage<PhotoRequest>(), campuses: [] as Campus[] }, [projectId])
+  const { data: galleryPhotos, loading: galleryLoading } = useLoad(
+    () => api<PageData<Photo>>({
+      url: '/photos',
+      params: { page: 1, pageSize: 100, status: 'AVAILABLE', keyword: galleryKeyword || undefined },
+    }),
+    emptyPage<Photo>(),
+    [galleryKeyword],
+  )
 
   const changeStatus = async (status: Project['status']) => {
     if (!data.project) return
@@ -107,6 +119,30 @@ export default function ProjectDetailPage() {
     } catch (reason) { message.error((reason as Error).message) } finally { setSaving(false) }
   }
 
+  const addFromGallery = async () => {
+    if (!selectedPhotoIds.length) {
+      message.warning('请至少选择一张图库图片')
+      return
+    }
+    setSaving(true)
+    try {
+      await api({
+        method: 'POST',
+        url: `/projects/${projectId}/adoptions`,
+        data: { photoIds: selectedPhotoIds, remark: galleryRemark.trim() || null },
+      })
+      message.success(`已向项目添加 ${selectedPhotoIds.length} 张图库图片`)
+      setGalleryOpen(false)
+      setSelectedPhotoIds([])
+      setGalleryRemark('')
+      await reload()
+    } catch (reason) {
+      message.error((reason as Error).message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const project = data.project
   const canManage = user?.role !== 'CAMPUS_MANAGER'
   return <DataState loading={loading} error={error} empty={!project} onRetry={reload}>
@@ -123,7 +159,10 @@ export default function ProjectDetailPage() {
             <Typography.Title>{project.title}</Typography.Title>
             <Typography.Paragraph>{project.description || '尚未添加项目说明。清晰的说明能帮助负责人准确理解拍摄目标。'}</Typography.Paragraph>
           </div>
-          {canManage && <Space wrap>
+          <Space wrap>
+            {project.status === 'ACTIVE' &&
+              <Button icon={<FileImageOutlined />} onClick={() => setGalleryOpen(true)}>从图库添加图片</Button>}
+            {canManage && <>
             {project.status !== 'COMPLETED' && project.status !== 'CANCELLED' &&
               <Button icon={<EditOutlined />} onClick={() => {
                 editForm.setFieldsValue({ title: project.title, description: project.description })
@@ -131,7 +170,8 @@ export default function ProjectDetailPage() {
               }}>编辑项目</Button>}
             {(project.status === 'DRAFT' || project.status === 'ACTIVE') &&
               <Button type="primary" icon={<PlusOutlined />} onClick={() => setRequestOpen(true)}>新建图片需求</Button>}
-          </Space>}
+            </>}
+          </Space>
         </div>
       </section>
 
@@ -199,6 +239,38 @@ export default function ProjectDetailPage() {
           <Form.Item label="项目名称" name="title" rules={[{ required: true, message: '请输入项目名称' }, { max: 200 }]}><Input /></Form.Item>
           <Form.Item label="项目说明" name="description"><Input.TextArea rows={5} placeholder="说明选题方向、内容范围和交付目标" /></Form.Item>
         </Form>
+      </Modal>
+
+      <Modal title="从图库添加图片" width={860} open={galleryOpen}
+        onCancel={() => setGalleryOpen(false)} onOk={addFromGallery}
+        okText={`添加所选图片${selectedPhotoIds.length ? `（${selectedPhotoIds.length}）` : ''}`}
+        confirmLoading={saving}>
+        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+          <Typography.Paragraph type="secondary">
+            选择你有权查看的可用图库图片。添加后会形成项目采用记录，不会复制或重新上传文件。
+          </Typography.Paragraph>
+          <Input.Search allowClear placeholder="搜索图片标题、描述或标签"
+            onSearch={setGalleryKeyword} style={{ maxWidth: 420 }} />
+          <Table<Photo> rowKey="id" size="small" loading={galleryLoading}
+            dataSource={galleryPhotos.items} pagination={{ pageSize: 8 }}
+            rowSelection={{
+              selectedRowKeys: selectedPhotoIds,
+              onChange: keys => setSelectedPhotoIds(keys.map(String)),
+            }}
+            locale={{ emptyText: '没有可添加的图库图片' }}
+            columns={[
+              { title: '预览', width: 92, render: (_, photo) =>
+                photo.thumbnailUrl ? <Image width={68} height={48} style={{ objectFit: 'cover' }}
+                  preview={false} src={photo.thumbnailUrl} /> : '-' },
+              { title: '图片', dataIndex: 'title', render: (value, photo) =>
+                <div className="table-title"><strong>{value || '未命名图片'}</strong>
+                  <span>{photo.photographerName} · {dayjs(photo.takenAt).format('YYYY-MM-DD')}</span></div> },
+              { title: '标签', dataIndex: 'tags', render: tags =>
+                <Space size={4} wrap>{tags?.slice(0, 3).map((tag: string) => <Tag key={tag}>{tag}</Tag>)}</Space> },
+            ]} />
+          <Input.TextArea value={galleryRemark} onChange={event => setGalleryRemark(event.target.value)}
+            maxLength={500} showCount rows={2} placeholder="添加备注（可选）" />
+        </Space>
       </Modal>
     </>}
   </DataState>

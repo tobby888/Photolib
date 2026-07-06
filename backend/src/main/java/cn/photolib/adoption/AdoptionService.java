@@ -9,6 +9,7 @@ import cn.photolib.photo.model.PhotoEntity;
 import cn.photolib.photo.model.PhotoStatus;
 import cn.photolib.project.ProjectService;
 import cn.photolib.project.model.ProjectStatus;
+import cn.photolib.user.model.UserRole;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
@@ -34,7 +35,7 @@ public class AdoptionService {
         if (photoIds == null || photoIds.isEmpty() || photoIds.size() > 200) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择 1 至 200 张图片");
         }
-        if (projectService.get(projectId).getStatus() != ProjectStatus.ACTIVE) {
+        if (projectService.getVisible(projectId, user).getStatus() != ProjectStatus.ACTIVE) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "仅进行中项目可采用图片");
         }
         LocalDateTime now = LocalDateTime.now();
@@ -42,6 +43,9 @@ public class AdoptionService {
             PhotoEntity photo = photoMapper.selectById(photoId);
             if (photo == null || photo.getStatus() != PhotoStatus.AVAILABLE) {
                 throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "存在不可采用的图片");
+            }
+            if (user.role() == UserRole.CAMPUS_MANAGER && !photo.getUploadedBy().equals(user.id())) {
+                throw new BusinessException(ErrorCode.FORBIDDEN, "无权使用不可见的图库图片");
             }
             Integer existing = jdbc.sql("SELECT deleted FROM adoption WHERE project_id=:p AND photo_id=:f")
                     .param("p", projectId).param("f", photoId).query(Integer.class).optional().orElse(null);

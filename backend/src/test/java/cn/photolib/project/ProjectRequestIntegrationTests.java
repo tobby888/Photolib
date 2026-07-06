@@ -46,7 +46,7 @@ class ProjectRequestIntegrationTests {
         PhotoRequestEntity request = requests.create(project.getId(),
                 new RequestService.CreateCommand("测试图片需求", "需要现场照片", campus.getId(),
                         5, LocalDateTime.now().plusDays(1)), admin);
-        ProjectService.ProjectDetail detail = projects.getDetail(project.getId());
+        ProjectService.ProjectDetail detail = projects.getDetail(project.getId(), admin);
 
         assertThat(request.getProjectId()).isEqualTo(project.getId());
         assertThat(detail.id()).isEqualTo(project.getId());

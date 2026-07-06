@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,6 +23,15 @@ public class PhotoStorageReconciliationService {
 
     private final ObjectStorageService storage;
     private final JdbcClient jdbc;
+
+    @Scheduled(fixedDelay = 3600_000, initialDelay = 600_000)
+    public void scheduledReconcile() {
+        try {
+            reconcile();
+        } catch (Exception e) {
+            log.error("定时对账任务执行失败", e);
+        }
+    }
 
     @Transactional
     public synchronized ReconciliationResult reconcile() {

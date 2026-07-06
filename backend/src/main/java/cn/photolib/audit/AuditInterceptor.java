@@ -4,6 +4,8 @@ import cn.photolib.auth.AuthenticatedUser;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
@@ -16,6 +18,7 @@ import java.util.UUID;
 @Component
 @RequiredArgsConstructor
 public class AuditInterceptor implements HandlerInterceptor {
+    private static final Logger log = LoggerFactory.getLogger(AuditInterceptor.class);
     private static final Set<String> WRITES = Set.of("POST", "PUT", "PATCH", "DELETE");
     private final AuditLogMapper mapper;
 
@@ -43,6 +46,10 @@ public class AuditInterceptor implements HandlerInterceptor {
                 "\",\"status\":" + response.getStatus() + "}");
         log.setIpAddress(request.getRemoteAddr());
         log.setCreatedAt(LocalDateTime.now());
-        try { mapper.insert(log); } catch (Exception ignored) { }
+        try {
+            mapper.insert(log);
+        } catch (Exception e) {
+            AuditInterceptor.log.warn("审计日志写入失败: {} {}", request.getMethod(), request.getRequestURI(), e);
+        }
     }
 }

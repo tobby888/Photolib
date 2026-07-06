@@ -9,6 +9,8 @@ import cn.photolib.user.model.UserEntity;
 import cn.photolib.user.model.UserRole;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.context.ApplicationEventPublisher;
@@ -25,6 +27,8 @@ import java.util.List;
 @Service
 @RequiredArgsConstructor
 public class NotificationService {
+    private static final Logger log = LoggerFactory.getLogger(NotificationService.class);
+    private static final String PAYLOAD_SEPARATOR = "\n\u0000MAIL_BODY\u0000\n";
     private final NotificationLogMapper mapper;
     private final UserNotificationMapper userNotificationMapper;
     private final UserMapper userMapper;
@@ -57,7 +61,7 @@ public class NotificationService {
         log.setEventType(event);
         log.setStatus("PENDING");
         log.setRetryCount(0);
-        log.setPayloadJson(subject + "\n" + html);
+        log.setPayloadJson(subject + PAYLOAD_SEPARATOR + html);
         log.setCreatedAt(LocalDateTime.now());
         log.setUpdatedAt(LocalDateTime.now());
         mapper.insert(log);
@@ -73,8 +77,8 @@ public class NotificationService {
 
     public void deliver(NotificationLogEntity log) {
         try {
-            String[] payload = log.getPayloadJson().split("\\n", 2);
-            gateway.send(log.getEmail(), payload[0], payload.length > 1 ? payload[1] : "");
+            MailPayload payload = parsePayload(log.getPayloadJson());
+            gateway.send(log.getEmail(), payload.subject(), payload.html());
             log.setStatus("SENT");
             log.setLastError(null);
         } catch (Exception ex) {
@@ -85,6 +89,24 @@ public class NotificationService {
         }
         log.setUpdatedAt(LocalDateTime.now());
         mapper.updateById(log);
+    }
+
+    static MailPayload parsePayload(String value) {
+        if (value == null) return new MailPayload("", "");
+        int separator = value.indexOf(PAYLOAD_SEPARATOR);
+        if (separator >= 0) {
+            return new MailPayload(value.substring(0, separator),
+                    value.substring(separator + PAYLOAD_SEPARATOR.length()));
+        }
+        int legacySeparator = value.indexOf('\n');
+        if (legacySeparator >= 0) {
+            return new MailPayload(value.substring(0, legacySeparator),
+                    value.substring(legacySeparator + 1));
+        }
+        return new MailPayload(value, "");
+    }
+
+    record MailPayload(String subject, String html) {
     }
 
     @Scheduled(fixedDelay = 300_000, initialDelay = 300_000)
@@ -116,6 +138,7 @@ public class NotificationService {
                 .eq(UserNotificationEntity::getUserId, userId)
                 .isNull(unreadOnly, UserNotificationEntity::getReadAt)
                 .orderByDesc(UserNotificationEntity::getCreatedAt)
+                .orderByDesc(UserNotificationEntity::getId)
                 .last("LIMIT 50"));
     }
 
@@ -208,7 +231,7 @@ public class NotificationService {
 
     private String toPlainText(String html) {
         if (html == null) return null;
-        return html.replaceAll("<[^>]+>", "").replace("&nbsp;", " ").trim();
+        return Jsoup.parse(html).text();
     }
 
     private void createAlert(NotificationLogEntity log) {
@@ -224,7 +247,7 @@ public class NotificationService {
                 .eq(UserEntity::getRole, UserRole.ADMIN).eq(UserEntity::getEnabled, true)
                 .isNotNull(UserEntity::getEmail)).forEach(admin -> {
             try { gateway.send(admin.getEmail(), "PhotoLib 邮件投递告警", alert.getMessage()); }
-            catch (Exception ignored) { }
+            catch (Exception e) { NotificationService.log.warn("管理员告警邮件发送失败: {}", admin.getEmail(), e); }
         });
     }
 

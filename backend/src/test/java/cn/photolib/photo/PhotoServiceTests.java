@@ -38,6 +38,7 @@ class PhotoServiceTests {
     private JdbcClient jdbc;
 
     private AuthenticatedUser adminUser;
+    private AuthenticatedUser ministerUser;
     private AuthenticatedUser managerUser;
     private ProjectEntity testProject;
     private CampusEntity testCampus;
@@ -52,11 +53,14 @@ class PhotoServiceTests {
                     (id, username, password_hash, display_name, role, campus_id, enabled, must_change_password)
                 VALUES
                     (200, 'test-admin', 'hash', '测试管理员', 'ADMIN', null, true, false),
-                    (201, 'test-manager', 'hash', '测试负责人', 'CAMPUS_MANAGER', :campusId, true, false)
+                    (201, 'test-manager', 'hash', '测试负责人', 'CAMPUS_MANAGER', :campusId, true, false),
+                    (202, 'test-minister', 'hash', '测试部长', 'MINISTER', null, true, false)
                 """).param("campusId", testCampus.getId()).update();
 
         adminUser = new AuthenticatedUser(
                 200L, "test-admin", "测试管理员", UserRole.ADMIN, null, false);
+        ministerUser = new AuthenticatedUser(
+                202L, "test-minister", "测试部长", UserRole.MINISTER, null, false);
         managerUser = new AuthenticatedUser(
                 201L, "test-manager", "测试负责人", UserRole.CAMPUS_MANAGER, testCampus.getId(), false);
 
@@ -81,6 +85,31 @@ class PhotoServiceTests {
         assertThat(ticket.uploadUrl()).isNotEmpty();
         assertThat(ticket.method()).isEqualTo("PUT");
         assertThat(ticket.contentType()).isEqualTo("image/jpeg");
+    }
+
+    @Test
+    void createTicket_forRequest_shouldAutomaticallyUseRequestsProject() {
+        jdbc.sql("""
+                INSERT INTO photo_request
+                    (id, project_id, title, campus_id, required_count, deadline, status, created_by)
+                VALUES
+                    (2901, :projectId, '上传需求', :campusId, 1,
+                     DATEADD('DAY', 1, CURRENT_TIMESTAMP), 'ACCEPTED', :adminId)
+                """)
+                .param("projectId", testProject.getId())
+                .param("campusId", testCampus.getId())
+                .param("adminId", adminUser.id())
+                .update();
+
+        var ticket = photoService.createTicket(new PhotoService.CreateTicket(
+                2901L, null, "request-photo.jpg", "image/jpeg", 1024L,
+                "d".repeat(64), "20230001", "张三", LocalDateTime.now()), adminUser);
+
+        var stored = jdbc.sql("SELECT request_id, project_id FROM photo WHERE id=:id")
+                .param("id", ticket.photoId())
+                .query((rs, rowNum) -> new long[]{rs.getLong("request_id"), rs.getLong("project_id")})
+                .single();
+        assertThat(stored).containsExactly(2901L, testProject.getId());
     }
 
     @Test
@@ -353,7 +382,7 @@ class PhotoServiceTests {
     }
 
     @Test
-    void deletePhoto_shouldMarkAsDeleted() {
+    void deletePhoto_asMinister_shouldMarkAsDeleted() {
         // Given: 已存在的照片
         jdbc.sql("""
                 INSERT INTO photo
@@ -370,11 +399,31 @@ class PhotoServiceTests {
                 .update();
 
         // When: 删除照片
-        photoService.delete(1003L, managerUser);
+        photoService.delete(1003L, ministerUser);
 
         // Then: 照片应该被逻辑删除
         assertThatThrownBy(() -> photoService.get(1003L, managerUser))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("图片不存在");
+    }
+
+    @Test
+    void deletePhoto_asCampusManager_shouldBeForbidden() {
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, project_id, title, photographer_student_id, photographer_name,
+                     uploaded_by, taken_at, size, content_type, object_key, sha256, status)
+                VALUES
+                    (1004, :projectId, 'manager photo', '20230001', 'photographer',
+                     :userId, NOW(), 1000, 'image/jpeg', 'photos/manager.jpg', :sha256, 'AVAILABLE')
+                """)
+                .param("projectId", testProject.getId())
+                .param("userId", managerUser.id())
+                .param("sha256", "m".repeat(64))
+                .update();
+
+        assertThatThrownBy(() -> photoService.delete(1004L, managerUser))
+                .isInstanceOf(BusinessException.class);
+        assertThat(photoService.get(1004L, managerUser).id()).isEqualTo(1004L);
     }
 }

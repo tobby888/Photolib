@@ -18,7 +18,7 @@ class LocalObjectStorageServiceTests {
     @Test
     void storesReadsSignsAndDeletesObjects() throws Exception {
         StorageProperties properties = new StorageProperties(
-                "local", null, null, null, null, directory.toString(),
+                "local", null, null, null, null, null, directory.toString(),
                 "http://localhost:8080/api/v1/local-storage/objects", "test-secret",
                 Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofDays(30),
                 10_485_760, 104_857_600);
@@ -47,7 +47,7 @@ class LocalObjectStorageServiceTests {
     @Test
     void rejectsPathTraversal() {
         StorageProperties properties = new StorageProperties(
-                "local", null, null, null, null, directory.toString(),
+                "local", null, null, null, null, null, directory.toString(),
                 "http://localhost:8080/api/v1/local-storage/objects", "test-secret",
                 Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofDays(30),
                 10_485_760, 104_857_600);
