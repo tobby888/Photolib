@@ -176,7 +176,7 @@ class PhotoServiceTests {
         // When: 校区负责人查询照片
         var result = photoService.list(
                 1, 20, null, testProject.getId(), null, null, null,
-                null, null, PhotoStatus.AVAILABLE, managerUser);
+                null, null, PhotoStatus.AVAILABLE, false, managerUser);
 
         // Then: 应该只看到自己上传的照片
         assertThat(result.items()).hasSize(1);
@@ -206,7 +206,7 @@ class PhotoServiceTests {
         // When: 管理员查询照片
         var result = photoService.list(
                 1, 20, null, testProject.getId(), null, null, null,
-                null, null, PhotoStatus.AVAILABLE, adminUser);
+                null, null, PhotoStatus.AVAILABLE, false, adminUser);
 
         // Then: 应该看到所有照片
         assertThat(result.items()).hasSizeGreaterThanOrEqualTo(2);
@@ -348,7 +348,7 @@ class PhotoServiceTests {
 
         var listed = photoService.list(
                 1, 20, null, testProject.getId(), null, null, null,
-                null, null, PhotoStatus.AVAILABLE, adminUser);
+                null, null, PhotoStatus.AVAILABLE, false, adminUser);
 
         assertThat(listed.items()).filteredOn(photo -> photo.id().equals(1012L))
                 .singleElement()
