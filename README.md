@@ -379,6 +379,69 @@ sudo systemctl status photolib
 
 更新前建议备份当前 JAR，以便在新版本启动失败时快速回滚。数据库结构由 Flyway 在应用启动时自动升级，生产数据库应同时做好备份。
 
+## 旧系统（PhotoWarehouse）数据迁移
+
+`scripts/migrate_photowarehouse.py` 用于把旧 PhotoWarehouse（PostgreSQL + 阿里云 OSS）的数据迁移到本系统。
+脚本在 **Linux** 上运行，拆成 `export` 和 `import` 两步，两台机器不需要能直连对方数据库：
+
+1. `export`：在旧服务器上连接旧 PostgreSQL，把**全部表原样**导出成一个 JSON 包（含评论、投票、评分、EXIF、标签等）。
+2. `import`：在新服务器上读取 JSON 包，先把旧 OSS Bucket 的对象复制到新 Bucket，再把可映射的业务数据写入新 MySQL，
+   并把每一行旧数据完整归档到 `legacy_archive_record`，避免任何字段丢失。
+
+导入靠 `legacy_migration_item` 记录新旧主键映射，是幂等的，可安全重跑。**开始前请备份两个数据库和旧 Bucket，
+并先启动一次新版后端让 Flyway 升级到最新版本（需包含 `legacy_migration_item` 和 `legacy_archive_record`）。**
+
+### 1. 安装依赖（在能访问对应资源的机器上）
+
+```bash
+python3 -m venv .venv-migration
+.venv-migration/bin/pip install -r scripts/photowarehouse_migration_requirements.txt
+```
+
+### 2. 导出（旧服务器）
+
+```bash
+export OLD_DATABASE_URL='postgresql://user:password@old-db:5432/photowarehouse'
+
+.venv-migration/bin/python scripts/migrate_photowarehouse.py export \
+  --output photowarehouse-export.json
+```
+
+把生成的 `photowarehouse-export.json` 传输到新服务器。
+
+### 3. 导入（新服务器）
+
+先停止旧系统写入，再配置新库与两套 OSS 凭据后执行。旧对象会被复制到新 Bucket（旧 Bucket 之后可删除）：
+
+```bash
+export NEW_DATABASE_URL='mysql://user:password@new-db:3306/photolib?charset=utf8mb4'
+
+export OLD_OSS_ENDPOINT='https://oss-cn-hangzhou.aliyuncs.com'
+export OLD_OSS_BUCKET='old-bucket'
+export OLD_OSS_ACCESS_KEY_ID='...'
+export OLD_OSS_ACCESS_KEY_SECRET='...'
+export NEW_OSS_ENDPOINT='https://oss-cn-hangzhou.aliyuncs.com'
+export NEW_OSS_BUCKET='photolib-prod'
+export NEW_OSS_ACCESS_KEY_ID='...'
+export NEW_OSS_ACCESS_KEY_SECRET='...'
+
+.venv-migration/bin/python scripts/migrate_photowarehouse.py import \
+  --input photowarehouse-export.json \
+  --report photowarehouse-import-report.json
+```
+
+要点：
+
+- OSS 先复制成功后数据库才开始写事务；数据库失败会回滚，已复制对象保留供下次续跑。新 Bucket 已存在且大小一致的对象会跳过。
+- 若需要更换对象 key 前缀，设置 `OLD_OSS_PREFIX` 和 `NEW_OSS_PREFIX`（或 `--source-prefix`/`--destination-prefix`），
+  数据库中的原图和预览图 key 会同步改写。
+- 旧库普通 `user` 会映射为 `CAMPUS_MANAGER` 但**默认禁用**，等管理员分配校区后再启用；显式传 `--enable-ordinary-users` 才会直接启用。
+- 找不到对应用户的项目/照片会归属到 `--fallback-user-id` 指定的用户（默认取新库第一个管理员）。
+- 对象已单独迁移完成时可加 `--skip-oss` 只写库（不建议）。
+
+导入完成后请核对 `photowarehouse-import-report.json` 中的归档行数、OSS 对象数/字节数和三类业务记录数量，
+并抽查原图及预览图。确认无误后再删除旧 Bucket。
+
 ## 关键业务约束
 
 - 仅支持 JPG、PNG；单图不超过 100 MiB，超过 10 MiB 时由后端压缩后入库。
@@ -426,3 +489,4 @@ PhotoLib/
 - [接口文档](./API.md)：认证、数据结构、接口、状态流转及校验规则。
 - [项目说明](./HELP.md)：角色、业务线与技术栈的原始说明。
 - [后端说明](./backend/README.md)：后端启动方式与当前实现范围。
+- [旧系统迁移](./docs/PHOTO_WAREHOUSE_SERVER_MIGRATION.md)：PhotoWarehouse 导出/导入迁移的详细步骤与约束。

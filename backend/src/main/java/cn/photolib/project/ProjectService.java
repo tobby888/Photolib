@@ -7,6 +7,7 @@ import cn.photolib.common.error.ErrorCode;
 import cn.photolib.project.mapper.ProjectMapper;
 import cn.photolib.project.model.ProjectEntity;
 import cn.photolib.project.model.ProjectStatus;
+import cn.photolib.user.model.UserRole;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
@@ -37,12 +38,17 @@ public class ProjectService {
         return project;
     }
 
-    public PageResponse<ProjectEntity> list(int page, int pageSize, String keyword, ProjectStatus status) {
+    public PageResponse<ProjectEntity> list(int page, int pageSize, String keyword, ProjectStatus status,
+                                            AuthenticatedUser user) {
         Page<ProjectEntity> result = mapper.selectPage(Page.of(page, pageSize),
                 Wrappers.<ProjectEntity>lambdaQuery()
                         .and(StringUtils.hasText(keyword), q -> q.like(ProjectEntity::getTitle, keyword)
                                 .or().like(ProjectEntity::getDescription, keyword))
                         .eq(status != null, ProjectEntity::getStatus, status)
+                        .inSql(user.role() == UserRole.CAMPUS_MANAGER, ProjectEntity::getId,
+                                "SELECT DISTINCT r.project_id FROM photo_request r "
+                                        + "JOIN request_participant rp ON rp.request_id=r.id "
+                                        + "WHERE r.deleted=0 AND rp.user_id=" + user.id())
                         .orderByDesc(ProjectEntity::getCreatedAt));
         return PageResponse.from(result);
     }
@@ -55,8 +61,9 @@ public class ProjectService {
         return project;
     }
 
-    public ProjectDetail getDetail(Long id) {
+    public ProjectDetail getDetail(Long id, AuthenticatedUser user) {
         ProjectEntity project = get(id);
+        requireVisible(project, user);
         ProjectSummary summary = jdbc.sql("""
                 SELECT
                     (SELECT COUNT(*) FROM photo_request WHERE project_id=:id AND deleted=0) AS request_count,
@@ -136,6 +143,31 @@ public class ProjectService {
     private void requireOwnerOrAdmin(ProjectEntity project, AuthenticatedUser user) {
         if (!project.getCreatedBy().equals(user.id()) && user.role() != cn.photolib.user.model.UserRole.ADMIN) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权修改该项目");
+        }
+    }
+
+    public ProjectEntity getVisible(Long id, AuthenticatedUser user) {
+        ProjectEntity project = get(id);
+        requireVisible(project, user);
+        return project;
+    }
+
+    private void requireVisible(ProjectEntity project, AuthenticatedUser user) {
+        if (user.role() != UserRole.CAMPUS_MANAGER) {
+            return;
+        }
+        long assignments = jdbc.sql("""
+                SELECT COUNT(*)
+                FROM photo_request r
+                JOIN request_participant rp ON rp.request_id=r.id
+                WHERE r.project_id=:projectId AND r.deleted=0 AND rp.user_id=:userId
+                """)
+                .param("projectId", project.getId())
+                .param("userId", user.id())
+                .query(Long.class)
+                .single();
+        if (assignments == 0) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权查看未指派需求所属的项目");
         }
     }
 

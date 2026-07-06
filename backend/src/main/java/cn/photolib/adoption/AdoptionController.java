@@ -16,7 +16,6 @@ import java.util.List;
 
 @RestController
 @RequiredArgsConstructor
-@PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
 public class AdoptionController {
     private final AdoptionService service;
 
@@ -28,6 +27,7 @@ public class AdoptionController {
     }
 
     @GetMapping("/projects/{projectId}/adoptions")
+    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
     ApiResponse<PageResponse<AdoptionEntity>> list(@PathVariable Long projectId,
                                                    @RequestParam(defaultValue = "1") @Min(1) int page,
                                                    @RequestParam(defaultValue = "50") @Min(1) @Max(100) int pageSize,
@@ -36,12 +36,14 @@ public class AdoptionController {
     }
 
     @DeleteMapping("/projects/{projectId}/adoptions/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
     ApiResponse<Void> cancel(@PathVariable Long projectId, @PathVariable Long id) {
         service.cancel(projectId, id);
         return ApiResponse.ok();
     }
 
     @GetMapping("/statistics/adoptions/ranking")
+    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
     ApiResponse<List<AdoptionService.Ranking>> ranking(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,

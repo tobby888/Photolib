@@ -67,6 +67,7 @@ public class MessageImageController {
     }
 
     @GetMapping("/{id}")
+    @PreAuthorize("isAuthenticated()")
     ResponseEntity<InputStreamResource> get(@PathVariable String id) {
         MessageImageEntity image = mapper.selectById(id);
         if (image == null) return ResponseEntity.notFound().build();

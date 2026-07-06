@@ -34,13 +34,15 @@ public class ProjectController {
             @RequestParam(defaultValue = "1") @Min(1) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int pageSize,
             @RequestParam(required = false) String keyword,
-            @RequestParam(required = false) ProjectStatus status) {
-        return ApiResponse.ok(service.list(page, pageSize, keyword, status));
+            @RequestParam(required = false) ProjectStatus status,
+            @AuthenticationPrincipal AuthenticatedUser user) {
+        return ApiResponse.ok(service.list(page, pageSize, keyword, status, user));
     }
 
     @GetMapping("/{id}")
-    ApiResponse<ProjectService.ProjectDetail> get(@PathVariable Long id) {
-        return ApiResponse.ok(service.getDetail(id));
+    ApiResponse<ProjectService.ProjectDetail> get(@PathVariable Long id,
+                                                  @AuthenticationPrincipal AuthenticatedUser user) {
+        return ApiResponse.ok(service.getDetail(id, user));
     }
 
     @PutMapping("/{id}")

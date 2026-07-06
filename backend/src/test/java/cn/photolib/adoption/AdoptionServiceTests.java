@@ -36,6 +36,7 @@ class AdoptionServiceTests {
     private JdbcClient jdbc;
 
     private AuthenticatedUser adminUser;
+    private AuthenticatedUser managerUser;
     private ProjectEntity activeProject;
     private ProjectEntity completedProject;
     private CampusEntity testCampus;
@@ -46,13 +47,16 @@ class AdoptionServiceTests {
 
         jdbc.sql("""
                 INSERT INTO app_user
-                    (id, username, password_hash, display_name, role, enabled, must_change_password)
+                    (id, username, password_hash, display_name, role, campus_id, enabled, must_change_password)
                 VALUES
-                    (300, 'test-admin', 'hash', '测试管理员', 'ADMIN', true, false)
-                """).update();
+                    (300, 'test-admin', 'hash', '测试管理员', 'ADMIN', null, true, false),
+                    (301, 'test-manager', 'hash', '测试负责人', 'CAMPUS_MANAGER', :campusId, true, false)
+                """).param("campusId", testCampus.getId()).update();
 
         adminUser = new AuthenticatedUser(
                 300L, "test-admin", "测试管理员", UserRole.ADMIN, null, false);
+        managerUser = new AuthenticatedUser(
+                301L, "test-manager", "测试负责人", UserRole.CAMPUS_MANAGER, testCampus.getId(), false);
 
         activeProject = projectService.create(
                 "进行中项目", "描述", ProjectStatus.ACTIVE, adminUser);
@@ -76,6 +80,24 @@ class AdoptionServiceTests {
                 .param("sha256_1", "a".repeat(64))
                 .param("sha256_2", "b".repeat(64))
                 .update();
+
+        jdbc.sql("""
+                INSERT INTO photo_request
+                    (id, project_id, title, campus_id, required_count, deadline, status, created_by)
+                VALUES
+                    (3901, :projectId, '已指派需求', :campusId, 1, DATEADD('DAY', 1, CURRENT_TIMESTAMP),
+                     'ACCEPTED', :adminId)
+                """)
+                .param("projectId", activeProject.getId())
+                .param("campusId", testCampus.getId())
+                .param("adminId", adminUser.id())
+                .update();
+        jdbc.sql("""
+                INSERT INTO request_participant (request_id, user_id, accepted_at)
+                VALUES (3901, :userId, CURRENT_TIMESTAMP)
+                """)
+                .param("userId", managerUser.id())
+                .update();
     }
 
     @Test
@@ -91,6 +113,38 @@ class AdoptionServiceTests {
         assertThat(adoptions).hasSize(2);
         assertThat(adoptions).allMatch(a -> a.getProjectId().equals(activeProject.getId()));
         assertThat(adoptions).allMatch(a -> a.getRemark().equals("用于首页展示"));
+    }
+
+    @Test
+    void adoptOwnVisibleGalleryPhoto_asCampusManager_shouldCreateAdoption() {
+        jdbc.sql("UPDATE photo SET uploaded_by=:userId WHERE id=2001")
+                .param("userId", managerUser.id())
+                .update();
+
+        var adoptions = adoptionService.adopt(
+                activeProject.getId(), List.of(2001L), "从图库添加", managerUser);
+
+        assertThat(adoptions).singleElement()
+                .satisfies(adoption -> assertThat(adoption.getAdoptedBy()).isEqualTo(managerUser.id()));
+    }
+
+    @Test
+    void adoptInvisibleGalleryPhoto_asCampusManager_shouldBeForbidden() {
+        assertThatThrownBy(() -> adoptionService.adopt(
+                activeProject.getId(), List.of(2001L), "从图库添加", managerUser))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("不可见");
+    }
+
+    @Test
+    void adoptPhotoToUnassignedProject_asCampusManager_shouldBeForbidden() {
+        var unassignedProject = projectService.create(
+                "未指派项目", "描述", ProjectStatus.ACTIVE, adminUser);
+
+        assertThatThrownBy(() -> adoptionService.adopt(
+                unassignedProject.getId(), List.of(2001L), "尝试添加", managerUser))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("无权查看");
     }
 
     @Test

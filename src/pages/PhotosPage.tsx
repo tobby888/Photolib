@@ -2,16 +2,18 @@ import {
   App, Button, Card, Col, DatePicker, Descriptions, Drawer, Form, Image, Input, Modal,
   Pagination, Row, Select, Space, Tag, Typography, Upload,
 } from 'antd'
-import { CloudUploadOutlined, DownloadOutlined, InboxOutlined, SearchOutlined } from '@ant-design/icons'
+import { CloudUploadOutlined, DeleteOutlined, DownloadOutlined, InboxOutlined, SearchOutlined } from '@ant-design/icons'
 import { useState } from 'react'
 import dayjs from 'dayjs'
 import { api, emptyPage, http, qs } from '../api'
 import type { PageData, Photo } from '../types'
 import { DataState, formatBytes, PageTitle, StatusTag } from '../components'
 import { useLoad } from '../hooks'
+import { useAuth } from '../auth'
 
 export default function PhotosPage() {
-  const { message } = App.useApp()
+  const { message, modal } = App.useApp()
+  const { user } = useAuth()
   const [uploadForm] = Form.useForm()
   const [uploadOpen, setUploadOpen] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -50,6 +52,27 @@ export default function PhotosPage() {
       window.open(result.downloadUrl, '_blank', 'noopener')
     } catch (e) { message.error((e as Error).message) }
   }
+  const remove = (photo: Photo) => {
+    modal.confirm({
+      title: '确认删除图片？',
+      content: '图片记录及 OSS 中的成品图、缩略图和保留原图都将被永久删除，此操作无法撤销。',
+      okText: '确认删除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      async onOk() {
+        try {
+          await api({ method: 'DELETE', url: `/photos/${photo.id}` })
+          setSelected(null)
+          message.success('图片已删除')
+          await reload()
+        } catch (e) {
+          message.error((e as Error).message)
+          throw e
+        }
+      },
+    })
+  }
+  const canDelete = user?.role === 'ADMIN' || user?.role === 'MINISTER'
   return <>
     <PageTitle eyebrow="LIBRARY" title="图片库" description="检索、查看并下载团队沉淀的每一帧。"
       extra={<Button type="primary" size="large" icon={<CloudUploadOutlined />} onClick={() => setUploadOpen(true)}>上传图片</Button>} />
@@ -95,7 +118,10 @@ export default function PhotosPage() {
       </Form>
     </Modal>
     <Drawer title="图片详情" width={520} open={!!selected} onClose={() => setSelected(null)}
-      extra={selected && <Button type="primary" icon={<DownloadOutlined />} onClick={() => void download(selected)}>下载原图</Button>}>
+      extra={selected && <Space>
+        {canDelete && <Button danger icon={<DeleteOutlined />} onClick={() => remove(selected)}>删除图片</Button>}
+        <Button type="primary" icon={<DownloadOutlined />} onClick={() => void download(selected)}>下载原图</Button>
+      </Space>}>
       {selected && <>
         <div className="detail-image">{selected.thumbnailUrl ? <Image src={selected.thumbnailUrl} /> : <div className="image-placeholder"><span>{selected.title.slice(0, 1)}</span></div>}</div>
         <Typography.Title level={3}>{selected.title}</Typography.Title>
