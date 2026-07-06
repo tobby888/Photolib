@@ -8,6 +8,7 @@ import cn.photolib.project.mapper.ProjectMapper;
 import cn.photolib.project.model.ProjectEntity;
 import cn.photolib.project.model.ProjectStatus;
 import cn.photolib.user.model.UserRole;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +18,7 @@ import org.springframework.util.StringUtils;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -40,16 +42,30 @@ public class ProjectService {
 
     public PageResponse<ProjectEntity> list(int page, int pageSize, String keyword, ProjectStatus status,
                                             AuthenticatedUser user) {
-        Page<ProjectEntity> result = mapper.selectPage(Page.of(page, pageSize),
-                Wrappers.<ProjectEntity>lambdaQuery()
-                        .and(StringUtils.hasText(keyword), q -> q.like(ProjectEntity::getTitle, keyword)
-                                .or().like(ProjectEntity::getDescription, keyword))
-                        .eq(status != null, ProjectEntity::getStatus, status)
-                        .inSql(user.role() == UserRole.CAMPUS_MANAGER, ProjectEntity::getId,
-                                "SELECT DISTINCT r.project_id FROM photo_request r "
-                                        + "JOIN request_participant rp ON rp.request_id=r.id "
-                                        + "WHERE r.deleted=0 AND rp.user_id=" + user.id())
-                        .orderByDesc(ProjectEntity::getCreatedAt));
+        LambdaQueryWrapper<ProjectEntity> query = Wrappers.<ProjectEntity>lambdaQuery()
+                .and(StringUtils.hasText(keyword), q -> q.like(ProjectEntity::getTitle, keyword)
+                        .or().like(ProjectEntity::getDescription, keyword))
+                .eq(status != null, ProjectEntity::getStatus, status);
+
+        // For campus managers, restrict to projects they participate in
+        if (user.role() == UserRole.CAMPUS_MANAGER) {
+            List<Long> visibleProjectIds = jdbc.sql(
+                "SELECT DISTINCT r.project_id FROM photo_request r " +
+                "JOIN request_participant rp ON rp.request_id = r.id " +
+                "WHERE r.deleted = 0 AND rp.user_id = :userId"
+            ).param("userId", user.id())
+             .query((rs, rowNum) -> rs.getLong("project_id"))
+             .list();
+
+            if (visibleProjectIds.isEmpty()) {
+                // No visible projects - return empty result
+                return PageResponse.from(Page.of(page, pageSize));
+            }
+            query.in(ProjectEntity::getId, visibleProjectIds);
+        }
+
+        query.orderByDesc(ProjectEntity::getCreatedAt);
+        Page<ProjectEntity> result = mapper.selectPage(Page.of(page, pageSize), query);
         return PageResponse.from(result);
     }
 

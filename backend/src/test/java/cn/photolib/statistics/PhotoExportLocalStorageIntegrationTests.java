@@ -29,7 +29,7 @@ class PhotoExportLocalStorageIntegrationTests {
         properties.add("photolib.storage.local-directory", STORAGE_DIRECTORY::toString);
         properties.add("photolib.storage.public-base-url",
                 () -> "http://localhost:8080/api/v1/local-storage/objects");
-        properties.add("photolib.storage.signing-secret", () -> "integration-test-secret");
+        properties.add("photolib.storage.signing-secret", () -> "integration-test-secret-32chars-minimum");
     }
 
     @Autowired

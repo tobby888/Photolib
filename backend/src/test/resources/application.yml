@@ -22,7 +22,7 @@ photolib:
     mode: local
     local-directory: ${java.io.tmpdir}/photolib-test-storage
     public-base-url: http://localhost:8080/api/v1/local-storage/objects
-    signing-secret: photolib-test-signing-secret
+    signing-secret: photolib-test-signing-secret-32chars-min
     upload-url-ttl: 15m
     download-url-ttl: 15m
     original-retention: 30d

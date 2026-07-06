@@ -28,8 +28,13 @@ public class LocalStorageController {
     ResponseEntity<Void> upload(@PathVariable String token, HttpServletRequest request) throws IOException {
         LocalObjectStorageService local = local();
         LocalObjectStorageService.Token resolved = local.resolveToken(token, "PUT");
+        String actualContentType = request.getContentType();
+        String expectedContentType = resolved.contentType();
+        if (expectedContentType != null && !expectedContentType.equals(actualContentType)) {
+            throw new IllegalArgumentException("Content-Type 不匹配: 预期 " + expectedContentType + ", 实际 " + actualContentType);
+        }
         storage.put(resolved.objectKey(), request.getInputStream(), request.getContentLengthLong(),
-                request.getContentType());
+                actualContentType);
         return ResponseEntity.noContent().build();
     }
 

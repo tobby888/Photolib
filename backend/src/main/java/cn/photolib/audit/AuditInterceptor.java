@@ -1,6 +1,7 @@
 package cn.photolib.audit;
 
 import cn.photolib.auth.AuthenticatedUser;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -12,6 +13,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 import java.time.LocalDateTime;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -20,6 +22,7 @@ import java.util.UUID;
 public class AuditInterceptor implements HandlerInterceptor {
     private static final Logger log = LoggerFactory.getLogger(AuditInterceptor.class);
     private static final Set<String> WRITES = Set.of("POST", "PUT", "PATCH", "DELETE");
+    private static final ObjectMapper objectMapper = new ObjectMapper();
     private final AuditLogMapper mapper;
 
     @Override
@@ -42,8 +45,15 @@ public class AuditInterceptor implements HandlerInterceptor {
         log.setResourceType(segments.length > 3 ? segments[3].toUpperCase() : "UNKNOWN");
         log.setResourceId(segments.length > 4 ? segments[4] : null);
         log.setRequestId(String.valueOf(request.getAttribute("requestId")));
-        log.setDetailJson("{\"path\":\"" + request.getRequestURI().replace("\"", "") +
-                "\",\"status\":" + response.getStatus() + "}");
+        try {
+            String detailJson = objectMapper.writeValueAsString(
+                Map.of("path", request.getRequestURI(), "status", response.getStatus())
+            );
+            log.setDetailJson(detailJson);
+        } catch (Exception e) {
+            log.setDetailJson("{}");
+            AuditInterceptor.log.warn("审计日志详情序列化失败", e);
+        }
         log.setIpAddress(request.getRemoteAddr());
         log.setCreatedAt(LocalDateTime.now());
         try {

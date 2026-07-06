@@ -65,12 +65,12 @@ public class LocalObjectStorageService implements ObjectStorageService {
 
     @Override
     public SignedUrl presignPut(String objectKey, String contentType, Duration ttl) {
-        return signed(objectKey, null, "PUT", ttl);
+        return signed(objectKey, null, "PUT", contentType, ttl);
     }
 
     @Override
     public SignedUrl presignGet(String objectKey, String downloadName, Duration ttl) {
-        return signed(objectKey, downloadName, "GET", ttl);
+        return signed(objectKey, downloadName, "GET", null, ttl);
     }
 
     @Override
@@ -136,15 +136,16 @@ public class LocalObjectStorageService implements ObjectStorageService {
         try {
             String decoded = new String(Base64.getUrlDecoder().decode(token), StandardCharsets.UTF_8);
             String[] parts = decoded.split("\n", -1);
-            if (parts.length != 5) throw new IllegalArgumentException("无效的本地对象签名");
-            String payload = String.join("\n", parts[0], parts[1], parts[2], parts[3]);
-            if (!constantTimeEquals(sign(payload), parts[4])) {
+            if (parts.length != 6) throw new IllegalArgumentException("无效的本地对象签名");
+            String payload = String.join("\n", parts[0], parts[1], parts[2], parts[3], parts[4]);
+            if (!constantTimeEquals(sign(payload), parts[5])) {
                 throw new IllegalArgumentException("本地对象签名校验失败");
             }
             Instant expiresAt = Instant.ofEpochSecond(Long.parseLong(parts[0]));
             if (expiresAt.isBefore(Instant.now())) throw new IllegalArgumentException("本地对象签名已过期");
             if (!expectedMethod.equals(parts[1])) throw new IllegalArgumentException("本地对象请求方法不匹配");
-            return new Token(parts[2], parts[3].isBlank() ? null : parts[3], expiresAt);
+            return new Token(parts[2], parts[3].isBlank() ? null : parts[3],
+                           parts[4].isBlank() ? null : parts[4], expiresAt);
         } catch (IllegalArgumentException ex) {
             throw ex;
         } catch (Exception ex) {
@@ -152,11 +153,12 @@ public class LocalObjectStorageService implements ObjectStorageService {
         }
     }
 
-    private SignedUrl signed(String objectKey, String downloadName, String method, Duration ttl) {
+    private SignedUrl signed(String objectKey, String downloadName, String method, String contentType, Duration ttl) {
         Instant expiresAt = Instant.now().plus(ttl);
         String name = downloadName == null ? "" : downloadName.replace("\n", "_");
         String safeKey = objectKey.replace("\n", "_");
-        String payload = expiresAt.getEpochSecond() + "\n" + method + "\n" + safeKey + "\n" + name;
+        String safeContentType = contentType == null ? "" : contentType.replace("\n", "_");
+        String payload = expiresAt.getEpochSecond() + "\n" + method + "\n" + safeKey + "\n" + name + "\n" + safeContentType;
         String token = Base64.getUrlEncoder().withoutPadding().encodeToString(
                 (payload + "\n" + sign(payload)).getBytes(StandardCharsets.UTF_8));
         try {
@@ -167,8 +169,15 @@ public class LocalObjectStorageService implements ObjectStorageService {
     }
 
     private Path resolve(String objectKey) {
+        if (objectKey == null || objectKey.isBlank() ||
+            objectKey.contains("\0") || objectKey.contains("..") ||
+            objectKey.startsWith("/") || objectKey.startsWith("\\")) {
+            throw new IllegalArgumentException("非法对象路径");
+        }
         Path resolved = root.resolve(objectKey).normalize();
-        if (!resolved.startsWith(root)) throw new IllegalArgumentException("非法对象路径");
+        if (!resolved.startsWith(root)) {
+            throw new IllegalArgumentException("非法对象路径");
+        }
         return resolved;
     }
 
@@ -195,6 +204,6 @@ public class LocalObjectStorageService implements ObjectStorageService {
         return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
     }
 
-    public record Token(String objectKey, String downloadName, Instant expiresAt) {
+    public record Token(String objectKey, String downloadName, String contentType, Instant expiresAt) {
     }
 }

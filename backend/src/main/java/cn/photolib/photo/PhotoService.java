@@ -97,7 +97,18 @@ public class PhotoService {
         photo.setTagsJson(tagsJson(command.tags()));
         photo.setStatus(PhotoStatus.PROCESSING);
         photo.setFailureReason(null);
-        mapper.updateById(photo);
+
+        // Use optimistic locking to prevent race conditions
+        int currentVersion = photo.getVersion();
+        photo.setVersion(currentVersion + 1);
+        int updated = mapper.update(photo, Wrappers.<PhotoEntity>lambdaUpdate()
+            .eq(PhotoEntity::getId, id)
+            .eq(PhotoEntity::getVersion, currentVersion)
+            .eq(PhotoEntity::getStatus, PhotoStatus.UPLOADING));
+        if (updated != 1) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "图片状态已变更，请刷新后重试");
+        }
+
         events.publishEvent(new PhotoProcessingService.PhotoProcessRequested(photo.getId()));
         return toView(photo);
     }
@@ -180,6 +191,7 @@ public class PhotoService {
         if (photo.getStatus() != PhotoStatus.AVAILABLE && photo.getStatus() != PhotoStatus.ARCHIVED) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "图片暂不可下载");
         }
+        requireVisible(photo, user);
         requireUploaderOrPrivileged(photo, user);
         ObjectStorageService.SignedUrl signed = storage.presignGet(
                 photo.getObjectKey(), photo.getStoredFileName(), properties.downloadUrlTtl());
@@ -265,6 +277,19 @@ public class PhotoService {
     private void requirePrivileged(AuthenticatedUser user) {
         if (user.role() != UserRole.ADMIN && user.role() != UserRole.MINISTER) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权执行该操作");
+        }
+    }
+
+    private void requireVisible(PhotoEntity photo, AuthenticatedUser user) {
+        // Admin and Minister can see all photos
+        if (user.role() == UserRole.ADMIN || user.role() == UserRole.MINISTER) {
+            return;
+        }
+        // Campus managers can only see photos from their campus
+        if (user.role() == UserRole.CAMPUS_MANAGER) {
+            if (photo.getCampusId() == null || !photo.getCampusId().equals(user.campusId())) {
+                throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该图片");
+            }
         }
     }
 

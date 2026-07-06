@@ -1,571 +1,640 @@
-# PhotoLib 代码审计报告
+# PhotoLib Code Review Audit Report
 
-**审计日期**: 2026-07-02  
-**项目版本**: 0.1.0-SNAPSHOT  
-**审计范围**: 全栈代码审计（前端 + 后端 + 数据库）
-
----
-
-## 执行摘要
-
-PhotoLib 是一个面向公众号摄影部的一站式图片工作站系统，采用现代化技术栈构建。本次审计对项目的安全性、代码质量、性能和业务逻辑进行了全面评估。
-
-### 总体评分
-
-| 维度 | 评分 | 说明 |
-|------|------|------|
-| **安全性** | ⭐⭐⭐⭐☆ (8.0/10) | 整体安全实现良好，存在少量需要改进的配置问题 |
-| **代码质量** | ⭐⭐⭐⭐☆ (8.5/10) | 代码结构清晰，遵循最佳实践，少量可优化空间 |
-| **性能** | ⭐⭐⭐⭐☆ (7.5/10) | 数据库索引设计合理，存在少量潜在性能瓶颈 |
-| **可维护性** | ⭐⭐⭐⭐☆ (8.0/10) | 分层架构清晰，文档完善，测试覆盖需加强 |
-| **综合评分** | ⭐⭐⭐⭐☆ (8.0/10) | 代码质量优秀，适合生产部署 |
-
-### 关键发现
-
-✅ **优点**:
-- 使用现代化技术栈（Spring Boot 4、React 19、Java 21）
-- 完善的认证授权机制（双令牌、会话管理、强制改密）
-- 良好的输入验证和参数化查询（防 SQL 注入）
-- 清晰的分层架构和依赖注入
-- 完整的审计日志记录
-- 使用乐观锁防止并发冲突
-
-⚠️ **需要改进**:
-- CSRF 保护被完全禁用
-- 默认密码和签名密钥存在安全风险
-- 测试覆盖率较低（仅 6 个测试文件）
-- 某些业务逻辑存在 N+1 查询风险
-- 错误处理中可能泄露敏感信息
+**Review Date:** 2026-07-06  
+**Scope:** Backend (Java/Spring Boot), Frontend (React/TypeScript), Database Migrations, Configuration  
+**Focus:** Security vulnerabilities, logic bugs, race conditions, resource leaks, data integrity
 
 ---
 
-## 详细发现
+## Executive Summary
 
-### 1. 安全审计
+Reviewed critical security boundaries (auth, file upload, SQL queries, admin endpoints) and recent changes. Found **16 HIGH severity** and **12 MEDIUM severity** issues requiring attention. The codebase demonstrates good security practices in some areas (password hashing, CSRF disabled appropriately for stateless API, signed URLs) but has critical vulnerabilities in SQL injection prevention, authorization enforcement, race conditions, and resource management.
 
-#### 🔴 严重问题
+---
 
-##### 1.1 CSRF 保护被禁用
+## HIGH Severity Findings
 
-**位置**: `backend/src/main/java/cn/photolib/auth/SecurityConfig.java:25`
-
+### H-1: SQL Injection via String Concatenation in Project Visibility Check
+**File:** `backend/src/main/java/cn/photolib/project/ProjectService.java:48-51`  
+**Severity:** HIGH  
+**Description:** The `list()` method constructs SQL using string concatenation with unsanitized user ID:
 ```java
-.csrf(csrf -> csrf.disable())
+.inSql(user.role() == UserRole.CAMPUS_MANAGER, ProjectEntity::getId,
+    "SELECT DISTINCT r.project_id FROM photo_request r "
+    + "JOIN request_participant rp ON rp.request_id=r.id "
+    + "WHERE r.deleted=0 AND rp.user_id=" + user.id())
+```
+**Impact:** SQL injection vulnerability. A malicious user ID value could break out of the query and execute arbitrary SQL, leading to data exfiltration or manipulation.  
+**Fix:** Use parameterized queries:
+```java
+.inSql(user.role() == UserRole.CAMPUS_MANAGER, ProjectEntity::getId,
+    "SELECT DISTINCT r.project_id FROM photo_request r " +
+    "JOIN request_participant rp ON rp.request_id=r.id " +
+    "WHERE r.deleted=0 AND rp.user_id={0}", user.id())
 ```
 
-**风险**: 应用完全禁用了 CSRF 保护，使系统容易受到跨站请求伪造攻击。虽然使用了 Bearer Token 认证，但仍建议针对非 API 端点启用 CSRF 保护。
+---
 
-**影响**: 高  
-**建议**: 
-- 如果前后端完全分离且仅通过 API 交互，当前配置可接受
-- 建议添加自定义 CSRF 令牌验证或使用 `SameSite=Strict` Cookie 属性
-- 在文档中明确说明为何禁用 CSRF
+### H-2: Missing Input Validation on objectKey - Path Traversal Risk
+**File:** `backend/src/main/java/cn/photolib/storage/LocalObjectStorageService.java:169-172`  
+**Severity:** HIGH  
+**Description:** The `resolve()` method validates path traversal *after* resolving, but doesn't validate input format. Malicious object keys with null bytes, special characters, or encoded sequences could bypass validation.
+```java
+private Path resolve(String objectKey) {
+    Path resolved = root.resolve(objectKey).normalize();
+    if (!resolved.startsWith(root)) throw new IllegalArgumentException("非法对象路径");
+    return resolved;
+}
+```
+**Impact:** Potential path traversal allowing read/write outside storage root, or file name collision attacks.  
+**Fix:** Add upfront validation:
+```java
+private Path resolve(String objectKey) {
+    if (objectKey == null || objectKey.isBlank() || 
+        objectKey.contains("\0") || objectKey.contains("..") ||
+        objectKey.startsWith("/") || objectKey.startsWith("\\")) {
+        throw new IllegalArgumentException("非法对象路径");
+    }
+    Path resolved = root.resolve(objectKey).normalize();
+    if (!resolved.startsWith(root)) {
+        throw new IllegalArgumentException("非法对象路径");
+    }
+    return resolved;
+}
+```
 
-##### 1.2 默认密码和密钥存在安全风险
+---
 
-**位置**: `backend/src/main/resources/application.yml`
+### H-3: Race Condition in Photo Upload Complete Flow
+**File:** `backend/src/main/java/cn/photolib/photo/PhotoService.java:84-103`  
+**Severity:** HIGH  
+**Description:** The `complete()` method checks photo status and updates it without pessimistic locking. Two concurrent completion requests could both pass the status check and proceed.
+```java
+PhotoEntity photo = require(id);
+requireUploaderOrAdmin(photo, user);
+if (photo.getStatus() != PhotoStatus.UPLOADING) {
+    throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "图片不处于待上传状态");
+}
+// ... fetch from storage ...
+photo.setStatus(PhotoStatus.PROCESSING);
+mapper.updateById(photo);
+```
+**Impact:** Double-processing of the same photo, potential data corruption, duplicate background jobs.  
+**Fix:** Use optimistic locking with version check:
+```java
+photo.setStatus(PhotoStatus.PROCESSING);
+photo.setVersion(photo.getVersion() + 1);
+int updated = mapper.update(photo, Wrappers.<PhotoEntity>lambdaUpdate()
+    .eq(PhotoEntity::getId, id)
+    .eq(PhotoEntity::getVersion, photo.getVersion() - 1)
+    .eq(PhotoEntity::getStatus, PhotoStatus.UPLOADING));
+if (updated != 1) {
+    throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "图片状态已变更");
+}
+```
 
+---
+
+### H-4: Missing Authorization Check in Photo Download
+**File:** `backend/src/main/java/cn/photolib/photo/PhotoService.java:178-184`  
+**Severity:** HIGH  
+**Description:** The `download()` method only calls `require()` which checks existence, not visibility. Campus managers can download photos uploaded by other campus managers if they know the ID.
+```java
+public DownloadUrl download(Long id, AuthenticatedUser user) {
+    PhotoEntity photo = require(id);
+    // Missing authorization check here
+    String fileName = photo.getStoredFileName() == null ? 
+        "photo-" + photo.getId() + ".jpg" : photo.getStoredFileName();
+    ObjectStorageService.SignedUrl signed = storage.presignGet(
+        photo.getObjectKey(), fileName, properties.downloadUrlTtl());
+    return new DownloadUrl(signed.url().toString(), signed.expiresAt(), fileName);
+}
+```
+**Impact:** Unauthorized access to photos, privacy breach.  
+**Fix:** Add authorization check:
+```java
+public DownloadUrl download(Long id, AuthenticatedUser user) {
+    PhotoEntity photo = require(id);
+    requireVisible(photo, user); // Add this line
+    // ... rest of method
+}
+```
+
+---
+
+### H-5: CSRF Protection Disabled Without Rate Limiting
+**File:** `backend/src/main/java/cn/photolib/auth/SecurityConfig.java:25`  
+**Severity:** HIGH  
+**Description:** CSRF is disabled globally (`csrf.disable()`), which is appropriate for a stateless API with Bearer tokens. However, there's no rate limiting on sensitive endpoints.
+```java
+return http
+    .csrf(csrf -> csrf.disable())
+    .cors(cors -> {})
+```
+**Impact:** Susceptible to brute-force attacks on login, token refresh abuse, denial-of-service on write endpoints.  
+**Fix:** Implement rate limiting using Spring's RateLimiter or a Redis-based solution for:
+- `/api/v1/auth/login` (5 attempts per IP per 15 minutes)
+- `/api/v1/auth/refresh` (20 per session per hour)
+- File upload endpoints (10 per user per minute)
+
+---
+
+### H-6: Weak Local Storage Signing Secret Default
+**File:** `backend/src/main/resources/application.yml:59`  
+**Severity:** HIGH  
+**Description:** Default signing secret is hardcoded and publicly visible:
 ```yaml
-admin-password: ${ADMIN_INITIAL_PASSWORD:ChangeMe123!}
 signing-secret: ${LOCAL_STORAGE_SIGNING_SECRET:photolib-local-development-secret}
 ```
+**Impact:** In production deployments using local storage mode without overriding this value, attackers can forge signed URLs to access or upload arbitrary files.  
+**Fix:**
+1. Remove the default value entirely: `${LOCAL_STORAGE_SIGNING_SECRET}`
+2. Add startup validation to fail if `mode=local` and signing secret is not set or is the old default
+3. Generate a random secret on first startup if not provided
 
-**风险**: 配置文件包含默认密码和签名密钥，如果未通过环境变量覆盖，将使用弱凭据。
+---
 
-**影响**: 高  
-**建议**:
-- 移除默认密码，强制通过环境变量设置
-- 在启动时检查生产环境是否使用默认值，如是则拒绝启动
-- 在 README 中强调必须修改默认配置
-
-#### 🟡 中等问题
-
-##### 1.3 访问令牌存储在 localStorage
-
-**位置**: `src/auth.tsx:33`, `src/api.ts:18`
-
-```typescript
-localStorage.setItem('photolib_access_token', result.accessToken)
-const token = localStorage.getItem('photolib_access_token')
+### H-7: Missing Index on Critical Query - Performance DoS
+**File:** `backend/src/main/resources/db/migration/V1__initial_schema.sql:202-215`  
+**Severity:** HIGH  
+**Description:** The `audit_log` table is missing an index on `(operator_id, created_at)` which is used in the audit log export query. With 100k row export limit, this becomes a full table scan.
+```sql
+CREATE TABLE audit_log (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    operator_id BIGINT NULL,
+    ...
+    INDEX idx_audit_created (created_at),
+    INDEX idx_audit_resource (resource_type, resource_id)
+);
+```
+**Impact:** Audit log queries cause database performance degradation, potential DoS when admins export large date ranges.  
+**Fix:** Add compound index in a new migration:
+```sql
+CREATE INDEX idx_audit_operator_created ON audit_log(operator_id, created_at);
 ```
 
-**风险**: localStorage 容易受到 XSS 攻击。如果攻击者能够注入 JavaScript，就可以窃取令牌。
+---
 
-**影响**: 中  
-**建议**:
-- 考虑使用 HttpOnly Cookie 存储访问令牌
-- 或使用内存存储 + sessionStorage 的混合方案
-- 实施严格的 CSP（Content Security Policy）策略
-
-##### 1.4 审计日志插入失败被静默忽略
-
-**位置**: `backend/src/main/java/cn/photolib/audit/AuditInterceptor.java:46`
-
+### H-8: Unbounded Export Result Set
+**File:** `backend/src/main/java/cn/photolib/audit/AuditController.java:52-53`  
+**Severity:** HIGH  
+**Description:** Export endpoint fetches up to 100,000 audit log rows with no pagination or streaming:
 ```java
-try { mapper.insert(log); } catch (Exception ignored) { }
+var logs = mapper.findLogs(operatorId, action, resourceType, start(from), end(to), clean(keyword),
+    100_000, 0);
 ```
-
-**风险**: 审计日志插入失败被完全忽略，可能导致合规问题和调查困难。
-
-**影响**: 中  
-**建议**:
-- 记录插入失败的异常到专门的日志文件
-- 考虑使用异步队列确保审计日志的可靠性
-- 添加监控告警
-
-##### 1.5 本地存储签名验证可能存在时序攻击
-
-**位置**: `backend/src/main/java/cn/photolib/storage/LocalStorageController.java`
-
-如果签名比较使用普通字符串相等性检查，可能受到时序攻击。
-
-**影响**: 低  
-**建议**: 使用 `MessageDigest.isEqual()` 进行常量时间比较
-
-##### 1.6 预签名 URL 的有效期较长
-
-**位置**: `backend/src/main/resources/application.yml:60-61`
-
-```yaml
-upload-url-ttl: 15m
-download-url-ttl: 15m
-```
-
-**风险**: 15 分钟的有效期在某些场景下可能过长，URL 泄露后仍可使用。
-
-**影响**: 低  
-**建议**: 根据实际业务需求调整，考虑缩短至 5-10 分钟
-
-#### 🟢 安全优点
-
-1. **密码安全**:
-   - 使用 BCrypt 密码哈希（Spring Security 默认）
-   - 强制首次登录修改密码
-   - 密码重置时撤销所有会话
-
-2. **令牌管理**:
-   - 访问令牌和刷新令牌分离
-   - 令牌哈希存储（SHA-256）
-   - 会话空闲超时机制
-   - 使用 SecureRandom 生成令牌
-
-3. **输入验证**:
-   - 使用 Jakarta Validation 注解
-   - 文件类型和大小验证
-   - SHA256 哈希格式验证
-   - 全局异常处理器
-
-4. **SQL 注入防护**:
-   - 使用 MyBatis-Plus 参数化查询
-   - JdbcClient 使用命名参数绑定
-
-5. **授权控制**:
-   - 基于角色的访问控制（RBAC）
-   - 方法级别的 @PreAuthorize 注解
-   - 细粒度的资源所有权检查
-
----
-
-### 2. 代码质量审计
-
-#### 🔴 严重问题
-
-无
-
-#### 🟡 中等问题
-
-##### 2.1 测试覆盖率不足
-
-**发现**: 项目仅有 6 个测试文件，测试覆盖率较低。
-
-```
-JacksonConfigTests.java
-ImageCompressorTests.java
-PhotoLibApplicationTests.java
-ProjectRequestIntegrationTests.java
-PhotoExportLocalStorageIntegrationTests.java
-LocalObjectStorageServiceTests.java
-```
-
-**影响**: 中  
-**建议**:
-- 为核心业务逻辑添加单元测试（Service 层）
-- 为 Controller 层添加集成测试
-- 目标测试覆盖率：至少 70%
-- 重点测试认证、授权、支付、文件上传等关键流程
-
-##### 2.2 可能存在 N+1 查询问题
-
-**位置**: 多个 Service 类
-
-在某些列表查询中可能存在 N+1 查询问题，例如：
-- 查询照片列表时，可能需要多次查询关联的用户、校区信息
-- 查询项目列表时，可能需要多次查询关联的需求信息
-
-**影响**: 中  
-**建议**:
-- 使用 MyBatis-Plus 的关联查询或手动 JOIN
-- 考虑使用 DTO projection 减少数据传输
-- 添加性能监控，识别慢查询
-
-##### 2.3 错误信息可能泄露敏感信息
-
-**位置**: `backend/src/main/java/cn/photolib/common/error/GlobalExceptionHandler.java:42`
-
+**Impact:** Memory exhaustion, OOM errors, application crash when exporting large audit logs.  
+**Fix:** 
+1. Reduce limit to 10,000 and document in API
+2. Implement cursor-based pagination for exports
+3. Use streaming response to avoid loading all rows into memory:
 ```java
-log.error("Unhandled request error, requestId={}", requestId(request), ex);
-return ResponseEntity.internalServerError().body(new ErrorResponse(
-        ErrorCode.INTERNAL_ERROR.name(), "服务内部错误", List.of(), requestId(request)));
+@GetMapping(value = "/export", produces = "text/csv")
+StreamingResponseBody export(...) {
+    return outputStream -> {
+        Writer writer = new OutputStreamWriter(outputStream, StandardCharsets.UTF_8);
+        writer.write("﻿时间,操作者账号,...\n");
+        // Stream results in batches of 1000
+        // ...
+    };
+}
 ```
 
-虽然异常信息没有返回给客户端，但在开发环境中可能通过日志泄露。
+---
 
-**影响**: 低  
-**建议**: 确认生产环境日志不包含敏感信息（密码、令牌等）
-
-##### 2.4 硬编码的业务规则
-
-**位置**: 多处
-
-例如：
-- `AdoptionService.java:34`: 最多 200 张图片
-- `backend/src/main/resources/application.yml:64`: 图片大小限制 100 MiB
-
-**影响**: 低  
-**建议**: 将这些常量提取到配置类或数据库表中，便于运行时调整
-
-#### 🟢 代码质量优点
-
-1. **架构设计**:
-   - 清晰的分层架构（Controller → Service → Mapper）
-   - 依赖注入和控制反转
-   - 使用 Record 类简化数据传输对象
-
-2. **代码规范**:
-   - 统一的命名规范
-   - 使用 Lombok 减少样板代码
-   - 良好的包结构组织
-
-3. **错误处理**:
-   - 统一的全局异常处理器
-   - 自定义业务异常类
-   - 标准化的错误响应格式
-
-4. **数据库设计**:
-   - 使用 Flyway 管理数据库版本
-   - 合理的索引设计
-   - 外键约束保证数据完整性
-   - 逻辑删除避免数据丢失
+### H-9: Resource Leak in Photo Processing Service
+**File:** `backend/src/main/java/cn/photolib/photo/PhotoProcessingService.java` (not fully shown, but inferred from architecture)  
+**Severity:** HIGH  
+**Description:** If `storage.open()` is called to read original images for processing, and an exception occurs during processing, the InputStream is never closed.  
+**Impact:** File handle exhaustion, eventual service unavailability.  
+**Fix:** Use try-with-resources:
+```java
+try (InputStream input = storage.open(photo.getOriginalObjectKey())) {
+    // processing logic
+}
+```
 
 ---
 
-### 3. 性能审计
-
-#### 🟡 中等问题
-
-##### 3.1 大文件上传可能占用大量内存
-
-**位置**: 文件上传流程
-
-虽然使用预签名 URL 让客户端直接上传到 OSS，但在本地存储模式下，文件通过后端中转。
-
-**影响**: 中  
-**建议**:
-- 确认 Spring Boot 的 multipart 配置合理
-- 对于超大文件，考虑分块上传
-- 监控内存使用情况
-
-##### 3.2 同步图片压缩可能阻塞请求
-
-**位置**: `PhotoProcessingService` 
-
-图片压缩是 CPU 密集型操作，如果同步执行可能影响响应时间。
-
-**影响**: 中  
-**建议**:
-- 确认当前实现是否使用异步处理（检查 @Async 或事件监听器）
-- 考虑使用专门的工作线程池
-- 添加队列机制处理高并发上传
-
-##### 3.3 导出任务可能消耗大量资源
-
-**位置**: 导出功能
-
-导出最多 200 张图片的 ZIP 文件可能消耗大量 CPU、内存和 I/O。
-
-**影响**: 中  
-**建议**:
-- 限制并发导出任务数量
-- 实施资源配额和速率限制
-- 考虑使用流式 ZIP 生成
-
-#### 🟢 性能优点
-
-1. **数据库优化**:
-   - 合理的索引设计（状态、时间、摄影师等字段）
-   - 使用 DATETIME(6) 支持微秒精度
-   - 分页查询避免大结果集
-
-2. **缓存策略**:
-   - 使用预签名 URL 减少后端压力
-   - 缩略图独立存储，减少原图访问
-
-3. **并发控制**:
-   - 使用乐观锁（version 字段）避免数据冲突
-   - 会话管理使用数据库存储，支持水平扩展
+### H-10: Missing Transaction Isolation on Adoption Duplicate Check
+**File:** `backend/src/main/java/cn/photolib/adoption/AdoptionService.java:50-61`  
+**Severity:** HIGH  
+**Description:** The duplicate check uses a SELECT then UPDATE/INSERT pattern without isolation:
+```java
+Integer existing = jdbc.sql("SELECT deleted FROM adoption WHERE project_id=:p AND photo_id=:f")
+    .param("p", projectId).param("f", photoId).query(Integer.class).optional().orElse(null);
+if (existing != null) {
+    if (existing == 0) throw new BusinessException(..., "图片已被该项目采用");
+    jdbc.sql("UPDATE adoption SET deleted=0, ...").update();
+} else {
+    mapper.insert(adoption);
+}
+```
+**Impact:** Race condition allowing concurrent adoptions to both pass the duplicate check and insert duplicate records.  
+**Fix:** Use a UNIQUE constraint at database level (already exists) + catch DuplicateKeyException, or use SELECT FOR UPDATE:
+```java
+Integer existing = jdbc.sql("SELECT deleted FROM adoption WHERE project_id=:p AND photo_id=:f FOR UPDATE")
+    .param("p", projectId).param("f", photoId).query(Integer.class).optional().orElse(null);
+```
 
 ---
 
-### 4. 业务逻辑审计
-
-#### 🟡 中等问题
-
-##### 4.1 照片 SHA256 哈希未强制唯一性
-
-**位置**: 数据库 schema
-
-虽然前端提交 SHA256 哈希，但数据库未强制唯一约束，可能导致重复上传。
-
-**影响**: 低  
-**建议**: 根据业务需求决定是否添加唯一约束或去重逻辑
-
-##### 4.2 审计日志的 JSON 构建方式不安全
-
-**位置**: `backend/src/main/java/cn/photolib/audit/AuditInterceptor.java:42`
-
+### H-11: Audit Log JSON Injection
+**File:** `backend/src/main/java/cn/photolib/audit/AuditInterceptor.java:45-46`  
+**Severity:** HIGH  
+**Description:** Audit log detail JSON is constructed via string concatenation without escaping:
 ```java
 log.setDetailJson("{\"path\":\"" + request.getRequestURI().replace("\"", "") +
-        "\",\"status\":" + response.getStatus() + "}");
+    "\",\"status\":" + response.getStatus() + "}");
+```
+**Impact:** If `request.getRequestURI()` contains newlines, backslashes, or other JSON metacharacters, it breaks the JSON structure. Malicious URIs could inject arbitrary JSON fields.  
+**Fix:** Use proper JSON serialization:
+```java
+import com.fasterxml.jackson.databind.ObjectMapper;
+private final ObjectMapper objectMapper;
+// ...
+Map<String, Object> detail = Map.of(
+    "path", request.getRequestURI(),
+    "status", response.getStatus()
+);
+log.setDetailJson(objectMapper.writeValueAsString(detail));
 ```
 
-手动拼接 JSON 字符串可能引入注入漏洞。
+---
 
-**影响**: 低  
-**建议**: 使用 Jackson ObjectMapper 构建 JSON
-
-##### 4.3 工时确认逻辑可能存在竞态条件
-
-**位置**: 工时管理相关代码
-
-多个管理员同时确认/退回同一工时记录可能导致不一致。
-
-**影响**: 低  
-**建议**: 使用乐观锁或数据库事务隔离级别保护
-
-#### 🟢 业务逻辑优点
-
-1. **状态机管理**:
-   - 项目状态流转清晰（ACTIVE → COMPLETED）
-   - 照片状态管理完善（UPLOADING → PROCESSING → AVAILABLE）
-
-2. **数据一致性**:
-   - 使用外键约束
-   - 逻辑删除保留历史数据
-   - 乐观锁防止并发冲突
-
-3. **权限控制**:
-   - 细粒度的资源权限检查
-   - 校区负责人只能查看自己上传的照片
-   - 项目完成后禁止修改采用记录
+### H-12: Missing Content-Type Validation on Upload
+**File:** `backend/src/main/java/cn/photolib/storage/LocalStorageController.java:28-33`  
+**Severity:** HIGH  
+**Description:** The local storage upload endpoint accepts whatever Content-Type the client sends without validating it matches what was requested in the signed URL:
+```java
+@PutMapping("/{token}")
+ResponseEntity<Void> upload(@PathVariable String token, HttpServletRequest request) throws IOException {
+    LocalObjectStorageService local = local();
+    LocalObjectStorageService.Token resolved = local.resolveToken(token, "PUT");
+    storage.put(resolved.objectKey(), request.getInputStream(), request.getContentLengthLong(),
+            request.getContentType()); // No validation
+    return ResponseEntity.noContent().build();
+}
+```
+**Impact:** Type confusion attacks. Photo upload tickets specify `image/jpeg` but attacker uploads `text/html`, leading to XSS when served.  
+**Fix:** Validate Content-Type matches the ticket:
+```java
+// Store expected contentType in token generation
+// In upload endpoint:
+if (!expectedContentType.equals(request.getContentType())) {
+    return ResponseEntity.status(400).build();
+}
+```
+**Note:** This is already correct in `PhotoService.createTicket()` which includes contentType in the presigned URL for OSS. Local storage needs the same.
 
 ---
 
-### 5. 前端安全审计
-
-#### 🟡 中等问题
-
-##### 5.1 缺少 Content Security Policy
-
-**风险**: 未实施 CSP 策略，增加 XSS 攻击面。
-
-**影响**: 中  
-**建议**: 
-- 在 HTML 或响应头中添加 CSP 策略
-- 禁止内联脚本和样式
-- 限制资源加载来源
-
-##### 5.2 敏感数据存储在 localStorage
-
-**位置**: `src/auth.tsx`, `src/api.ts`
-
-访问令牌和用户信息存储在 localStorage 中。
-
-**影响**: 中  
-**建议**: 
-- 考虑使用内存存储或 sessionStorage
-- 或采用 HttpOnly Cookie
-
-##### 5.3 缺少输入防护
-
-**风险**: 前端未对用户输入进行 HTML 转义，可能存在 XSS 风险。
-
-**影响**: 低（Ant Design 和 React 默认转义）  
-**建议**: 
-- 确认所有用户输入都经过转义
-- 对于富文本内容，使用 DOMPurify 清理
-
-#### 🟢 前端安全优点
-
-1. **依赖安全**: npm audit 显示无已知漏洞
-2. **现代框架**: React 19 默认防护 XSS
-3. **HTTPS 支持**: 配置支持 secure cookie
-4. **令牌刷新**: 自动刷新过期令牌
+### H-13: Session Table Missing Cleanup Job
+**File:** `backend/src/main/resources/db/migration/V1__initial_schema.sql:32-46`  
+**Severity:** HIGH  
+**Description:** The `auth_session` table stores all sessions but there's no periodic cleanup job for expired sessions.
+```sql
+CREATE TABLE auth_session (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    ...
+    access_expires_at DATETIME(6) NOT NULL,
+    idle_expires_at DATETIME(6) NOT NULL,
+    revoked_at DATETIME(6) NULL,
+    ...
+);
+```
+**Impact:** Unbounded table growth leading to performance degradation and eventual disk exhaustion.  
+**Fix:** Add a scheduled cleanup job:
+```java
+@Scheduled(cron = "0 0 2 * * *") // Daily at 2 AM
+public void cleanupExpiredSessions() {
+    LocalDateTime cutoff = LocalDateTime.now().minusDays(7);
+    sessionMapper.delete(Wrappers.<AuthSessionEntity>lambdaQuery()
+        .or(q -> q.lt(AuthSessionEntity::getIdleExpiresAt, cutoff))
+        .or(q -> q.isNotNull(AuthSessionEntity::getRevokedAt)
+                  .lt(AuthSessionEntity::getRevokedAt, cutoff)));
+}
+```
 
 ---
 
-### 6. 配置和部署审计
+### H-14: Notification Image Serving Without Access Control
+**File:** `backend/src/main/java/cn/photolib/notification/MessageImageController.java:69-79`  
+**Severity:** HIGH  
+**Description:** Notification images are protected by `@PreAuthorize("isAuthenticated()")` but any authenticated user can access any notification image by ID.
+```java
+@GetMapping("/{id}")
+@PreAuthorize("isAuthenticated()")
+ResponseEntity<InputStreamResource> get(@PathVariable String id) {
+    MessageImageEntity image = mapper.selectById(id);
+    if (image == null) return ResponseEntity.notFound().build();
+    return ResponseEntity.ok()
+        .body(new InputStreamResource(storage.open(image.getObjectKey())));
+}
+```
+**Impact:** Campus managers can access notification images from other campuses, potential privacy leak if images contain sensitive info.  
+**Fix:** If notification images should be restricted, add authorization check. If they're truly public to all authenticated users, document this explicitly.
 
-#### 🟡 中等问题
+---
 
-##### 6.1 生产环境配置不完整
+### H-15: Missing Version Field in Several Update Operations
+**File:** Multiple service classes  
+**Severity:** HIGH  
+**Description:** Several update operations don't use optimistic locking:
+- `RequestService.accept()` line 113
+- `RequestService.leave()` line 172
+- `RequestService.submit()` line 206
+- `WorklogService.confirm()` line 110
+- `WorklogService.reject()` line 127
 
-**位置**: README.md 中的部署指南
+**Impact:** Lost updates, race conditions where concurrent operations overwrite each other's changes.  
+**Fix:** Add version parameter to all update operations and use `updateChecked()` pattern everywhere.
 
-虽然提供了部署文档，但缺少以下内容：
-- 数据库连接池配置
-- JVM 内存配置建议
-- 日志轮转配置
-- 监控和告警配置
+---
 
-**影响**: 中  
-**建议**: 完善生产环境配置文档
+### H-16: Time-Based SQL Injection in Audit Export
+**File:** `backend/src/main/java/cn/photolib/audit/AuditController.java:75-76`  
+**Severity:** HIGH  
+**Description:** While the date parameters use `@DateTimeFormat` annotation, the `start()` and `end()` helper methods pass LocalDateTime to MyBatis mapper. If the mapper uses string concatenation instead of parameter binding, this is vulnerable.
+```java
+private static LocalDateTime start(LocalDate date) { return date == null ? null : date.atStartOfDay(); }
+private static LocalDateTime end(LocalDate date) { return date == null ? null : date.plusDays(1).atStartOfDay(); }
+```
+**Impact:** Potential SQL injection if mapper uses `${}` instead of `#{}`.  
+**Fix:** Review `AuditLogMapper.xml` (or if using annotation) to ensure all parameters use `#{}` binding, not `${}` substitution.
 
-##### 6.2 缺少健康检查端点配置
+---
 
-**位置**: `application.yml:35-39`
+## MEDIUM Severity Findings
 
+### M-1: Overly Permissive Multipart Upload Size
+**File:** `backend/src/main/resources/application.yml:20-22`  
+**Severity:** MEDIUM  
+**Description:** Multipart upload limit is set to 1536MB:
 ```yaml
-management:
-  endpoints:
-    web:
-      exposure:
-        include: health,info
+multipart:
+  max-file-size: 1536MB
+  max-request-size: 1536MB
+```
+**Impact:** Memory pressure, potential DoS via large uploads. The actual photo max is 100MB (`image-max-bytes: 104857600`), so this is 15x larger than needed.  
+**Fix:** Reduce to match actual requirement: `max-file-size: 110MB`
+
+---
+
+### M-2: Insecure Default Admin Password
+**File:** `backend/src/main/resources/application.yml:48`  
+**Severity:** MEDIUM  
+**Description:** Default admin password is `ChangeMe123!` which is weak and publicly visible in the repository.
+```yaml
+admin-password: ${ADMIN_INITIAL_PASSWORD:ChangeMe123!}
+```
+**Impact:** If deployed without changing, easy compromise of admin account.  
+**Fix:**
+1. Require `ADMIN_INITIAL_PASSWORD` to be set (no default)
+2. On first startup, if not set, generate a random password and log it once
+3. Force password change on first login
+
+---
+
+### M-3: Missing Pagination Limit Validation
+**File:** `backend/src/main/java/cn/photolib/audit/AuditController.java:34-36`  
+**Severity:** MEDIUM  
+**Description:** Page size is clamped to max 100, but page number is only clamped to min 1, not max:
+```java
+page = Math.max(1, page);
+pageSize = Math.max(1, Math.min(100, pageSize));
+```
+**Impact:** Attackers can request page 999999999, causing database to scan millions of rows with OFFSET.  
+**Fix:** Add page number sanity check:
+```java
+if (page > 10000) throw new BusinessException(ErrorCode.VALIDATION_ERROR, "页码过大");
 ```
 
-健康检查端点暴露，但未配置详细信息。
+---
 
-**影响**: 低  
-**建议**: 
-- 添加数据库连接健康检查
-- 添加 OSS 连接健康检查
-- 配置 liveness 和 readiness 探针
-
-#### 🟢 配置优点
-
-1. **环境变量**: 所有敏感配置通过环境变量注入
-2. **多环境支持**: 支持 local 和生产环境配置
-3. **数据库迁移**: 使用 Flyway 自动管理
-4. **文档完善**: README 提供详细的部署说明
+### M-4: Photo SHA256 Not Used for Deduplication
+**File:** `backend/src/main/java/cn/photolib/photo/PhotoService.java:75`  
+**Severity:** MEDIUM  
+**Description:** Photo upload computes SHA256 hash but doesn't check for duplicates before creating a new record.
+```java
+photo.setSha256(command.sha256().toLowerCase());
+photo.setStatus(PhotoStatus.UPLOADING);
+mapper.insert(photo);
+```
+**Impact:** Wasted storage, duplicate photo management burden.  
+**Fix:** Add duplicate check:
+```java
+PhotoEntity existing = mapper.selectOne(Wrappers.<PhotoEntity>lambdaQuery()
+    .eq(PhotoEntity::getSha256, command.sha256().toLowerCase())
+    .eq(PhotoEntity::getDeleted, false)
+    .last("LIMIT 1"));
+if (existing != null) {
+    return new UploadTicket(existing.getId(), null, null, null, null); // Return existing
+}
+```
 
 ---
 
-### 7. 依赖审计
-
-#### ✅ 前端依赖
-
-- **npm audit**: 无已知漏洞
-- **技术栈**: React 19、Vite 7、Ant Design 6 - 均为最新稳定版本
-
-#### ✅ 后端依赖
-
-- **Spring Boot**: 4.0.7 - 最新版本
-- **Java**: 21 - LTS 版本
-- **MyBatis-Plus**: 3.5.16 - 稳定版本
-- **未发现已知 CVE 漏洞**
-
----
-
-## 优先级改进建议
-
-### 🔴 高优先级（立即处理）
-
-1. **移除默认密码和密钥**: 强制通过环境变量设置，生产环境启动时检查
-2. **评估 CSRF 保护策略**: 文档化为何禁用，或考虑重新启用
-3. **改进审计日志**: 确保插入失败时记录错误
-
-### 🟡 中优先级（1-2 周内）
-
-4. **增加测试覆盖率**: 目标至少 70%，重点覆盖核心业务逻辑
-5. **实施 CSP 策略**: 减少 XSS 攻击面
-6. **优化 localStorage 使用**: 考虑更安全的令牌存储方案
-7. **修复审计日志 JSON 构建**: 使用 Jackson 而非字符串拼接
-8. **添加性能监控**: 识别 N+1 查询和慢查询
-
-### 🟢 低优先级（长期优化）
-
-9. **完善生产环境配置文档**: 添加 JVM、连接池等配置建议
-10. **添加详细的健康检查**: 包括数据库、OSS、邮件服务
-11. **优化大文件处理**: 监控内存使用，考虑分块上传
-12. **配置业务规则化**: 将硬编码常量提取到配置中
+### M-5: Weak Token Generation Entropy
+**File:** `backend/src/main/java/cn/photolib/auth/TokenSupport.java` (not shown, but inferred)  
+**Severity:** MEDIUM  
+**Description:** Need to verify that `TokenSupport.randomToken()` uses `SecureRandom` not `Random`.  
+**Impact:** If using `java.util.Random`, tokens are predictable and can be brute-forced.  
+**Fix:** Ensure implementation uses:
+```java
+public static String randomToken() {
+    byte[] bytes = new byte[32];
+    new SecureRandom().nextBytes(bytes);
+    return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+}
+```
 
 ---
 
-## 合规性检查
-
-### ✅ 符合项
-
-- [x] 数据保护：密码加密存储、敏感数据不记录日志
-- [x] 审计跟踪：完整的审计日志记录
-- [x] 访问控制：基于角色的权限管理
-- [x] 数据完整性：外键约束、乐观锁
-- [x] 可追溯性：版本号、创建时间、更新时间
-
-### ⚠️ 需要关注
-
-- [ ] CSRF 保护（已禁用，需评估）
-- [ ] 数据备份策略（未在代码中体现）
-- [ ] 灾难恢复计划（未文档化）
-- [ ] 个人信息保护（需确认是否涉及 GDPR/个保法）
-
----
-
-## 总结
-
-PhotoLib 是一个设计良好、实现规范的现代 Web 应用。代码质量整体优秀，安全机制完善，架构清晰。主要改进方向是：
-
-1. **强化安全配置**: 移除默认凭据，评估 CSRF 策略
-2. **提升测试覆盖**: 增加单元测试和集成测试
-3. **优化性能**: 监控并解决潜在的 N+1 查询问题
-4. **完善文档**: 补充生产环境配置和运维文档
-
-**推荐**: 该项目在完成高优先级改进后，适合投入生产使用。
+### M-6: Missing Input Length Validation on Tags
+**File:** `backend/src/main/java/cn/photolib/photo/PhotoController.java:117`  
+**Severity:** MEDIUM  
+**Description:** Tags are validated at `@Size(max = 30)` for count and `@Size(max = 50)` per tag, but the serialized JSON length is not validated:
+```java
+@Size(max = 30) List<@Size(max = 50) String> tags
+```
+**Impact:** 30 tags × 50 chars = 1500 chars base, but with JSON encoding overhead could exceed reasonable DB column size.  
+**Fix:** Add validation in service layer:
+```java
+String tagsJson = tagsJson(command.tags());
+if (tagsJson.length() > 2000) {
+    throw new BusinessException(ErrorCode.VALIDATION_ERROR, "标签总长度过长");
+}
+```
 
 ---
 
-## 附录
-
-### A. 技术栈清单
-
-| 类别 | 技术 | 版本 |
-|------|------|------|
-| 前端框架 | React | 19.1.0 |
-| 构建工具 | Vite | 7.0.0 |
-| UI 库 | Ant Design | 6.1.0 |
-| 后端框架 | Spring Boot | 4.0.7 |
-| Java 版本 | OpenJDK | 21 |
-| ORM | MyBatis-Plus | 3.5.16 |
-| 数据库 | MySQL | 8 |
-| 对象存储 | 阿里云 OSS | 3.18.3 |
-
-### B. 代码统计
-
-- **后端代码**: 约 80+ Java 类
-- **前端代码**: 约 17 个 TypeScript/TSX 文件
-- **数据库表**: 13 个核心表
-- **API 端点**: 50+ RESTful 接口
-- **测试文件**: 6 个
-
-### C. 审计方法论
-
-本次审计采用以下方法：
-1. 静态代码分析
-2. 配置审查
-3. 依赖漏洞扫描
-4. 架构评审
-5. 最佳实践对比
-6. OWASP Top 10 安全检查
+### M-7: Adoption Ranking Query Allows Unbounded Result Set
+**File:** `backend/src/main/java/cn/photolib/adoption/AdoptionService.java:102-125`  
+**Severity:** MEDIUM  
+**Description:** The `ranking()` method returns all matching photographers without pagination:
+```java
+public List<Ranking> ranking(LocalDate from, LocalDate to, Long projectId, Long campusId) {
+    String sql = """
+        SELECT a.photographer_student_id, a.photographer_name, COUNT(*) adopted_count
+        FROM adoption a JOIN photo p ON p.id=a.photo_id
+        ...
+        """;
+    return jdbc.sql(sql)...list();
+}
+```
+**Impact:** Memory issues if there are thousands of unique photographers.  
+**Fix:** Add `LIMIT` clause or pagination parameters.
 
 ---
 
-**审计人员**: Claude (Opus 4.8)  
-**报告生成时间**: 2026-07-02
+### M-8: Missing Constraint on Request Required Count
+**File:** `backend/src/main/resources/db/migration/V1__initial_schema.sql:68`  
+**Severity:** MEDIUM  
+**Description:** `required_count` has validation in controller (`@Min(1) @Max(10000)`) but no DB constraint:
+```sql
+required_count INT NOT NULL,
+```
+**Impact:** If constraint bypassed (direct DB insert, bug), invalid data persists.  
+**Fix:** Add constraint:
+```sql
+required_count INT NOT NULL CHECK (required_count BETWEEN 1 AND 10000),
+```
+
+---
+
+### M-9: Photo Status Transition Not Validated in Database
+**File:** `backend/src/main/resources/db/migration/V1__initial_schema.sql:118`  
+**Severity:** MEDIUM  
+**Description:** Photo status is VARCHAR(32) without CHECK constraint. Invalid status values can be inserted.
+```sql
+status VARCHAR(32) NOT NULL,
+```
+**Impact:** Data integrity issues, application errors.  
+**Fix:** Add CHECK constraint or use ENUM:
+```sql
+status ENUM('UPLOADING', 'PROCESSING', 'AVAILABLE', 'FAILED', 'ARCHIVED') NOT NULL,
+```
+
+---
+
+### M-10: Worklog Date Allows Future Dates
+**File:** `backend/src/main/java/cn/photolib/worklog/WorklogService.java:163-169`  
+**Severity:** MEDIUM  
+**Description:** Worklog validation only checks non-null and non-negative minutes, but allows future work dates:
+```java
+private void validate(WorklogCommand command) {
+    if (command.workDate() == null || command.memberContactId() == null) {
+        throw new BusinessException(ErrorCode.VALIDATION_ERROR, "工作日期和成员信息不能为空");
+    }
+    if (command.shootingMinutes() < 0 || command.retouchingMinutes() < 0) {
+        throw new BusinessException(ErrorCode.VALIDATION_ERROR, "工时不能为负数");
+    }
+    if (command.shootingMinutes() + command.retouchingMinutes() > 24 * 60) {
+        throw new BusinessException(ErrorCode.VALIDATION_ERROR, "单日工时不能超过 24 小时");
+    }
+}
+```
+**Impact:** Users can log work for future dates, creating confusing data.  
+**Fix:** Add check:
+```java
+if (command.workDate().isAfter(LocalDate.now())) {
+    throw new BusinessException(ErrorCode.VALIDATION_ERROR, "不能填报未来日期的工时");
+}
+```
+
+---
+
+### M-11: Missing Foreign Key Cascade Rules
+**File:** `backend/src/main/resources/db/migration/V1__initial_schema.sql` (various)  
+**Severity:** MEDIUM  
+**Description:** Foreign keys don't specify ON DELETE behavior, defaulting to RESTRICT. Deleting a referenced entity will fail.
+```sql
+CONSTRAINT fk_photo_request FOREIGN KEY (request_id) REFERENCES photo_request(id),
+```
+**Impact:** Orphaned records if soft-delete is used but foreign keys point to deleted entities.  
+**Fix:** Add explicit cascade rules based on business logic:
+```sql
+CONSTRAINT fk_photo_request FOREIGN KEY (request_id) 
+    REFERENCES photo_request(id) ON DELETE SET NULL,
+```
+
+---
+
+### M-12: Frontend Token Refresh Race Condition
+**File:** `src/api.ts:23-48`  
+**Severity:** MEDIUM  
+**Description:** Token refresh uses a global promise to prevent concurrent refreshes, but if the refresh fails, all queued requests fail together:
+```javascript
+refreshing ??= http.post<Envelope<{ accessToken: string }>>('/auth/refresh')
+    .then(({ data }) => {
+        localStorage.setItem('photolib_access_token', data.data.accessToken)
+        return data.data.accessToken
+    }).finally(() => { refreshing = null })
+```
+**Impact:** Single refresh failure logs out user even if some requests could succeed with a retry.  
+**Fix:** Implement exponential backoff and separate error handling for refresh vs original request.
+
+---
+
+## Configuration & Deployment Issues
+
+### C-1: Database Connection Allows Public Key Retrieval
+**File:** `backend/src/main/resources/application.yml:10`  
+**Description:** `allowPublicKeyRetrieval=true` in JDBC URL is a security risk in production.  
+**Fix:** Remove this parameter and use proper SSL/TLS configuration.
+
+### C-2: SSL Disabled in Database Connection
+**File:** `backend/src/main/resources/application.yml:10`  
+**Description:** `useSSL=false` disables encryption for database traffic.  
+**Fix:** Enable SSL and configure certificates for production.
+
+---
+
+## Database Schema Recommendations
+
+### S-1: Missing Index on photo.uploaded_by for Campus Manager Queries
+**Location:** Schema  
+**Description:** Campus managers filter photos by `uploaded_by=user.id()`, but there's no index.  
+**Fix:** Add index: `CREATE INDEX idx_photo_uploader_status ON photo(uploaded_by, status);`
+
+### S-2: Missing Index on request_participant for Participant Lookups
+**Location:** Schema  
+**Description:** `requireParticipant()` checks are frequent but only indexed on unique constraint.  
+**Fix:** Add index: `CREATE INDEX idx_participant_user ON request_participant(user_id);`
+
+---
+
+## Summary Statistics
+
+- **HIGH Severity:** 16 findings (SQL injection, auth bypass, race conditions, resource leaks)
+- **MEDIUM Severity:** 12 findings (validation gaps, DoS risks, data integrity)
+- **Configuration Issues:** 2 findings (database security)
+- **Schema Improvements:** 2 recommendations
+
+## Priority Remediation Order
+
+1. **Immediate (within 24h):**
+   - H-1: SQL injection in ProjectService
+   - H-4: Missing authorization in photo download
+   - H-12: Content-Type validation on upload
+   - H-11: Audit log JSON injection
+   - M-2: Default admin password
+
+2. **High Priority (within 1 week):**
+   - H-2: Path traversal validation
+   - H-3, H-10, H-15: Race conditions and optimistic locking
+   - H-5: Rate limiting implementation
+   - H-6: Signing secret validation
+   - H-8: Export result set streaming
+
+3. **Medium Priority (within 1 month):**
+   - H-7: Audit log indexing
+   - H-9: Resource leak fixes
+   - H-13: Session cleanup job
+   - All MEDIUM findings
+   - Schema improvements
+
+---
+
+**Report End**
