@@ -164,6 +164,37 @@ class UserServiceTests {
     }
 
     @Test
+    void deleteUser_shouldSoftRemoveRevokeSessionsAndFreeUsername() {
+        // Given: 用户已登录
+        UserService.CreatedUser created = userService.create(new UserService.CreateUser(
+                "deletetest", "待删除", UserRole.MINISTER, null, null, null));
+        authService.login("deletetest", created.initialPassword());
+
+        // When: 删除账号（操作者为另一个 id）
+        userService.delete(created.user().id(), created.user().id() + 1);
+
+        // Then: 用户从列表中消失
+        assertThat(userService.list(1, 50, "deletetest", null, null, null).items()).isEmpty();
+        // 会话被吊销，原密码无法登录
+        assertThatThrownBy(() -> authService.login("deletetest", created.initialPassword()))
+                .isInstanceOf(BusinessException.class);
+        // 用户名已释放，可再次创建同名账号
+        assertThatNoException().isThrownBy(() -> userService.create(new UserService.CreateUser(
+                "deletetest", "重建", UserRole.MINISTER, null, null, null)));
+    }
+
+    @Test
+    void deleteUser_ownAccount_shouldThrowException() {
+        UserService.CreatedUser created = userService.create(new UserService.CreateUser(
+                "selfdelete", "自己", UserRole.ADMIN, null, null, null));
+
+        // 操作者删除自己应被拒绝
+        assertThatThrownBy(() -> userService.delete(created.user().id(), created.user().id()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("不能删除当前登录的账号");
+    }
+
+    @Test
     void listUsers_withFilters_shouldReturnFilteredResults() {
         // Given: 创建多个用户
         userService.create(new UserService.CreateUser(

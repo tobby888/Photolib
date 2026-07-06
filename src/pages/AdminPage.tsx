@@ -86,6 +86,18 @@ export default function AdminPage() {
       message.success(user.enabled ? '账号已停用' : '账号已启用'); await reload()
     } catch (e) { message.error((e as Error).message) }
   }
+  const deleteUser = (user: User) => {
+    modal.confirm({
+      title: '删除账号', okText: '删除', okButtonProps: { danger: true }, cancelText: '取消',
+      content: <span>确定删除账号 <strong>{user.displayName}</strong>（@{user.username}）吗？账号将被停用并从列表中移除，其历史记录仍会保留。</span>,
+      onOk: async () => {
+        try {
+          await api({ method: 'DELETE', url: `/users/${user.id}` })
+          message.success('账号已删除'); await reload()
+        } catch (e) { message.error((e as Error).message); throw e }
+      },
+    })
+  }
   return <>
     <PageTitle eyebrow="ADMINISTRATION" title="系统管理" description="维护账号、校区和系统运行秩序。" />
     <Card>
@@ -151,7 +163,7 @@ export default function AdminPage() {
               { title: '状态', dataIndex: 'enabled', render: value => <Tag color={value ? 'green' : 'default'} variant="filled">{value ? '正常' : '已停用'}</Tag> },
               { title: '操作', fixed: 'right', render: (_, item) => <Space><Switch size="small" checked={item.enabled} onChange={() => void toggleUser(item)} /><Button type="link" onClick={async () => {
                 try { const result = await api<{ initialPassword: string }>({ method: 'PUT', url: `/users/${item.id}/password` }); modal.warning({ title: '密码已重置', content: <Typography.Text copyable code>{result.initialPassword}</Typography.Text> }) } catch (e) { message.error((e as Error).message) }
-              }}>重置密码</Button></Space> },
+              }}>重置密码</Button><Button type="link" danger onClick={() => deleteUser(item)}>删除</Button></Space> },
             ]} />
           </DataState>
         </> },

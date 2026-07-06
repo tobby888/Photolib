@@ -108,6 +108,27 @@ public class UserService {
     }
 
     @Transactional
+    public void delete(Long id, Long operatorId) {
+        UserEntity user = require(id);
+        if (id.equals(operatorId)) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "不能删除当前登录的账号");
+        }
+        if (user.getRole() == UserRole.ADMIN && Boolean.TRUE.equals(user.getEnabled())
+                && userMapper.selectCount(Wrappers.<UserEntity>lambdaQuery()
+                .eq(UserEntity::getRole, UserRole.ADMIN).eq(UserEntity::getEnabled, true)) <= 1) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "不能删除唯一可用的管理员");
+        }
+        // 释放用户名：软删除后 uk_user_username 唯一约束仍占用原用户名，
+        // 重命名（保留唯一的 id 前缀）以便后续可重新创建同名账号。
+        String freed = "del." + id + "." + user.getUsername();
+        user.setUsername(freed.length() > 64 ? freed.substring(0, 64) : freed);
+        user.setEnabled(false);
+        userMapper.updateById(user);
+        userMapper.deleteById(id);
+        authService.revokeAll(id);
+    }
+
+    @Transactional
     public UserView setEnabled(Long id, boolean enabled) {
         UserEntity user = require(id);
         if (!enabled && user.getRole() == UserRole.ADMIN && Boolean.TRUE.equals(user.getEnabled())

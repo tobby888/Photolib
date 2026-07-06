@@ -546,5 +546,4 @@ body { background: var(--studio-paper); color: var(--studio-ink); }
   .delivery-hero { align-items: flex-start; flex-direction: column; padding: 24px 20px; }
   .delivery-gallery { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .delivery-gallery article > div { height: 150px; }
->>>>>>> 27b9ff857d095094327788f4d72e69f8539eb8b3
 }
