@@ -49,6 +49,13 @@ public class StatisticsController {
                 request.projectId(), request.campusId(), user));
     }
 
+    @PostMapping("/worklogs/export")
+    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    ApiResponse<ExportJobEntity> exportWorklogs(@Valid @RequestBody WorklogExportRequest request,
+                                                @AuthenticationPrincipal AuthenticatedUser user) {
+        return ApiResponse.ok(exports.createWorklogs(request.from(), request.to(), user));
+    }
+
     @PostMapping("/photos/batch-download")
     @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
     ApiResponse<ExportJobEntity> photoZip(@Valid @RequestBody PhotoZipRequest request,
@@ -64,6 +71,8 @@ public class StatisticsController {
 
     record ExportRequest(LocalDate from, LocalDate to, Long projectId, Long campusId,
                          @NotNull String format) {}
+    record WorklogExportRequest(@NotNull LocalDate from, @NotNull LocalDate to,
+                                @NotNull String format) {}
     record PhotoZipRequest(@NotEmpty @Size(max = 200) List<@NotNull Long> photoIds,
                            String purpose) {}
 }

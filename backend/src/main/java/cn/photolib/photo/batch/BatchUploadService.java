@@ -9,8 +9,11 @@ import cn.photolib.photo.mapper.PhotoMapper;
 import cn.photolib.photo.model.PhotoEntity;
 import cn.photolib.photo.model.PhotoStatus;
 import cn.photolib.request.RequestService;
+import cn.photolib.request.mapper.RequestParticipantMapper;
+import cn.photolib.request.model.RequestParticipantEntity;
 import cn.photolib.storage.ObjectStorageService;
 import cn.photolib.storage.StorageProperties;
+import cn.photolib.user.model.UserRole;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
@@ -30,6 +33,7 @@ public class BatchUploadService {
     private final PhotoUploadItemMapper itemMapper;
     private final PhotoMapper photoMapper;
     private final RequestService requestService;
+    private final RequestParticipantMapper participantMapper;
     private final ObjectStorageService storage;
     private final StorageProperties storageProperties;
     private final ApplicationEventPublisher events;
@@ -45,7 +49,15 @@ public class BatchUploadService {
                 || command.archiveSize() > MAX_ARCHIVE)) {
             throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "ZIP 不得超过 1.5 GB");
         }
-        if (command.requestId() != null) requestService.get(command.requestId());
+        if (command.requestId() != null) {
+            requestService.get(command.requestId());
+            if (user.role() == UserRole.CAMPUS_MANAGER
+                    && participantMapper.selectCount(Wrappers.<RequestParticipantEntity>lambdaQuery()
+                    .eq(RequestParticipantEntity::getRequestId, command.requestId())
+                    .eq(RequestParticipantEntity::getUserId, user.id())) == 0) {
+                throw new BusinessException(ErrorCode.FORBIDDEN, "仅需求参与人可批量上传图片");
+            }
+        }
         String batchId = PublicId.next();
         LocalDateTime now = LocalDateTime.now();
         PhotoUploadBatchEntity batch = new PhotoUploadBatchEntity();

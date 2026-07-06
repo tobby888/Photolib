@@ -4,7 +4,7 @@ import {
 } from 'antd'
 import { CheckOutlined, EyeOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons'
 import { useEffect, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { api, emptyPage, qs } from '../api'
 import { useAuth } from '../auth'
@@ -20,6 +20,7 @@ const statuses = [
 export default function RequestsPage() {
   const { user } = useAuth()
   const { message } = App.useApp()
+  const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const [form] = Form.useForm()
   const [open, setOpen] = useState(false)
@@ -63,7 +64,9 @@ export default function RequestsPage() {
     } catch (e) { message.error((e as Error).message) }
   }
   const actions = (item: PhotoRequest) => <Space>
-    <Button type="text" icon={<EyeOutlined />} onClick={() => setDetail(item)}>详情</Button>
+    <Button type="text" icon={<EyeOutlined />} onClick={() => navigate(`/requests/${item.id}`)}>
+      {user?.role === 'CAMPUS_MANAGER' ? '交付图片' : '详情'}
+    </Button>
     {user?.role === 'CAMPUS_MANAGER' && item.status === 'PUBLISHED' && <Button type="primary" onClick={() => void action(item, 'accept')}>接受任务</Button>}
     {user?.role !== 'CAMPUS_MANAGER' && item.status === 'DRAFT' && <Button onClick={() => void action(item, 'publish')}>发布</Button>}
     {user?.role === 'CAMPUS_MANAGER' && item.status === 'ACCEPTED' && <Button onClick={() => void action(item, 'submit')}>提交</Button>}

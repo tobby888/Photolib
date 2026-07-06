@@ -270,7 +270,7 @@ class RequestServiceTests {
 
         // When: 校区负责人查询需求
         var result = requestService.list(
-                1, 20, activeProject.getId(), null, null, managerUser);
+                1, 20, activeProject.getId(), null, null, null, managerUser);
 
         // Then: 应该只看到自己校区的需求
         assertThat(result.items()).hasSize(1);

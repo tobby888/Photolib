@@ -108,6 +108,7 @@ public class ProjectService {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "不允许的项目状态流转");
         }
         project.setStatus(target);
+        project.setCompletedAt(target == ProjectStatus.COMPLETED ? LocalDateTime.now() : null);
         project.setVersion(version);
         updateChecked(project);
         return get(id);
@@ -120,6 +121,7 @@ public class ProjectService {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "仅已完成项目可重新开放");
         }
         project.setStatus(ProjectStatus.ACTIVE);
+        project.setCompletedAt(null);
         project.setVersion(version);
         updateChecked(project);
         return get(id);

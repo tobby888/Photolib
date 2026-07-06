@@ -25,18 +25,27 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <AppErrorBoundary>
       <ConfigProvider locale={zhCN} theme={{
         token: {
-          colorPrimary: '#28594f',
-          colorInfo: '#28594f',
-          colorSuccess: '#3f7b65',
-          colorWarning: '#c57a3d',
-          colorError: '#b34f4f',
-          borderRadius: 10,
+          colorPrimary: '#1f594c',
+          colorInfo: '#1f594c',
+          colorSuccess: '#34745f',
+          colorWarning: '#c98837',
+          colorError: '#b84f4f',
+          colorText: '#202b28',
+          colorTextSecondary: '#6f7975',
+          colorBorder: '#e4e3dc',
+          colorBgLayout: '#f7f7f3',
+          colorBgContainer: '#fffefa',
+          borderRadius: 12,
+          controlHeight: 38,
+          boxShadowSecondary: '0 18px 45px rgba(25, 49, 42, .08)',
           fontFamily: '"PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", system-ui, sans-serif',
         },
         components: {
-          Layout: { bodyBg: '#f6f4ef', siderBg: '#173b35', headerBg: '#f6f4ef' },
-          Menu: { darkItemBg: '#173b35', darkItemSelectedBg: '#f0b66d', darkItemSelectedColor: '#173b35' },
+          Layout: { bodyBg: '#f7f7f3', siderBg: '#123d34', headerBg: 'rgba(247,247,243,.88)' },
+          Menu: { darkItemBg: '#123d34', darkItemSelectedBg: '#e9ba70', darkItemSelectedColor: '#153c34', darkItemHoverBg: 'rgba(255,255,255,.08)' },
           Card: { headerBg: 'transparent' },
+          Button: { primaryShadow: 'none' },
+          Table: { headerBg: '#f4f5f1', headerColor: '#56615d' },
         },
       }}>
         <AntApp>
