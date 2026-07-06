@@ -11,6 +11,7 @@ import dayjs from 'dayjs'
 import { useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, emptyPage } from '../api'
+import { readTakenAt } from '../exif'
 import { useAuth } from '../auth'
 import { DataState, StatusTag } from '../components'
 import { useLoad } from '../hooks'
@@ -217,7 +218,19 @@ export default function RequestDeliveryPage() {
               initialValues={{ takenAt: dayjs(), photographerName: user?.displayName }}>
               <Form.Item name="files" valuePropName="fileList" getValueFromEvent={event => event.fileList}
                 rules={[{ required: true, message: '请选择图片' }]}>
-                <Upload.Dragger multiple maxCount={20} accept=".jpg,.jpeg,.png" beforeUpload={() => false}>
+                <Upload.Dragger multiple maxCount={20} accept=".jpg,.jpeg,.png" beforeUpload={async (file, fileList) => {
+                  // 批量上传共用一个拍摄时间，自动读取取自第一张
+                  if (fileList[0] === file) {
+                    const takenAt = await readTakenAt(file)
+                    if (takenAt) {
+                      form.setFieldsValue({ takenAt })
+                      message.info('已根据第一张照片的 EXIF 自动填入拍摄时间')
+                    } else {
+                      message.warning('未能识别照片拍摄时间，请手动选择')
+                    }
+                  }
+                  return false
+                }}>
                   <p className="ant-upload-drag-icon"><InboxOutlined /></p>
                   <p className="ant-upload-text">拖入或选择需求图片</p>
                   <p className="ant-upload-hint">一次最多 20 张 JPG / PNG，单张不超过 100 MiB</p>
@@ -229,7 +242,8 @@ export default function RequestDeliveryPage() {
                 <Col span={12}><Form.Item label="学号" name="photographerStudentId"
                   rules={[{ required: true, message: '请输入学号' }]}><Input /></Form.Item></Col>
               </Row>
-              <Form.Item label="拍摄时间" name="takenAt" rules={[{ required: true }]}>
+              <Form.Item label="拍摄时间" name="takenAt" rules={[{ required: true }]}
+                extra="批量上传统一采用该时间，已自动取自第一张照片的 EXIF，可手动调整">
                 <DatePicker showTime style={{ width: '100%' }} />
               </Form.Item>
               <Form.Item label="标签" name="tags">
