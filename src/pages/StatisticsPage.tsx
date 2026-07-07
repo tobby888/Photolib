@@ -7,9 +7,17 @@ import type { MemberStats } from '../types'
 import { DataState, formatMinutes, PageTitle } from '../components'
 import { useLoad } from '../hooks'
 
+interface ExportJobView {
+  job: { status: 'PENDING' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED'; errorMessage?: string }
+  downloadUrl?: string
+}
+
+const wait = (milliseconds: number) => new Promise(resolve => window.setTimeout(resolve, milliseconds))
+
 export default function StatisticsPage() {
   const { message } = App.useApp()
   const [range, setRange] = useState<[string, string]>([dayjs().startOf('year').format('YYYY-MM-DD'), dayjs().format('YYYY-MM-DD')])
+  const [exporting, setExporting] = useState(false)
   const { data, loading, error, reload } = useLoad(async () => {
     const params = { from: range[0], to: range[1] }
     const [overview, members] = await Promise.all([
@@ -19,16 +27,29 @@ export default function StatisticsPage() {
     return { overview, members }
   }, { overview: {} as Record<string, number>, members: [] as MemberStats[] }, [range[0], range[1]])
   const exportData = async () => {
+    setExporting(true)
     try {
       const job = await api<{ id?: string; jobId?: string }>({ method: 'POST', url: '/statistics/members/export',
         data: { from: range[0], to: range[1], projectId: null, campusId: null, format: 'XLSX' } })
-      message.success(`导出任务已创建：${job.id || job.jobId}`)
+      const jobId = job.id || job.jobId
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        const result = await api<ExportJobView>({ url: `/export-jobs/${jobId}` })
+        if (result.job.status === 'SUCCEEDED' && result.downloadUrl) {
+          window.location.assign(result.downloadUrl)
+          message.success('统计文件已生成')
+          return
+        }
+        if (result.job.status === 'FAILED') throw new Error(result.job.errorMessage || '导出失败')
+        await wait(1000)
+      }
+      message.info('导出任务仍在处理中，请稍后重试')
     } catch (e) { message.error((e as Error).message) }
+    finally { setExporting(false) }
   }
   const maxAdopted = Math.max(1, ...data.members.map(m => m.adoptedCount))
   return <>
     <PageTitle eyebrow="INSIGHTS" title="数据统计" description="按选题结束时间统计工时，并对应每位成员的图片被引数。"
-      extra={<Button type="primary" size="large" icon={<DownloadOutlined />} onClick={() => void exportData()}>导出 XLSX</Button>} />
+      extra={<Button type="primary" size="large" icon={<DownloadOutlined />} loading={exporting} onClick={() => void exportData()}>导出 XLSX</Button>} />
     <Card className="filter-card">
       <Space><span>选题结束时间</span><DatePicker.RangePicker value={[dayjs(range[0]), dayjs(range[1])]}
         onChange={values => values?.[0] && values[1] && setRange([values[0].format('YYYY-MM-DD'), values[1].format('YYYY-MM-DD')])} /></Space>
