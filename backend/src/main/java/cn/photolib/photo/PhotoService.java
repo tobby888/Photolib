@@ -117,12 +117,15 @@ public class PhotoService {
         photo.setStatus(PhotoStatus.PROCESSING);
         photo.setFailureReason(null);
 
-        // Use optimistic locking to prevent race conditions
-        int currentVersion = photo.getVersion();
-        photo.setVersion(currentVersion + 1);
+        // Guard against concurrent completion: only the request that still sees
+        // UPLOADING wins. Optimistic version bump/check is applied automatically by
+        // the @Version OptimisticLockerInnerInterceptor (BaseEntity.version) — do NOT
+        // touch version by hand here. Manually setting version and adding an explicit
+        // version predicate double-applies the lock: the interceptor injects
+        // `WHERE version = <manual value>` which never matches the stored row, so the
+        // update silently affects 0 rows and every complete-upload 409s (H-3 regression).
         int updated = mapper.update(photo, Wrappers.<PhotoEntity>lambdaUpdate()
             .eq(PhotoEntity::getId, id)
-            .eq(PhotoEntity::getVersion, currentVersion)
             .eq(PhotoEntity::getStatus, PhotoStatus.UPLOADING));
         if (updated != 1) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "图片状态已变更，请刷新后重试");
@@ -332,20 +335,23 @@ public class PhotoService {
                     properties.downloadUrlTtl()).url().toString();
         }
         // 获取图片关联的所有项目
-        List<Long> projectIds = jdbc.sql("""
-                SELECT DISTINCT project_id FROM photo_project
-                WHERE photo_id = :photoId
-                ORDER BY project_id
+        List<ProjectLink> projects = jdbc.sql("""
+                SELECT DISTINCT pr.id, pr.title
+                FROM photo_project pp
+                JOIN project pr ON pr.id = pp.project_id AND pr.deleted = 0
+                WHERE pp.photo_id = :photoId
+                ORDER BY pr.id
                 """)
                 .param("photoId", p.getId())
-                .query(Long.class)
+                .query((rs, rowNum) -> new ProjectLink(rs.getLong("id"), rs.getString("title")))
                 .list();
+        List<Long> projectIds = projects.stream().map(ProjectLink::id).toList();
 
         return new PhotoView(p.getId(), p.getRequestId(), p.getProjectId(), p.getTitle(), p.getDescription(),
                 p.getPhotographerStudentId(), p.getPhotographerName(), p.getUploadedBy(), p.getCampusId(),
                 p.getTakenAt(), p.getTagsJson(), p.getWidth(), p.getHeight(), p.getSize(), p.getContentType(),
                 p.getStoredFileName(), thumbnailUrl, p.getStatus(), p.getFailureReason(),
-                p.getCreatedAt(), p.getVersion(), adoptionCount(p.getId()), projectIds);
+                p.getCreatedAt(), p.getVersion(), adoptionCount(p.getId()), projectIds, projects);
     }
 
     private long adoptionCount(Long photoId) {
@@ -370,5 +376,6 @@ public class PhotoService {
                             Integer height, Long size, String contentType, String storedFileName,
                             String thumbnailUrl, PhotoStatus status, String failureReason,
                             LocalDateTime uploadedAt, Integer version, long adoptionCount,
-                            List<Long> relatedProjectIds) {}
+                            List<Long> relatedProjectIds, List<ProjectLink> relatedProjects) {}
+    public record ProjectLink(Long id, String title) {}
 }

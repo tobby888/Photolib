@@ -3,6 +3,7 @@ package cn.photolib.storage;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.time.Duration;
+import java.util.List;
 
 @ConfigurationProperties(prefix = "photolib.storage")
 public record StorageProperties(
@@ -15,6 +16,7 @@ public record StorageProperties(
         String localDirectory,
         String publicBaseUrl,
         String signingSecret,
+        List<String> corsAllowedOrigins,
         Duration uploadUrlTtl,
         Duration downloadUrlTtl,
         Duration originalRetention,

@@ -6,12 +6,12 @@ import {
   ArrowLeftOutlined, CheckCircleOutlined, CloudUploadOutlined, InboxOutlined,
   PictureOutlined, SendOutlined,
 } from '@ant-design/icons'
-import axios from 'axios'
 import dayjs from 'dayjs'
 import { useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, emptyPage } from '../api'
 import { readTakenAt } from '../exif'
+import { uploadToObjectStorage } from '../storageUpload'
 import { useAuth } from '../auth'
 import { DataState, StatusTag } from '../components'
 import { useLoad } from '../hooks'
@@ -124,13 +124,7 @@ export default function RequestDeliveryPage() {
             takenAt: values.takenAt.format('YYYY-MM-DDTHH:mm:ss'),
           },
         })
-        await axios.request({
-          method: ticket.method || 'PUT',
-          url: ticket.uploadUrl,
-          data: file,
-          headers: { 'Content-Type': ticket.contentType },
-          transformRequest: [(value) => value],
-        })
+        await uploadToObjectStorage(ticket, file)
         await api({
           method: 'POST',
           url: `/photos/${ticket.photoId}/complete-upload`,
@@ -183,10 +177,9 @@ export default function RequestDeliveryPage() {
       </section>
 
       <Row gutter={[18, 18]} className="delivery-metrics">
-        <Col xs={12} md={6}><Statistic title="需求数量" value={request.requiredCount} suffix="张" /></Col>
-        <Col xs={12} md={6}><Statistic title="当前列表" value={photosState.data.total} suffix="张" /></Col>
-        <Col xs={12} md={6}><Statistic title="项目" value={requestState.data.project?.title || `#${request.projectId}`} /></Col>
-        <Col xs={12} md={6}><Statistic title="剩余时间"
+        <Col xs={12} md={8}><Statistic title="当前列表" value={photosState.data.total} suffix="张" /></Col>
+        <Col xs={12} md={8}><Statistic title="项目" value={requestState.data.project?.title || `#${request.projectId}`} /></Col>
+        <Col xs={12} md={8}><Statistic title="剩余时间"
           value={dayjs(request.deadline).isBefore(dayjs()) ? '已截止' : `${Math.max(1, dayjs(request.deadline).diff(dayjs(), 'day'))} 天`} /></Col>
       </Row>
 
@@ -218,7 +211,7 @@ export default function RequestDeliveryPage() {
               initialValues={{ takenAt: dayjs(), photographerName: user?.displayName }}>
               <Form.Item name="files" valuePropName="fileList" getValueFromEvent={event => event.fileList}
                 rules={[{ required: true, message: '请选择图片' }]}>
-                <Upload.Dragger multiple maxCount={20} accept=".jpg,.jpeg,.png" beforeUpload={async (file, fileList) => {
+                <Upload.Dragger multiple accept=".jpg,.jpeg,.png" beforeUpload={async (file, fileList) => {
                   // 批量上传共用一个拍摄时间，自动读取取自第一张
                   if (fileList[0] === file) {
                     const takenAt = await readTakenAt(file)
@@ -233,7 +226,7 @@ export default function RequestDeliveryPage() {
                 }}>
                   <p className="ant-upload-drag-icon"><InboxOutlined /></p>
                   <p className="ant-upload-text">拖入或选择需求图片</p>
-                  <p className="ant-upload-hint">一次最多 20 张 JPG / PNG，单张不超过 100 MiB</p>
+                  <p className="ant-upload-hint">支持多张 JPG / PNG，单张不超过 100 MiB</p>
                 </Upload.Dragger>
               </Form.Item>
               <Row gutter={12}>

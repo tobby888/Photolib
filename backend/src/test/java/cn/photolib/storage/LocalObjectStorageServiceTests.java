@@ -20,6 +20,7 @@ class LocalObjectStorageServiceTests {
         StorageProperties properties = new StorageProperties(
                 "local", null, null, null, null, null, directory.toString(),
                 "http://localhost:8080/api/v1/local-storage/objects", "test-secret",
+                java.util.List.of("*"),
                 Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofDays(30),
                 10_485_760, 104_857_600);
         LocalObjectStorageService storage = new LocalObjectStorageService(properties);
@@ -49,6 +50,7 @@ class LocalObjectStorageServiceTests {
         StorageProperties properties = new StorageProperties(
                 "local", null, null, null, null, null, directory.toString(),
                 "http://localhost:8080/api/v1/local-storage/objects", "test-secret",
+                java.util.List.of("*"),
                 Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofDays(30),
                 10_485_760, 104_857_600);
         LocalObjectStorageService storage = new LocalObjectStorageService(properties);

@@ -36,6 +36,8 @@ class PhotoServiceTests {
     private CampusService campusService;
     @Autowired
     private JdbcClient jdbc;
+    @Autowired
+    private ObjectStorageService storage;
 
     private AuthenticatedUser adminUser;
     private AuthenticatedUser ministerUser;
@@ -124,6 +126,32 @@ class PhotoServiceTests {
                 .query((rs, rowNum) -> new long[]{rs.getLong("request_id"), rs.getLong("project_id")})
                 .single();
         assertThat(stored).containsExactly(2901L, testProject.getId());
+    }
+
+    @Test
+    void complete_shouldTransitionToProcessing() {
+        // Regression for H-3 optimistic-lock double-application: complete-upload was
+        // 409-ing on every call because manual version handling conflicted with the
+        // @Version OptimisticLockerInnerInterceptor, so processing never started and
+        // OSS kept only the original. This exercises the real interceptor via H2.
+        var ticket = photoService.createTicket(new PhotoService.CreateTicket(
+                null, testProject.getId(), "done.jpg", "image/jpeg", 1024L,
+                "e".repeat(64), "20230001", "张三", LocalDateTime.now()), adminUser);
+
+        // Simulate the browser having PUT the original object to storage.
+        String originalKey = jdbc.sql("SELECT original_object_key FROM photo WHERE id=:id")
+                .param("id", ticket.photoId())
+                .query(String.class).single();
+        byte[] bytes = "non-empty-original".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        storage.put(originalKey, new java.io.ByteArrayInputStream(bytes), bytes.length, "image/jpeg");
+
+        var view = photoService.complete(ticket.photoId(),
+                new PhotoService.CompleteUpload("标题", "描述", java.util.List.of("tag")), adminUser);
+
+        assertThat(view.status()).isEqualTo(PhotoStatus.PROCESSING);
+        String status = jdbc.sql("SELECT status FROM photo WHERE id=:id")
+                .param("id", ticket.photoId()).query(String.class).single();
+        assertThat(status).isEqualTo("PROCESSING");
     }
 
     @Test

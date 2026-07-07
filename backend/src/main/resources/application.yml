@@ -57,6 +57,7 @@ photolib:
     local-directory: ${LOCAL_STORAGE_DIRECTORY:./data/object-storage}
     public-base-url: ${LOCAL_STORAGE_PUBLIC_BASE_URL:http://localhost:${SERVER_PORT:8080}/api/v1/local-storage/objects}
     signing-secret: ${LOCAL_STORAGE_SIGNING_SECRET:photolib-local-development-secret}
+    cors-allowed-origins: ${OSS_CORS_ALLOWED_ORIGINS:*}
     upload-url-ttl: 15m
     download-url-ttl: 15m
     original-retention: 30d

@@ -45,7 +45,7 @@ export interface PhotoRequest extends BaseEntity {
   title: string
   description: string
   campusId: EntityId
-  requiredCount: number
+  requiredCount?: number | null
   deadline: string
   status: 'DRAFT' | 'PUBLISHED' | 'ACCEPTED' | 'SUBMITTED' | 'COMPLETED' | 'CANCELLED'
   createdBy: EntityId
@@ -70,8 +70,10 @@ export interface Photo extends BaseEntity {
   thumbnailUrl?: string
   storedFileName: string
   status: 'UPLOADING' | 'PROCESSING' | 'AVAILABLE' | 'ARCHIVED' | 'DELETED'
+  failureReason?: string
   adoptionCount?: number
   relatedProjectIds?: EntityId[]
+  relatedProjects?: { id: EntityId; title: string }[]
 }
 
 export interface Adoption {

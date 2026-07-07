@@ -256,6 +256,6 @@ public class RequestService {
     }
 
     public record CreateCommand(String title, String description, Long campusId,
-                                int requiredCount, LocalDateTime deadline) {
+                                Integer requiredCount, LocalDateTime deadline) {
     }
 }
