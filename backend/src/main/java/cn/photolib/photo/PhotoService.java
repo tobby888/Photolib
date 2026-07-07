@@ -75,6 +75,13 @@ public class PhotoService {
         photo.setSha256(command.sha256().toLowerCase());
         photo.setStatus(PhotoStatus.UPLOADING);
         mapper.insert(photo);
+        // 归属链接：项目相册/计数以 photo_project 为准。新照片 id 全新，(photo_id,project_id) 不会撞主键。
+        if (projectId != null) {
+            jdbc.sql("INSERT INTO photo_project (photo_id, project_id) VALUES (:photoId, :projectId)")
+                    .param("photoId", photo.getId())
+                    .param("projectId", projectId)
+                    .update();
+        }
         ObjectStorageService.SignedUrl signed = storage.presignPut(
                 originalKey, command.contentType(), properties.uploadUrlTtl());
         return new UploadTicket(photo.getId(), signed.url().toString(), signed.method(),
@@ -127,7 +134,8 @@ public class PhotoService {
                 .and(StringUtils.hasText(keyword), q -> q.like(PhotoEntity::getTitle, keyword)
                         .or().like(PhotoEntity::getDescription, keyword)
                         .or().like(PhotoEntity::getTagsJson, keyword))
-                .eq(projectId != null, PhotoEntity::getProjectId, projectId)
+                .inSql(projectId != null, PhotoEntity::getId,
+                        "SELECT photo_id FROM photo_project WHERE project_id = " + projectId)
                 .eq(requestId != null, PhotoEntity::getRequestId, requestId)
                 .eq(StringUtils.hasText(studentId), PhotoEntity::getPhotographerStudentId, studentId)
                 .like(StringUtils.hasText(photographerName), PhotoEntity::getPhotographerName, photographerName)

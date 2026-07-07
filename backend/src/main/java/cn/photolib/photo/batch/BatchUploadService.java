@@ -17,6 +17,7 @@ import cn.photolib.user.model.UserRole;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,6 +38,7 @@ public class BatchUploadService {
     private final ObjectStorageService storage;
     private final StorageProperties storageProperties;
     private final ApplicationEventPublisher events;
+    private final JdbcClient jdbc;
 
     @Transactional
     public BatchTicket create(CreateBatch command, AuthenticatedUser user) {
@@ -177,6 +179,13 @@ public class BatchUploadService {
         photo.setSha256(item.getSha256() == null ? "0".repeat(64) : item.getSha256());
         photo.setStatus(PhotoStatus.PROCESSING);
         photoMapper.insert(photo);
+        // 归属链接：项目相册/计数以 photo_project 为准。新照片 id 全新，不会撞主键。
+        if (photo.getProjectId() != null) {
+            jdbc.sql("INSERT INTO photo_project (photo_id, project_id) VALUES (:photoId, :projectId)")
+                    .param("photoId", photo.getId())
+                    .param("projectId", photo.getProjectId())
+                    .update();
+        }
         item.setTitle(metadata.title());
         item.setDescription(metadata.description());
         item.setPhotographerStudentId(metadata.photographerStudentId());

@@ -95,7 +95,8 @@ public class ProjectService {
         return jdbc.sql("""
                 SELECT
                     (SELECT COUNT(*) FROM photo_request WHERE project_id=:id AND deleted=0) AS request_count,
-                    (SELECT COUNT(*) FROM photo WHERE project_id=:id AND deleted=0) AS photo_count,
+                    (SELECT COUNT(*) FROM photo p JOIN photo_project pp ON pp.photo_id=p.id
+                        WHERE pp.project_id=:id AND p.deleted=0) AS photo_count,
                     (SELECT COUNT(*) FROM adoption WHERE project_id=:id AND deleted=0) AS adoption_count
                 """)
                 .param("id", id)
@@ -114,8 +115,8 @@ public class ProjectService {
                     (SELECT COUNT(*) FROM photo_request
                         WHERE project_id=:id AND deleted=0
                           AND (:campusId IS NULL OR campus_id=:campusId)) AS request_count,
-                    (SELECT COUNT(*) FROM photo
-                        WHERE project_id=:id AND deleted=0 AND uploaded_by=:userId) AS photo_count,
+                    (SELECT COUNT(*) FROM photo p JOIN photo_project pp ON pp.photo_id=p.id
+                        WHERE pp.project_id=:id AND p.deleted=0 AND p.uploaded_by=:userId) AS photo_count,
                     (SELECT COUNT(*) FROM adoption a
                         WHERE a.project_id=:id AND a.deleted=0
                           AND EXISTS (SELECT 1 FROM photo p
@@ -185,7 +186,8 @@ public class ProjectService {
         long related = jdbc.sql("""
                 SELECT (SELECT COUNT(*) FROM photo_request WHERE project_id=:id AND deleted=0)
                      + (SELECT COUNT(*) FROM adoption WHERE project_id=:id AND deleted=0)
-                     + (SELECT COUNT(*) FROM photo WHERE project_id=:id AND deleted=0)
+                     + (SELECT COUNT(*) FROM photo p JOIN photo_project pp ON pp.photo_id=p.id
+                            WHERE pp.project_id=:id AND p.deleted=0)
                 """).param("id", id).query(Long.class).single();
         if (related > 0) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "项目已有业务数据，只能取消");

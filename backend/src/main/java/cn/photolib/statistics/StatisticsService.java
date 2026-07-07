@@ -126,7 +126,11 @@ public class StatisticsService {
                 .param("p", projectId == null ? 0L : projectId).query(Long.class).single();
         long requests = jdbc.sql("SELECT COUNT(*) FROM photo_request WHERE deleted=0 AND (:p=0 OR project_id=:p)")
                 .param("p", projectId == null ? 0L : projectId).query(Long.class).single();
-        long photos = jdbc.sql("SELECT COUNT(*) FROM photo WHERE deleted=0 AND status='AVAILABLE' AND (:p=0 OR project_id=:p)")
+        long photos = jdbc.sql("""
+                SELECT COUNT(*) FROM photo p WHERE p.deleted=0 AND p.status='AVAILABLE'
+                  AND (:p=0 OR EXISTS (SELECT 1 FROM photo_project pp
+                                        WHERE pp.photo_id=p.id AND pp.project_id=:p))
+                """)
                 .param("p", projectId == null ? 0L : projectId).query(Long.class).single();
         long adoptions = jdbc.sql("SELECT COUNT(*) FROM adoption WHERE deleted=0 AND (:p=0 OR project_id=:p)")
                 .param("p", projectId == null ? 0L : projectId).query(Long.class).single();
