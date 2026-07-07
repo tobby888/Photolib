@@ -1,7 +1,7 @@
 import { Button, Card, Col, Image, List, Progress, Row, Space, Statistic, Typography } from 'antd'
 import {
   ArrowRightOutlined, CameraOutlined, CheckCircleOutlined, ClockCircleOutlined,
-  FolderOutlined, HeartOutlined, PlusOutlined,
+  FolderOutlined, PlusOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
@@ -53,11 +53,10 @@ export default function DashboardPage() {
 
     <DataState loading={loading} error={error} onRetry={reload}>
       <Row className="studio-metrics">
-        <Col xs={12} md={8} xl={4}><Statistic title="进行中项目" value={active} prefix={<FolderOutlined />} suffix={<small>个</small>} /></Col>
-        <Col xs={12} md={8} xl={5}><Statistic title="待处理需求" value={pending} prefix={<CheckCircleOutlined />} suffix={<small>项</small>} /></Col>
-        <Col xs={12} md={8} xl={5}><Statistic title="图库资产" value={data.photos.total} prefix={<CameraOutlined />} suffix={<small>张</small>} /></Col>
-        <Col xs={12} md={8} xl={5}><Statistic title="近期交付" value={completed} prefix={<ClockCircleOutlined />} suffix={<small>项</small>} /></Col>
-        <Col xs={24} md={16} xl={5}><Statistic title="项目健康度" value={active ? '良好' : '平稳'} prefix={<HeartOutlined />} /></Col>
+        <Col xs={12} md={12} xl={6}><Statistic title="进行中项目" value={active} prefix={<FolderOutlined />} suffix={<small>个</small>} /></Col>
+        <Col xs={12} md={12} xl={6}><Statistic title="待处理需求" value={pending} prefix={<CheckCircleOutlined />} suffix={<small>项</small>} /></Col>
+        <Col xs={12} md={12} xl={6}><Statistic title="图库资产" value={data.photos.total} prefix={<CameraOutlined />} suffix={<small>张</small>} /></Col>
+        <Col xs={12} md={12} xl={6}><Statistic title="近期交付" value={completed} prefix={<ClockCircleOutlined />} suffix={<small>项</small>} /></Col>
       </Row>
 
       <Row gutter={[18, 18]} className="gallery-dashboard">
@@ -87,7 +86,7 @@ export default function DashboardPage() {
                 <div className="queue-type"><CameraOutlined /></div>
                 <div className="queue-copy">
                   <Space wrap><Typography.Text strong>{item.title}</Typography.Text><StatusTag value={item.status} /></Space>
-                  <Typography.Text type="secondary">需要 {item.requiredCount} 张 · {dayjs(item.deadline).format('M 月 D 日 HH:mm')} 截止</Typography.Text>
+                  <Typography.Text type="secondary">{dayjs(item.deadline).format('M 月 D 日 HH:mm')} 截止</Typography.Text>
                 </div>
                 <Progress percent={requestProgress[item.status]} showInfo={false} strokeColor="#28594f" />
               </List.Item>} />
@@ -102,18 +101,6 @@ export default function DashboardPage() {
                 <div className="deadline-date"><strong>{dayjs(item.deadline).format('DD')}</strong><span>{dayjs(item.deadline).format('MM 月')}</span></div>
                 <div><Typography.Text strong>{item.title}</Typography.Text><Typography.Text type="secondary">剩余 {Math.max(0, dayjs(item.deadline).diff(dayjs(), 'day'))} 天</Typography.Text></div>
               </List.Item>} />
-          </Card>
-
-          <Card className="health-card" title="项目健康度"
-            extra={<Button type="link" onClick={() => navigate('/projects')}>查看全部 <ArrowRightOutlined /></Button>}>
-            <List dataSource={data.projects.items.slice(0, 5)} locale={{ emptyText: '暂无项目' }}
-              renderItem={(item) => {
-                const percent = item.status === 'COMPLETED' ? 100 : item.status === 'ACTIVE' ? 68 : item.status === 'DRAFT' ? 18 : 0
-                return <List.Item className="health-item" onClick={() => navigate(`/projects/${item.id}`)}>
-                  <div><Typography.Text strong>{item.title}</Typography.Text><StatusTag value={item.status} /></div>
-                  <Progress percent={percent} size="small" strokeColor="#28594f" />
-                </List.Item>
-              }} />
           </Card>
         </Col>
       </Row>

@@ -106,7 +106,7 @@ public class RequestController {
     record CreateRequest(@NotBlank @Size(max = 200) String title,
                          @Size(max = 5000) String description,
                          @NotNull Long campusId,
-                         @Min(1) @Max(10000) int requiredCount,
+                         @Min(1) Integer requiredCount,
                          @NotNull @Future LocalDateTime deadline) {
     }
 
@@ -116,7 +116,7 @@ public class RequestController {
     record UpdateRequest(@NotBlank @Size(max = 200) String title,
                          @Size(max = 5000) String description,
                          @NotNull Long campusId,
-                         @Min(1) @Max(10000) int requiredCount,
+                         @Min(1) Integer requiredCount,
                          @NotNull @Future LocalDateTime deadline,
                          @Min(1) int version) {}
 

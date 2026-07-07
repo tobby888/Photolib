@@ -1,5 +1,5 @@
 import {
-  App, Breadcrumb, Button, Card, Col, DatePicker, Form, Image, Input, InputNumber,
+  App, Breadcrumb, Button, Card, Col, DatePicker, Form, Image, Input,
   Modal, Row, Select, Space, Statistic, Table, Tag, Typography,
 } from 'antd'
 import {
@@ -265,7 +265,6 @@ export default function ProjectDetailPage() {
           columns={[
             { title: '需求', dataIndex: 'title', render: (value, item) => <div className="table-title"><strong>{value}</strong><span>{item.description || '暂无拍摄说明'}</span></div> },
             { title: '校区', dataIndex: 'campusId', render: value => data.campuses.find(c => c.id === value)?.name || `校区 #${value}` },
-            { title: '需要数量', dataIndex: 'requiredCount', render: value => `${value} 张` },
             { title: '截止时间', dataIndex: 'deadline', render: value => dayjs(value).format('YYYY-MM-DD HH:mm') },
             { title: '状态', dataIndex: 'status', render: value => <StatusTag value={value} /> },
             { title: '操作', render: (_, item) => <Button type="link" onClick={() => navigate(`/requests?projectId=${projectId}&requestId=${item.id}`)}>查看需求</Button> },
@@ -323,7 +322,7 @@ export default function ProjectDetailPage() {
       <Modal title="新建图片需求" width={640} open={requestOpen} onCancel={() => setRequestOpen(false)}
         onOk={createRequest} okText="保存需求草稿" confirmLoading={saving}>
         <Typography.Paragraph type="secondary">需求将归属到“{project.title}”，保存后可继续检查并发布。</Typography.Paragraph>
-        <Form form={requestForm} layout="vertical" requiredMark={false} initialValues={{ requiredCount: 10 }}>
+        <Form form={requestForm} layout="vertical" requiredMark={false}>
           <Form.Item label="需求标题" name="title" rules={[{ required: true, message: '请输入需求标题' }, { max: 200 }]}>
             <Input placeholder="例如：毕业典礼现场图片" />
           </Form.Item>
@@ -332,10 +331,7 @@ export default function ProjectDetailPage() {
             <Col xs={24} sm={8}><Form.Item label="拍摄校区" name="campusId" rules={[{ required: true, message: '请选择校区' }]}>
               <Select options={data.campuses.map(c => ({ value: c.id, label: c.name }))} placeholder="选择校区" />
             </Form.Item></Col>
-            <Col xs={24} sm={7}><Form.Item label="需要数量" name="requiredCount" rules={[{ required: true }]}>
-              <InputNumber min={1} max={10000} suffix="张" style={{ width: '100%' }} />
-            </Form.Item></Col>
-            <Col xs={24} sm={9}><Form.Item label="截止时间" name="deadline" rules={[{ required: true, message: '请选择截止时间' }]}>
+            <Col xs={24} sm={12}><Form.Item label="截止时间" name="deadline" rules={[{ required: true, message: '请选择截止时间' }]}>
               <DatePicker showTime format="YYYY-MM-DD HH:mm" disabledDate={date => date.isBefore(dayjs(), 'day')} style={{ width: '100%' }} />
             </Form.Item></Col>
           </Row>

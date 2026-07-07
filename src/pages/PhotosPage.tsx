@@ -1,13 +1,13 @@
 import {
   App, Button, Card, Col, DatePicker, Descriptions, Drawer, Form, Image, Input, Modal,
-  Pagination, Row, Select, Space, Tag, Typography, Upload,
+  Pagination, Progress, Row, Select, Space, Tag, Typography, Upload,
 } from 'antd'
 import { CloudUploadOutlined, DeleteOutlined, DownloadOutlined, InboxOutlined, SearchOutlined } from '@ant-design/icons'
 import { useState } from 'react'
 import dayjs from 'dayjs'
-import axios from 'axios'
 import { api, emptyPage, qs } from '../api'
 import { readTakenAt } from '../exif'
+import { uploadToObjectStorage } from '../storageUpload'
 import type { PageData, Photo } from '../types'
 import { DataState, formatBytes, PageTitle, StatusTag } from '../components'
 import { useLoad } from '../hooks'
@@ -19,17 +19,33 @@ export default function PhotosPage() {
   const [uploadForm] = Form.useForm()
   const [uploadOpen, setUploadOpen] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [uploadPhase, setUploadPhase] = useState<'uploading' | 'processing' | null>(null)
+  const [uploadPercent, setUploadPercent] = useState(0)
   const [selected, setSelected] = useState<Photo | null>(null)
   const [filters, setFilters] = useState({ page: 1, keyword: '', status: 'AVAILABLE' })
   const { data, loading, error, reload } = useLoad(
     () => api<PageData<Photo>>({ url: '/photos', params: qs({ ...filters, pageSize: 24 }) }),
     emptyPage<Photo>(), [filters.page, filters.keyword, filters.status],
   )
+  const waitForProcessing = async (photoId: string): Promise<Photo> => {
+    // complete-upload leaves the photo PROCESSING; the async pipeline flips it to
+    // AVAILABLE on success or back to UPLOADING (with failureReason) on failure.
+    // Poll until it settles so we can surface the real outcome instead of a silent
+    // "processing" that never appears in the (AVAILABLE-filtered) gallery.
+    const deadline = Date.now() + 90_000
+    let last: Photo | null = null
+    while (Date.now() < deadline) {
+      last = await api<Photo>({ url: `/photos/${photoId}` })
+      if (last.status !== 'PROCESSING') return last
+      await new Promise(resolve => setTimeout(resolve, 1500))
+    }
+    return last ?? await api<Photo>({ url: `/photos/${photoId}` })
+  }
   const submitUpload = async () => {
     const values = await uploadForm.validateFields()
     const file = values.file?.[0]?.originFileObj as File | undefined
     if (!file) return
-    setUploading(true)
+    setUploading(true); setUploadPercent(0); setUploadPhase('uploading')
     try {
       const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer())))
         .map(b => b.toString(16).padStart(2, '0')).join('')
@@ -41,12 +57,21 @@ export default function PhotosPage() {
           takenAt: values.takenAt.format('YYYY-MM-DDTHH:mm:ss'),
         },
       })
-      await axios.request({ method: ticket.method || 'PUT', url: ticket.uploadUrl, data: file,
-        headers: { 'Content-Type': ticket.contentType }, transformRequest: [(value) => value] })
+      await uploadToObjectStorage(ticket, file, setUploadPercent)
+      setUploadPhase('processing')
       await api({ method: 'POST', url: `/photos/${ticket.photoId}/complete-upload`,
         data: { title: values.title, description: values.description, tags: values.tags || [] } })
-      message.success('图片已上传，后台正在处理'); setUploadOpen(false); uploadForm.resetFields(); await reload()
-    } catch (e) { message.error((e as Error).message) } finally { setUploading(false) }
+      const photo = await waitForProcessing(ticket.photoId)
+      if (photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED') {
+        message.success('图片已上传并处理完成')
+      } else if (photo.status === 'PROCESSING') {
+        message.warning('图片仍在后台处理，请稍后在图片库刷新查看')
+      } else {
+        message.error(photo.failureReason ? `图片处理失败：${photo.failureReason}` : '图片处理失败，请重新上传')
+      }
+      setUploadOpen(false); uploadForm.resetFields(); await reload()
+    } catch (e) { message.error((e as Error).message) }
+    finally { setUploading(false); setUploadPhase(null); setUploadPercent(0) }
   }
   const download = async (photo: Photo) => {
     try {
@@ -103,8 +128,9 @@ export default function PhotosPage() {
       </Row>
       <Pagination current={filters.page} pageSize={24} total={data.total} hideOnSinglePage onChange={page => setFilters({ ...filters, page })} />
     </DataState>
-    <Modal title="上传单张图片" width={680} open={uploadOpen} onCancel={() => setUploadOpen(false)} onOk={submitUpload}
-      okText="开始上传" confirmLoading={uploading} destroyOnHidden>
+    <Modal title="上传单张图片" width={680} open={uploadOpen} onCancel={() => { if (!uploading) setUploadOpen(false) }} onOk={submitUpload}
+      okText="开始上传" confirmLoading={uploading} destroyOnHidden
+      maskClosable={!uploading} closable={!uploading} cancelButtonProps={{ disabled: uploading }}>
       <Form form={uploadForm} layout="vertical" requiredMark={false}>
         <Form.Item name="file" valuePropName="fileList" getValueFromEvent={e => e.fileList} rules={[{ required: true, message: '请选择图片' }]}>
           <Upload.Dragger accept=".jpg,.jpeg,.png" maxCount={1} beforeUpload={async file => {
@@ -127,6 +153,14 @@ export default function PhotosPage() {
         <Form.Item label="标签" name="tags"><Select mode="tags" maxCount={30} placeholder="输入后回车添加标签" /></Form.Item>
         <Form.Item label="图片说明" name="description"><Input.TextArea rows={3} /></Form.Item>
       </Form>
+      {uploadPhase && <div style={{ marginTop: 4 }}>
+        <Progress percent={uploadPhase === 'uploading' ? uploadPercent : 100} status="active" />
+        <Typography.Text type="secondary">
+          {uploadPhase === 'uploading'
+            ? `正在上传到对象存储… ${uploadPercent}%`
+            : '上传完成，后台正在压缩生成成品图与缩略图，请稍候…'}
+        </Typography.Text>
+      </div>}
     </Modal>
     <Drawer title="图片详情" width={520} open={!!selected} onClose={() => setSelected(null)}
       extra={selected && <Space>
@@ -140,8 +174,10 @@ export default function PhotosPage() {
         <Descriptions column={1} size="small" items={[
           { key: 'status', label: '状态', children: <StatusTag value={selected.status} /> },
           { key: 'adoption', label: '采用状态', children: selected.adoptionCount ? <Tag color="gold">已采用 × {selected.adoptionCount}</Tag> : '未采用' },
-          { key: 'projects', label: '关联项目', children: selected.relatedProjectIds?.length
-            ? <Space size={4} wrap>{selected.relatedProjectIds.map(pid => <Tag key={pid} color="blue">项目 #{pid}</Tag>)}</Space>
+          { key: 'projects', label: '关联项目', children: selected.relatedProjects?.length
+            ? <Space size={4} wrap>{selected.relatedProjects.map(project => <Tag key={project.id} color="blue">{project.title}</Tag>)}</Space>
+            : selected.relatedProjectIds?.length
+              ? <Space size={4} wrap>{selected.relatedProjectIds.map(pid => <Tag key={pid} color="blue">项目 #{pid}</Tag>)}</Space>
             : '无关联项目' },
           { key: 'photographer', label: '拍摄者', children: `${selected.photographerName} · ${selected.photographerStudentId}` },
           { key: 'taken', label: '拍摄时间', children: dayjs(selected.takenAt).format('YYYY-MM-DD HH:mm') },

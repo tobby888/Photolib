@@ -88,6 +88,18 @@ class RequestServiceTests {
     }
 
     @Test
+    void createRequest_withoutRequiredCount_shouldAllowUnlimitedUploads() {
+        RequestService.CreateCommand command = new RequestService.CreateCommand(
+                "无限制交付需求", "校区负责人可按实际情况上传图片",
+                testCampus.getId(), null, LocalDateTime.now().plusDays(7));
+
+        var request = requestService.create(activeProject.getId(), command, ministerUser);
+
+        assertThat(request.getRequiredCount()).isNull();
+        assertThat(request.getStatus()).isEqualTo(RequestStatus.DRAFT);
+    }
+
+    @Test
     void createRequest_inCompletedProject_shouldThrowException() {
         // When & Then: 已完成项目不能创建需求
         RequestService.CreateCommand command = new RequestService.CreateCommand(

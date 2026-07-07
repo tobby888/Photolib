@@ -15,3 +15,5 @@ __pycache__/
 .venv/
 # 旧系统源码，仅用于迁移期本地参考，不纳入本仓库
 photowarehouse/
+# 导出的审计日志等本地诊断文件
+photolib-audit-logs-*.csv
