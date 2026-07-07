@@ -68,6 +68,20 @@ class PhotoServiceTests {
                 "测试项目", "项目描述", ProjectStatus.ACTIVE, adminUser);
     }
 
+    /**
+     * 把每张照片按其 project_id 链接进 photo_project（幂等）。项目相册/计数现以该多对多表为准，
+     * 用裸 SQL 直插照片的测试需要补这一步（等价于 V12 迁移的回填）。
+     */
+    private void linkPhotosToProjects() {
+        jdbc.sql("""
+                INSERT INTO photo_project (photo_id, project_id)
+                SELECT p.id, p.project_id FROM photo p
+                WHERE p.project_id IS NOT NULL AND p.deleted = 0
+                  AND NOT EXISTS (SELECT 1 FROM photo_project pp
+                                  WHERE pp.photo_id = p.id AND pp.project_id = p.project_id)
+                """).update();
+    }
+
     @Test
     void createTicket_shouldGenerateUploadUrl() {
         // When: 创建上传票据
@@ -174,6 +188,7 @@ class PhotoServiceTests {
                 .update();
 
         // When: 校区负责人查询照片
+        linkPhotosToProjects();
         var result = photoService.list(
                 1, 20, null, testProject.getId(), null, null, null,
                 null, null, PhotoStatus.AVAILABLE, false, managerUser);
@@ -204,6 +219,7 @@ class PhotoServiceTests {
                 .update();
 
         // When: 管理员查询照片
+        linkPhotosToProjects();
         var result = photoService.list(
                 1, 20, null, testProject.getId(), null, null, null,
                 null, null, PhotoStatus.AVAILABLE, false, adminUser);
@@ -346,6 +362,7 @@ class PhotoServiceTests {
                 .param("adminId", adminUser.id())
                 .update();
 
+        linkPhotosToProjects();
         var listed = photoService.list(
                 1, 20, null, testProject.getId(), null, null, null,
                 null, null, PhotoStatus.AVAILABLE, false, adminUser);
@@ -425,5 +442,50 @@ class PhotoServiceTests {
         assertThatThrownBy(() -> photoService.delete(1004L, managerUser))
                 .isInstanceOf(BusinessException.class);
         assertThat(photoService.get(1004L, managerUser).id()).isEqualTo(1004L);
+    }
+
+    @Test
+    void listPhotos_shouldUseMembershipTable_soOnePhotoAppearsInMultipleProjects() {
+        // Given: 第二个项目 B，和一张“主项目=testProject”的照片
+        ProjectEntity projectB = projectService.create(
+                "项目B", "另一个项目", ProjectStatus.ACTIVE, adminUser);
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, project_id, title, photographer_student_id, photographer_name,
+                     uploaded_by, campus_id, taken_at, size, content_type, object_key, sha256, status)
+                VALUES
+                    (1500, :projectId, '多归属照片', '20230001', '张三', 200, :campusId,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/multi.jpg', :sha256, 'AVAILABLE')
+                """)
+                .param("projectId", testProject.getId())
+                .param("campusId", testCampus.getId())
+                .param("sha256", "n".repeat(64))
+                .update();
+        // 该照片同时归属 testProject 与 项目B（一图多项目）
+        jdbc.sql("INSERT INTO photo_project (photo_id, project_id) VALUES (1500, :a), (1500, :b)")
+                .param("a", testProject.getId()).param("b", projectB.getId())
+                .update();
+
+        // When & Then: 两个项目的相册都能查到这张照片
+        var inA = photoService.list(1, 20, null, testProject.getId(), null, null, null,
+                null, null, PhotoStatus.AVAILABLE, false, adminUser);
+        var inB = photoService.list(1, 20, null, projectB.getId(), null, null, null,
+                null, null, PhotoStatus.AVAILABLE, false, adminUser);
+        assertThat(inA.items()).extracting(PhotoService.PhotoView::id).contains(1500L);
+        assertThat(inB.items()).extracting(PhotoService.PhotoView::id).contains(1500L);
+    }
+
+    @Test
+    void createTicket_shouldCreateMembershipLink() {
+        var ticket = photoService.createTicket(new PhotoService.CreateTicket(
+                null, testProject.getId(), "linked.jpg", "image/jpeg", 1024L,
+                "o".repeat(64), "20230001", "张三", LocalDateTime.now()), adminUser);
+
+        Long links = jdbc.sql(
+                "SELECT COUNT(*) FROM photo_project WHERE photo_id=:pid AND project_id=:prj")
+                .param("pid", ticket.photoId())
+                .param("prj", testProject.getId())
+                .query(Long.class).single();
+        assertThat(links).isEqualTo(1L);
     }
 }

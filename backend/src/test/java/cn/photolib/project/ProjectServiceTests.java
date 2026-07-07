@@ -186,6 +186,45 @@ class ProjectServiceTests {
     }
 
     @Test
+    void getProjectDetail_photoCount_shouldCountViaMembershipTable() {
+        var project = projectService.create("统计项目", "描述", ProjectStatus.ACTIVE, adminUser);
+        // 两张照片：一张管理员上传、一张校区负责人上传，都归属该项目
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, project_id, title, photographer_student_id, photographer_name,
+                     uploaded_by, campus_id, taken_at, size, content_type, object_key, sha256, status)
+                VALUES
+                    (2001, :pid, '照片1', '20230001', '张三', 100, null,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/c1.jpg', :s1, 'AVAILABLE'),
+                    (2002, :pid, '照片2', '20230002', '李四', 102, 901,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/c2.jpg', :s2, 'AVAILABLE')
+                """)
+                .param("pid", project.getId())
+                .param("s1", "a".repeat(64))
+                .param("s2", "b".repeat(64))
+                .update();
+        jdbc.sql("INSERT INTO photo_project (photo_id, project_id) VALUES (2001, :pid), (2002, :pid)")
+                .param("pid", project.getId()).update();
+
+        // 让校区负责人对该项目可见：一条其参与的需求
+        jdbc.sql("""
+                INSERT INTO photo_request
+                    (id, project_id, title, campus_id, required_count, deadline, status, created_by)
+                VALUES (2100, :pid, '需求', 901, 1,
+                        DATEADD('DAY', 1, CURRENT_TIMESTAMP), 'ACCEPTED', 100)
+                """).param("pid", project.getId()).update();
+        jdbc.sql("""
+                INSERT INTO request_participant (request_id, user_id, accepted_at)
+                VALUES (2100, 102, NOW())
+                """).update();
+
+        // admin 看到全项目 2 张
+        assertThat(projectService.getDetail(project.getId(), adminUser).photoCount()).isEqualTo(2L);
+        // 校区负责人 scopedSummary 只数自己上传的 1 张
+        assertThat(projectService.getDetail(project.getId(), managerUser).photoCount()).isEqualTo(1L);
+    }
+
+    @Test
     void campusManager_shouldOnlySeeProjectsWithAssignedRequests() {
         var assigned = projectService.create("已指派项目", "描述", ProjectStatus.ACTIVE, adminUser);
         var hidden = projectService.create("未指派项目", "描述", ProjectStatus.ACTIVE, adminUser);

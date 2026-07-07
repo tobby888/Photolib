@@ -174,6 +174,11 @@ public class LegacyMigrationService {
                     createdAt);
             Long id = target.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
             remember("PHOTO", sourceId, id);
+            // 归属链接：项目相册/计数以 photo_project 为准。此处仅样图归属；完整的标签归属由
+            // scripts/restore_project_photos.py 重建。
+            if (project != null && id != null) {
+                target.update("INSERT INTO photo_project (photo_id, project_id) VALUES (?, ?)", id, project);
+            }
             count++;
         }
         return count;
