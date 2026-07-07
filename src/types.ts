@@ -71,6 +71,7 @@ export interface Photo extends BaseEntity {
   storedFileName: string
   status: 'UPLOADING' | 'PROCESSING' | 'AVAILABLE' | 'ARCHIVED' | 'DELETED'
   adoptionCount?: number
+  relatedProjectIds?: EntityId[]
 }
 
 export interface Adoption {

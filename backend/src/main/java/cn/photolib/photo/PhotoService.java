@@ -331,11 +331,21 @@ public class PhotoService {
             thumbnailUrl = storage.presignGet(p.getThumbnailObjectKey(), null,
                     properties.downloadUrlTtl()).url().toString();
         }
+        // 获取图片关联的所有项目
+        List<Long> projectIds = jdbc.sql("""
+                SELECT DISTINCT project_id FROM photo_project
+                WHERE photo_id = :photoId
+                ORDER BY project_id
+                """)
+                .param("photoId", p.getId())
+                .query(Long.class)
+                .list();
+
         return new PhotoView(p.getId(), p.getRequestId(), p.getProjectId(), p.getTitle(), p.getDescription(),
                 p.getPhotographerStudentId(), p.getPhotographerName(), p.getUploadedBy(), p.getCampusId(),
                 p.getTakenAt(), p.getTagsJson(), p.getWidth(), p.getHeight(), p.getSize(), p.getContentType(),
                 p.getStoredFileName(), thumbnailUrl, p.getStatus(), p.getFailureReason(),
-                p.getCreatedAt(), p.getVersion(), adoptionCount(p.getId()));
+                p.getCreatedAt(), p.getVersion(), adoptionCount(p.getId()), projectIds);
     }
 
     private long adoptionCount(Long photoId) {
@@ -359,5 +369,6 @@ public class PhotoService {
                             Long campusId, LocalDateTime takenAt, String tagsJson, Integer width,
                             Integer height, Long size, String contentType, String storedFileName,
                             String thumbnailUrl, PhotoStatus status, String failureReason,
-                            LocalDateTime uploadedAt, Integer version, long adoptionCount) {}
+                            LocalDateTime uploadedAt, Integer version, long adoptionCount,
+                            List<Long> relatedProjectIds) {}
 }

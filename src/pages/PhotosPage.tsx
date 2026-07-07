@@ -140,6 +140,9 @@ export default function PhotosPage() {
         <Descriptions column={1} size="small" items={[
           { key: 'status', label: '状态', children: <StatusTag value={selected.status} /> },
           { key: 'adoption', label: '采用状态', children: selected.adoptionCount ? <Tag color="gold">已采用 × {selected.adoptionCount}</Tag> : '未采用' },
+          { key: 'projects', label: '关联项目', children: selected.relatedProjectIds?.length
+            ? <Space size={4} wrap>{selected.relatedProjectIds.map(pid => <Tag key={pid} color="blue">项目 #{pid}</Tag>)}</Space>
+            : '无关联项目' },
           { key: 'photographer', label: '拍摄者', children: `${selected.photographerName} · ${selected.photographerStudentId}` },
           { key: 'taken', label: '拍摄时间', children: dayjs(selected.takenAt).format('YYYY-MM-DD HH:mm') },
           { key: 'size', label: '文件信息', children: `${selected.width || '-'} × ${selected.height || '-'} · ${formatBytes(selected.size)}` },

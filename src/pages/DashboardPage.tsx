@@ -41,8 +41,8 @@ export default function DashboardPage() {
     <section className="dashboard-header">
       <div>
         <Typography.Text className="eyebrow">{dayjs().format('YYYY 年 M 月 D 日 · dddd')}</Typography.Text>
-        <Typography.Title level={1}>早上好，{user?.displayName}</Typography.Title>
-        <Typography.Paragraph>{roleName[user?.role || '']}，今天也一起把好照片送到需要它的地方。</Typography.Paragraph>
+        <Typography.Title level={1}>欢迎回来，{user?.displayName}</Typography.Title>
+        <Typography.Paragraph>以{roleName[user?.role || '']}身份登录。让我们一起记录每个精彩瞬间，用影像讲述校园故事。</Typography.Paragraph>
       </div>
       <Space wrap>
         {user?.role !== 'CAMPUS_MANAGER' &&

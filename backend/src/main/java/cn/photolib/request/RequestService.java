@@ -197,11 +197,6 @@ public class RequestService {
         if (request.getStatus() != RequestStatus.ACCEPTED) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "仅已接受需求可提交");
         }
-        long photos = jdbc.sql("SELECT COUNT(*) FROM photo WHERE request_id=:id AND status='AVAILABLE' AND deleted=0")
-                .param("id", id).query(Long.class).single();
-        if (photos == 0) {
-            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "至少上传一张可用图片后才能提交");
-        }
         request.setStatus(RequestStatus.SUBMITTED);
         request.setVersion(version);
         updateChecked(request);
