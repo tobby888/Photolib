@@ -369,7 +369,7 @@ export default function ProjectDetailPage() {
             locale={{ emptyText: '没有可添加的图库图片' }}
             columns={[
               { title: '预览', width: 92, render: (_, photo) =>
-                photo.thumbnailUrl ? <Image width={68} height={48} style={{ objectFit: 'cover' }}
+                photo.thumbnailUrl ? <Image width={68} height={48} style={{ objectFit: 'contain' }}
                   preview={false} src={photo.thumbnailUrl} /> : '-' },
               { title: '图片', dataIndex: 'title', render: (value, photo) =>
                 <div className="table-title"><strong>{value || '未命名图片'}</strong>
