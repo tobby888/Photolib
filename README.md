@@ -442,6 +442,54 @@ export NEW_OSS_ACCESS_KEY_SECRET='...'
 导入完成后请核对 `photowarehouse-import-report.json` 中的归档行数、OSS 对象数/字节数和三类业务记录数量，
 并抽查原图及预览图。确认无误后再删除旧 Bucket。
 
+### 4. 恢复项目照片归属（`restore_project_photos.py`）
+
+旧系统里照片按**标签**归属项目（照片标签集合 ⊇ 项目标签集合），一张照片可同时出现在多个项目相册中。
+上面的 `import` 只给每个项目的**样图**写了归属，其余照片归属会丢失，导致新系统项目相册只剩样图。
+`scripts/restore_project_photos.py` 用同一个导出 JSON 包按标签规则重建**全部**归属，写入多对多表
+`photo_project`（一图多项目完整还原）。
+
+**前提：新库必须已经跑过包含 `photo_project` 表的迁移（`V12__photo_project_membership.sql`），
+即先启动一次新版后端让 Flyway 升级到最新版本。** 依赖与迁移脚本相同（含 `PyMySQL`），无需额外安装。
+
+先离线出报告核对（不连任何数据库，可反复运行）：
+
+```bash
+.venv-migration/bin/python scripts/restore_project_photos.py plan \
+  --input photowarehouse-export.json \
+  --output restore-plan.json
+```
+
+`plan` 会打印每个项目将获得的照片数，并生成 `restore-plan.json`、`restore-plan.projects.csv`
+（项目汇总）和 `restore-plan.ambiguous.csv`（同时归属多个项目的照片明细）。
+
+核对无误后连新库写入。**建议先 `--dry-run` 预演，只统计将新增的链接行数、不写库：**
+
+```bash
+export NEW_DATABASE_URL='mysql://user:password@new-db:3306/photolib?charset=utf8mb4'
+
+# 预演（不写库）
+.venv-migration/bin/python scripts/restore_project_photos.py apply \
+  --plan restore-plan.json \
+  --input photowarehouse-export.json \
+  --target-url "$NEW_DATABASE_URL" --dry-run
+
+# 确认无误后正式写入（去掉 --dry-run）
+.venv-migration/bin/python scripts/restore_project_photos.py apply \
+  --plan restore-plan.json \
+  --input photowarehouse-export.json \
+  --target-url "$NEW_DATABASE_URL"
+```
+
+要点：
+
+- 靠 `photo_project` 主键 `(photo_id, project_id)` 天然幂等（重复归属自动跳过），可安全重跑。
+- 旧→新主键映射优先用 `legacy_migration_item`；缺失时用照片 `object_key`、项目 `title` 兜底，
+  因此 `apply` 必须同时提供 `--input` 导出包。若迁移时改过对象 key 前缀，需带上与迁移一致的
+  `--source-prefix`/`--destination-prefix`（或 `OLD_OSS_PREFIX`/`NEW_OSS_PREFIX`）。
+- 只想人工审阅 SQL 时，用 `--emit-sql restore.sql` 生成 `INSERT INTO photo_project ...` 语句（不执行，仍需 `--target-url` 翻译 id）。
+- 无标签的项目在旧系统里本就空展示，`apply` 后仍为空，属正常。
+
 ## 关键业务约束
 
 - 仅支持 JPG、PNG；单图不超过 100 MiB，超过 10 MiB 时由后端压缩后入库。
