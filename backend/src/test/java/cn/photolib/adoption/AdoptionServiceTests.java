@@ -285,4 +285,75 @@ class AdoptionServiceTests {
         assertThat(topPhotographer.photographerName()).isEqualTo("张三");
         assertThat(topPhotographer.adoptedCount()).isEqualTo(2);
     }
+
+    @Test
+    void adoptPhotos_shouldCreatePhotoProjectLinks() {
+        // Given: 创建另一个项目，准备从图库添加图片
+        var targetProject = projectService.create(
+                "目标项目", "描述", ProjectStatus.ACTIVE, adminUser);
+
+        // When: 从图库添加图片到目标项目
+        adoptionService.adopt(targetProject.getId(), List.of(2001L, 2002L), "从图库添加", adminUser);
+
+        // Then: 应该在 photo_project 表中创建关联
+        Integer count = jdbc.sql("""
+                SELECT COUNT(*) FROM photo_project
+                WHERE project_id = :projectId AND photo_id IN (2001, 2002)
+                """)
+                .param("projectId", targetProject.getId())
+                .query(Integer.class)
+                .single();
+
+        assertThat(count).isEqualTo(2);
+    }
+
+    @Test
+    void cancelAdoption_shouldRemovePhotoProjectLink_whenNoOtherLinks() {
+        // Given: 创建一个新项目，从图库添加图片
+        var targetProject = projectService.create(
+                "目标项目", "描述", ProjectStatus.ACTIVE, adminUser);
+        var adoptions = adoptionService.adopt(
+                targetProject.getId(), List.of(2001L), "从图库添加", adminUser);
+
+        // When: 取消采用
+        adoptionService.cancel(targetProject.getId(), adoptions.get(0).getId());
+
+        // Then: photo_project 表中的关联应该被删除
+        Integer count = jdbc.sql("""
+                SELECT COUNT(*) FROM photo_project
+                WHERE project_id = :projectId AND photo_id = 2001
+                """)
+                .param("projectId", targetProject.getId())
+                .query(Integer.class)
+                .single();
+
+        assertThat(count).isEqualTo(0);
+    }
+
+    @Test
+    void cancelAdoption_shouldKeepPhotoProjectLink_whenPhotoOriginallyFromProject() {
+        // Given: 图片2001原本就属于activeProject（通过upload创建）
+        // 先在 photo_project 表中建立原始关联
+        jdbc.sql("INSERT INTO photo_project (photo_id, project_id) VALUES (2001, :projectId)")
+                .param("projectId", activeProject.getId())
+                .update();
+
+        // 然后采用这张照片
+        var adoptions = adoptionService.adopt(
+                activeProject.getId(), List.of(2001L), "采用自己项目的图片", adminUser);
+
+        // When: 取消采用
+        adoptionService.cancel(activeProject.getId(), adoptions.get(0).getId());
+
+        // Then: photo_project 表中的关联应该保留（因为图片本身就属于这个项目）
+        Integer count = jdbc.sql("""
+                SELECT COUNT(*) FROM photo_project
+                WHERE project_id = :projectId AND photo_id = 2001
+                """)
+                .param("projectId", activeProject.getId())
+                .query(Integer.class)
+                .single();
+
+        assertThat(count).isEqualTo(1);
+    }
 }
