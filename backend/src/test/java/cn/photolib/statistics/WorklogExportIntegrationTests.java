@@ -33,6 +33,7 @@ class WorklogExportIntegrationTests {
         long insideProjectId = base + 2;
         long outsideProjectId = base + 3;
         long requestId = base + 4;
+        long secondInsideProjectId = base + 5;
 
         jdbc.sql("""
                 INSERT INTO campus (id, code, name)
@@ -47,6 +48,8 @@ class WorklogExportIntegrationTests {
                 LocalDateTime.of(2026, 6, 20, 12, 0));
         insertProject(outsideProjectId, userId, "范围外结束项目",
                 LocalDateTime.of(2026, 7, 1, 0, 0));
+        insertProject(secondInsideProjectId, userId, "范围内结束项目二",
+                LocalDateTime.of(2026, 6, 22, 12, 0));
         jdbc.sql("""
                 INSERT INTO photo_request
                     (id, project_id, title, campus_id, required_count, deadline, status, created_by)
@@ -67,6 +70,9 @@ class WorklogExportIntegrationTests {
                 "成员乙", "20260002", 20, 10);
         insertWorklog(base + 13, requestId, userId, LocalDate.of(2026, 5, 31),
                 "成员甲", "20260001", 999, 999);
+        // 未确认（SUBMITTED）工时必须被排除，否则会把未审核工时发进工资。
+        insertWorklog(base + 14, requestId, userId, LocalDate.of(2026, 6, 10),
+                "成员乙", "20260002", 500, 500, "SUBMITTED");
 
         long photoOne = insertPhoto(base + 20, insideProjectId, requestId, campusId, userId,
                 "20260001", "成员甲", "inside-1-" + base + ".jpg");
@@ -77,6 +83,9 @@ class WorklogExportIntegrationTests {
         insertAdoption(base + 30, insideProjectId, photoOne, userId, "20260001", "成员甲");
         insertAdoption(base + 31, insideProjectId, photoTwo, userId, "20260001", "成员甲");
         insertAdoption(base + 32, outsideProjectId, outsidePhoto, userId, "20260001", "成员甲");
+        // 同一张照片被第二个（同样在范围内完成的）项目再次采用；被引张数应按 DISTINCT 照片计，
+        // 成员甲仍应是 2 张而非 3，避免一图多项目导致工资重复计发。
+        insertAdoption(base + 33, secondInsideProjectId, photoOne, userId, "20260001", "成员甲");
 
         String jobId = "WEXP" + base;
         jdbc.sql("""
@@ -101,9 +110,69 @@ class WorklogExportIntegrationTests {
             for (int index = 1; index <= sheet.getLastRowNum(); index++) {
                 rows.put(sheet.getRow(index).getCell(1).getStringCellValue(), sheet.getRow(index));
             }
+            // 成员甲：被引按 DISTINCT 照片计为 2（photoOne 虽被两个项目采用也只算一次）。
             assertExportRow(rows.get("20260001"), "成员甲", "测试校区", 75, 75, 150, 2);
+            // 成员乙：仅 CONFIRMED 工时计入（20/10），SUBMITTED 的 500/500 被排除。
             assertExportRow(rows.get("20260002"), "成员乙", "测试校区", 20, 10, 30, 0);
         }
+
+        // 本例所有被引摄影师均能匹配到已确认工时，不应产生对账告警。
+        Long falseAlerts = jdbc.sql("""
+                SELECT COUNT(*) FROM admin_alert
+                WHERE type='WORKLOG_EXPORT_UNMATCHED_ADOPTIONS' AND resource_id=:jobId
+                """).param("jobId", jobId).query(Long.class).single();
+        assertThat(falseAlerts).isZero();
+    }
+
+    @Test
+    void alertsWhenAdoptionHasNoMatchingConfirmedWorklog() throws Exception {
+        long base = System.nanoTime() & Long.MAX_VALUE;
+        long userId = base;
+        long campusId = base + 1;
+        long projectId = base + 2;
+        long requestId = base + 3;
+
+        jdbc.sql("""
+                INSERT INTO campus (id, code, name)
+                VALUES (:id, :code, '对账校区')
+                """).param("id", campusId).param("code", "recon-" + base).update();
+        jdbc.sql("""
+                INSERT INTO app_user
+                    (id, username, password_hash, display_name, role, enabled, must_change_password)
+                VALUES (:id, :username, 'hash', '对账管理员', 'ADMIN', TRUE, FALSE)
+                """).param("id", userId).param("username", "recon-export-" + base).update();
+        insertProject(projectId, userId, "对账范围内项目", LocalDateTime.of(2025, 3, 20, 12, 0));
+        jdbc.sql("""
+                INSERT INTO photo_request
+                    (id, project_id, title, campus_id, required_count, deadline, status, created_by)
+                VALUES (:id, :projectId, '对账拍摄需求', :campusId, 1, :deadline, 'IN_PROGRESS', :userId)
+                """)
+                .param("id", requestId).param("projectId", projectId).param("campusId", campusId)
+                .param("deadline", LocalDateTime.of(2025, 3, 30, 23, 59)).param("userId", userId).update();
+
+        // 使用与其他用例零重叠的 2025-03 区间隔离数据（worklogs() 是全库查询）。
+        // 工时成员学号 20250001；被采用照片的摄影师学号 20259999（对不上），应触发漏发告警。
+        insertWorklog(base + 10, requestId, userId, LocalDate.of(2025, 3, 10),
+                "有工时成员", "20250001", 60, 0);
+        long photo = insertPhoto(base + 20, projectId, requestId, campusId, userId,
+                "20259999", "无工时摄影师", "recon-" + base + ".jpg");
+        insertAdoption(base + 30, projectId, photo, userId, "20259999", "无工时摄影师");
+
+        String jobId = "RECON" + base;
+        jdbc.sql("""
+                INSERT INTO export_job (id, type, status, progress, created_by)
+                VALUES (:id, 'WORKLOGS', 'PENDING', 0, :userId)
+                """).param("id", jobId).param("userId", userId).update();
+
+        exports.exportWorklogs(new ExportService.WorklogExportRequested(
+                jobId, LocalDate.of(2025, 3, 1), LocalDate.of(2025, 3, 31)));
+        assertThat(waitForCompletion(jobId).getStatus()).isEqualTo("SUCCEEDED");
+
+        String message = jdbc.sql("""
+                SELECT message FROM admin_alert
+                WHERE type='WORKLOG_EXPORT_UNMATCHED_ADOPTIONS' AND resource_id=:jobId
+                """).param("jobId", jobId).query(String.class).single();
+        assertThat(message).contains("20259999").contains("1 张");
     }
 
     private void insertProject(long id, long userId, String title, LocalDateTime completedAt) {
@@ -117,17 +186,24 @@ class WorklogExportIntegrationTests {
 
     private void insertWorklog(long id, long requestId, long userId, LocalDate date,
                                String name, String studentId, int shooting, int retouching) {
+        insertWorklog(id, requestId, userId, date, name, studentId, shooting, retouching, "CONFIRMED");
+    }
+
+    private void insertWorklog(long id, long requestId, long userId, LocalDate date,
+                               String name, String studentId, int shooting, int retouching,
+                               String status) {
         jdbc.sql("""
                 INSERT INTO worklog
                     (id, request_id, user_id, work_date, shooting_minutes, retouching_minutes,
                      member_name, member_student_id, status)
                 VALUES
                     (:id, :requestId, :userId, :workDate, :shooting, :retouching,
-                     :memberName, :studentId, 'CONFIRMED')
+                     :memberName, :studentId, :status)
                 """)
                 .param("id", id).param("requestId", requestId).param("userId", userId)
                 .param("workDate", date).param("shooting", shooting).param("retouching", retouching)
-                .param("memberName", name).param("studentId", studentId).update();
+                .param("memberName", name).param("studentId", studentId)
+                .param("status", status).update();
     }
 
     private long insertPhoto(long id, long projectId, long requestId, long campusId, long userId,
