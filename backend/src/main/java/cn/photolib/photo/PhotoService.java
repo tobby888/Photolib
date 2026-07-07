@@ -347,11 +347,25 @@ public class PhotoService {
                 .list();
         List<Long> projectIds = projects.stream().map(ProjectLink::id).toList();
 
+        // 采用了该图片的项目：以真实采用记录 adoption 为准（区别于 photo_project 归属，
+        // 后者还包含直接上传到项目的关联）。展示与后端实际采用记录保持一致。
+        List<AdoptedProject> adoptedProjects = jdbc.sql("""
+                SELECT a.project_id, pr.title, a.adopted_at, a.remark
+                FROM adoption a
+                JOIN project pr ON pr.id = a.project_id AND pr.deleted = 0
+                WHERE a.photo_id = :photoId AND a.deleted = 0
+                ORDER BY a.adopted_at DESC, a.project_id
+                """)
+                .param("photoId", p.getId())
+                .query((rs, rowNum) -> new AdoptedProject(rs.getLong("project_id"), rs.getString("title"),
+                        rs.getObject("adopted_at", LocalDateTime.class), rs.getString("remark")))
+                .list();
+
         return new PhotoView(p.getId(), p.getRequestId(), p.getProjectId(), p.getTitle(), p.getDescription(),
                 p.getPhotographerStudentId(), p.getPhotographerName(), p.getUploadedBy(), p.getCampusId(),
                 p.getTakenAt(), p.getTagsJson(), p.getWidth(), p.getHeight(), p.getSize(), p.getContentType(),
                 p.getStoredFileName(), thumbnailUrl, p.getStatus(), p.getFailureReason(),
-                p.getCreatedAt(), p.getVersion(), adoptionCount(p.getId()), projectIds, projects);
+                p.getCreatedAt(), p.getVersion(), adoptionCount(p.getId()), projectIds, projects, adoptedProjects);
     }
 
     private long adoptionCount(Long photoId) {
@@ -376,6 +390,8 @@ public class PhotoService {
                             Integer height, Long size, String contentType, String storedFileName,
                             String thumbnailUrl, PhotoStatus status, String failureReason,
                             LocalDateTime uploadedAt, Integer version, long adoptionCount,
-                            List<Long> relatedProjectIds, List<ProjectLink> relatedProjects) {}
+                            List<Long> relatedProjectIds, List<ProjectLink> relatedProjects,
+                            List<AdoptedProject> adoptedProjects) {}
     public record ProjectLink(Long id, String title) {}
+    public record AdoptedProject(Long projectId, String projectTitle, LocalDateTime adoptedAt, String remark) {}
 }

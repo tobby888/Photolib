@@ -403,6 +403,59 @@ class PhotoServiceTests {
     }
 
     @Test
+    void get_shouldReturnAdoptedProjects_fromRealAdoptionRecords() {
+        // Given: 一张图片，被两个项目采用（其中一条备注），另有一条已取消（deleted=1）的采用记录
+        ProjectEntity projectB = projectService.create(
+                "采用项目B", "另一个项目", ProjectStatus.ACTIVE, adminUser);
+        ProjectEntity cancelledProject = projectService.create(
+                "已取消采用的项目", "描述", ProjectStatus.ACTIVE, adminUser);
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, project_id, title, photographer_student_id, photographer_name,
+                     uploaded_by, campus_id, taken_at, size, content_type, object_key, sha256, status)
+                VALUES
+                    (1013, :projectId, 'adopted projects photo', '20230001', 'photographer',
+                     :userId, :campusId, NOW(), 1000, 'image/jpeg', 'photos/adopted-projects.jpg',
+                     :sha256, 'AVAILABLE')
+                """)
+                .param("projectId", testProject.getId())
+                .param("userId", adminUser.id())
+                .param("campusId", testCampus.getId())
+                .param("sha256", "p".repeat(64))
+                .update();
+        jdbc.sql("""
+                INSERT INTO adoption
+                    (project_id, photo_id, photographer_student_id, photographer_name,
+                     adopted_by, adopted_at, remark, deleted)
+                VALUES
+                    (:projectA, 1013, '20230001', 'photographer', :adminId, NOW(), '首页用图', false),
+                    (:projectB, 1013, '20230001', 'photographer', :adminId, NOW(), null, false),
+                    (:cancelled, 1013, '20230001', 'photographer', :adminId, NOW(), null, true)
+                """)
+                .param("projectA", testProject.getId())
+                .param("projectB", projectB.getId())
+                .param("cancelled", cancelledProject.getId())
+                .param("adminId", adminUser.id())
+                .update();
+
+        // When: 查询图片详情
+        var view = photoService.get(1013L, adminUser);
+
+        // Then: 只返回未取消的采用项目，携带项目标题与备注
+        assertThat(view.adoptedProjects())
+                .extracting(PhotoService.AdoptedProject::projectId)
+                .containsExactlyInAnyOrder(testProject.getId(), projectB.getId());
+        assertThat(view.adoptedProjects())
+                .filteredOn(ap -> ap.projectId().equals(testProject.getId()))
+                .singleElement()
+                .satisfies(ap -> {
+                    assertThat(ap.projectTitle()).isEqualTo("测试项目");
+                    assertThat(ap.remark()).isEqualTo("首页用图");
+                    assertThat(ap.adoptedAt()).isNotNull();
+                });
+    }
+
+    @Test
     void archivePhoto_asMinister_shouldChangeStatus() {
         // Given: 可用的照片
         jdbc.sql("""

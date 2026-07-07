@@ -1,6 +1,6 @@
 import {
   App, Button, Card, Col, DatePicker, Descriptions, Drawer, Form, Image, Input, Modal,
-  Pagination, Progress, Row, Select, Space, Tag, Typography, Upload,
+  Pagination, Progress, Row, Select, Space, Tag, Tooltip, Typography, Upload,
 } from 'antd'
 import { CloudUploadOutlined, DeleteOutlined, DownloadOutlined, InboxOutlined, SearchOutlined } from '@ant-design/icons'
 import { useState } from 'react'
@@ -174,6 +174,13 @@ export default function PhotosPage() {
         <Descriptions column={1} size="small" items={[
           { key: 'status', label: '状态', children: <StatusTag value={selected.status} /> },
           { key: 'adoption', label: '采用状态', children: selected.adoptionCount ? <Tag color="gold">已采用 × {selected.adoptionCount}</Tag> : '未采用' },
+          { key: 'adoptedProjects', label: '采用项目', children: selected.adoptedProjects?.length
+            ? <Space size={4} wrap>{selected.adoptedProjects.map(ap => (
+                <Tooltip key={ap.projectId} title={`采用于 ${dayjs(ap.adoptedAt).format('YYYY-MM-DD HH:mm')}${ap.remark ? ` · ${ap.remark}` : ''}`}>
+                  <Tag color="gold">{ap.projectTitle}</Tag>
+                </Tooltip>
+              ))}</Space>
+            : '未被任何项目采用' },
           { key: 'projects', label: '关联项目', children: selected.relatedProjects?.length
             ? <Space size={4} wrap>{selected.relatedProjects.map(project => <Tag key={project.id} color="blue">{project.title}</Tag>)}</Space>
             : selected.relatedProjectIds?.length

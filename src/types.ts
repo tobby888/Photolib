@@ -74,6 +74,7 @@ export interface Photo extends BaseEntity {
   adoptionCount?: number
   relatedProjectIds?: EntityId[]
   relatedProjects?: { id: EntityId; title: string }[]
+  adoptedProjects?: { projectId: EntityId; projectTitle: string; adoptedAt: string; remark?: string }[]
 }
 
 export interface Adoption {
