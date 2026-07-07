@@ -7,6 +7,7 @@ import { useState } from 'react'
 import dayjs from 'dayjs'
 import axios from 'axios'
 import { api, emptyPage, qs } from '../api'
+import { readTakenAt } from '../exif'
 import type { PageData, Photo } from '../types'
 import { DataState, formatBytes, PageTitle, StatusTag } from '../components'
 import { useLoad } from '../hooks'
@@ -106,7 +107,16 @@ export default function PhotosPage() {
       okText="开始上传" confirmLoading={uploading} destroyOnHidden>
       <Form form={uploadForm} layout="vertical" requiredMark={false}>
         <Form.Item name="file" valuePropName="fileList" getValueFromEvent={e => e.fileList} rules={[{ required: true, message: '请选择图片' }]}>
-          <Upload.Dragger accept=".jpg,.jpeg,.png" maxCount={1} beforeUpload={() => false}>
+          <Upload.Dragger accept=".jpg,.jpeg,.png" maxCount={1} beforeUpload={async file => {
+            const takenAt = await readTakenAt(file)
+            if (takenAt) {
+              uploadForm.setFieldsValue({ takenAt })
+              message.info('已根据照片 EXIF 自动填入拍摄时间')
+            } else {
+              message.warning('未能识别照片拍摄时间，请手动选择')
+            }
+            return false
+          }}>
             <p className="ant-upload-drag-icon"><InboxOutlined /></p><p className="ant-upload-text">拖拽图片到这里，或点击选择</p><p className="ant-upload-hint">仅支持 JPG / PNG，单张不超过 100 MiB</p>
           </Upload.Dragger>
         </Form.Item>

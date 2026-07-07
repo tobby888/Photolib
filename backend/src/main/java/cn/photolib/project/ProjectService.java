@@ -80,7 +80,19 @@ public class ProjectService {
     public ProjectDetail getDetail(Long id, AuthenticatedUser user) {
         ProjectEntity project = get(id);
         requireVisible(project, user);
-        ProjectSummary summary = jdbc.sql("""
+        // Campus managers only see a slice of the project (their campus's requests, their own
+        // photos). Scope the summary counts to that same slice so the header stats match the
+        // request table and photo wall instead of exposing project-wide totals.
+        ProjectSummary summary = user.role() == UserRole.CAMPUS_MANAGER
+                ? scopedSummary(id, user)
+                : projectSummary(id);
+        return new ProjectDetail(project.getId(), project.getTitle(), project.getDescription(),
+                project.getStatus(), project.getCreatedBy(), project.getCreatedAt(), project.getUpdatedAt(),
+                project.getVersion(), summary.requestCount(), summary.photoCount(), summary.adoptionCount());
+    }
+
+    private ProjectSummary projectSummary(Long id) {
+        return jdbc.sql("""
                 SELECT
                     (SELECT COUNT(*) FROM photo_request WHERE project_id=:id AND deleted=0) AS request_count,
                     (SELECT COUNT(*) FROM photo WHERE project_id=:id AND deleted=0) AS photo_count,
@@ -92,9 +104,32 @@ public class ProjectService {
                         rs.getLong("photo_count"),
                         rs.getLong("adoption_count")))
                 .single();
-        return new ProjectDetail(project.getId(), project.getTitle(), project.getDescription(),
-                project.getStatus(), project.getCreatedBy(), project.getCreatedAt(), project.getUpdatedAt(),
-                project.getVersion(), summary.requestCount(), summary.photoCount(), summary.adoptionCount());
+    }
+
+    private ProjectSummary scopedSummary(Long id, AuthenticatedUser user) {
+        // Mirrors RequestService.list (campus lock, applied only when the manager has a campus)
+        // and PhotoService.list (uploader lock) so the counts equal what the manager can list.
+        return jdbc.sql("""
+                SELECT
+                    (SELECT COUNT(*) FROM photo_request
+                        WHERE project_id=:id AND deleted=0
+                          AND (:campusId IS NULL OR campus_id=:campusId)) AS request_count,
+                    (SELECT COUNT(*) FROM photo
+                        WHERE project_id=:id AND deleted=0 AND uploaded_by=:userId) AS photo_count,
+                    (SELECT COUNT(*) FROM adoption a
+                        WHERE a.project_id=:id AND a.deleted=0
+                          AND EXISTS (SELECT 1 FROM photo p
+                                      WHERE p.id=a.photo_id AND p.deleted=0
+                                        AND p.uploaded_by=:userId)) AS adoption_count
+                """)
+                .param("id", id)
+                .param("campusId", user.campusId())
+                .param("userId", user.id())
+                .query((rs, rowNum) -> new ProjectSummary(
+                        rs.getLong("request_count"),
+                        rs.getLong("photo_count"),
+                        rs.getLong("adoption_count")))
+                .single();
     }
 
     @Transactional

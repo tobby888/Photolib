@@ -116,8 +116,13 @@ public class PhotoService {
     public PageResponse<PhotoView> list(int page, int pageSize, String keyword, Long projectId,
                                         Long requestId, String studentId, String photographerName,
                                         Long uploadedBy, Long campusId, PhotoStatus status,
+                                        boolean includeAllStatuses,
                                         AuthenticatedUser user) {
         Long effectiveUploader = user.role() == UserRole.CAMPUS_MANAGER ? user.id() : uploadedBy;
+        // status explicitly given -> filter by it; otherwise default to AVAILABLE unless the
+        // caller opts into every status (used by the project detail gallery to match photoCount).
+        PhotoStatus effectiveStatus = status != null ? status
+                : includeAllStatuses ? null : PhotoStatus.AVAILABLE;
         var query = Wrappers.<PhotoEntity>lambdaQuery()
                 .and(StringUtils.hasText(keyword), q -> q.like(PhotoEntity::getTitle, keyword)
                         .or().like(PhotoEntity::getDescription, keyword)
@@ -128,7 +133,7 @@ public class PhotoService {
                 .like(StringUtils.hasText(photographerName), PhotoEntity::getPhotographerName, photographerName)
                 .eq(effectiveUploader != null, PhotoEntity::getUploadedBy, effectiveUploader)
                 .eq(campusId != null, PhotoEntity::getCampusId, campusId)
-                .eq(PhotoEntity::getStatus, status == null ? PhotoStatus.AVAILABLE : status)
+                .eq(effectiveStatus != null, PhotoEntity::getStatus, effectiveStatus)
                 .orderByDesc(PhotoEntity::getCreatedAt);
         Page<PhotoEntity> result = mapper.selectPage(Page.of(page, pageSize), query);
         return new PageResponse<>(result.getRecords().stream().map(this::toView).toList(),

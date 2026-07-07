@@ -46,9 +46,11 @@ public class PhotoController {
             @RequestParam(required = false) Long uploadedBy,
             @RequestParam(required = false) Long campusId,
             @RequestParam(required = false) PhotoStatus status,
+            @RequestParam(defaultValue = "false") boolean includeAllStatuses,
             @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.list(page, pageSize, keyword, projectId, requestId,
-                photographerStudentId, photographerName, uploadedBy, campusId, status, user));
+                photographerStudentId, photographerName, uploadedBy, campusId, status,
+                includeAllStatuses, user));
     }
 
     @GetMapping("/{id}")

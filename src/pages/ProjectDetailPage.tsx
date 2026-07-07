@@ -50,20 +50,27 @@ export default function ProjectDetailPage() {
   const [saving, setSaving] = useState(false)
   const [markingPhotoId, setMarkingPhotoId] = useState<string | null>(null)
   const { data, loading, error, reload } = useLoad(async () => {
-    const [project, requests, campuses, firstPhotos, firstAdoptions] = await Promise.all([
+    const [project, firstRequests, campuses, firstPhotos, firstAdoptions] = await Promise.all([
       api<Project>({ url: `/projects/${projectId}` }),
       api<PageData<PhotoRequest>>({ url: '/requests', params: { page: 1, pageSize: 100, projectId } }),
       api<Campus[]>({ url: '/campuses', params: { enabled: true } }),
-      api<PageData<Photo>>({ url: '/photos', params: { page: 1, pageSize: 100, projectId, status: 'AVAILABLE' } }),
+      api<PageData<Photo>>({ url: '/photos', params: { page: 1, pageSize: 100, projectId, includeAllStatuses: true } }),
       user?.role === 'CAMPUS_MANAGER'
         ? Promise.resolve(emptyPage<Adoption>())
         : api<PageData<Adoption>>({ url: `/projects/${projectId}/adoptions`, params: { page: 1, pageSize: 100 } }),
     ])
+    const requestPages = await Promise.all(Array.from(
+      { length: Math.max(0, firstRequests.totalPages - 1) },
+      (_, index) => api<PageData<PhotoRequest>>({
+        url: '/requests',
+        params: { page: index + 2, pageSize: 100, projectId },
+      }),
+    ))
     const photoPages = await Promise.all(Array.from(
       { length: Math.max(0, firstPhotos.totalPages - 1) },
       (_, index) => api<PageData<Photo>>({
         url: '/photos',
-        params: { page: index + 2, pageSize: 100, projectId, status: 'AVAILABLE' },
+        params: { page: index + 2, pageSize: 100, projectId, includeAllStatuses: true },
       }),
     ))
     const adoptionPages = await Promise.all(Array.from(
@@ -75,14 +82,14 @@ export default function ProjectDetailPage() {
     ))
     return {
       project,
-      requests,
+      requests: [firstRequests, ...requestPages].flatMap(page => page.items),
       campuses,
       photos: [firstPhotos, ...photoPages].flatMap(page => page.items),
       adoptions: [firstAdoptions, ...adoptionPages].flatMap(page => page.items),
     }
   }, {
     project: null as Project | null,
-    requests: emptyPage<PhotoRequest>(),
+    requests: [] as PhotoRequest[],
     campuses: [] as Campus[],
     photos: [] as Photo[],
     adoptions: [] as Adoption[],
@@ -254,7 +261,7 @@ export default function ProjectDetailPage() {
 
       <Card title="项目图片需求" extra={canManage && ['DRAFT', 'ACTIVE'].includes(project.status) &&
         <Button type="link" icon={<PlusOutlined />} onClick={() => setRequestOpen(true)}>新建需求</Button>}>
-        <Table rowKey="id" dataSource={data.requests.items} pagination={false} locale={{ emptyText: '这个项目还没有图片需求' }}
+        <Table rowKey="id" dataSource={data.requests} pagination={false} locale={{ emptyText: '这个项目还没有图片需求' }}
           columns={[
             { title: '需求', dataIndex: 'title', render: (value, item) => <div className="table-title"><strong>{value}</strong><span>{item.description || '暂无拍摄说明'}</span></div> },
             { title: '校区', dataIndex: 'campusId', render: value => data.campuses.find(c => c.id === value)?.name || `校区 #${value}` },
@@ -267,12 +274,12 @@ export default function ProjectDetailPage() {
 
       <Card
         title={`需求图片（${data.photos.length}）`}
-        extra={<Typography.Text type="secondary">汇总展示本选题下所有需求已上传的可用图片</Typography.Text>}
+        extra={<Typography.Text type="secondary">汇总展示本选题下所有需求已上传的图片</Typography.Text>}
       >
         {data.photos.length ? <Row gutter={[16, 20]} className="photo-grid">
           {data.photos.map(photo => {
             const adopted = data.adoptions.some(item => item.photoId === photo.id)
-            const request = data.requests.items.find(item => item.id === photo.requestId)
+            const request = data.requests.find(item => item.id === photo.requestId)
             return <Col xs={24} sm={12} lg={8} xxl={6} key={photo.id}>
               <Card
                 className="photo-card"
@@ -302,7 +309,7 @@ export default function ProjectDetailPage() {
                   danger={adopted}
                   icon={<LinkOutlined />}
                   loading={markingPhotoId === photo.id}
-                  disabled={project.status !== 'ACTIVE'}
+                  disabled={project.status !== 'ACTIVE' || photo.status !== 'AVAILABLE'}
                   onClick={() => void toggleAdoption(photo)}
                 >
                   {adopted ? '取消被引' : '标注图片被引'}
@@ -310,7 +317,7 @@ export default function ProjectDetailPage() {
               </Card>
             </Col>
           })}
-        </Row> : <div className="empty-state">这个选题的需求还没有上传可用图片</div>}
+        </Row> : <div className="empty-state">这个选题还没有上传图片</div>}
       </Card>
 
       <Modal title="新建图片需求" width={640} open={requestOpen} onCancel={() => setRequestOpen(false)}
