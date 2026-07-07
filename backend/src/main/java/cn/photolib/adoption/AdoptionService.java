@@ -104,14 +104,15 @@ public class AdoptionService {
                 SELECT a.photographer_student_id, a.photographer_name, COUNT(*) adopted_count
                 FROM adoption a JOIN photo p ON p.id=a.photo_id
                 WHERE a.deleted=0
-                  AND (:fromDate IS NULL OR DATE(a.adopted_at)>=:fromDate)
-                  AND (:toDate IS NULL OR DATE(a.adopted_at)<=:toDate)
+                  AND (:fromDate IS NULL OR a.adopted_at>=:fromDate)
+                  AND (:toExclusive IS NULL OR a.adopted_at<:toExclusive)
                   AND (:projectId IS NULL OR a.project_id=:projectId)
                   AND (:campusId IS NULL OR p.campus_id=:campusId)
                 GROUP BY a.photographer_student_id, a.photographer_name
                 ORDER BY adopted_count DESC, a.photographer_student_id
                 """;
-        List<Ranking> rows = jdbc.sql(sql).param("fromDate", from).param("toDate", to)
+        List<Ranking> rows = jdbc.sql(sql).param("fromDate", from)
+                .param("toExclusive", to == null ? null : to.plusDays(1))
                 .param("projectId", projectId).param("campusId", campusId)
                 .query((rs, n) -> new Ranking(0, rs.getString(1), rs.getString(2), rs.getLong(3))).list();
         long previous = -1; int rank = 0;

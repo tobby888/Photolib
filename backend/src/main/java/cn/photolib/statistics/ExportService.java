@@ -1,15 +1,19 @@
 package cn.photolib.statistics;
 
 import cn.photolib.auth.AuthenticatedUser;
+import cn.photolib.admin.AdminAlertEntity;
+import cn.photolib.admin.AdminAlertMapper;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.common.util.PublicId;
 import cn.photolib.photo.mapper.PhotoMapper;
 import cn.photolib.photo.model.PhotoEntity;
+import cn.photolib.photo.model.PhotoStatus;
 import cn.photolib.storage.ObjectStorageService;
 import cn.photolib.storage.StorageProperties;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
@@ -31,6 +35,7 @@ import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ExportService {
@@ -40,6 +45,7 @@ public class ExportService {
     private final ObjectStorageService storage;
     private final StorageProperties storageProperties;
     private final ApplicationEventPublisher events;
+    private final AdminAlertMapper alertMapper;
 
     @Transactional
     public ExportJobEntity createStatistics(LocalDate from, LocalDate to, Long projectId,
@@ -122,11 +128,17 @@ public class ExportService {
                         value.adoptedCount());
             }
             for (int column = 0; column < 7; column++) {
-                worklogs.autoSizeColumn(column);
+                try {
+                    worklogs.autoSizeColumn(column);
+                } catch (Exception ignored) {
+                    // autoSizeColumn 依赖 AWT 字体度量，无头/字体缺失环境可能抛异常；
+                    // 列宽仅影响美观，不能因此让工资相关的工时导出失败。
+                }
             }
             workbook.write(output);
             save(event.jobId(), output.toByteArray(),
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx");
+            alertUnmatchedAdoptions(event);
         } catch (Exception ex) {
             fail(event.jobId(), ex);
         }
@@ -139,10 +151,14 @@ public class ExportService {
         try {
             temporary = Files.createTempFile("photolib-export-", ".zip");
             try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(temporary))) {
+                // 仅打包在库/归档且未软删的图片；已删除或处理中的图片不得进入下载包。
                 List<PhotoEntity> photos = photoMapper.selectList(Wrappers.<PhotoEntity>lambdaQuery()
-                        .in(PhotoEntity::getId, event.photoIds()));
+                        .in(PhotoEntity::getId, event.photoIds())
+                        .eq(PhotoEntity::getDeleted, false)
+                        .in(PhotoEntity::getStatus, PhotoStatus.AVAILABLE, PhotoStatus.ARCHIVED));
+                java.util.Set<String> usedNames = new java.util.HashSet<>();
                 for (PhotoEntity photo : photos) {
-                    zip.putNextEntry(new ZipEntry(photo.getId() + "-" + photo.getStoredFileName()));
+                    zip.putNextEntry(new ZipEntry(uniqueEntryName(usedNames, photo)));
                     try (InputStream input = storage.open(photo.getObjectKey())) {
                         input.transferTo(zip);
                     }
@@ -197,12 +213,59 @@ public class ExportService {
         mapper.updateById(job);
     }
 
+    /**
+     * 工时导出后核对：若该期存在被引（采用）但学号匹配不到已确认工时成员的摄影师，
+     * 其被引数会在导出里静默归零，属于潜在漏发工资。此处写入管理员告警提醒人工核对，
+     * 但告警失败不得影响已成功的导出任务。
+     */
+    private void alertUnmatchedAdoptions(WorklogExportRequested event) {
+        try {
+            List<StatisticsService.UnmatchedAdoption> unmatched =
+                    statistics.unmatchedAdoptions(event.from(), event.to());
+            if (unmatched.isEmpty()) return;
+            long photos = unmatched.stream().mapToLong(StatisticsService.UnmatchedAdoption::adoptedCount).sum();
+            String detail = unmatched.stream().limit(20)
+                    .map(u -> u.photographerName() + "(" + u.photographerStudentId() + ")：" + u.adoptedCount() + " 张")
+                    .reduce((a, b) -> a + "，" + b).orElse("");
+            String message = "工时导出（" + event.from() + " 至 " + event.to() + "）发现 "
+                    + unmatched.size() + " 名摄影师共 " + photos
+                    + " 张被引图片无法匹配到已确认工时成员，被引数可能被漏算：" + detail;
+            AdminAlertEntity alert = new AdminAlertEntity();
+            alert.setType("WORKLOG_EXPORT_UNMATCHED_ADOPTIONS");
+            alert.setMessage(message.length() > 1000 ? message.substring(0, 1000) : message);
+            alert.setResourceType("EXPORT_JOB");
+            alert.setResourceId(event.jobId());
+            alert.setResolved(false);
+            alertMapper.insert(alert);
+        } catch (Exception ex) {
+            log.error("写入工时导出被引对账告警失败，导出本身已成功", ex);
+        }
+    }
+
     private void row(Sheet sheet, int index, Object... values) {
         Row row = sheet.createRow(index);
         for (int i = 0; i < values.length; i++) {
             if (values[i] instanceof Number n) row.createCell(i).setCellValue(n.doubleValue());
             else row.createCell(i).setCellValue(values[i] == null ? "" : values[i].toString());
         }
+    }
+
+    private String uniqueEntryName(java.util.Set<String> used, PhotoEntity photo) {
+        // storedFileName 可能含路径分隔符或与其他图片重名，需消毒并去重，避免 ZIP 条目冲突。
+        String stored = photo.getStoredFileName() == null ? "" : photo.getStoredFileName();
+        String safe = stored.replaceAll("[/\\\\]", "_");
+        if (safe.isBlank()) safe = photo.getId() + ".bin";
+        String base = photo.getId() + "-" + safe;
+        String candidate = base;
+        int suffix = 1;
+        while (!used.add(candidate)) {
+            int dot = base.lastIndexOf('.');
+            candidate = dot > 0
+                    ? base.substring(0, dot) + "(" + suffix + ")" + base.substring(dot)
+                    : base + "(" + suffix + ")";
+            suffix++;
+        }
+        return candidate;
     }
 
     public record StatisticsExportRequested(String jobId, LocalDate from, LocalDate to,

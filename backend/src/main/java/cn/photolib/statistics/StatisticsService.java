@@ -20,7 +20,7 @@ public class StatisticsService {
                     SELECT id
                     FROM project
                     WHERE deleted=0 AND status='COMPLETED'
-                      AND DATE(completed_at) BETWEEN :fromDate AND :toDate
+                      AND completed_at >= :fromDate AND completed_at < :toExclusive
                       AND (:projectId=0 OR id=:projectId)
                 ),
                 adoption_totals AS (
@@ -47,7 +47,7 @@ public class StatisticsService {
                 GROUP BY w.member_student_id,w.member_name
                 ORDER BY w.member_name
                 """).param("fromDate", from == null ? LocalDate.of(1900,1,1) : from)
-                .param("toDate", to == null ? LocalDate.of(2999,12,31) : to)
+                .param("toExclusive", to == null ? LocalDate.of(3000,1,1) : to.plusDays(1))
                 .param("projectId", projectId == null ? 0L : projectId)
                 .param("campusId", campusId == null ? 0L : campusId)
                 .param("userId", userId == null ? 0L : userId)
@@ -63,13 +63,13 @@ public class StatisticsService {
         return jdbc.sql("""
                 SELECT a.photographer_student_id,a.photographer_name,COUNT(*)
                 FROM adoption a JOIN photo p ON p.id=a.photo_id
-                WHERE a.deleted=0 AND DATE(a.adopted_at) BETWEEN :fromDate AND :toDate
+                WHERE a.deleted=0 AND a.adopted_at >= :fromDate AND a.adopted_at < :toExclusive
                   AND (:projectId=0 OR a.project_id=:projectId)
                   AND (:campusId=0 OR p.campus_id=:campusId)
                 GROUP BY a.photographer_student_id,a.photographer_name
                 ORDER BY COUNT(*) DESC
                 """).param("fromDate", from == null ? LocalDate.of(1900,1,1) : from)
-                .param("toDate", to == null ? LocalDate.of(2999,12,31) : to)
+                .param("toExclusive", to == null ? LocalDate.of(3000,1,1) : to.plusDays(1))
                 .param("projectId", projectId == null ? 0L : projectId)
                 .param("campusId", campusId == null ? 0L : campusId)
                 .query((rs, n) -> new AdoptionStatistics(rs.getString(1), rs.getString(2), rs.getLong(3)))
@@ -86,17 +86,18 @@ public class StatisticsService {
                     JOIN photo_request r ON r.id=w.request_id
                     LEFT JOIN campus c ON c.id=r.campus_id
                     WHERE w.deleted=0
+                      AND w.status='CONFIRMED'
                       AND w.work_date BETWEEN :fromDate AND :toDate
                     GROUP BY w.member_student_id, w.member_name
                 ),
                 adoption_totals AS (
-                    SELECT a.photographer_student_id, COUNT(*) AS adopted_count
+                    SELECT a.photographer_student_id, COUNT(DISTINCT a.photo_id) AS adopted_count
                     FROM adoption a
                     JOIN project p ON p.id=a.project_id
                     WHERE a.deleted=0
                       AND p.deleted=0
                       AND p.status='COMPLETED'
-                      AND DATE(p.completed_at) BETWEEN :fromDate AND :toDate
+                      AND p.completed_at >= :fromDate AND p.completed_at < :toExclusive
                       AND EXISTS (
                           SELECT 1 FROM matched_worklogs mw
                           WHERE mw.member_student_id=a.photographer_student_id
@@ -113,6 +114,7 @@ public class StatisticsService {
                 """)
                 .param("fromDate", from)
                 .param("toDate", to)
+                .param("toExclusive", to.plusDays(1))
                 .query((rs, n) -> {
                     int shooting = rs.getInt(4);
                     int retouching = rs.getInt(5);
@@ -141,6 +143,39 @@ public class StatisticsService {
                 "adoptions", adoptions, "shootingMinutes", shooting, "retouchingMinutes", retouching);
     }
 
+    /**
+     * 找出该期已完成项目中有被引（采用）记录、但其学号无法匹配到任何该期已确认工时成员的摄影师。
+     * 口径与 {@link #worklogs} 的被引侧一致（项目 COMPLETED 且 completed_at 落在区间）。
+     * 这类摄影师会因学号对不上而在工时导出里被引数归零，属于潜在漏发，需要人工核对。
+     */
+    public List<UnmatchedAdoption> unmatchedAdoptions(LocalDate from, LocalDate to) {
+        return jdbc.sql("""
+                SELECT a.photographer_student_id,
+                       MIN(a.photographer_name) AS photographer_name,
+                       COUNT(DISTINCT a.photo_id) AS adopted_count
+                FROM adoption a
+                JOIN project p ON p.id=a.project_id
+                WHERE a.deleted=0
+                  AND p.deleted=0
+                  AND p.status='COMPLETED'
+                  AND p.completed_at >= :fromDate AND p.completed_at < :toExclusive
+                  AND NOT EXISTS (
+                      SELECT 1 FROM worklog w
+                      WHERE w.deleted=0
+                        AND w.status='CONFIRMED'
+                        AND w.work_date BETWEEN :fromDate AND :toDate
+                        AND w.member_student_id=a.photographer_student_id
+                  )
+                GROUP BY a.photographer_student_id
+                ORDER BY adopted_count DESC, a.photographer_student_id
+                """)
+                .param("fromDate", from)
+                .param("toDate", to)
+                .param("toExclusive", to.plusDays(1))
+                .query((rs, n) -> new UnmatchedAdoption(rs.getString(1), rs.getString(2), rs.getLong(3)))
+                .list();
+    }
+
     public record MemberStatistics(Long userId, String studentId, String displayName, String campus,
                                    int shootingMinutes, int retouchingMinutes, int totalMinutes,
                                    long adoptedCount) {}
@@ -149,4 +184,6 @@ public class StatisticsService {
     public record WorklogExportRow(String memberName, String studentId, String campus,
                                    int shootingMinutes, int retouchingMinutes, int totalMinutes,
                                    long adoptedCount) {}
+    public record UnmatchedAdoption(String photographerStudentId, String photographerName,
+                                    long adoptedCount) {}
 }
