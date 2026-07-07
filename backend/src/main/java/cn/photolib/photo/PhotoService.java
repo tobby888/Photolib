@@ -46,6 +46,18 @@ public class PhotoService {
     @Transactional
     public UploadTicket createTicket(CreateTicket command, AuthenticatedUser user) {
         validateFile(command.fileName(), command.contentType(), command.size());
+
+        // 检查 SHA256 哈希是否重复
+        String sha256Lower = command.sha256().toLowerCase();
+        PhotoEntity existing = mapper.selectOne(Wrappers.<PhotoEntity>lambdaQuery()
+                .eq(PhotoEntity::getSha256, sha256Lower)
+                .eq(PhotoEntity::getDeleted, false)
+                .last("LIMIT 1"));
+        if (existing != null) {
+            throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE,
+                    "已经上传过该图片（标题：" + existing.getTitle() + "）");
+        }
+
         Long campusId = user.campusId();
         Long projectId = command.projectId();
         if (command.requestId() != null) {
@@ -72,7 +84,7 @@ public class PhotoService {
         photo.setContentType(command.contentType());
         photo.setObjectKey(finalKey);
         photo.setOriginalObjectKey(originalKey);
-        photo.setSha256(command.sha256().toLowerCase());
+        photo.setSha256(sha256Lower);
         photo.setStatus(PhotoStatus.UPLOADING);
         mapper.insert(photo);
         // 归属链接：项目相册/计数以 photo_project 为准。新照片 id 全新，(photo_id,project_id) 不会撞主键。
