@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, type PropsWithChildren } from 'react'
-import { api, type LoginResult } from './api'
+import { api, SESSION_EXPIRED_EVENT, type LoginResult } from './api'
 import type { User } from './types'
 
 interface AuthContextValue {
@@ -22,6 +22,14 @@ function readUser(): User | null {
 
 export function AuthProvider({ children }: PropsWithChildren) {
   const [user, setUser] = useState<User | null>(readUser)
+  useEffect(() => {
+    // A failed token refresh (interceptor) means the session is unrecoverable.
+    // Clear React state so route guards send the user to /login and keep them there
+    // instead of bouncing between the shell and the login page.
+    const onExpired = () => setUser(null)
+    window.addEventListener(SESSION_EXPIRED_EVENT, onExpired)
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired)
+  }, [])
   useEffect(() => {
     if (!localStorage.getItem('photolib_access_token')) return
     void api<User>({ url: '/auth/me' }).then(current => {
