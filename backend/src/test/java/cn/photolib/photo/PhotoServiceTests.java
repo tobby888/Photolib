@@ -44,6 +44,7 @@ class PhotoServiceTests {
     private AuthenticatedUser managerUser;
     private ProjectEntity testProject;
     private CampusEntity testCampus;
+    private Long photographerContactId;
 
     @BeforeEach
     void setUp() {
@@ -58,6 +59,15 @@ class PhotoServiceTests {
                     (201, 'test-manager', 'hash', '测试负责人', 'CAMPUS_MANAGER', :campusId, true, false),
                     (202, 'test-minister', 'hash', '测试部长', 'MINISTER', null, true, false)
                 """).param("campusId", testCampus.getId()).update();
+
+        // 通讯录成员：上传拍摄者必须来自通讯录（快照姓名/学号写入照片）。
+        jdbc.sql("""
+                INSERT INTO campus_member (id, campus_id, student_id, name, enabled, version, deleted)
+                VALUES
+                    (300, :campusId, '20230001', '张三', true, 1, false),
+                    (301, :campusId, '20230002', '李四', true, 1, false)
+                """).param("campusId", testCampus.getId()).update();
+        photographerContactId = 300L;
 
         adminUser = new AuthenticatedUser(
                 200L, "test-admin", "测试管理员", UserRole.ADMIN, null, false);
@@ -91,7 +101,7 @@ class PhotoServiceTests {
                 null, testProject.getId(),
                 "test.jpg", "image/jpeg", 1024000L,
                 "a".repeat(64), // SHA256
-                "20230001", "张三",
+                photographerContactId,
                 LocalDateTime.now());
 
         PhotoService.UploadTicket ticket = photoService.createTicket(command, adminUser);
@@ -119,7 +129,7 @@ class PhotoServiceTests {
 
         var ticket = photoService.createTicket(new PhotoService.CreateTicket(
                 2901L, null, "request-photo.jpg", "image/jpeg", 1024L,
-                "d".repeat(64), "20230001", "张三", LocalDateTime.now()), adminUser);
+                "d".repeat(64), photographerContactId, LocalDateTime.now()), adminUser);
 
         var stored = jdbc.sql("SELECT request_id, project_id FROM photo WHERE id=:id")
                 .param("id", ticket.photoId())
@@ -136,7 +146,7 @@ class PhotoServiceTests {
         // OSS kept only the original. This exercises the real interceptor via H2.
         var ticket = photoService.createTicket(new PhotoService.CreateTicket(
                 null, testProject.getId(), "done.jpg", "image/jpeg", 1024L,
-                "e".repeat(64), "20230001", "张三", LocalDateTime.now()), adminUser);
+                "e".repeat(64), photographerContactId, LocalDateTime.now()), adminUser);
 
         // Simulate the browser having PUT the original object to storage.
         String originalKey = jdbc.sql("SELECT original_object_key FROM photo WHERE id=:id")
@@ -161,7 +171,7 @@ class PhotoServiceTests {
                 null, testProject.getId(),
                 "test.pdf", "application/pdf", 1024000L,
                 "a".repeat(64),
-                "20230001", "张三",
+                photographerContactId,
                 LocalDateTime.now());
 
         assertThatThrownBy(() -> photoService.createTicket(command, adminUser))
@@ -176,7 +186,7 @@ class PhotoServiceTests {
                 null, testProject.getId(),
                 "test.jpg", "image/jpeg", 150_000_000L, // 150MB
                 "a".repeat(64),
-                "20230001", "张三",
+                photographerContactId,
                 LocalDateTime.now());
 
         assertThatThrownBy(() -> photoService.createTicket(command, adminUser))
@@ -295,9 +305,9 @@ class PhotoServiceTests {
                 .param("sha256", "g".repeat(64))
                 .update();
 
-        // When: 更新照片元数据
+        // When: 更新照片元数据（拍摄者改选通讯录中的另一位成员 301=李四/20230002）
         PhotoService.Metadata metadata = new PhotoService.Metadata(
-                "新标题", "新描述", "20230002", "李四",
+                "新标题", "新描述", 301L,
                 LocalDateTime.now(), null, 1);
         var updated = photoService.update(1001L, metadata, managerUser);
 
@@ -507,7 +517,7 @@ class PhotoServiceTests {
     void createTicket_shouldCreateMembershipLink() {
         var ticket = photoService.createTicket(new PhotoService.CreateTicket(
                 null, testProject.getId(), "linked.jpg", "image/jpeg", 1024L,
-                "o".repeat(64), "20230001", "张三", LocalDateTime.now()), adminUser);
+                "o".repeat(64), photographerContactId, LocalDateTime.now()), adminUser);
 
         Long links = jdbc.sql(
                 "SELECT COUNT(*) FROM photo_project WHERE photo_id=:pid AND project_id=:prj")
@@ -515,5 +525,24 @@ class PhotoServiceTests {
                 .param("prj", testProject.getId())
                 .query(Long.class).single();
         assertThat(links).isEqualTo(1L);
+    }
+
+    @Test
+    void createTicket_withPhotographerFromAnotherCampus_shouldThrow() {
+        // 另一个校区及其通讯录成员
+        CampusEntity otherCampus = campusService.create("OTHER", "其他校区");
+        jdbc.sql("""
+                INSERT INTO campus_member (id, campus_id, student_id, name, enabled, version, deleted)
+                VALUES (400, :campusId, '99990001', '王五', true, 1, false)
+                """).param("campusId", otherCampus.getId()).update();
+
+        // 校区负责人图库上传的校区为其本校区，选用其他校区的拍摄者应被拒绝
+        PhotoService.CreateTicket command = new PhotoService.CreateTicket(
+                null, testProject.getId(), "cross.jpg", "image/jpeg", 1024L,
+                "1".repeat(64), 400L, LocalDateTime.now());
+
+        assertThatThrownBy(() -> photoService.createTicket(command, managerUser))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("校区通讯录");
     }
 }

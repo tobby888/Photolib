@@ -27,6 +27,12 @@ public class CampusMemberController {
         return ApiResponse.ok(service.list(campusId, enabled, user));
     }
 
+    @GetMapping("/deduped")
+    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    ApiResponse<List<CampusMemberService.DedupedMember>> deduped() {
+        return ApiResponse.ok(service.listDeduped());
+    }
+
     @PostMapping
     @PreAuthorize("hasAnyRole('ADMIN','CAMPUS_MANAGER')")
     ApiResponse<CampusMemberEntity> create(@Valid @RequestBody MemberRequest request,

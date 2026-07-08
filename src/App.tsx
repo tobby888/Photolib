@@ -2,8 +2,8 @@ import {
   App as AntApp, Avatar, Badge, Button, Divider, Dropdown, Empty, Grid, Layout, List, Menu, Popover, Space, Typography,
 } from 'antd'
 import {
-  AimOutlined, BarChartOutlined, BellOutlined, BookOutlined, BulbOutlined, CameraOutlined, DashboardOutlined,
-  FolderOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SettingOutlined,
+  AimOutlined, BarChartOutlined, BellOutlined, BookOutlined, BulbOutlined, CameraOutlined, ContactsOutlined,
+  DashboardOutlined, FolderOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SettingOutlined,
   MessageOutlined, PictureOutlined, StarOutlined, UnorderedListOutlined, UserOutlined,
 } from '@ant-design/icons'
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
@@ -23,6 +23,7 @@ const RequestsPage = lazy(() => import('./pages/RequestsPage'))
 const RequestDeliveryPage = lazy(() => import('./pages/RequestDeliveryPage'))
 const PhotosPage = lazy(() => import('./pages/PhotosPage'))
 const WorklogsPage = lazy(() => import('./pages/WorklogsPage'))
+const DirectoryPage = lazy(() => import('./pages/DirectoryPage'))
 const StatisticsPage = lazy(() => import('./pages/StatisticsPage'))
 const AdminPage = lazy(() => import('./pages/AdminPage'))
 const NotificationsPage = lazy(() => import('./pages/NotificationsPage'))
@@ -103,6 +104,7 @@ function Shell() {
       { key: '/requests', icon: <UnorderedListOutlined />, label: '图片需求' },
       { key: '/photos', icon: <CameraOutlined />, label: '图片库' },
       { key: '/worklogs', icon: <BookOutlined />, label: '工时记录' },
+      { key: '/directory', icon: <ContactsOutlined />, label: '通讯录' },
       { key: '/notifications', icon: <MessageOutlined />, label: '消息中心' },
     ]
     if (user?.role !== 'CAMPUS_MANAGER') common.push(
@@ -196,6 +198,7 @@ function Shell() {
           <Route path="/requests/:requestId" element={<RequestDeliveryPage />} />
           <Route path="/photos" element={<PhotosPage />} />
           <Route path="/worklogs" element={<WorklogsPage />} />
+          <Route path="/directory" element={<DirectoryPage />} />
           <Route path="/notifications" element={<NotificationsPage />} />
           <Route path="/notifications/:notificationId" element={<NotificationDetailPage />} />
           <Route path="/statistics" element={user.role === 'CAMPUS_MANAGER' ? <Navigate to="/" /> : <StatisticsPage />} />

@@ -47,7 +47,7 @@ public class BatchUploadController {
             @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.setMetadata(batchId, itemId,
                 new BatchUploadService.ItemMetadata(request.title(), request.description(),
-                        request.photographerStudentId(), request.photographerName(),
+                        request.photographerContactId(),
                         request.takenAt(), request.tags()), user));
     }
 
@@ -59,8 +59,7 @@ public class BatchUploadController {
                        @NotBlank @Pattern(regexp = "^[a-fA-F0-9]{64}$") String sha256) {}
     record MetadataRequest(@NotBlank @Size(max = 200) String title,
                            @Size(max = 5000) String description,
-                           @NotBlank @Size(max = 64) String photographerStudentId,
-                           @NotBlank @Size(max = 100) String photographerName,
+                           @NotNull Long photographerContactId,
                            @NotNull @PastOrPresent LocalDateTime takenAt,
                            @Size(max = 30) List<@Size(max = 50) String> tags) {}
 }

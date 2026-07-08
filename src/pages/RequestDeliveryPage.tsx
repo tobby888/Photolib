@@ -15,12 +15,11 @@ import { uploadToObjectStorage } from '../storageUpload'
 import { useAuth } from '../auth'
 import { DataState, StatusTag } from '../components'
 import { useLoad } from '../hooks'
-import type { Campus, PageData, Photo, PhotoRequest, Project } from '../types'
+import type { Campus, CampusMember, EntityId, PageData, Photo, PhotoRequest, Project } from '../types'
 
 type UploadValues = {
   files: { originFileObj?: File }[]
-  photographerName: string
-  photographerStudentId: string
+  photographerContactId: EntityId
   takenAt: dayjs.Dayjs
   tags?: string[]
   description?: string
@@ -46,12 +45,14 @@ export default function RequestDeliveryPage() {
 
   const requestState = useLoad(async () => {
     const request = await api<PhotoRequest>({ url: `/requests/${requestId}` })
-    const [project, campuses] = await Promise.all([
+    const [project, campuses, members] = await Promise.all([
       api<Project>({ url: `/projects/${request.projectId}` }),
       api<Campus[]>({ url: '/campuses', params: { enabled: true } }),
+      api<CampusMember[]>({ url: '/campus-members', params: { enabled: true, campusId: request.campusId } }),
     ])
-    return { request, project, campuses }
-  }, { request: null as PhotoRequest | null, project: null as Project | null, campuses: [] as Campus[] }, [requestId])
+    return { request, project, campuses, members }
+  }, { request: null as PhotoRequest | null, project: null as Project | null,
+    campuses: [] as Campus[], members: [] as CampusMember[] }, [requestId])
 
   const photosState = useLoad(
     () => api<PageData<Photo>>({
@@ -119,8 +120,7 @@ export default function RequestDeliveryPage() {
             contentType: file.type,
             size: file.size,
             sha256: hash,
-            photographerStudentId: values.photographerStudentId,
-            photographerName: values.photographerName,
+            photographerContactId: values.photographerContactId,
             takenAt: values.takenAt.format('YYYY-MM-DDTHH:mm:ss'),
           },
         })
@@ -208,7 +208,7 @@ export default function RequestDeliveryPage() {
         {canUpload && <Col xs={24} xl={9}>
           <Card className="delivery-upload-card" title={<Space><CloudUploadOutlined />上传交付图片</Space>}>
             <Form form={form} layout="vertical" requiredMark={false}
-              initialValues={{ takenAt: dayjs(), photographerName: user?.displayName }}>
+              initialValues={{ takenAt: dayjs() }}>
               <Form.Item name="files" valuePropName="fileList" getValueFromEvent={event => event.fileList}
                 rules={[{ required: true, message: '请选择图片' }]}>
                 <Upload.Dragger multiple accept=".jpg,.jpeg,.png" beforeUpload={async (file, fileList) => {
@@ -229,12 +229,16 @@ export default function RequestDeliveryPage() {
                   <p className="ant-upload-hint">支持多张 JPG / PNG，单张不超过 100 MiB</p>
                 </Upload.Dragger>
               </Form.Item>
-              <Row gutter={12}>
-                <Col span={12}><Form.Item label="拍摄者" name="photographerName"
-                  rules={[{ required: true, message: '请输入拍摄者姓名' }]}><Input /></Form.Item></Col>
-                <Col span={12}><Form.Item label="学号" name="photographerStudentId"
-                  rules={[{ required: true, message: '请输入学号' }]}><Input /></Form.Item></Col>
-              </Row>
+              <Form.Item label="拍摄者" name="photographerContactId"
+                extra="从需求所属校区通讯录选择，通讯录在「通讯录」页维护"
+                rules={[{ required: true, message: '请从通讯录选择拍摄者' }]}>
+                <Select showSearch optionFilterProp="label"
+                  placeholder={requestState.data.members.length ? '按姓名或学号选择' : '该校区通讯录为空，请先添加成员'}
+                  notFoundContent="该校区通讯录中没有可用成员"
+                  options={requestState.data.members.map(member => ({
+                    value: member.id, label: `${member.name} · ${member.studentId}`,
+                  }))} />
+              </Form.Item>
               <Form.Item label="拍摄时间" name="takenAt" rules={[{ required: true }]}
                 extra="批量上传统一采用该时间，已自动取自第一张照片的 EXIF，可手动调整">
                 <DatePicker showTime style={{ width: '100%' }} />

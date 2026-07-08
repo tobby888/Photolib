@@ -8,7 +8,7 @@ import dayjs from 'dayjs'
 import { api, emptyPage, qs } from '../api'
 import { readTakenAt } from '../exif'
 import { uploadToObjectStorage } from '../storageUpload'
-import type { PageData, Photo } from '../types'
+import type { CampusMember, DedupedMember, EntityId, PageData, Photo } from '../types'
 import { DataState, formatBytes, PageTitle, StatusTag } from '../components'
 import { useLoad } from '../hooks'
 import { useAuth } from '../auth'
@@ -26,6 +26,14 @@ export default function PhotosPage() {
   const { data, loading, error, reload } = useLoad(
     () => api<PageData<Photo>>({ url: '/photos', params: qs({ ...filters, pageSize: 24 }) }),
     emptyPage<Photo>(), [filters.page, filters.keyword, filters.status],
+  )
+  const { data: photographers, loading: photographersLoading } = useLoad(
+    async () => user?.role === 'CAMPUS_MANAGER'
+      ? (await api<CampusMember[]>({ url: '/campus-members', params: { enabled: true } }))
+          .map(m => ({ value: m.id, label: `${m.name} · ${m.studentId}` }))
+      : (await api<DedupedMember[]>({ url: '/campus-members/deduped' }))
+          .map(m => ({ value: m.id, label: `${m.name} · ${m.studentId}` })),
+    [] as { value: EntityId; label: string }[], [user?.role],
   )
   const waitForProcessing = async (photoId: string): Promise<Photo> => {
     // complete-upload leaves the photo PROCESSING; the async pipeline flips it to
@@ -53,7 +61,7 @@ export default function PhotosPage() {
         method: 'POST', url: '/photos/upload-tickets', data: {
           requestId: values.requestId || null, projectId: values.projectId || null,
           fileName: file.name, contentType: file.type, size: file.size, sha256: hash,
-          photographerStudentId: values.photographerStudentId, photographerName: values.photographerName,
+          photographerContactId: values.photographerContactId,
           takenAt: values.takenAt.format('YYYY-MM-DDTHH:mm:ss'),
         },
       })
@@ -148,8 +156,12 @@ export default function PhotosPage() {
         </Form.Item>
         <Row gutter={16}><Col span={12}><Form.Item label="图片标题" name="title" rules={[{ required: true }]}><Input /></Form.Item></Col>
           <Col span={12}><Form.Item label="拍摄时间" name="takenAt" rules={[{ required: true }]}><DatePicker showTime style={{ width: '100%' }} /></Form.Item></Col></Row>
-        <Row gutter={16}><Col span={12}><Form.Item label="拍摄者姓名" name="photographerName" rules={[{ required: true }]}><Input /></Form.Item></Col>
-          <Col span={12}><Form.Item label="拍摄者学号" name="photographerStudentId" rules={[{ required: true }]}><Input /></Form.Item></Col></Row>
+        <Form.Item label="拍摄者" name="photographerContactId" rules={[{ required: true, message: '请从通讯录选择拍摄者' }]}>
+          <Select showSearch optionFilterProp="label" loading={photographersLoading}
+            placeholder={photographers.length ? '按姓名或学号选择' : '通讯录为空，请先在「通讯录」页添加成员'}
+            notFoundContent={photographersLoading ? '正在加载通讯录…' : '通讯录中没有可用成员'}
+            options={photographers} />
+        </Form.Item>
         <Form.Item label="标签" name="tags"><Select mode="tags" maxCount={30} placeholder="输入后回车添加标签" /></Form.Item>
         <Form.Item label="图片说明" name="description"><Input.TextArea rows={3} /></Form.Item>
       </Form>

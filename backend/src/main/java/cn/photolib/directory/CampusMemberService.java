@@ -2,6 +2,7 @@ package cn.photolib.directory;
 
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.campus.CampusService;
+import cn.photolib.campus.model.CampusEntity;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.directory.mapper.CampusMemberMapper;
@@ -12,7 +13,12 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -27,6 +33,54 @@ public class CampusMemberService {
                 .eq(enabled != null, CampusMemberEntity::getEnabled, enabled)
                 .orderByAsc(CampusMemberEntity::getName)
                 .orderByAsc(CampusMemberEntity::getStudentId));
+    }
+
+    /**
+     * 部长/管理员的通讯录去重视图：把所有校区启用成员按学号合并去重。
+     * 每个学号取最小 id 的成员行作为代表（提供一个可用于快照的 contactId），
+     * campusNames 汇总该学号出现过的所有校区名。
+     */
+    public List<DedupedMember> listDeduped() {
+        List<CampusMemberEntity> members = mapper.selectList(Wrappers.<CampusMemberEntity>lambdaQuery()
+                .eq(CampusMemberEntity::getEnabled, true)
+                .orderByAsc(CampusMemberEntity::getId));
+        Map<Long, String> campusNames = campusService.list(null).stream()
+                .collect(Collectors.toMap(CampusEntity::getId, CampusEntity::getName, (a, b) -> a));
+        LinkedHashMap<String, CampusMemberEntity> representative = new LinkedHashMap<>();
+        LinkedHashMap<String, List<String>> campuses = new LinkedHashMap<>();
+        for (CampusMemberEntity member : members) {
+            String key = member.getStudentId();
+            representative.putIfAbsent(key, member);
+            List<String> names = campuses.computeIfAbsent(key, k -> new ArrayList<>());
+            String campusName = campusNames.get(member.getCampusId());
+            if (campusName != null && !names.contains(campusName)) {
+                names.add(campusName);
+            }
+        }
+        return representative.entrySet().stream()
+                .map(entry -> new DedupedMember(entry.getValue().getId(), entry.getKey(),
+                        entry.getValue().getName(), campuses.get(entry.getKey())))
+                .sorted(Comparator.comparing(DedupedMember::name).thenComparing(DedupedMember::studentId))
+                .toList();
+    }
+
+    /**
+     * 解析并校验上传照片时选择的拍摄者（来自通讯录）。
+     * campusId 非空（需求上传 / 校区负责人图库上传）时成员必须属于该校区；
+     * campusId 为空（部长/管理员无校区的图库上传，来自去重视图的代表 id）时接受任意启用成员。
+     */
+    public CampusMemberEntity resolvePhotographer(Long contactId, Long campusId) {
+        if (contactId == null) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请从通讯录选择拍摄者");
+        }
+        CampusMemberEntity member = require(contactId);
+        if (!Boolean.TRUE.equals(member.getEnabled())) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择有效的通讯录成员");
+        }
+        if (campusId != null && !member.getCampusId().equals(campusId)) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择该校区通讯录中的成员");
+        }
+        return member;
     }
 
     public CampusMemberEntity getForWorklog(Long id, Long requestCampusId) {
@@ -122,4 +176,6 @@ public class CampusMemberService {
         }
         throw new BusinessException(ErrorCode.FORBIDDEN, "只能维护所属校区的通讯录");
     }
+
+    public record DedupedMember(Long id, String studentId, String name, List<String> campusNames) {}
 }

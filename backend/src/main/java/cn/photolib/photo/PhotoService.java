@@ -42,6 +42,7 @@ public class PhotoService {
     private final ApplicationEventPublisher events;
     private final JdbcClient jdbc;
     private final CampusService campusService;
+    private final cn.photolib.directory.CampusMemberService campusMemberService;
 
     @Transactional
     public UploadTicket createTicket(CreateTicket command, AuthenticatedUser user) {
@@ -68,6 +69,8 @@ public class PhotoService {
                 throw new BusinessException(ErrorCode.FORBIDDEN, "仅需求参与人可上传图片");
             }
         }
+        // 强制拍摄者来自通讯录：解析放在文件校验、参与人校区校验之后，快照姓名/学号写入照片。
+        var photographer = campusMemberService.resolvePhotographer(command.photographerContactId(), campusId);
         String extension = command.contentType().equals("image/png") ? "png" : "jpg";
         String id = UUID.randomUUID().toString();
         String originalKey = "temporary/photos/" + id + "." + extension;
@@ -75,8 +78,8 @@ public class PhotoService {
         PhotoEntity photo = new PhotoEntity();
         photo.setRequestId(command.requestId());
         photo.setProjectId(projectId);
-        photo.setPhotographerStudentId(command.photographerStudentId());
-        photo.setPhotographerName(command.photographerName());
+        photo.setPhotographerStudentId(photographer.getStudentId());
+        photo.setPhotographerName(photographer.getName());
         photo.setUploadedBy(user.id());
         photo.setCampusId(campusId);
         photo.setTakenAt(command.takenAt());
@@ -175,10 +178,12 @@ public class PhotoService {
     public PhotoView update(Long id, Metadata command, AuthenticatedUser user) {
         PhotoEntity photo = require(id);
         requireUploaderOrPrivileged(photo, user);
+        var photographer = campusMemberService.resolvePhotographer(
+                command.photographerContactId(), photo.getCampusId());
         photo.setTitle(command.title());
         photo.setDescription(command.description());
-        photo.setPhotographerStudentId(command.photographerStudentId());
-        photo.setPhotographerName(command.photographerName());
+        photo.setPhotographerStudentId(photographer.getStudentId());
+        photo.setPhotographerName(photographer.getName());
         photo.setTakenAt(command.takenAt());
         photo.setTagsJson(tagsJson(command.tags()));
         photo.setVersion(command.version());
@@ -362,11 +367,11 @@ public class PhotoService {
     }
 
     public record CreateTicket(Long requestId, Long projectId, String fileName, String contentType, long size,
-                               String sha256, String photographerStudentId, String photographerName,
+                               String sha256, Long photographerContactId,
                                LocalDateTime takenAt) {}
     public record CompleteUpload(String title, String description, List<String> tags) {}
-    public record Metadata(String title, String description, String photographerStudentId,
-                           String photographerName, LocalDateTime takenAt, List<String> tags, int version) {}
+    public record Metadata(String title, String description, Long photographerContactId,
+                           LocalDateTime takenAt, List<String> tags, int version) {}
     public record UploadTicket(Long photoId, String uploadUrl, String method, String contentType,
                                java.time.Instant expiresAt) {}
     public record DownloadUrl(String downloadUrl, java.time.Instant expiresAt, String fileName) {}
