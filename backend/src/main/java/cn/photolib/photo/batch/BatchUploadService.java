@@ -39,6 +39,7 @@ public class BatchUploadService {
     private final StorageProperties storageProperties;
     private final ApplicationEventPublisher events;
     private final JdbcClient jdbc;
+    private final cn.photolib.directory.CampusMemberService campusMemberService;
 
     @Transactional
     public BatchTicket create(CreateBatch command, AuthenticatedUser user) {
@@ -160,14 +161,15 @@ public class BatchUploadService {
         }
         Long campusId = user.campusId();
         if (batch.getRequestId() != null) campusId = requestService.get(batch.getRequestId()).getCampusId();
+        var photographer = campusMemberService.resolvePhotographer(metadata.photographerContactId(), campusId);
         String extension = item.getContentType().equals("image/png") ? "png" : "jpg";
         PhotoEntity photo = new PhotoEntity();
         photo.setRequestId(batch.getRequestId());
         photo.setProjectId(batch.getProjectId());
         photo.setTitle(metadata.title());
         photo.setDescription(metadata.description());
-        photo.setPhotographerStudentId(metadata.photographerStudentId());
-        photo.setPhotographerName(metadata.photographerName());
+        photo.setPhotographerStudentId(photographer.getStudentId());
+        photo.setPhotographerName(photographer.getName());
         photo.setUploadedBy(user.id());
         photo.setCampusId(campusId);
         photo.setTakenAt(metadata.takenAt());
@@ -188,8 +190,8 @@ public class BatchUploadService {
         }
         item.setTitle(metadata.title());
         item.setDescription(metadata.description());
-        item.setPhotographerStudentId(metadata.photographerStudentId());
-        item.setPhotographerName(metadata.photographerName());
+        item.setPhotographerStudentId(photographer.getStudentId());
+        item.setPhotographerName(photographer.getName());
         item.setTakenAt(metadata.takenAt());
         item.setTagsJson(photo.getTagsJson());
         item.setPhotoId(photo.getId());
@@ -237,8 +239,8 @@ public class BatchUploadService {
     public record CreateBatch(BatchMode mode, Long requestId, Long projectId, String archiveFileName,
                               Long archiveSize, List<FileSpec> files) {}
     public record FileSpec(String fileName, String contentType, long size, String sha256) {}
-    public record ItemMetadata(String title, String description, String photographerStudentId,
-                               String photographerName, LocalDateTime takenAt, List<String> tags) {}
+    public record ItemMetadata(String title, String description, Long photographerContactId,
+                               LocalDateTime takenAt, List<String> tags) {}
     public record ItemTicket(Long itemId, String fileName, String uploadUrl, String contentType,
                              java.time.Instant expiresAt) {}
     public record BatchTicket(String batchId, BatchMode mode, List<ItemTicket> tickets) {}

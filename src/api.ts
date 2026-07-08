@@ -20,6 +20,17 @@ http.interceptors.request.use((config) => {
   return config
 })
 
+// Broadcast that the session is unrecoverable (refresh failed) so AuthProvider can
+// clear React state. Clearing only localStorage here leaves the in-memory `user`
+// stale, which makes the /login guard bounce straight back to the shell.
+export const SESSION_EXPIRED_EVENT = 'photolib:session-expired'
+
+function clearSession() {
+  localStorage.removeItem('photolib_access_token')
+  localStorage.removeItem('photolib_user')
+  window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT))
+}
+
 let refreshing: Promise<string> | null = null
 http.interceptors.response.use(
   (response) => response,
@@ -39,9 +50,7 @@ http.interceptors.response.use(
       original.headers = { ...original.headers, Authorization: `Bearer ${token}` }
       return http(original)
     } catch {
-      localStorage.removeItem('photolib_access_token')
-      localStorage.removeItem('photolib_user')
-      window.location.href = '/#/login'
+      clearSession()
       return Promise.reject(error)
     }
   },

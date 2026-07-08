@@ -201,21 +201,24 @@ try {
     $image = Get-Item $ImagePath
     $sha = (Get-FileHash -Algorithm SHA256 $ImagePath).Hash.ToLowerInvariant()
     $takenAt = (Get-Date).AddDays(-1).ToString("yyyy-MM-ddTHH:mm:ss")
+    # 上传拍摄者强制来自校区通讯录：先由负责人建立通讯录成员，用其 id 作为 photographerContactId
+    $photographer = Invoke-Api "POST" "/campus-members" $campusToken @{ name = "测试摄影师"; studentId = "QA2026001" }
+    Assert-That "DIR-01" ($photographer.id -and $photographer.studentId -eq "QA2026001") "负责人向校区通讯录添加拍摄者"
     $ticket = Invoke-Api "POST" "/photos/upload-tickets" $campusToken @{
         requestId = $request.id; projectId = $project.id; fileName = $image.Name
         contentType = "image/jpeg"; size = $image.Length; sha256 = $sha
-        photographerStudentId = "QA2026001"; photographerName = "测试摄影师"; takenAt = $takenAt
+        photographerContactId = $photographer.id; takenAt = $takenAt
     }
     Assert-That "OSS-01" ($ticket.photoId -and $ticket.uploadUrl -and $ticket.method -eq "PUT") "签发单图上传票据"
     Expect-Status "OSS-04" 415 "POST" "/photos/upload-tickets" $campusToken @{
         requestId = $request.id; projectId = $project.id; fileName = "bad.gif"
         contentType = "image/gif"; size = 10; sha256 = ("0" * 64)
-        photographerStudentId = "QA2026001"; photographerName = "测试摄影师"; takenAt = $takenAt
+        photographerContactId = $photographer.id; takenAt = $takenAt
     }
     Expect-Status "OSS-05" 403 "POST" "/photos/upload-tickets" $campusBToken @{
         requestId = $request.id; projectId = $project.id; fileName = $image.Name
         contentType = "image/jpeg"; size = $image.Length; sha256 = $sha
-        photographerStudentId = "QA2026002"; photographerName = "越权摄影师"; takenAt = $takenAt
+        photographerContactId = $photographer.id; takenAt = $takenAt
     }
     Invoke-WebRequest -UseBasicParsing -Method Put -Uri $ticket.uploadUrl -InFile $ImagePath -ContentType $ticket.contentType | Out-Null
     $photo = Invoke-Api "POST" "/photos/$($ticket.photoId)/complete-upload" $campusToken @{

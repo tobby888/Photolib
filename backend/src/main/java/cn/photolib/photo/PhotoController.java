@@ -105,12 +105,11 @@ public class PhotoController {
                          @NotBlank String contentType,
                          @Positive long size,
                          @NotBlank @Pattern(regexp = "^[a-fA-F0-9]{64}$") String sha256,
-                         @NotBlank @Size(max = 64) String photographerStudentId,
-                         @NotBlank @Size(max = 100) String photographerName,
+                         @NotNull Long photographerContactId,
                          @NotNull @PastOrPresent LocalDateTime takenAt) {
         PhotoService.CreateTicket command() {
             return new PhotoService.CreateTicket(requestId, projectId, fileName, contentType, size, sha256,
-                    photographerStudentId, photographerName, takenAt);
+                    photographerContactId, takenAt);
         }
     }
 
@@ -120,14 +119,13 @@ public class PhotoController {
 
     record MetadataRequest(@NotBlank @Size(max = 200) String title,
                            @Size(max = 5000) String description,
-                           @NotBlank @Size(max = 64) String photographerStudentId,
-                           @NotBlank @Size(max = 100) String photographerName,
+                           @NotNull Long photographerContactId,
                            @NotNull @PastOrPresent LocalDateTime takenAt,
                            @Size(max = 30) List<@Size(max = 50) String> tags,
                            @Min(1) int version) {
         PhotoService.Metadata command() {
-            return new PhotoService.Metadata(title, description, photographerStudentId,
-                    photographerName, takenAt, tags, version);
+            return new PhotoService.Metadata(title, description, photographerContactId,
+                    takenAt, tags, version);
         }
     }
 

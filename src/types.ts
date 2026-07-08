@@ -116,6 +116,13 @@ export interface CampusMember extends BaseEntity {
   enabled: boolean
 }
 
+export interface DedupedMember {
+  id: EntityId
+  studentId: string
+  name: string
+  campusNames: string[]
+}
+
 export interface MemberStats {
   userId: EntityId
   studentId: string

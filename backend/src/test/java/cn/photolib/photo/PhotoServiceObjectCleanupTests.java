@@ -32,7 +32,8 @@ class PhotoServiceObjectCleanupTests {
                 mock(StorageProperties.class),
                 mock(ApplicationEventPublisher.class),
                 mock(JdbcClient.class),
-                mock(CampusService.class));
+                mock(CampusService.class),
+                mock(cn.photolib.directory.CampusMemberService.class));
         PhotoEntity photo = new PhotoEntity();
         photo.setId(42L);
         photo.setObjectKey("photos/main.jpg");

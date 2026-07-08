@@ -24,8 +24,6 @@ export default function WorklogsPage() {
   const { message, modal } = App.useApp()
   const [form] = Form.useForm()
   const [open, setOpen] = useState(false)
-  const [directoryOpen, setDirectoryOpen] = useState(false)
-  const [directoryForm] = Form.useForm()
   const [saving, setSaving] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
@@ -49,33 +47,12 @@ export default function WorklogsPage() {
       : Promise.resolve([]),
     [] as PhotoRequest[], [user?.id, user?.role],
   )
-  const { data: directory, loading: directoryLoading, reload: reloadDirectory } = useLoad(
+  const { data: directory, loading: directoryLoading } = useLoad(
     () => user?.role === 'CAMPUS_MANAGER'
       ? api<CampusMember[]>({ url: '/campus-members', params: { enabled: true } })
       : Promise.resolve([]),
     [] as CampusMember[], [user?.id, user?.role],
   )
-
-  const createDirectoryMember = async () => {
-    try {
-      await api({ method: 'POST', url: '/campus-members', data: await directoryForm.validateFields() })
-      message.success('成员已加入通讯录')
-      directoryForm.resetFields()
-      await reloadDirectory()
-    } catch (e) {
-      message.error((e as Error).message)
-    }
-  }
-
-  const deleteDirectoryMember = async (member: CampusMember) => {
-    try {
-      await api({ method: 'DELETE', url: `/campus-members/${member.id}` })
-      message.success('已从通讯录移除')
-      await reloadDirectory()
-    } catch (e) {
-      message.error((e as Error).message)
-    }
-  }
 
   const create = async () => {
     const values = await form.validateFields()
@@ -196,10 +173,7 @@ export default function WorklogsPage() {
           </Button>
         )}
         {user?.role === 'CAMPUS_MANAGER' && (
-          <>
-            <Button size="large" onClick={() => setDirectoryOpen(true)}>校区通讯录</Button>
-            <Button type="primary" size="large" icon={<PlusOutlined />} onClick={() => setOpen(true)}>填报工时</Button>
-          </>
+          <Button type="primary" size="large" icon={<PlusOutlined />} onClick={() => setOpen(true)}>填报工时</Button>
         )}
       </Space>}
     />
@@ -290,7 +264,7 @@ export default function WorklogsPage() {
             options={requestOptions.map(item => ({ value: item.id, label: item.title }))}
           />
         </Form.Item>
-        <Form.Item label="工作人员" name="memberContactId" rules={[{ required: true, message: '请从校区通讯录选择工作人员' }]}>
+        <Form.Item label="工作人员" name="memberContactId" extra="通讯录成员在「通讯录」页维护" rules={[{ required: true, message: '请从校区通讯录选择工作人员' }]}>
           <Select
             showSearch
             optionFilterProp="label"
@@ -337,44 +311,6 @@ export default function WorklogsPage() {
           />
         </Form.Item>
       </Form>
-    </Modal>
-    <Modal
-      title="校区成员通讯录"
-      width={680}
-      open={directoryOpen}
-      onCancel={() => setDirectoryOpen(false)}
-      footer={<Button onClick={() => setDirectoryOpen(false)}>完成</Button>}
-    >
-      <Form form={directoryForm} layout="inline" style={{ marginBottom: 20 }}>
-        <Form.Item name="name" rules={[{ required: true, message: '请输入姓名' }, { max: 100 }]}>
-          <Input placeholder="成员姓名" />
-        </Form.Item>
-        <Form.Item name="studentId" rules={[{ required: true, message: '请输入学号' }, { max: 64 }]}>
-          <Input placeholder="成员学号" />
-        </Form.Item>
-        <Form.Item>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => void createDirectoryMember()}>添加成员</Button>
-        </Form.Item>
-      </Form>
-      <Table
-        rowKey="id"
-        loading={directoryLoading}
-        dataSource={directory}
-        pagination={{ pageSize: 8 }}
-        columns={[
-          { title: '姓名', dataIndex: 'name' },
-          { title: '学号', dataIndex: 'studentId' },
-          { title: '操作', width: 90, render: (_, member: CampusMember) =>
-            <Button danger type="text" icon={<DeleteOutlined />}
-              onClick={() => modal.confirm({
-                title: `移除“${member.name}”？`,
-                content: '历史工时中的姓名和学号不会受影响。',
-                okText: '移除',
-                okButtonProps: { danger: true },
-                onOk: () => deleteDirectoryMember(member),
-              })}>移除</Button> },
-        ]}
-      />
     </Modal>
   </>
 }
