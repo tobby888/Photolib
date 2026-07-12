@@ -9,6 +9,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,6 +30,8 @@ class UserServiceTests {
     private AuthService authService;
     @Autowired
     private PasswordEncoder passwordEncoder;
+    @Autowired
+    private JdbcClient jdbc;
 
     private CampusEntity testCampus;
 
@@ -102,6 +105,37 @@ class UserServiceTests {
         assertThat(updated.campusId()).isEqualTo(testCampus.getId());
         assertThat(updated.phone()).isEqualTo("13900139000");
         assertThat(updated.email()).isEqualTo("new@example.com");
+    }
+
+    @Test
+    void updateCampus_shouldAssignCampusToLegacyManagerWithoutCampus() {
+        UserService.CreatedUser created = userService.create(new UserService.CreateUser(
+                "legacy-manager", "历史负责人", UserRole.CAMPUS_MANAGER,
+                testCampus.getId(), null, null));
+        jdbc.sql("UPDATE app_user SET campus_id = NULL WHERE id = :id")
+                .param("id", created.user().id())
+                .update();
+        CampusEntity newCampus = campusService.create("NEW-CAMPUS", "新校区");
+        UserService.UserView legacyManager = userService.get(created.user().id());
+
+        UserService.UserView updated = userService.updateCampus(
+                legacyManager.id(), newCampus.getId(), legacyManager.version());
+
+        assertThat(updated.role()).isEqualTo(UserRole.CAMPUS_MANAGER);
+        assertThat(updated.campusId()).isEqualTo(newCampus.getId());
+        assertThat(updated.version()).isGreaterThan(legacyManager.version());
+    }
+
+    @Test
+    void updateCampus_forNonManager_shouldThrowException() {
+        UserService.CreatedUser minister = userService.create(new UserService.CreateUser(
+                "campus-minister", "部长", UserRole.MINISTER, null, null, null));
+        UserService.UserView current = userService.get(minister.user().id());
+
+        assertThatThrownBy(() -> userService.updateCampus(
+                current.id(), testCampus.getId(), current.version()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("只能修改校区负责人");
     }
 
     @Test

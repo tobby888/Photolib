@@ -65,6 +65,13 @@ public class UserController {
                 request.email(), request.enabled(), request.version())));
     }
 
+    @PutMapping("/{id}/campus")
+    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    ApiResponse<UserService.UserView> updateCampus(
+            @PathVariable Long id, @Valid @RequestBody UpdateCampusRequest request) {
+        return ApiResponse.ok(userService.updateCampus(id, request.campusId(), request.version()));
+    }
+
     @PutMapping("/{id}/password")
     @PreAuthorize("hasRole('ADMIN')")
     ApiResponse<ResetPasswordResponse> resetPassword(@PathVariable Long id) {
@@ -107,6 +114,9 @@ public class UserController {
             @Email @Size(max = 255) String email,
             boolean enabled,
             @Min(1) int version) {
+    }
+
+    record UpdateCampusRequest(@NotNull Long campusId, @Min(1) int version) {
     }
 
     record ResetPasswordResponse(String initialPassword) {

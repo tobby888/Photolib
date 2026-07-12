@@ -95,6 +95,21 @@ public class UserService {
     }
 
     @Transactional
+    public UserView updateCampus(Long id, Long campusId, int version) {
+        UserEntity user = require(id);
+        if (user.getRole() != UserRole.CAMPUS_MANAGER) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "只能修改校区负责人的负责校区");
+        }
+        validateCampus(UserRole.CAMPUS_MANAGER, campusId);
+        user.setCampusId(campusId);
+        user.setVersion(version);
+        if (userMapper.updateById(user) != 1) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "用户已被其他操作修改");
+        }
+        return toView(require(id));
+    }
+
+    @Transactional
     public String resetPassword(Long id) {
         UserEntity user = require(id);
         String initialPassword = randomPassword();

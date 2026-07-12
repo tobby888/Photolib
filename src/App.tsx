@@ -3,7 +3,7 @@ import {
 } from 'antd'
 import {
   AimOutlined, BarChartOutlined, BellOutlined, BookOutlined, BulbOutlined, CameraOutlined, ContactsOutlined,
-  DashboardOutlined, FolderOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SettingOutlined,
+  DashboardOutlined, EnvironmentOutlined, FolderOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SettingOutlined,
   MessageOutlined, PictureOutlined, StarOutlined, UnorderedListOutlined, UserOutlined,
 } from '@ant-design/icons'
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
@@ -25,6 +25,7 @@ const PhotosPage = lazy(() => import('./pages/PhotosPage'))
 const WorklogsPage = lazy(() => import('./pages/WorklogsPage'))
 const DirectoryPage = lazy(() => import('./pages/DirectoryPage'))
 const StatisticsPage = lazy(() => import('./pages/StatisticsPage'))
+const ManagerCampusesPage = lazy(() => import('./pages/ManagerCampusesPage'))
 const AdminPage = lazy(() => import('./pages/AdminPage'))
 const NotificationsPage = lazy(() => import('./pages/NotificationsPage'))
 const NotificationDetailPage = lazy(() => import('./pages/NotificationDetailPage'))
@@ -109,6 +110,7 @@ function Shell() {
     ]
     if (user?.role !== 'CAMPUS_MANAGER') common.push(
       { key: '/statistics', icon: <BarChartOutlined />, label: '数据统计' },
+      { key: '/manager-campuses', icon: <EnvironmentOutlined />, label: '负责人校区' },
     )
     if (user?.role === 'ADMIN') common.push(
       { key: '/admin', icon: <SettingOutlined />, label: '系统管理' },
@@ -202,6 +204,7 @@ function Shell() {
           <Route path="/notifications" element={<NotificationsPage />} />
           <Route path="/notifications/:notificationId" element={<NotificationDetailPage />} />
           <Route path="/statistics" element={user.role === 'CAMPUS_MANAGER' ? <Navigate to="/" /> : <StatisticsPage />} />
+          <Route path="/manager-campuses" element={user.role === 'CAMPUS_MANAGER' ? <Navigate to="/" /> : <ManagerCampusesPage />} />
           <Route path="/admin" element={user.role === 'ADMIN' ? <AdminPage /> : <Navigate to="/" />} />
           <Route path="*" element={<NotFound />} />
         </Routes></Suspense>
