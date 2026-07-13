@@ -251,6 +251,85 @@ class ProjectServiceTests {
     }
 
     @Test
+    void removePhoto_shouldOnlyRemoveProjectMembershipAndKeepRequest() {
+        var project = projectService.create("解除关联项目", "描述", ProjectStatus.ACTIVE, adminUser);
+        jdbc.sql("""
+                INSERT INTO photo_request
+                    (id, project_id, title, campus_id, deadline, status, created_by)
+                VALUES
+                    (2300, :projectId, '保留关联需求', 901, DATEADD('DAY', 1, CURRENT_TIMESTAMP),
+                     'PUBLISHED', 100)
+                """)
+                .param("projectId", project.getId())
+                .update();
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, request_id, project_id, title, photographer_student_id, photographer_name,
+                     uploaded_by, campus_id, taken_at, size, content_type, object_key, sha256, status)
+                VALUES
+                    (2301, 2300, :projectId, '需求照片', '20230001', '张三', 100, 901,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/request.jpg', :sha256, 'AVAILABLE')
+                """)
+                .param("projectId", project.getId())
+                .param("sha256", "d".repeat(64))
+                .update();
+        jdbc.sql("INSERT INTO photo_project (photo_id, project_id) VALUES (2301, :projectId)")
+                .param("projectId", project.getId())
+                .update();
+
+        projectService.removePhoto(project.getId(), 2301L, ministerUser);
+
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM photo_project WHERE photo_id=2301 AND project_id=:projectId")
+                .param("projectId", project.getId()).query(Integer.class).single()).isZero();
+        assertThat(jdbc.sql("SELECT request_id FROM photo WHERE id=2301")
+                .query(Long.class).single()).isEqualTo(2300L);
+        assertThat(jdbc.sql("SELECT project_id FROM photo WHERE id=2301")
+                .query(Long.class).single()).isEqualTo(project.getId());
+    }
+
+    @Test
+    void removePhoto_whenStillAdopted_shouldRequireCancellingAdoptionFirst() {
+        var project = projectService.create("引用项目", "描述", ProjectStatus.ACTIVE, adminUser);
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, title, photographer_student_id, photographer_name, uploaded_by, campus_id,
+                     taken_at, size, content_type, object_key, sha256, status)
+                VALUES
+                    (2302, '被引照片', '20230001', '张三', 100, 901,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/adopted.jpg', :sha256, 'AVAILABLE')
+                """)
+                .param("sha256", "e".repeat(64))
+                .update();
+        jdbc.sql("INSERT INTO photo_project (photo_id, project_id) VALUES (2302, :projectId)")
+                .param("projectId", project.getId())
+                .update();
+        jdbc.sql("""
+                INSERT INTO adoption
+                    (project_id, photo_id, photographer_student_id, photographer_name,
+                     adopted_by, adopted_at, deleted)
+                VALUES
+                    (:projectId, 2302, '20230001', '张三', 100, NOW(), false)
+                """)
+                .param("projectId", project.getId())
+                .update();
+
+        assertThatThrownBy(() -> projectService.removePhoto(project.getId(), 2302L, adminUser))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("先取消引用");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM photo_project WHERE photo_id=2302 AND project_id=:projectId")
+                .param("projectId", project.getId()).query(Integer.class).single()).isEqualTo(1);
+    }
+
+    @Test
+    void removePhoto_asCampusManager_shouldBeForbidden() {
+        var project = projectService.create("权限项目", "描述", ProjectStatus.ACTIVE, adminUser);
+
+        assertThatThrownBy(() -> projectService.removePhoto(project.getId(), 9999L, managerUser))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("管理员或部长");
+    }
+
+    @Test
     void campusManager_shouldOnlySeeProjectsWithAssignedRequests() {
         var assigned = projectService.create("已指派项目", "描述", ProjectStatus.ACTIVE, adminUser);
         var hidden = projectService.create("未指派项目", "描述", ProjectStatus.ACTIVE, adminUser);

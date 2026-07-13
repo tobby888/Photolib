@@ -47,12 +47,17 @@ public class AdoptionService {
             if (user.role() == UserRole.CAMPUS_MANAGER && !photo.getUploadedBy().equals(user.id())) {
                 throw new BusinessException(ErrorCode.FORBIDDEN, "无权使用不可见的图库图片");
             }
-            long membership = jdbc.sql("SELECT COUNT(*) FROM photo_project WHERE photo_id=:photoId AND project_id=:projectId")
+            Long membership = jdbc.sql("""
+                    SELECT photo_id FROM photo_project
+                    WHERE photo_id=:photoId AND project_id=:projectId
+                    FOR UPDATE
+                    """)
                     .param("photoId", photoId)
                     .param("projectId", projectId)
                     .query(Long.class)
-                    .single();
-            if (membership == 0) {
+                    .optional()
+                    .orElse(null);
+            if (membership == null) {
                 throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "图片尚未加入项目相册");
             }
             Integer existing = jdbc.sql("SELECT deleted FROM adoption WHERE project_id=:p AND photo_id=:f")

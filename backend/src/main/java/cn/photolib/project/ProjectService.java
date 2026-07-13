@@ -238,6 +238,45 @@ public class ProjectService {
         }
     }
 
+    @Transactional
+    public void removePhoto(Long projectId, Long photoId, AuthenticatedUser user) {
+        if (user.role() != UserRole.ADMIN && user.role() != UserRole.MINISTER) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "仅管理员或部长可解除项目图片关联");
+        }
+        get(projectId);
+        Long membership = jdbc.sql("""
+                SELECT photo_id FROM photo_project
+                WHERE project_id=:projectId AND photo_id=:photoId
+                FOR UPDATE
+                """)
+                .param("projectId", projectId)
+                .param("photoId", photoId)
+                .query(Long.class)
+                .optional()
+                .orElse(null);
+        if (membership == null) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "图片未关联到该项目");
+        }
+        long adoptions = jdbc.sql("""
+                SELECT COUNT(*) FROM adoption
+                WHERE project_id=:projectId AND photo_id=:photoId AND deleted=0
+                """)
+                .param("projectId", projectId)
+                .param("photoId", photoId)
+                .query(Long.class)
+                .single();
+        if (adoptions > 0) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "图片仍被该项目引用，请先取消引用");
+        }
+        int removed = jdbc.sql("DELETE FROM photo_project WHERE project_id=:projectId AND photo_id=:photoId")
+                .param("projectId", projectId)
+                .param("photoId", photoId)
+                .update();
+        if (removed != 1) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "图片项目关联已发生变化");
+        }
+    }
+
     private void requireVisible(ProjectEntity project, AuthenticatedUser user) {
         if (user.role() != UserRole.CAMPUS_MANAGER) {
             return;
