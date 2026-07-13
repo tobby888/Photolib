@@ -49,10 +49,9 @@ export default function ProjectDetailPage() {
   const [galleryOpen, setGalleryOpen] = useState(false)
   const [galleryKeyword, setGalleryKeyword] = useState('')
   const [selectedPhotoIds, setSelectedPhotoIds] = useState<string[]>([])
-  const [galleryRemark, setGalleryRemark] = useState('')
   const [saving, setSaving] = useState(false)
   const [markingPhotoId, setMarkingPhotoId] = useState<string | null>(null)
-  const { data, loading, error, reload } = useLoad(async () => {
+  const { data, setData, loading, error, reload } = useLoad(async () => {
     const [project, firstRequests, campuses, firstPhotos, firstAdoptions] = await Promise.all([
       api<Project>({ url: `/projects/${projectId}` }),
       api<PageData<PhotoRequest>>({ url: '/requests', params: { page: 1, pageSize: 100, projectId } }),
@@ -112,16 +111,40 @@ export default function ProjectDetailPage() {
     try {
       if (adoption) {
         await api({ method: 'DELETE', url: `/projects/${projectId}/adoptions/${adoption.id}` })
+        setData(current => ({
+          ...current,
+          project: current.project && {
+            ...current.project,
+            adoptionCount: Math.max(0, (current.project.adoptionCount || 0) - 1),
+          },
+          photos: current.photos.map(item => item.id === photo.id
+            ? { ...item, adoptionCount: Math.max(0, (item.adoptionCount || 0) - 1) }
+            : item),
+          adoptions: current.adoptions.filter(item => item.id !== adoption.id),
+        }))
         message.success('已取消被引标注')
       } else {
-        await api({
+        const created = await api<Adoption[]>({
           method: 'POST',
           url: `/projects/${projectId}/adoptions`,
           data: { photoIds: [photo.id], remark: null },
         })
+        setData(current => ({
+          ...current,
+          project: current.project && {
+            ...current.project,
+            adoptionCount: (current.project.adoptionCount || 0) + created.length,
+          },
+          photos: current.photos.map(item => item.id === photo.id
+            ? { ...item, adoptionCount: (item.adoptionCount || 0) + created.length }
+            : item),
+          adoptions: [
+            ...current.adoptions.filter(item => !created.some(value => value.id === item.id)),
+            ...created,
+          ],
+        }))
         message.success('已标注为被引图片')
       }
-      await reload()
     } catch (reason) {
       message.error((reason as Error).message)
     } finally {
@@ -220,13 +243,12 @@ export default function ProjectDetailPage() {
     try {
       await api({
         method: 'POST',
-        url: `/projects/${projectId}/adoptions`,
-        data: { photoIds: selectedPhotoIds, remark: galleryRemark.trim() || null },
+        url: `/projects/${projectId}/photos`,
+        data: { photoIds: selectedPhotoIds },
       })
-      message.success(`已向项目添加 ${selectedPhotoIds.length} 张图库图片`)
+      message.success(`已向项目相册添加 ${selectedPhotoIds.length} 张图片，请按需标注被引`)
       setGalleryOpen(false)
       setSelectedPhotoIds([])
-      setGalleryRemark('')
       await reload()
     } catch (reason) {
       message.error((reason as Error).message)
@@ -237,6 +259,8 @@ export default function ProjectDetailPage() {
 
   const project = data.project
   const canManage = user?.role !== 'CAMPUS_MANAGER'
+  const addableGalleryPhotos = galleryPhotos.items.filter(photo =>
+    !photo.relatedProjectIds?.some(id => String(id) === projectId))
   return <DataState loading={loading} error={error} empty={!project} onRetry={reload}>
     {project && <>
       <Breadcrumb className="detail-breadcrumb" items={[
@@ -399,12 +423,13 @@ export default function ProjectDetailPage() {
         confirmLoading={saving}>
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
           <Typography.Paragraph type="secondary">
-            选择你有权查看的可用图库图片。添加后会形成项目采用记录，不会复制或重新上传文件。
+            选择你有权查看的可用图库图片。添加后只会进入项目相册，默认不标记为被引；
+            管理员可在项目图片中按需标注。
           </Typography.Paragraph>
           <Input.Search allowClear placeholder="搜索图片标题、描述或标签"
             onSearch={setGalleryKeyword} style={{ maxWidth: 420 }} />
           <Table<Photo> rowKey="id" size="small" loading={galleryLoading}
-            dataSource={galleryPhotos.items} pagination={{ pageSize: 8 }}
+            dataSource={addableGalleryPhotos} pagination={{ pageSize: 8 }}
             rowSelection={{
               selectedRowKeys: selectedPhotoIds,
               onChange: keys => setSelectedPhotoIds(keys.map(String)),
@@ -420,8 +445,6 @@ export default function ProjectDetailPage() {
               { title: '标签', dataIndex: 'tags', render: tags =>
                 <Space size={4} wrap>{tags?.slice(0, 3).map((tag: string) => <Tag key={tag}>{tag}</Tag>)}</Space> },
             ]} />
-          <Input.TextArea value={galleryRemark} onChange={event => setGalleryRemark(event.target.value)}
-            maxLength={500} showCount rows={2} placeholder="添加备注（可选）" />
         </Space>
       </Modal>
     </>}

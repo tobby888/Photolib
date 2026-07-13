@@ -98,6 +98,12 @@ class AdoptionServiceTests {
                 """)
                 .param("userId", managerUser.id())
                 .update();
+        jdbc.sql("""
+                INSERT INTO photo_project (photo_id, project_id)
+                VALUES (2001, :projectId), (2002, :projectId)
+                """)
+                .param("projectId", activeProject.getId())
+                .update();
     }
 
     @Test
@@ -242,6 +248,7 @@ class AdoptionServiceTests {
 
         var anotherProject = projectService.create(
                 "另一个项目", "描述", ProjectStatus.ACTIVE, adminUser);
+        projectService.addPhotos(anotherProject.getId(), List.of(2002L), adminUser);
         adoptionService.adopt(anotherProject.getId(), List.of(2002L), "项目2采用", adminUser);
 
         // When: 查询特定项目的采用记录
@@ -271,6 +278,9 @@ class AdoptionServiceTests {
                 .param("campusId", testCampus.getId())
                 .param("sha256", "c".repeat(64))
                 .update();
+        jdbc.sql("INSERT INTO photo_project (photo_id, project_id) VALUES (2003, :projectId)")
+                .param("projectId", activeProject.getId())
+                .update();
 
         adoptionService.adopt(activeProject.getId(), List.of(2001L, 2003L), "张三的照片", adminUser);
         adoptionService.adopt(activeProject.getId(), List.of(2002L), "李四的照片", adminUser);
@@ -287,38 +297,31 @@ class AdoptionServiceTests {
     }
 
     @Test
-    void adoptPhotos_shouldCreatePhotoProjectLinks() {
-        // Given: 创建另一个项目，准备从图库添加图片
+    void adoptPhotos_outsideProjectAlbum_shouldThrowException() {
+        // Given: 图片尚未加入目标项目相册
         var targetProject = projectService.create(
                 "目标项目", "描述", ProjectStatus.ACTIVE, adminUser);
 
-        // When: 从图库添加图片到目标项目
-        adoptionService.adopt(targetProject.getId(), List.of(2001L, 2002L), "从图库添加", adminUser);
-
-        // Then: 应该在 photo_project 表中创建关联
-        Integer count = jdbc.sql("""
-                SELECT COUNT(*) FROM photo_project
-                WHERE project_id = :projectId AND photo_id IN (2001, 2002)
-                """)
-                .param("projectId", targetProject.getId())
-                .query(Integer.class)
-                .single();
-
-        assertThat(count).isEqualTo(2);
+        // When & Then: 标记引用不能隐式把图片加入项目
+        assertThatThrownBy(() -> adoptionService.adopt(
+                targetProject.getId(), List.of(2001L), "尝试直接引用", adminUser))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("尚未加入项目相册");
     }
 
     @Test
-    void cancelAdoption_shouldRemovePhotoProjectLink_whenNoOtherLinks() {
-        // Given: 创建一个新项目，从图库添加图片
+    void cancelAdoption_shouldKeepPhotoProjectLink_whenAddedFromGallery() {
+        // Given: 创建一个新项目，从图库添加并采用图片
         var targetProject = projectService.create(
                 "目标项目", "描述", ProjectStatus.ACTIVE, adminUser);
+        projectService.addPhotos(targetProject.getId(), List.of(2001L), adminUser);
         var adoptions = adoptionService.adopt(
                 targetProject.getId(), List.of(2001L), "从图库添加", adminUser);
 
         // When: 取消采用
         adoptionService.cancel(targetProject.getId(), adoptions.get(0).getId());
 
-        // Then: photo_project 表中的关联应该被删除
+        // Then: 取消采用只改变引用状态，图片仍应留在项目相册
         Integer count = jdbc.sql("""
                 SELECT COUNT(*) FROM photo_project
                 WHERE project_id = :projectId AND photo_id = 2001
@@ -327,18 +330,13 @@ class AdoptionServiceTests {
                 .query(Integer.class)
                 .single();
 
-        assertThat(count).isEqualTo(0);
+        assertThat(count).isEqualTo(1);
     }
 
     @Test
     void cancelAdoption_shouldKeepPhotoProjectLink_whenPhotoOriginallyFromProject() {
         // Given: 图片2001原本就属于activeProject（通过upload创建）
-        // 先在 photo_project 表中建立原始关联
-        jdbc.sql("INSERT INTO photo_project (photo_id, project_id) VALUES (2001, :projectId)")
-                .param("projectId", activeProject.getId())
-                .update();
-
-        // 然后采用这张照片
+        // photo_project 原始关联已在测试准备阶段建立，然后采用这张照片
         var adoptions = adoptionService.adopt(
                 activeProject.getId(), List.of(2001L), "采用自己项目的图片", adminUser);
 

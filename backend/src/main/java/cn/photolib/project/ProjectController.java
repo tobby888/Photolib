@@ -9,12 +9,15 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/projects")
@@ -43,6 +46,13 @@ public class ProjectController {
     ApiResponse<ProjectService.ProjectDetail> get(@PathVariable Long id,
                                                   @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.getDetail(id, user));
+    }
+
+    @PostMapping("/{id}/photos")
+    ApiResponse<Void> addPhotos(@PathVariable Long id, @Valid @RequestBody AddPhotosRequest request,
+                                @AuthenticationPrincipal AuthenticatedUser user) {
+        service.addPhotos(id, request.photoIds(), user);
+        return ApiResponse.ok();
     }
 
     @PutMapping("/{id}")
@@ -84,5 +94,8 @@ public class ProjectController {
     }
 
     record ReopenRequest(@NotBlank @Size(max = 500) String reason, @Min(1) int version) {
+    }
+
+    record AddPhotosRequest(@NotEmpty @Size(max = 200) List<@NotNull Long> photoIds) {
     }
 }

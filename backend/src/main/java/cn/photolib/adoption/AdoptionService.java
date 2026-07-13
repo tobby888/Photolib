@@ -47,6 +47,14 @@ public class AdoptionService {
             if (user.role() == UserRole.CAMPUS_MANAGER && !photo.getUploadedBy().equals(user.id())) {
                 throw new BusinessException(ErrorCode.FORBIDDEN, "无权使用不可见的图库图片");
             }
+            long membership = jdbc.sql("SELECT COUNT(*) FROM photo_project WHERE photo_id=:photoId AND project_id=:projectId")
+                    .param("photoId", photoId)
+                    .param("projectId", projectId)
+                    .query(Long.class)
+                    .single();
+            if (membership == 0) {
+                throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "图片尚未加入项目相册");
+            }
             Integer existing = jdbc.sql("SELECT deleted FROM adoption WHERE project_id=:p AND photo_id=:f")
                     .param("p", projectId).param("f", photoId).query(Integer.class).optional().orElse(null);
             if (existing != null) {
@@ -72,12 +80,6 @@ public class AdoptionService {
                 adoption.setCreatedAt(now);
                 mapper.insert(adoption);
             }
-            // 在 photo_project 表中建立关联，使图片出现在项目相册中
-            // 使用 INSERT IGNORE 避免重复插入（图片可能已通过其他方式关联到该项目）
-            jdbc.sql("INSERT IGNORE INTO photo_project (photo_id, project_id) VALUES (:photoId, :projectId)")
-                    .param("photoId", photoId)
-                    .param("projectId", projectId)
-                    .update();
         }
         return mapper.selectList(Wrappers.<AdoptionEntity>lambdaQuery()
                 .eq(AdoptionEntity::getProjectId, projectId)
@@ -103,19 +105,6 @@ public class AdoptionService {
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "采用记录不存在");
         }
         mapper.deleteById(adoptionId);
-
-        // 检查该图片是否还有其他原因关联到该项目（例如直接上传到该项目的需求）
-        // 如果没有，则从 photo_project 表中删除关联
-        PhotoEntity photo = photoMapper.selectById(adoption.getPhotoId());
-        boolean hasOtherLinks = photo != null && photo.getProjectId() != null
-                && photo.getProjectId().equals(projectId);
-
-        if (!hasOtherLinks) {
-            jdbc.sql("DELETE FROM photo_project WHERE photo_id = :photoId AND project_id = :projectId")
-                    .param("photoId", adoption.getPhotoId())
-                    .param("projectId", projectId)
-                    .update();
-        }
     }
 
     public List<Ranking> ranking(LocalDate from, LocalDate to, Long projectId, Long campusId) {

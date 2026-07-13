@@ -11,6 +11,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.*;
 
 /**
@@ -222,6 +224,30 @@ class ProjectServiceTests {
         assertThat(projectService.getDetail(project.getId(), adminUser).photoCount()).isEqualTo(2L);
         // 校区负责人 scopedSummary 只数自己上传的 1 张
         assertThat(projectService.getDetail(project.getId(), managerUser).photoCount()).isEqualTo(1L);
+    }
+
+    @Test
+    void addPhotos_shouldAddToAlbumWithoutCreatingAdoption() {
+        var project = projectService.create("图库项目", "描述", ProjectStatus.ACTIVE, adminUser);
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, title, photographer_student_id, photographer_name, uploaded_by, campus_id,
+                     taken_at, size, content_type, object_key, sha256, status)
+                VALUES
+                    (2201, '图库照片', '20230001', '张三', 100, 901,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/gallery.jpg', :sha256, 'AVAILABLE')
+                """)
+                .param("sha256", "c".repeat(64))
+                .update();
+
+        projectService.addPhotos(project.getId(), List.of(2201L), adminUser);
+
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM photo_project WHERE photo_id=2201 AND project_id=:projectId")
+                .param("projectId", project.getId()).query(Integer.class).single()).isEqualTo(1);
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM adoption WHERE photo_id=2201 AND project_id=:projectId AND deleted=0")
+                .param("projectId", project.getId()).query(Integer.class).single()).isZero();
+        assertThat(projectService.getDetail(project.getId(), adminUser).photoCount()).isEqualTo(1L);
+        assertThat(projectService.getDetail(project.getId(), adminUser).adoptionCount()).isZero();
     }
 
     @Test
