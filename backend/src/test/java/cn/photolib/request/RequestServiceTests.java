@@ -297,15 +297,25 @@ class RequestServiceTests {
                 LocalDateTime.now().plusDays(1));
         var request = requestService.create(activeProject.getId(), create, ministerUser);
 
-        // When: 直接删除需求（通过 Mapper）
-        var mapper = jdbc;
-        jdbc.sql("UPDATE photo_request SET deleted = 1 WHERE id = :id")
-                .param("id", request.getId())
-                .update();
+        // When: 管理员删除需求
+        requestService.delete(request.getId(), adminUser);
 
         // Then: 需求应该被逻辑删除
         assertThatThrownBy(() -> requestService.get(request.getId()))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("需求不存在");
+    }
+
+    @Test
+    void deleteRequest_byNonAdmin_shouldBeForbidden() {
+        RequestService.CreateCommand create = new RequestService.CreateCommand(
+                "测试需求", "描述", testCampus.getId(), 5,
+                LocalDateTime.now().plusDays(1));
+        var request = requestService.create(activeProject.getId(), create, ministerUser);
+
+        assertThatThrownBy(() -> requestService.delete(request.getId(), ministerUser))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("仅管理员可删除需求");
+        assertThat(requestService.get(request.getId())).isNotNull();
     }
 }

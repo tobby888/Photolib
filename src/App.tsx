@@ -133,9 +133,11 @@ function Shell() {
         </div>
         {!collapsed && <div><strong>{branding.title}</strong><span>{branding.slogan}</span></div>}
       </div>
-      {!collapsed && <Typography.Text className="nav-section">工作空间</Typography.Text>}
-      <Menu theme="dark" mode="inline" selectedKeys={[selected]} items={nav}
-        onClick={({ key }) => { navigate(key); if (mobile) setCollapsed(true) }} />
+      <div className="side-nav-scroll">
+        {!collapsed && <Typography.Text className="nav-section">工作空间</Typography.Text>}
+        <Menu theme="dark" mode="inline" selectedKeys={[selected]} items={nav}
+          onClick={({ key }) => { navigate(key); if (mobile) setCollapsed(true) }} />
+      </div>
       <div className="side-foot">
         {!collapsed && <div className="storage-note">
           <span>工作流</span><strong>拍摄 · 归档 · 采纳</strong>

@@ -52,6 +52,14 @@ export interface PhotoRequest extends BaseEntity {
   firstAcceptedAt?: string
 }
 
+export interface BatchPublishResult {
+  campusId: EntityId
+  success: boolean
+  request?: PhotoRequest | null
+  errorCode?: string | null
+  message?: string | null
+}
+
 export interface Photo extends BaseEntity {
   requestId?: EntityId
   projectId?: EntityId

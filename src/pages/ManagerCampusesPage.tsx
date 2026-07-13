@@ -1,4 +1,4 @@
-import { App, Button, Card, Select, Space, Table, Tag, Typography } from 'antd'
+import { App, Button, Card, Input, Select, Space, Table, Tag, Typography } from 'antd'
 import { SaveOutlined, WarningOutlined } from '@ant-design/icons'
 import { useState } from 'react'
 import { api, emptyPage } from '../api'
@@ -10,13 +10,15 @@ export default function ManagerCampusesPage() {
   const { message } = App.useApp()
   const [selectedCampuses, setSelectedCampuses] = useState<Record<EntityId, EntityId>>({})
   const [savingId, setSavingId] = useState<EntityId | null>(null)
+  const [searchText, setSearchText] = useState('')
+  const [keyword, setKeyword] = useState('')
   const { data: users, loading, error, reload } = useLoad(
     () => api<PageData<User>>({
       url: '/users',
-      params: { page: 1, pageSize: 100, role: 'CAMPUS_MANAGER' },
+      params: { page: 1, pageSize: 100, role: 'CAMPUS_MANAGER', keyword: keyword || undefined },
     }),
     emptyPage<User>(),
-    [],
+    [keyword],
   )
   const { data: campuses, loading: campusesLoading, error: campusesError, reload: reloadCampuses } = useLoad(
     () => api<Campus[]>({ url: '/campuses' }),
@@ -62,12 +64,27 @@ export default function ManagerCampusesPage() {
         <div>
           <Typography.Title level={4}>校区负责人</Typography.Title>
           <Typography.Text type="secondary">
-            {unassignedCount > 0
+            {keyword
+              ? `找到 ${users.total} 位匹配的校区负责人。`
+              : unassignedCount > 0
               ? `有 ${unassignedCount} 位历史迁移负责人尚未指定校区，请及时补全。`
               : '所有校区负责人均已指定负责校区。'}
           </Typography.Text>
         </div>
-        {unassignedCount > 0 && <Tag color="warning" icon={<WarningOutlined />}>待补全 {unassignedCount}</Tag>}
+        <Space wrap>
+          <Input.Search
+            allowClear
+            value={searchText}
+            placeholder="搜索负责人姓名或账号"
+            style={{ width: 280 }}
+            onChange={event => {
+              setSearchText(event.target.value)
+              if (!event.target.value) setKeyword('')
+            }}
+            onSearch={value => setKeyword(value.trim())}
+          />
+          {unassignedCount > 0 && <Tag color="warning" icon={<WarningOutlined />}>待补全 {unassignedCount}</Tag>}
+        </Space>
       </div>
       <DataState loading={loading || campusesLoading} error={error || campusesError}
         empty={!users.items.length} onRetry={() => { void reload(); void reloadCampuses() }}>

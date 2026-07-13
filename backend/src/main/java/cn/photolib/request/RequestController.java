@@ -31,6 +31,17 @@ public class RequestController {
                 request.requiredCount(), request.deadline()), user));
     }
 
+    @PostMapping("/projects/{projectId}/requests/batch-publish")
+    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    ApiResponse<List<RequestService.BatchPublishResult>> batchPublish(
+            @PathVariable Long projectId,
+            @Valid @RequestBody BatchPublishRequest request,
+            @AuthenticationPrincipal AuthenticatedUser user) {
+        return ApiResponse.ok(service.batchPublish(projectId, new RequestService.BatchPublishCommand(
+                request.title(), request.description(), request.campusIds(),
+                request.requiredCount(), request.deadline()), user));
+    }
+
     @GetMapping("/requests")
     ApiResponse<PageResponse<PhotoRequestEntity>> list(
             @RequestParam(defaultValue = "1") @Min(1) int page,
@@ -103,11 +114,26 @@ public class RequestController {
         return ApiResponse.ok(service.cancel(id, request.reason(), request.version(), user));
     }
 
+    @DeleteMapping("/requests/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    ApiResponse<Void> delete(@PathVariable Long id,
+                             @AuthenticationPrincipal AuthenticatedUser user) {
+        service.delete(id, user);
+        return ApiResponse.ok();
+    }
+
     record CreateRequest(@NotBlank @Size(max = 200) String title,
                          @Size(max = 5000) String description,
                          @NotNull Long campusId,
                          @Min(1) Integer requiredCount,
                          @NotNull @Future LocalDateTime deadline) {
+    }
+
+    record BatchPublishRequest(@NotBlank @Size(max = 200) String title,
+                               @Size(max = 5000) String description,
+                               @NotEmpty @Size(max = 50) List<@NotNull Long> campusIds,
+                               @Min(1) Integer requiredCount,
+                               @NotNull @Future LocalDateTime deadline) {
     }
 
     record VersionRequest(@Min(1) int version) {
