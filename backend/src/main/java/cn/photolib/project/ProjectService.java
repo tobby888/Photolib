@@ -4,6 +4,9 @@ import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.PageResponse;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
+import cn.photolib.photo.mapper.PhotoMapper;
+import cn.photolib.photo.model.PhotoEntity;
+import cn.photolib.photo.model.PhotoStatus;
 import cn.photolib.project.mapper.ProjectMapper;
 import cn.photolib.project.model.ProjectEntity;
 import cn.photolib.project.model.ProjectStatus;
@@ -24,6 +27,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class ProjectService {
     private final ProjectMapper mapper;
+    private final PhotoMapper photoMapper;
     private final JdbcClient jdbc;
 
     @Transactional
@@ -205,6 +209,33 @@ public class ProjectService {
         ProjectEntity project = get(id);
         requireVisible(project, user);
         return project;
+    }
+
+    @Transactional
+    public void addPhotos(Long projectId, List<Long> photoIds, AuthenticatedUser user) {
+        if (photoIds == null || photoIds.isEmpty() || photoIds.size() > 200) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择 1 至 200 张图片");
+        }
+        if (getVisible(projectId, user).getStatus() != ProjectStatus.ACTIVE) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "仅进行中项目可添加图片");
+        }
+
+        for (Long photoId : photoIds.stream().distinct().toList()) {
+            PhotoEntity photo = photoMapper.selectById(photoId);
+            if (photo == null || photo.getStatus() != PhotoStatus.AVAILABLE) {
+                throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "存在不可添加的图片");
+            }
+            if (user.role() == UserRole.CAMPUS_MANAGER && !photo.getUploadedBy().equals(user.id())) {
+                throw new BusinessException(ErrorCode.FORBIDDEN, "无权使用不可见的图库图片");
+            }
+            int inserted = jdbc.sql("INSERT IGNORE INTO photo_project (photo_id, project_id) VALUES (:photoId, :projectId)")
+                    .param("photoId", photoId)
+                    .param("projectId", projectId)
+                    .update();
+            if (inserted != 1) {
+                throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE, "图片已在该项目中");
+            }
+        }
     }
 
     private void requireVisible(ProjectEntity project, AuthenticatedUser user) {
