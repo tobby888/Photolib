@@ -44,9 +44,34 @@ class AuthServiceTests {
         testUser.setPasswordHash(passwordEncoder.encode("password123"));
         testUser.setDisplayName("测试用户");
         testUser.setRole(UserRole.MINISTER);
+        testUser.setEmail("test@example.com");
         testUser.setEnabled(true);
         testUser.setMustChangePassword(false);
         userMapper.insert(testUser);
+    }
+
+    @Test
+    void loginWithEmail_shouldIgnoreCaseAndWhitespace() {
+        AuthService.TokenPair tokens = authService.login("  TEST@EXAMPLE.COM ", "password123");
+
+        assertThat(tokens.user().username()).isEqualTo("testuser");
+    }
+
+    @Test
+    void loginWithDuplicateLegacyEmail_shouldRejectAmbiguousIdentity() {
+        UserEntity duplicate = new UserEntity();
+        duplicate.setUsername("duplicate-email-user");
+        duplicate.setPasswordHash(passwordEncoder.encode("anotherPassword123"));
+        duplicate.setDisplayName("重复邮箱用户");
+        duplicate.setRole(UserRole.MINISTER);
+        duplicate.setEmail("test@example.com");
+        duplicate.setEnabled(true);
+        duplicate.setMustChangePassword(false);
+        userMapper.insert(duplicate);
+
+        assertThatThrownBy(() -> authService.login("test@example.com", "password123"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("账号、邮箱或密码错误");
     }
 
     @Test
@@ -73,7 +98,7 @@ class AuthServiceTests {
         // When & Then: 使用错误的密码登录应该抛出异常
         assertThatThrownBy(() -> authService.login("testuser", "wrongpassword"))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("用户名或密码错误");
+                .hasMessageContaining("账号、邮箱或密码错误");
     }
 
     @Test
@@ -85,7 +110,7 @@ class AuthServiceTests {
         // When & Then: 登录应该失败
         assertThatThrownBy(() -> authService.login("testuser", "password123"))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("用户名或密码错误");
+                .hasMessageContaining("账号、邮箱或密码错误");
     }
 
     @Test

@@ -13,6 +13,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Locale;
 
 @Service
 @RequiredArgsConstructor
@@ -23,12 +25,19 @@ public class AuthService {
     private final AuthProperties properties;
 
     @Transactional
-    public TokenPair login(String username, String password) {
+    public TokenPair login(String loginIdentifier, String password) {
+        String identifier = loginIdentifier == null ? "" : loginIdentifier.trim();
         UserEntity user = userMapper.selectOne(Wrappers.<UserEntity>lambdaQuery()
-                .eq(UserEntity::getUsername, username));
+                .eq(UserEntity::getUsername, identifier));
+        if (user == null) {
+            List<UserEntity> emailMatches = userMapper.selectList(Wrappers.<UserEntity>lambdaQuery()
+                    .eq(UserEntity::getEmail, identifier.toLowerCase(Locale.ROOT))
+                    .last("LIMIT 2"));
+            user = emailMatches.size() == 1 ? emailMatches.getFirst() : null;
+        }
         if (user == null || !Boolean.TRUE.equals(user.getEnabled())
                 || !passwordEncoder.matches(password, user.getPasswordHash())) {
-            throw new BusinessException(ErrorCode.UNAUTHORIZED, "用户名或密码错误");
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "账号、邮箱或密码错误");
         }
         return issue(user);
     }

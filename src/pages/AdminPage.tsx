@@ -3,7 +3,7 @@ import {
 } from 'antd'
 import {
   AimOutlined, BgColorsOutlined, BulbOutlined, CameraOutlined, PictureOutlined,
-  FileTextOutlined, PlusOutlined, SafetyCertificateOutlined, StarOutlined, TeamOutlined, UploadOutlined,
+  EditOutlined, FileTextOutlined, PlusOutlined, SafetyCertificateOutlined, StarOutlined, TeamOutlined, UploadOutlined,
 } from '@ant-design/icons'
 import { useState } from 'react'
 import { api, emptyPage } from '../api'
@@ -18,12 +18,18 @@ interface BrandingFormValues {
   iconChoice: BrandingSettings['builtinIcon'] | 'custom'
 }
 
+interface EmailFormValues {
+  email?: string
+}
+
 export default function AdminPage() {
   const { message, modal } = App.useApp()
   const [userForm] = Form.useForm()
+  const [emailForm] = Form.useForm<EmailFormValues>()
   const [campusForm] = Form.useForm()
   const [brandingForm] = Form.useForm<BrandingFormValues>()
   const [userOpen, setUserOpen] = useState(false)
+  const [editingUser, setEditingUser] = useState<User | null>(null)
   const [campusOpen, setCampusOpen] = useState(false)
   const [userSearchText, setUserSearchText] = useState('')
   const [userKeyword, setUserKeyword] = useState('')
@@ -89,6 +95,33 @@ export default function AdminPage() {
     try {
       await api({ method: 'POST', url: `/users/${user.id}/${user.enabled ? 'disable' : 'enable'}` })
       message.success(user.enabled ? '账号已停用' : '账号已启用'); await reload()
+    } catch (e) { message.error((e as Error).message) }
+  }
+  const openEmailEditor = (user: User) => {
+    setEditingUser(user)
+    emailForm.setFieldsValue({ email: user.email })
+  }
+  const updateUserEmail = async () => {
+    if (!editingUser || editingUser.version == null) return
+    try {
+      const values = await emailForm.validateFields()
+      await api<User>({
+        method: 'PUT',
+        url: `/users/${editingUser.id}`,
+        data: {
+          displayName: editingUser.displayName,
+          role: editingUser.role,
+          campusId: editingUser.campusId,
+          phone: editingUser.phone,
+          email: values.email?.trim() || null,
+          enabled: editingUser.enabled ?? true,
+          version: editingUser.version,
+        },
+      })
+      message.success('用户邮箱已更新')
+      setEditingUser(null)
+      emailForm.resetFields()
+      await reload()
     } catch (e) { message.error((e as Error).message) }
   }
   const deleteUser = (user: User) => {
@@ -162,7 +195,7 @@ export default function AdminPage() {
               <Input.Search
                 allowClear
                 value={userSearchText}
-                placeholder="搜索成员姓名或账号"
+                placeholder="搜索成员姓名、账号或邮箱"
                 style={{ width: 280 }}
                 onChange={event => {
                   setUserSearchText(event.target.value)
@@ -173,13 +206,13 @@ export default function AdminPage() {
               <Button type="primary" icon={<PlusOutlined />} onClick={() => setUserOpen(true)}>创建账号</Button>
             </Space></div>
           <DataState loading={loading} error={error} empty={!users.items.length} onRetry={reload}>
-            <Table rowKey="id" dataSource={users.items} pagination={{ pageSize: 12 }} scroll={{ x: 850 }} columns={[
+            <Table rowKey="id" dataSource={users.items} pagination={{ pageSize: 12 }} scroll={{ x: 1050 }} columns={[
               { title: '成员', render: (_, item) => <div className="table-title"><strong>{item.displayName}</strong><span>@{item.username}</span></div> },
               { title: '角色', dataIndex: 'role', render: value => <Tag variant="filled">{roleName[value]}</Tag> },
               { title: '校区', dataIndex: 'campusId', render: value => campuses.find(c => c.id === value)?.name || '-' },
               { title: '联系方式', render: (_, item) => item.email || item.phone || '-' },
               { title: '状态', dataIndex: 'enabled', render: value => <Tag color={value ? 'green' : 'default'} variant="filled">{value ? '正常' : '已停用'}</Tag> },
-              { title: '操作', fixed: 'right', render: (_, item) => <Space><Switch size="small" checked={item.enabled} onChange={() => void toggleUser(item)} /><Button type="link" onClick={async () => {
+              { title: '操作', fixed: 'right', render: (_, item) => <Space><Switch size="small" checked={item.enabled} onChange={() => void toggleUser(item)} /><Button type="link" icon={<EditOutlined />} onClick={() => openEmailEditor(item)}>修改邮箱</Button><Button type="link" onClick={async () => {
                 try { const result = await api<{ initialPassword: string }>({ method: 'PUT', url: `/users/${item.id}/password` }); modal.warning({ title: '密码已重置', content: <Typography.Text copyable code>{result.initialPassword}</Typography.Text> }) } catch (e) { message.error((e as Error).message) }
               }}>重置密码</Button><Button type="link" danger onClick={() => deleteUser(item)}>删除</Button></Space> },
             ]} />
@@ -203,8 +236,22 @@ export default function AdminPage() {
         <Form.Item label="显示姓名" name="displayName" rules={[{ required: true }]}><Input /></Form.Item>
         <Form.Item label="角色" name="role" rules={[{ required: true }]}><Select options={Object.entries(roleName).map(([value, label]) => ({ value, label }))} /></Form.Item>
         <Form.Item noStyle shouldUpdate={(prev, next) => prev.role !== next.role}>{({ getFieldValue }) => getFieldValue('role') === 'CAMPUS_MANAGER' && <Form.Item label="所属校区" name="campusId" rules={[{ required: true }]}><Select options={campuses.filter(c => c.enabled).map(c => ({ value: c.id, label: c.name }))} /></Form.Item>}</Form.Item>
-        <Form.Item label="邮箱" name="email" rules={[{ type: 'email' }]}><Input /></Form.Item>
+        <Form.Item label="邮箱" name="email" extra="填写后，用户可使用该邮箱登录。" rules={[{ type: 'email' }, { max: 255 }]}><Input /></Form.Item>
         <Form.Item label="手机号" name="phone"><Input /></Form.Item>
+      </Form>
+    </Modal>
+    <Modal
+      title={`修改 ${editingUser?.displayName || ''} 的邮箱`}
+      open={editingUser !== null}
+      onCancel={() => { setEditingUser(null); emailForm.resetFields() }}
+      onOk={() => void updateUserEmail()}
+      okText="保存"
+    >
+      <Typography.Paragraph type="secondary">邮箱不区分大小写，保存后可立即用于登录；留空则取消邮箱登录。</Typography.Paragraph>
+      <Form form={emailForm} layout="vertical" requiredMark={false}>
+        <Form.Item label="邮箱" name="email" rules={[{ type: 'email', message: '请输入有效的邮箱地址' }, { max: 255, message: '邮箱不能超过 255 个字符' }]}>
+          <Input placeholder="例如 name@example.com" autoComplete="email" />
+        </Form.Item>
       </Form>
     </Modal>
     <Modal title="新建校区" open={campusOpen} onCancel={() => setCampusOpen(false)} onOk={createCampus}>

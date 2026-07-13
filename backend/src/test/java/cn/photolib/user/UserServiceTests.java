@@ -51,6 +51,7 @@ class UserServiceTests {
         // Then: 应该返回随机生成的初始密码
         assertThat(result.user().username()).isEqualTo("newuser");
         assertThat(result.user().displayName()).isEqualTo("新用户");
+        assertThat(result.user().email()).isEqualTo("test@example.com");
         assertThat(result.user().mustChangePassword()).isTrue();
         assertThat(result.initialPassword()).isNotEmpty();
         assertThat(result.initialPassword().length()).isBetween(8, 16);
@@ -58,6 +59,20 @@ class UserServiceTests {
         // 验证密码可以登录
         assertThatNoException().isThrownBy(() ->
                 authService.login("newuser", result.initialPassword()));
+    }
+
+    @Test
+    void createUser_shouldNormalizeEmailAndRejectDuplicateEmail() {
+        UserService.CreatedUser first = userService.create(new UserService.CreateUser(
+                "email-first", "用户1", UserRole.MINISTER, null, null, " First@Example.COM "));
+
+        assertThat(first.user().email()).isEqualTo("first@example.com");
+        assertThatNoException().isThrownBy(() ->
+                authService.login("FIRST@EXAMPLE.COM", first.initialPassword()));
+        assertThatThrownBy(() -> userService.create(new UserService.CreateUser(
+                "email-second", "用户2", UserRole.MINISTER, null, null, "first@example.com")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("邮箱已被其他用户使用");
     }
 
     @Test
@@ -105,6 +120,22 @@ class UserServiceTests {
         assertThat(updated.campusId()).isEqualTo(testCampus.getId());
         assertThat(updated.phone()).isEqualTo("13900139000");
         assertThat(updated.email()).isEqualTo("new@example.com");
+    }
+
+    @Test
+    void updateUser_withAnotherUsersEmail_shouldThrowException() {
+        userService.create(new UserService.CreateUser(
+                "email-owner", "邮箱所有者", UserRole.MINISTER, null, null, "owner@example.com"));
+        UserService.CreatedUser target = userService.create(new UserService.CreateUser(
+                "email-target", "待修改用户", UserRole.MINISTER, null, null, "target@example.com"));
+
+        UserService.UpdateUser update = new UserService.UpdateUser(
+                target.user().displayName(), target.user().role(), target.user().campusId(),
+                target.user().phone(), " OWNER@EXAMPLE.COM ", true, 1);
+
+        assertThatThrownBy(() -> userService.update(target.user().id(), update))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("邮箱已被其他用户使用");
     }
 
     @Test

@@ -10,10 +10,10 @@ export default function LoginPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const [loading, setLoading] = useState(false)
-  const submit = async (values: { username: string; password: string }) => {
+  const submit = async (values: { identifier: string; password: string }) => {
     setLoading(true)
     try {
-      const result = await login(values.username, values.password)
+      const result = await login(values.identifier, values.password)
       message.success(`欢迎回来，${result.user.displayName}`)
       navigate(result.mustChangePassword ? '/initial-password' :
         ((location.state as { from?: { pathname: string } })?.from?.pathname || '/'))
@@ -36,10 +36,10 @@ export default function LoginPage() {
       <Card className="login-card" variant="borderless">
         <Typography.Text className="eyebrow">欢迎回来</Typography.Text>
         <Typography.Title level={2}>登录摄影工作站</Typography.Title>
-        <Typography.Paragraph type="secondary">使用管理员分配给你的账号继续工作。</Typography.Paragraph>
+        <Typography.Paragraph type="secondary">使用管理员分配给你的账号或邮箱继续工作。</Typography.Paragraph>
         <Form layout="vertical" size="large" onFinish={submit} requiredMark={false}>
-          <Form.Item label="账号" name="username" rules={[{ required: true, message: '请输入账号' }]}>
-            <Input prefix={<UserOutlined />} placeholder="请输入账号" autoComplete="username" />
+          <Form.Item label="账号或邮箱" name="identifier" rules={[{ required: true, message: '请输入账号或邮箱' }]}>
+            <Input prefix={<UserOutlined />} placeholder="请输入账号或邮箱" autoComplete="username" />
           </Form.Item>
           <Form.Item label="密码" name="password" rules={[{ required: true, message: '请输入密码' }]}>
             <Input.Password prefix={<LockOutlined />} placeholder="请输入密码" autoComplete="current-password" />
