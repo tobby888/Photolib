@@ -4,7 +4,7 @@ import type { User } from './types'
 
 interface AuthContextValue {
   user: User | null
-  login: (username: string, password: string) => Promise<LoginResult>
+  login: (identifier: string, password: string) => Promise<LoginResult>
   updateSession: (result: LoginResult) => void
   logout: () => Promise<void>
 }
@@ -42,8 +42,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
     localStorage.setItem('photolib_user', JSON.stringify(result.user))
     setUser(result.user)
   }
-  const login = async (username: string, password: string) => {
-    const result = await api<LoginResult>({ method: 'POST', url: '/auth/login', data: { username, password } })
+  const login = async (identifier: string, password: string) => {
+    const result = await api<LoginResult>({ method: 'POST', url: '/auth/login', data: { username: identifier, password } })
     updateSession(result)
     return result
   }

@@ -19,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.security.SecureRandom;
+import java.util.Locale;
 
 @Service
 @RequiredArgsConstructor
@@ -39,6 +40,8 @@ public class UserService {
                 .eq(UserEntity::getUsername, command.username())) > 0) {
             throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE, "资源已存在");
         }
+        String email = normalizeEmail(command.email());
+        validateEmailAvailable(email, null);
         String initialPassword = randomPassword();
         UserEntity user = new UserEntity();
         user.setUsername(command.username());
@@ -47,7 +50,7 @@ public class UserService {
         user.setRole(command.role());
         user.setCampusId(command.campusId());
         user.setPhone(command.phone());
-        user.setEmail(command.email());
+        user.setEmail(email);
         user.setEnabled(true);
         user.setMustChangePassword(true);
         userMapper.insert(user);
@@ -60,7 +63,8 @@ public class UserService {
                                        Long campusId, Boolean enabled) {
         var query = Wrappers.<UserEntity>lambdaQuery()
                 .and(StringUtils.hasText(keyword), q -> q.like(UserEntity::getUsername, keyword)
-                        .or().like(UserEntity::getDisplayName, keyword))
+                        .or().like(UserEntity::getDisplayName, keyword)
+                        .or().like(UserEntity::getEmail, keyword))
                 .eq(role != null, UserEntity::getRole, role)
                 .eq(campusId != null, UserEntity::getCampusId, campusId)
                 .eq(enabled != null, UserEntity::getEnabled, enabled)
@@ -78,11 +82,13 @@ public class UserService {
     public UserView update(Long id, UpdateUser command) {
         UserEntity user = require(id);
         validateCampus(command.role(), command.campusId());
+        String email = normalizeEmail(command.email());
+        validateEmailAvailable(email, id);
         user.setDisplayName(command.displayName());
         user.setRole(command.role());
         user.setCampusId(command.campusId());
         user.setPhone(command.phone());
-        user.setEmail(command.email());
+        user.setEmail(email);
         user.setEnabled(command.enabled());
         user.setVersion(command.version());
         if (userMapper.updateById(user) != 1) {
@@ -167,6 +173,22 @@ public class UserService {
                 throw new BusinessException(ErrorCode.VALIDATION_ERROR, "校区不存在或已停用");
             }
         }
+    }
+
+    private void validateEmailAvailable(String email, Long excludedUserId) {
+        if (email == null) {
+            return;
+        }
+        long existing = userMapper.selectCount(Wrappers.<UserEntity>lambdaQuery()
+                .eq(UserEntity::getEmail, email)
+                .ne(excludedUserId != null, UserEntity::getId, excludedUserId));
+        if (existing > 0) {
+            throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE, "邮箱已被其他用户使用");
+        }
+    }
+
+    private String normalizeEmail(String email) {
+        return StringUtils.hasText(email) ? email.trim().toLowerCase(Locale.ROOT) : null;
     }
 
     private UserEntity require(Long id) {
