@@ -1,8 +1,10 @@
 package cn.photolib.directory;
 
+import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.campus.CampusService;
 import cn.photolib.campus.model.CampusEntity;
 import cn.photolib.common.error.BusinessException;
+import cn.photolib.user.model.UserRole;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -87,5 +89,30 @@ class CampusMemberServiceTests {
     void resolvePhotographer_nullContact_shouldThrow() {
         assertThatThrownBy(() -> service.resolvePhotographer(null, campusA.getId()))
                 .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void delete_shouldRemoveMemberAndAllowReadd() {
+        AuthenticatedUser admin = new AuthenticatedUser(1L, "admin", "管理员", UserRole.ADMIN, null, false);
+        // 物理删除甲校区学号 20250001
+        service.delete(500L, admin);
+        assertThat(service.list(campusA.getId(), null, admin))
+                .extracting(CampusMemberEntity::getStudentId)
+                .doesNotContain("20250001");
+        // 唯一约束已释放：相同学号可重新添加，不触发 DuplicateKeyException
+        CampusMemberEntity readded = service.create(campusA.getId(), "20250001", "张三", admin);
+        assertThat(readded.getStudentId()).isEqualTo("20250001");
+        assertThat(readded.getEnabled()).isTrue();
+        assertThat(service.list(campusA.getId(), null, admin))
+                .extracting(CampusMemberEntity::getStudentId)
+                .contains("20250001");
+    }
+
+    @Test
+    void delete_missingMember_shouldThrow() {
+        AuthenticatedUser admin = new AuthenticatedUser(1L, "admin", "管理员", UserRole.ADMIN, null, false);
+        assertThatThrownBy(() -> service.delete(99999L, admin))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("不存在");
     }
 }

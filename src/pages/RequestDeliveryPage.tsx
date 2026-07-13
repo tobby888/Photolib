@@ -16,6 +16,7 @@ import { useAuth } from '../auth'
 import { DataState, StatusTag } from '../components'
 import { useLoad } from '../hooks'
 import type { Campus, CampusMember, EntityId, PageData, Photo, PhotoRequest, Project } from '../types'
+import MarkdownRenderer from '../MarkdownRenderer'
 
 type UploadValues = {
   files: { originFileObj?: File }[]
@@ -160,7 +161,9 @@ export default function RequestDeliveryPage() {
         <div>
           <Typography.Text className="eyebrow">REQUEST DELIVERY · REQ-{request.id}</Typography.Text>
           <Typography.Title>{request.title}</Typography.Title>
-          <Typography.Paragraph>{request.description || '暂无拍摄说明'}</Typography.Paragraph>
+          {request.description
+            ? <MarkdownRenderer value={request.description} />
+            : <Typography.Paragraph>暂无拍摄说明</Typography.Paragraph>}
           <Space wrap>
             <StatusTag value={request.status} />
             <Tag>{campusName}</Tag>

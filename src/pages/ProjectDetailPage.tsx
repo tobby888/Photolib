@@ -1,6 +1,6 @@
 import {
   App, Breadcrumb, Button, Card, Col, DatePicker, Form, Image, Input,
-  Modal, Row, Select, Space, Statistic, Table, Tag, Typography,
+  Modal, Radio, Row, Select, Space, Statistic, Table, Tag, Typography,
 } from 'antd'
 import {
   ArrowLeftOutlined, CameraOutlined, CheckCircleOutlined, EditOutlined, FileImageOutlined,
@@ -11,9 +11,11 @@ import { useNavigate, useParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { useAuth } from '../auth'
 import { api, emptyPage } from '../api'
-import type { Adoption, Campus, PageData, Photo, PhotoRequest, Project } from '../types'
+import type { Adoption, BatchPublishResult, Campus, PageData, Photo, PhotoRequest, Project } from '../types'
 import { DataState, StatusTag } from '../components'
 import { useLoad } from '../hooks'
+import MarkdownEditor from '../MarkdownEditor'
+import MarkdownRenderer, { markdownExcerpt } from '../MarkdownRenderer'
 
 const projectStateCopy = {
   DRAFT: {
@@ -40,6 +42,7 @@ export default function ProjectDetailPage() {
   const { user } = useAuth()
   const { message, modal } = App.useApp()
   const [requestForm] = Form.useForm()
+  const publishMode = Form.useWatch('publishMode', requestForm) || 'publish'
   const [editForm] = Form.useForm()
   const [requestOpen, setRequestOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
@@ -155,14 +158,42 @@ export default function ProjectDetailPage() {
 
   const createRequest = async () => {
     const values = await requestForm.validateFields()
+    if (values.publishMode === 'draft' && values.campusIds.length !== 1) {
+      message.warning('保存草稿时只能选择一个校区')
+      return
+    }
     setSaving(true)
     try {
-      const { deadline, ...rest } = values
-      await api({ method: 'POST', url: `/projects/${projectId}/requests`,
-        data: { ...rest, deadline: deadline.format('YYYY-MM-DDTHH:mm:ss') } })
-      message.success('图片需求草稿已创建')
-      setRequestOpen(false)
-      requestForm.resetFields()
+      const { deadline, title, description, campusIds } = values
+      if (values.publishMode === 'draft') {
+        await api({
+          method: 'POST', url: `/projects/${projectId}/requests`,
+          data: { title, description, campusId: campusIds[0], deadline: deadline.format('YYYY-MM-DDTHH:mm:ss') },
+        })
+        message.success('图片需求草稿已创建')
+        setRequestOpen(false)
+        requestForm.resetFields()
+        await reload()
+        return
+      }
+      const results = await api<BatchPublishResult[]>({
+        method: 'POST', url: `/projects/${projectId}/requests/batch-publish`,
+        data: { title, description, campusIds, deadline: deadline.format('YYYY-MM-DDTHH:mm:ss') },
+      })
+      const succeeded = results.filter(item => item.success)
+      const failed = results.filter(item => !item.success)
+      if (failed.length) {
+        requestForm.setFieldValue('campusIds', failed.map(item => item.campusId))
+        const details = failed.map(item => {
+          const campus = data.campuses.find(value => value.id === item.campusId)
+          return `${campus?.name || `校区 #${item.campusId}`}：${item.message || '发布失败'}`
+        }).join('；')
+        message.warning({ content: `已成功发布 ${succeeded.length} 个，失败 ${failed.length} 个。${details}`, duration: 8 })
+      } else {
+        message.success(`已向 ${succeeded.length} 个校区分别发布需求`)
+        setRequestOpen(false)
+        requestForm.resetFields()
+      }
       await reload()
     } catch (reason) { message.error((reason as Error).message) } finally { setSaving(false) }
   }
@@ -218,7 +249,9 @@ export default function ProjectDetailPage() {
           <div>
             <Space><Tag variant="filled">PROJECT {project.id}</Tag><StatusTag value={project.status} /></Space>
             <Typography.Title>{project.title}</Typography.Title>
-            <Typography.Paragraph>{project.description || '尚未添加项目说明。清晰的说明能帮助负责人准确理解拍摄目标。'}</Typography.Paragraph>
+            {project.description
+              ? <MarkdownRenderer value={project.description} />
+              : <Typography.Paragraph>尚未添加项目说明。清晰的说明能帮助负责人准确理解拍摄目标。</Typography.Paragraph>}
           </div>
           <Space wrap>
             {project.status === 'ACTIVE' &&
@@ -263,7 +296,7 @@ export default function ProjectDetailPage() {
         <Button type="link" icon={<PlusOutlined />} onClick={() => setRequestOpen(true)}>新建需求</Button>}>
         <Table rowKey="id" dataSource={data.requests} pagination={false} locale={{ emptyText: '这个项目还没有图片需求' }}
           columns={[
-            { title: '需求', dataIndex: 'title', render: (value, item) => <div className="table-title"><strong>{value}</strong><span>{item.description || '暂无拍摄说明'}</span></div> },
+            { title: '需求', dataIndex: 'title', render: (value, item) => <div className="table-title"><strong>{value}</strong><span>{markdownExcerpt(item.description) || '暂无拍摄说明'}</span></div> },
             { title: '校区', dataIndex: 'campusId', render: value => data.campuses.find(c => c.id === value)?.name || `校区 #${value}` },
             { title: '截止时间', dataIndex: 'deadline', render: value => dayjs(value).format('YYYY-MM-DD HH:mm') },
             { title: '状态', dataIndex: 'status', render: value => <StatusTag value={value} /> },
@@ -319,30 +352,44 @@ export default function ProjectDetailPage() {
         </Row> : <div className="empty-state">这个选题还没有上传图片</div>}
       </Card>
 
-      <Modal title="新建图片需求" width={640} open={requestOpen} onCancel={() => setRequestOpen(false)}
-        onOk={createRequest} okText="保存需求草稿" confirmLoading={saving}>
-        <Typography.Paragraph type="secondary">需求将归属到“{project.title}”，保存后可继续检查并发布。</Typography.Paragraph>
-        <Form form={requestForm} layout="vertical" requiredMark={false}>
+      <Modal title="新建图片需求" width={780} open={requestOpen} onCancel={() => setRequestOpen(false)}
+        onOk={createRequest} okText={publishMode === 'publish' ? '创建并发布' : '保存草稿'} confirmLoading={saving}>
+        <Typography.Paragraph type="secondary">需求将归属到“{project.title}”。可以保存单校区草稿，或向多个校区立即发布独立需求。</Typography.Paragraph>
+        <Form form={requestForm} layout="vertical"
+          initialValues={{ publishMode: project.status === 'ACTIVE' ? 'publish' : 'draft' }} requiredMark={false}>
+          <Form.Item label="建立方式" name="publishMode">
+            <Radio.Group optionType="button" buttonStyle="solid" options={[
+              { value: 'publish', label: '立即向多校区发布', disabled: project.status !== 'ACTIVE' },
+              { value: 'draft', label: '保存单校区草稿' },
+            ]} />
+          </Form.Item>
           <Form.Item label="需求标题" name="title" rules={[{ required: true, message: '请输入需求标题' }, { max: 200 }]}>
             <Input placeholder="例如：毕业典礼现场图片" />
           </Form.Item>
-          <Form.Item label="拍摄说明" name="description"><Input.TextArea rows={3} placeholder="说明需要的场景、人物、构图和交付标准" /></Form.Item>
-          <Row gutter={16}>
-            <Col xs={24} sm={8}><Form.Item label="拍摄校区" name="campusId" rules={[{ required: true, message: '请选择校区' }]}>
-              <Select options={data.campuses.map(c => ({ value: c.id, label: c.name }))} placeholder="选择校区" />
-            </Form.Item></Col>
-            <Col xs={24} sm={12}><Form.Item label="截止时间" name="deadline" rules={[{ required: true, message: '请选择截止时间' }]}>
-              <DatePicker showTime format="YYYY-MM-DD HH:mm" disabledDate={date => date.isBefore(dayjs(), 'day')} style={{ width: '100%' }} />
-            </Form.Item></Col>
-          </Row>
+          <Form.Item label="拍摄说明" name="description">
+            <MarkdownEditor placeholder="使用 Markdown 说明场景、人物、构图和交付标准；可上传说明图片" />
+          </Form.Item>
+          <Form.Item label={publishMode === 'publish' ? '发布校区' : '草稿校区'} name="campusIds"
+            extra={publishMode === 'publish' ? '每个校区独立建立；个别校区失败不会撤销其他已成功需求' : '草稿仍按原流程保存，检查后可单独发布'}
+            rules={[{ required: true, message: '请至少选择一个校区' }]}>
+            <Select mode="multiple" maxCount={publishMode === 'draft' ? 1 : undefined}
+              showSearch optionFilterProp="label" maxTagCount="responsive"
+              options={data.campuses.map(c => ({ value: c.id, label: c.name }))}
+              placeholder={publishMode === 'publish' ? '可同时选择多个校区' : '选择一个校区'} />
+          </Form.Item>
+          <Form.Item label="截止时间" name="deadline" rules={[{ required: true, message: '请选择截止时间' }]}>
+            <DatePicker showTime format="YYYY-MM-DD HH:mm" disabledDate={date => date.isBefore(dayjs(), 'day')} style={{ width: '100%' }} />
+          </Form.Item>
         </Form>
       </Modal>
 
-      <Modal title="编辑项目信息" open={editOpen} onCancel={() => setEditOpen(false)} onOk={updateProject}
+      <Modal title="编辑项目信息" width={760} open={editOpen} onCancel={() => setEditOpen(false)} onOk={updateProject}
         okText="保存修改" confirmLoading={saving}>
         <Form form={editForm} layout="vertical" requiredMark={false}>
           <Form.Item label="项目名称" name="title" rules={[{ required: true, message: '请输入项目名称' }, { max: 200 }]}><Input /></Form.Item>
-          <Form.Item label="项目说明" name="description"><Input.TextArea rows={5} placeholder="说明选题方向、内容范围和交付目标" /></Form.Item>
+          <Form.Item label="项目说明" name="description">
+            <MarkdownEditor placeholder="使用 Markdown 说明选题方向、内容范围和交付目标；可上传说明图片" />
+          </Form.Item>
         </Form>
       </Modal>
 

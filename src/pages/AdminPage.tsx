@@ -25,8 +25,13 @@ export default function AdminPage() {
   const [brandingForm] = Form.useForm<BrandingFormValues>()
   const [userOpen, setUserOpen] = useState(false)
   const [campusOpen, setCampusOpen] = useState(false)
+  const [userSearchText, setUserSearchText] = useState('')
+  const [userKeyword, setUserKeyword] = useState('')
   const { data: users, loading, error, reload } = useLoad(
-    () => api<PageData<User>>({ url: '/users', params: { page: 1, pageSize: 100 } }), emptyPage<User>(), [],
+    () => api<PageData<User>>({
+      url: '/users',
+      params: { page: 1, pageSize: 100, keyword: userKeyword || undefined },
+    }), emptyPage<User>(), [userKeyword],
   )
   const { data: campuses, reload: reloadCampuses } = useLoad(
     () => api<Campus[]>({ url: '/campuses' }), [] as Campus[], [],
@@ -153,7 +158,20 @@ export default function AdminPage() {
           </DataState> },
         { key: 'users', label: <span><TeamOutlined /> 账号管理</span>, children: <>
           <div className="tab-toolbar"><div><Typography.Title level={4}>成员账号</Typography.Title><Typography.Text type="secondary">系统不开放注册，账号均由管理员创建。</Typography.Text></div>
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => setUserOpen(true)}>创建账号</Button></div>
+            <Space wrap>
+              <Input.Search
+                allowClear
+                value={userSearchText}
+                placeholder="搜索成员姓名或账号"
+                style={{ width: 280 }}
+                onChange={event => {
+                  setUserSearchText(event.target.value)
+                  if (!event.target.value) setUserKeyword('')
+                }}
+                onSearch={value => setUserKeyword(value.trim())}
+              />
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => setUserOpen(true)}>创建账号</Button>
+            </Space></div>
           <DataState loading={loading} error={error} empty={!users.items.length} onRetry={reload}>
             <Table rowKey="id" dataSource={users.items} pagination={{ pageSize: 12 }} scroll={{ x: 850 }} columns={[
               { title: '成员', render: (_, item) => <div className="table-title"><strong>{item.displayName}</strong><span>@{item.username}</span></div> },

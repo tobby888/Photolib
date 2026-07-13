@@ -1,5 +1,5 @@
 import { App, Button, Card, Empty, Form, Input, Modal, Select, Space, Table, Tag } from 'antd'
-import { EditOutlined, PlusOutlined, StopOutlined, CheckCircleOutlined } from '@ant-design/icons'
+import { EditOutlined, PlusOutlined, StopOutlined, CheckCircleOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useState } from 'react'
 import { api, qs } from '../api'
 import { useAuth } from '../auth'
@@ -90,6 +90,26 @@ export default function DirectoryPage() {
     })
   }
 
+  const del = async (member: CampusMember) => {
+    try {
+      await api({ method: 'DELETE', url: `/campus-members/${member.id}` })
+      message.success('成员已从通讯录删除')
+      await reload()
+    } catch (e) {
+      message.error((e as Error).message)
+    }
+  }
+
+  const confirmDelete = (member: CampusMember) => {
+    modal.confirm({
+      title: `删除“${member.name}”？`,
+      content: '将把该成员从通讯录彻底移除；历史工时与照片中的姓名、学号快照不受影响。如只是暂时不可选，请改用“停用”。',
+      okText: '删除',
+      okButtonProps: { danger: true },
+      onOk: () => del(member),
+    })
+  }
+
   const description = isMinister
     ? '汇总各校区负责人维护的通讯录，按学号去重后的合并结果（只读）。'
     : isAdmin
@@ -153,11 +173,12 @@ export default function DirectoryPage() {
                     render: (enabled: boolean) => enabled
                       ? <Tag color="green">启用</Tag>
                       : <Tag>停用</Tag> },
-                  { title: '操作', width: 200, render: (_, member: CampusMember) => <Space>
+                  { title: '操作', width: 280, render: (_, member: CampusMember) => <Space>
                     <Button type="text" icon={<EditOutlined />} onClick={() => openEdit(member)}>编辑</Button>
                     {member.enabled
                       ? <Button type="text" danger icon={<StopOutlined />} onClick={() => confirmToggle(member)}>停用</Button>
                       : <Button type="text" icon={<CheckCircleOutlined />} onClick={() => confirmToggle(member)}>启用</Button>}
+                    <Button type="text" danger icon={<DeleteOutlined />} onClick={() => confirmDelete(member)}>删除</Button>
                   </Space> },
                 ]}
               />

@@ -19,19 +19,25 @@ import cn.photolib.user.model.UserEntity;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
 public class RequestService {
+    private static final Logger log = LoggerFactory.getLogger(RequestService.class);
     private final PhotoRequestMapper mapper;
     private final RequestParticipantMapper participantMapper;
     private final ProjectService projectService;
+    private final BatchRequestPublisher batchPublisher;
     private final UserMapper userMapper;
     private final NotificationService notifications;
     private final JdbcClient jdbc;
@@ -56,6 +62,35 @@ public class RequestService {
         request.setCreatedBy(user.id());
         mapper.insert(request);
         return request;
+    }
+
+    public List<BatchPublishResult> batchPublish(Long projectId, BatchPublishCommand command,
+                                                 AuthenticatedUser user) {
+        ProjectEntity project = projectService.get(projectId);
+        if (project.getStatus() != ProjectStatus.ACTIVE) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "仅进行中的项目可以发布需求");
+        }
+        if (command.deadline().isBefore(LocalDateTime.now())) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "截止时间不能早于当前时间");
+        }
+
+        Set<Long> seenCampuses = new HashSet<>();
+        return command.campusIds().stream().map(campusId -> {
+            if (!seenCampuses.add(campusId)) {
+                return BatchPublishResult.failure(campusId, ErrorCode.VALIDATION_ERROR,
+                        "不能重复选择同一校区");
+            }
+            try {
+                PhotoRequestEntity request = batchPublisher.publish(projectId, campusId, command, user);
+                return BatchPublishResult.success(campusId, request);
+            } catch (BusinessException exception) {
+                return BatchPublishResult.failure(campusId, exception.getCode(), exception.getMessage());
+            } catch (RuntimeException exception) {
+                log.error("向校区 {} 批量发布项目 {} 的需求失败", campusId, projectId, exception);
+                return BatchPublishResult.failure(campusId, ErrorCode.INTERNAL_ERROR,
+                        "需求发布失败，请稍后单独重试");
+            }
+        }).toList();
     }
 
     public PageResponse<PhotoRequestEntity> list(int page, int pageSize, Long projectId,
@@ -100,12 +135,7 @@ public class RequestService {
         request.setStatus(RequestStatus.PUBLISHED);
         request.setVersion(version);
         updateChecked(request);
-        userMapper.selectList(Wrappers.<UserEntity>lambdaQuery()
-                .eq(UserEntity::getRole, UserRole.CAMPUS_MANAGER)
-                .eq(UserEntity::getCampusId, request.getCampusId())
-                .eq(UserEntity::getEnabled, true))
-                .forEach(member -> notifications.notifyUser(member.getId(), "REQUEST_PUBLISHED",
-                        "新的图片需求", "<p>" + request.getTitle() + "</p>"));
+        notifyCampusManagers(request);
         return get(id);
     }
 
@@ -232,6 +262,15 @@ public class RequestService {
         return get(id);
     }
 
+    @Transactional
+    public void delete(Long id, AuthenticatedUser user) {
+        if (user.role() != UserRole.ADMIN) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "仅管理员可删除需求");
+        }
+        PhotoRequestEntity request = get(id);
+        mapper.deleteById(request);
+    }
+
     private void requireParticipantOrAdmin(Long requestId, AuthenticatedUser user) {
         if (user.role() == UserRole.ADMIN) {
             return;
@@ -255,7 +294,31 @@ public class RequestService {
         }
     }
 
+    private void notifyCampusManagers(PhotoRequestEntity request) {
+        userMapper.selectList(Wrappers.<UserEntity>lambdaQuery()
+                .eq(UserEntity::getRole, UserRole.CAMPUS_MANAGER)
+                .eq(UserEntity::getCampusId, request.getCampusId())
+                .eq(UserEntity::getEnabled, true))
+                .forEach(member -> notifications.notifyUser(member.getId(), "REQUEST_PUBLISHED",
+                        "新的图片需求", "<p>" + request.getTitle() + "</p>"));
+    }
+
     public record CreateCommand(String title, String description, Long campusId,
                                 Integer requiredCount, LocalDateTime deadline) {
+    }
+
+    public record BatchPublishCommand(String title, String description, List<Long> campusIds,
+                                      Integer requiredCount, LocalDateTime deadline) {
+    }
+
+    public record BatchPublishResult(Long campusId, boolean success, PhotoRequestEntity request,
+                                     String errorCode, String message) {
+        static BatchPublishResult success(Long campusId, PhotoRequestEntity request) {
+            return new BatchPublishResult(campusId, true, request, null, null);
+        }
+
+        static BatchPublishResult failure(Long campusId, ErrorCode code, String message) {
+            return new BatchPublishResult(campusId, false, null, code.name(), message);
+        }
     }
 }

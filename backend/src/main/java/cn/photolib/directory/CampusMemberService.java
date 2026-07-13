@@ -137,12 +137,16 @@ public class CampusMemberService {
         return require(id);
     }
 
+    /**
+     * 从通讯录彻底删除成员（物理删除）。历史工时/照片仅存姓名学号快照、不引用本行，删除不改写历史；
+     * 物理删除同时释放唯一约束 (campus_id, student_id)，使同一学号可重新添加。
+     * 若只是暂时不可选，应改用停用（update 置 enabled=false）。
+     */
     @Transactional
     public void delete(Long id, AuthenticatedUser user) {
         CampusMemberEntity member = require(id);
         requireWritableCampus(member.getCampusId(), user);
-        member.setEnabled(false);
-        mapper.updateById(member);
+        mapper.deletePhysically(member.getId());
     }
 
     private CampusMemberEntity require(Long id) {

@@ -10,6 +10,8 @@ import { api, emptyPage, qs } from '../api'
 import type { PageData, Project } from '../types'
 import { DataState, PageTitle, StatusTag } from '../components'
 import { useLoad } from '../hooks'
+import MarkdownEditor from '../MarkdownEditor'
+import { markdownExcerpt } from '../MarkdownRenderer'
 
 const statusOptions = [
   { value: 'DRAFT', label: '草稿' }, { value: 'ACTIVE', label: '进行中' },
@@ -55,7 +57,7 @@ export default function ProjectsPage() {
           <Card className="project-card" hoverable>
             <div className="project-card-top"><div className="folder-icon"><FolderOpenOutlined /></div><StatusTag value={item.status} /></div>
             <Typography.Title level={4}>{item.title}</Typography.Title>
-            <Typography.Paragraph ellipsis={{ rows: 2 }}>{item.description || '尚未添加项目说明'}</Typography.Paragraph>
+            <Typography.Paragraph ellipsis={{ rows: 2 }}>{markdownExcerpt(item.description) || '尚未添加项目说明'}</Typography.Paragraph>
             <div className="project-meta"><span>创建于 {dayjs(item.createdAt).format('YYYY.MM.DD')}</span><span>#{item.id}</span></div>
             <Button block onClick={() => navigate(`/projects/${item.id}`)}>打开项目 <ArrowRightOutlined /></Button>
           </Card>
@@ -64,13 +66,15 @@ export default function ProjectsPage() {
       <Pagination current={filters.page} pageSize={12} total={data.total} hideOnSinglePage
         onChange={(page) => setFilters({ ...filters, page })} />
     </DataState>
-    <Modal title="新建选题项目" open={open} onCancel={() => setOpen(false)} onOk={create} confirmLoading={saving}
+    <Modal title="新建选题项目" width={760} open={open} onCancel={() => setOpen(false)} onOk={create} confirmLoading={saving}
       okText="创建项目" cancelText="取消">
       <Form form={form} layout="vertical" initialValues={{ status: 'DRAFT' }} requiredMark={false}>
         <Form.Item label="项目名称" name="title" rules={[{ required: true, message: '请输入项目名称' }, { max: 200 }]}>
           <Input placeholder="例如：2026 毕业季" />
         </Form.Item>
-        <Form.Item label="项目说明" name="description"><Input.TextArea rows={4} placeholder="说明选题方向、交付目标等" /></Form.Item>
+        <Form.Item label="项目说明" name="description">
+          <MarkdownEditor placeholder="使用 Markdown 说明选题方向、交付目标等；可直接上传说明图片" />
+        </Form.Item>
         <Form.Item label="初始状态" name="status"><Select options={statusOptions.slice(0, 2)} /></Form.Item>
       </Form>
     </Modal>
