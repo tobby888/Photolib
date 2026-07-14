@@ -4,6 +4,7 @@ import {
 } from 'antd'
 import { CloudUploadOutlined, DeleteOutlined, DownloadOutlined, InboxOutlined, SearchOutlined } from '@ant-design/icons'
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { api, emptyPage, qs } from '../api'
 import { readTakenAt } from '../exif'
@@ -14,6 +15,7 @@ import { useLoad } from '../hooks'
 import { useAuth } from '../auth'
 
 export default function PhotosPage() {
+  const navigate = useNavigate()
   const { message, modal } = App.useApp()
   const { user } = useAuth()
   const [uploadForm] = Form.useForm()
@@ -110,7 +112,10 @@ export default function PhotosPage() {
   const canDelete = user?.role === 'ADMIN' || user?.role === 'MINISTER'
   return <>
     <PageTitle eyebrow="LIBRARY" title="图片库" description="检索、查看并下载团队沉淀的每一帧。"
-      extra={<Button type="primary" size="large" icon={<CloudUploadOutlined />} onClick={() => setUploadOpen(true)}>上传图片</Button>} />
+      extra={<Space wrap>
+        <Button size="large" icon={<InboxOutlined />} onClick={() => navigate('/photos/batch-upload')}>ZIP 批量上传</Button>
+        <Button type="primary" size="large" icon={<CloudUploadOutlined />} onClick={() => setUploadOpen(true)}>上传图片</Button>
+      </Space>} />
     <Card className="filter-card">
       <Space wrap>
         <Input.Search allowClear placeholder="搜索标题、描述或标签" enterButton={<SearchOutlined />} style={{ width: 320 }}

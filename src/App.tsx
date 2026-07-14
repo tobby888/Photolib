@@ -22,6 +22,7 @@ const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage'))
 const RequestsPage = lazy(() => import('./pages/RequestsPage'))
 const RequestDeliveryPage = lazy(() => import('./pages/RequestDeliveryPage'))
 const PhotosPage = lazy(() => import('./pages/PhotosPage'))
+const BatchUploadPage = lazy(() => import('./pages/BatchUploadPage'))
 const WorklogsPage = lazy(() => import('./pages/WorklogsPage'))
 const DirectoryPage = lazy(() => import('./pages/DirectoryPage'))
 const StatisticsPage = lazy(() => import('./pages/StatisticsPage'))
@@ -201,6 +202,7 @@ function Shell() {
           <Route path="/requests" element={<RequestsPage />} />
           <Route path="/requests/:requestId" element={<RequestDeliveryPage />} />
           <Route path="/photos" element={<PhotosPage />} />
+          <Route path="/photos/batch-upload" element={<BatchUploadPage />} />
           <Route path="/worklogs" element={<WorklogsPage />} />
           <Route path="/directory" element={<DirectoryPage />} />
           <Route path="/notifications" element={<NotificationsPage />} />

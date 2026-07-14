@@ -251,6 +251,35 @@ class ProjectServiceTests {
     }
 
     @Test
+    void addPhotos_shouldIgnoreExistingMembershipAndStillAddNewPhotos() {
+        var project = projectService.create("幂等相册项目", "描述", ProjectStatus.ACTIVE, adminUser);
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, title, photographer_student_id, photographer_name, uploaded_by, campus_id,
+                     taken_at, size, content_type, object_key, sha256, status)
+                VALUES
+                    (2211, '已在相册', '20230001', '张三', 100, 901,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/existing.jpg', :firstSha, 'AVAILABLE'),
+                    (2212, '新图片', '20230001', '张三', 100, 901,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/new.jpg', :secondSha, 'AVAILABLE')
+                """)
+                .param("firstSha", "d".repeat(64))
+                .param("secondSha", "e".repeat(64))
+                .update();
+        jdbc.sql("INSERT INTO photo_project (photo_id, project_id) VALUES (2211, :projectId)")
+                .param("projectId", project.getId())
+                .update();
+
+        projectService.addPhotos(project.getId(), List.of(2211L, 2212L), adminUser);
+
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM photo_project WHERE project_id=:projectId")
+                .param("projectId", project.getId())
+                .query(Integer.class).single()).isEqualTo(2);
+        assertThat(projectService.getDetail(project.getId(), adminUser).photoCount()).isEqualTo(2L);
+        assertThat(projectService.getDetail(project.getId(), adminUser).adoptionCount()).isZero();
+    }
+
+    @Test
     void campusManager_shouldOnlySeeProjectsWithAssignedRequests() {
         var assigned = projectService.create("已指派项目", "描述", ProjectStatus.ACTIVE, adminUser);
         var hidden = projectService.create("未指派项目", "描述", ProjectStatus.ACTIVE, adminUser);
