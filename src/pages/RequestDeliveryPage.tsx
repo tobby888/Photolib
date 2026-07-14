@@ -66,7 +66,8 @@ export default function RequestDeliveryPage() {
 
   const request = requestState.data.request
   const isManager = user?.role === 'CAMPUS_MANAGER'
-  const canUpload = isManager && request?.status === 'ACCEPTED'
+  const canUpload = request?.status === 'ACCEPTED'
+    && (isManager || user?.role === 'ADMIN' || user?.role === 'MINISTER')
   const campusName = useMemo(() => request
     ? requestState.data.campuses.find(campus => campus.id === request.campusId)?.name || `校区 #${request.campusId}`
     : '', [request, requestState.data.campuses])

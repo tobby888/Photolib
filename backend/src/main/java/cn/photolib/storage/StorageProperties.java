@@ -21,7 +21,8 @@ public record StorageProperties(
         Duration downloadUrlTtl,
         Duration originalRetention,
         long imageTargetBytes,
-        long imageMaxBytes
+        long imageMaxBytes,
+        double previewCompressionRatio
 ) {
     public boolean local() {
         return "local".equalsIgnoreCase(mode);

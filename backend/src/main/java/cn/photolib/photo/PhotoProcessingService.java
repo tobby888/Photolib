@@ -63,7 +63,8 @@ public class PhotoProcessingService {
             }
             storage.put(photo.getObjectKey(), new ByteArrayInputStream(result.bytes()),
                     result.bytes().length, result.contentType());
-            ImageCompressor.Result thumbnail = compressor.thumbnail(result.bytes(), result.contentType(), 480);
+            ImageCompressor.Result thumbnail = compressor.thumbnail(result.bytes(), result.contentType(), 480,
+                    properties.previewCompressionRatio());
             String thumbnailKey = "thumbnails/" + photo.getId()
                     + (photo.getContentType().equals("image/png") ? ".png" : ".jpg");
             storage.put(thumbnailKey, new ByteArrayInputStream(thumbnail.bytes()),
@@ -76,6 +77,7 @@ public class PhotoProcessingService {
             photo.setWidth(result.width());
             photo.setHeight(result.height());
             photo.setThumbnailObjectKey(thumbnailKey);
+            photo.setThumbnailSize((long) thumbnail.bytes().length);
             photo.setOriginalDeleteAfter(LocalDateTime.now().plus(properties.originalRetention()));
             photo.setStatus(PhotoStatus.AVAILABLE);
             photo.setFailureReason(null);

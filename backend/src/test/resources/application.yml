@@ -28,3 +28,4 @@ photolib:
     original-retention: 30d
     image-target-bytes: 10485760
     image-max-bytes: 104857600
+    preview-compression-ratio: 0.6
