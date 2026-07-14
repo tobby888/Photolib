@@ -51,6 +51,16 @@ public class BatchUploadController {
                         request.takenAt(), request.tags()), user));
     }
 
+    @PutMapping("/batches/{batchId}/metadata")
+    ApiResponse<BatchUploadService.BatchView> batchMetadata(
+            @PathVariable String batchId,
+            @Valid @RequestBody BatchMetadataRequest request,
+            @AuthenticationPrincipal AuthenticatedUser user) {
+        return ApiResponse.ok(service.setMetadataForAll(batchId,
+                new BatchUploadService.BatchMetadata(request.description(),
+                        request.photographerContactId(), request.takenAt(), request.tags()), user));
+    }
+
     record CreateRequest(@NotNull BatchMode mode, Long requestId, Long projectId,
                          String archiveFileName, @Positive Long archiveSize,
                          @Size(max = 100) List<@Valid FileRequest> files) {}
@@ -62,4 +72,8 @@ public class BatchUploadController {
                            @NotNull Long photographerContactId,
                            @NotNull @PastOrPresent LocalDateTime takenAt,
                            @Size(max = 30) List<@Size(max = 50) String> tags) {}
+    record BatchMetadataRequest(@Size(max = 5000) String description,
+                                @NotNull Long photographerContactId,
+                                @NotNull @PastOrPresent LocalDateTime takenAt,
+                                @Size(max = 30) List<@Size(max = 50) String> tags) {}
 }

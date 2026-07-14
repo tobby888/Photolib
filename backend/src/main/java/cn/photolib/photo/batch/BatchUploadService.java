@@ -162,18 +162,55 @@ public class BatchUploadService {
         Long campusId = user.campusId();
         if (batch.getRequestId() != null) campusId = requestService.get(batch.getRequestId()).getCampusId();
         var photographer = campusMemberService.resolvePhotographer(metadata.photographerContactId(), campusId);
+        createPhoto(batch, item, metadata.title(), metadata.description(), metadata.takenAt(),
+                metadata.tags(), photographer.getStudentId(), photographer.getName(), campusId, user.id());
+        return view(batchMapper.selectById(batchId));
+    }
+
+    @Transactional
+    public BatchView setMetadataForAll(String batchId, BatchMetadata metadata, AuthenticatedUser user) {
+        PhotoUploadBatchEntity batch = requireOwned(batchId, user);
+        if (batch.getStatus() != BatchStatus.WAITING_METADATA) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "批次尚未完成解压或已开始处理");
+        }
+        List<PhotoUploadItemEntity> waitingItems = itemMapper.selectList(
+                Wrappers.<PhotoUploadItemEntity>lambdaQuery()
+                        .eq(PhotoUploadItemEntity::getBatchId, batchId)
+                        .eq(PhotoUploadItemEntity::getStatus, BatchItemStatus.WAITING_METADATA)
+                        .orderByAsc(PhotoUploadItemEntity::getId));
+        if (waitingItems.isEmpty()) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "批次中没有可整理的图片");
+        }
+        Long campusId = user.campusId();
+        if (batch.getRequestId() != null) campusId = requestService.get(batch.getRequestId()).getCampusId();
+        var photographer = campusMemberService.resolvePhotographer(metadata.photographerContactId(), campusId);
+        for (PhotoUploadItemEntity item : waitingItems) {
+            createPhoto(batch, item, titleFromFileName(item.getOriginalFileName()), metadata.description(),
+                    metadata.takenAt(), metadata.tags(), photographer.getStudentId(), photographer.getName(),
+                    campusId, user.id());
+        }
+        batch.setStatus(BatchStatus.PROCESSING);
+        batch.setUpdatedAt(LocalDateTime.now());
+        batchMapper.updateById(batch);
+        return view(batchMapper.selectById(batchId));
+    }
+
+    private void createPhoto(PhotoUploadBatchEntity batch, PhotoUploadItemEntity item, String title,
+                             String description, LocalDateTime takenAt, List<String> tags,
+                             String photographerStudentId, String photographerName, Long campusId,
+                             Long uploadedBy) {
         String extension = item.getContentType().equals("image/png") ? "png" : "jpg";
         PhotoEntity photo = new PhotoEntity();
         photo.setRequestId(batch.getRequestId());
         photo.setProjectId(batch.getProjectId());
-        photo.setTitle(metadata.title());
-        photo.setDescription(metadata.description());
-        photo.setPhotographerStudentId(photographer.getStudentId());
-        photo.setPhotographerName(photographer.getName());
-        photo.setUploadedBy(user.id());
+        photo.setTitle(title);
+        photo.setDescription(description);
+        photo.setPhotographerStudentId(photographerStudentId);
+        photo.setPhotographerName(photographerName);
+        photo.setUploadedBy(uploadedBy);
         photo.setCampusId(campusId);
-        photo.setTakenAt(metadata.takenAt());
-        photo.setTagsJson(tagsJson(metadata.tags()));
+        photo.setTakenAt(takenAt);
+        photo.setTagsJson(tagsJson(tags));
         photo.setSize(item.getSize());
         photo.setContentType(item.getContentType());
         photo.setOriginalObjectKey(item.getTempObjectKey());
@@ -188,17 +225,25 @@ public class BatchUploadService {
                     .param("projectId", photo.getProjectId())
                     .update();
         }
-        item.setTitle(metadata.title());
-        item.setDescription(metadata.description());
-        item.setPhotographerStudentId(photographer.getStudentId());
-        item.setPhotographerName(photographer.getName());
-        item.setTakenAt(metadata.takenAt());
+        item.setTitle(title);
+        item.setDescription(description);
+        item.setPhotographerStudentId(photographerStudentId);
+        item.setPhotographerName(photographerName);
+        item.setTakenAt(takenAt);
         item.setTagsJson(photo.getTagsJson());
         item.setPhotoId(photo.getId());
         item.setStatus(BatchItemStatus.PROCESSING);
         itemMapper.updateById(item);
         events.publishEvent(new PhotoProcessingService.PhotoProcessRequested(photo.getId()));
-        return view(batch);
+    }
+
+    private String titleFromFileName(String fileName) {
+        String value = fileName == null ? "" : fileName.trim();
+        int dot = value.lastIndexOf('.');
+        if (dot > 0) value = value.substring(0, dot).trim();
+        if (value.isEmpty()) value = "未命名图片";
+        int[] codePoints = value.codePoints().limit(200).toArray();
+        return new String(codePoints, 0, codePoints.length);
     }
 
     private void validateFile(FileSpec file) {
@@ -241,6 +286,8 @@ public class BatchUploadService {
     public record FileSpec(String fileName, String contentType, long size, String sha256) {}
     public record ItemMetadata(String title, String description, Long photographerContactId,
                                LocalDateTime takenAt, List<String> tags) {}
+    public record BatchMetadata(String description, Long photographerContactId,
+                                LocalDateTime takenAt, List<String> tags) {}
     public record ItemTicket(Long itemId, String fileName, String uploadUrl, String contentType,
                              java.time.Instant expiresAt) {}
     public record BatchTicket(String batchId, BatchMode mode, List<ItemTicket> tickets) {}

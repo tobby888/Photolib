@@ -102,17 +102,21 @@ public class PhotoProcessingService {
         long failed = batchItemMapper.selectCount(Wrappers.<PhotoUploadItemEntity>lambdaQuery()
                 .eq(PhotoUploadItemEntity::getBatchId, item.getBatchId())
                 .eq(PhotoUploadItemEntity::getStatus, BatchItemStatus.FAILED));
-        long waiting = batchItemMapper.selectCount(Wrappers.<PhotoUploadItemEntity>lambdaQuery()
+        long waitingMetadata = batchItemMapper.selectCount(Wrappers.<PhotoUploadItemEntity>lambdaQuery()
                 .eq(PhotoUploadItemEntity::getBatchId, item.getBatchId())
-                .in(PhotoUploadItemEntity::getStatus, BatchItemStatus.WAITING_METADATA,
-                        BatchItemStatus.PROCESSING, BatchItemStatus.UPLOADING));
+                .eq(PhotoUploadItemEntity::getStatus, BatchItemStatus.WAITING_METADATA));
+        long processing = batchItemMapper.selectCount(Wrappers.<PhotoUploadItemEntity>lambdaQuery()
+                .eq(PhotoUploadItemEntity::getBatchId, item.getBatchId())
+                .in(PhotoUploadItemEntity::getStatus, BatchItemStatus.PROCESSING, BatchItemStatus.UPLOADING));
         PhotoUploadBatchEntity batch = batchMapper.selectById(item.getBatchId());
         batch.setSuccessCount((int) success);
         batch.setFailureCount((int) failed);
-        if (waiting == 0) {
+        if (waitingMetadata == 0 && processing == 0) {
             batch.setStatus(failed > 0 ? BatchStatus.PARTIALLY_SUCCEEDED : BatchStatus.SUCCEEDED);
-        } else {
+        } else if (waitingMetadata > 0) {
             batch.setStatus(BatchStatus.WAITING_METADATA);
+        } else {
+            batch.setStatus(BatchStatus.PROCESSING);
         }
         batchMapper.updateById(batch);
     }

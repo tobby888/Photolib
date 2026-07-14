@@ -209,7 +209,11 @@ export default function RequestDeliveryPage() {
         </Col>
 
         {canUpload && <Col xs={24} xl={9}>
-          <Card className="delivery-upload-card" title={<Space><CloudUploadOutlined />上传交付图片</Space>}>
+          <Card className="delivery-upload-card" title={<Space><CloudUploadOutlined />上传交付图片</Space>}
+            extra={<Button type="link" icon={<InboxOutlined />}
+              onClick={() => navigate(`/photos/batch-upload?requestId=${request.id}&projectId=${request.projectId}`)}>
+              上传 ZIP
+            </Button>}>
             <Form form={form} layout="vertical" requiredMark={false}
               initialValues={{ takenAt: dayjs() }}>
               <Form.Item name="files" valuePropName="fileList" getValueFromEvent={event => event.fileList}

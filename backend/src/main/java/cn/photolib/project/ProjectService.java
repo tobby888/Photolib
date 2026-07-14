@@ -228,13 +228,13 @@ public class ProjectService {
             if (user.role() == UserRole.CAMPUS_MANAGER && !photo.getUploadedBy().equals(user.id())) {
                 throw new BusinessException(ErrorCode.FORBIDDEN, "无权使用不可见的图库图片");
             }
-            int inserted = jdbc.sql("INSERT IGNORE INTO photo_project (photo_id, project_id) VALUES (:photoId, :projectId)")
+            // Adding photos to an album is an idempotent membership operation. The gallery
+            // can be stale by the time the user confirms a selection, so an already-linked
+            // photo must not roll back other new links in the same request.
+            jdbc.sql("INSERT IGNORE INTO photo_project (photo_id, project_id) VALUES (:photoId, :projectId)")
                     .param("photoId", photoId)
                     .param("projectId", projectId)
                     .update();
-            if (inserted != 1) {
-                throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE, "图片已在该项目中");
-            }
         }
     }
 

@@ -84,6 +84,34 @@ export interface Photo extends BaseEntity {
   relatedProjects?: { id: EntityId; title: string }[]
 }
 
+export type BatchUploadStatus = 'UPLOADING' | 'PROCESSING' | 'WAITING_METADATA'
+  | 'PARTIALLY_SUCCEEDED' | 'SUCCEEDED' | 'FAILED'
+
+export interface BatchUploadItem {
+  id: EntityId
+  originalFileName: string
+  title?: string | null
+  status: 'UPLOADING' | 'WAITING_METADATA' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED'
+  failureReason?: string | null
+  photoId?: EntityId | null
+}
+
+export interface BatchUploadView {
+  batch: {
+    id: string
+    mode: 'FILES' | 'ZIP'
+    requestId?: EntityId | null
+    projectId?: EntityId | null
+    archiveFileName?: string | null
+    status: BatchUploadStatus
+    totalCount: number
+    successCount: number
+    failureCount: number
+    failureReason?: string | null
+  }
+  items: BatchUploadItem[]
+}
+
 export interface Adoption {
   id: EntityId
   projectId: EntityId

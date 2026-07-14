@@ -832,6 +832,21 @@ OSS 的 `bucket`、`objectKey` 等内部存储信息不直接暴露给普通客�
 
 当图片处理成功且必填元数据完整时，该图片进入 `AVAILABLE`。批次内全部有效图片均处理完成且元数据完整后，批次进入 `SUCCEEDED`。
 
+ZIP 子页面使用批量元数据接口一次性整理全部已解压图片：
+
+`PUT /photos/batches/{batchId}/metadata`
+
+```json
+{
+  "description": "毕业典礼交付",
+  "photographerContactId": 301,
+  "takenAt": "2026-07-03T09:10:00",
+  "tags": ["毕业季", "典礼"]
+}
+```
+
+权限：批量上传任务创建人、`ADMIN`。接口为每个 `WAITING_METADATA` 图片创建图片记录，标题固定取 ZIP 内原始文件名并去掉最后一个扩展名；拍摄者、拍摄时间、标签和说明在批次内共用。创建后异步生成成品图与缩略图，批次进入 `PROCESSING`。
+
 ### 9.7 查询图库
 
 `GET /photos?page=1&pageSize=30&keyword=毕业&projectId=101&requestId=201&photographerStudentId=20260001&photographerName=王&uploadedBy=12&campusId=3&tag=典礼&takenFrom=2026-01-01&takenTo=2026-12-31&adopted=true&sort=uploadedAt,desc`
