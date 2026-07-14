@@ -4,7 +4,7 @@ import {
 } from 'antd'
 import {
   ArrowLeftOutlined, CameraOutlined, CheckCircleOutlined, EditOutlined, FileImageOutlined,
-  LinkOutlined, PlusOutlined, RocketOutlined, StopOutlined, UnorderedListOutlined,
+  DisconnectOutlined, LinkOutlined, PlusOutlined, RocketOutlined, StopOutlined, UnorderedListOutlined,
 } from '@ant-design/icons'
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
@@ -51,6 +51,7 @@ export default function ProjectDetailPage() {
   const [selectedPhotoIds, setSelectedPhotoIds] = useState<string[]>([])
   const [saving, setSaving] = useState(false)
   const [markingPhotoId, setMarkingPhotoId] = useState<string | null>(null)
+  const [unlinkingPhotoId, setUnlinkingPhotoId] = useState<string | null>(null)
   const { data, setData, loading, error, reload } = useLoad(async () => {
     const [project, firstRequests, campuses, firstPhotos, firstAdoptions] = await Promise.all([
       api<Project>({ url: `/projects/${projectId}` }),
@@ -150,6 +151,37 @@ export default function ProjectDetailPage() {
     } finally {
       setMarkingPhotoId(null)
     }
+  }
+
+  const unlinkPhoto = (photo: Photo) => {
+    modal.confirm({
+      title: '将图片移出当前项目？',
+      content: photo.requestId
+        ? '只会解除图片与当前项目的相册关联；图片与需求的关联会继续保留。'
+        : '只会解除图片与当前项目的相册关联，不会删除图片。',
+      okText: '确认移出',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        setUnlinkingPhotoId(photo.id)
+        try {
+          await api({ method: 'DELETE', url: `/projects/${projectId}/photos/${photo.id}` })
+          setData(current => ({
+            ...current,
+            project: current.project && {
+              ...current.project,
+              photoCount: Math.max(0, (current.project.photoCount || 0) - 1),
+            },
+            photos: current.photos.filter(item => item.id !== photo.id),
+          }))
+          message.success('已解除图片与项目的关联')
+        } catch (reason) {
+          message.error((reason as Error).message)
+          throw reason
+        } finally {
+          setUnlinkingPhotoId(null)
+        }
+      },
+    })
   }
 
   const changeStatus = async (status: Project['status']) => {
@@ -359,17 +391,30 @@ export default function ProjectDetailPage() {
                   <span>{photo.photographerName}</span>
                   <span>{dayjs(photo.takenAt).format('YYYY.MM.DD')}</span>
                 </div>
-                {canManage && <Button
-                  block
-                  type={adopted ? 'default' : 'primary'}
-                  danger={adopted}
-                  icon={<LinkOutlined />}
-                  loading={markingPhotoId === photo.id}
-                  disabled={project.status !== 'ACTIVE' || photo.status !== 'AVAILABLE'}
-                  onClick={() => void toggleAdoption(photo)}
-                >
-                  {adopted ? '取消被引' : '标注图片被引'}
-                </Button>}
+                {canManage && <Space direction="vertical" style={{ width: '100%' }}>
+                  <Button
+                    block
+                    type={adopted ? 'default' : 'primary'}
+                    danger={adopted}
+                    icon={<LinkOutlined />}
+                    loading={markingPhotoId === photo.id}
+                    disabled={project.status !== 'ACTIVE' || photo.status !== 'AVAILABLE'}
+                    onClick={() => void toggleAdoption(photo)}
+                  >
+                    {adopted ? '取消被引' : '标注图片被引'}
+                  </Button>
+                  <Button
+                    block
+                    danger
+                    icon={<DisconnectOutlined />}
+                    loading={unlinkingPhotoId === photo.id}
+                    disabled={adopted}
+                    title={adopted ? '请先取消图片引用' : undefined}
+                    onClick={() => unlinkPhoto(photo)}
+                  >
+                    移出项目
+                  </Button>
+                </Space>}
               </Card>
             </Col>
           })}

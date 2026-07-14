@@ -55,6 +55,14 @@ public class ProjectController {
         return ApiResponse.ok();
     }
 
+    @DeleteMapping("/{id}/photos/{photoId}")
+    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    ApiResponse<Void> removePhoto(@PathVariable Long id, @PathVariable Long photoId,
+                                  @AuthenticationPrincipal AuthenticatedUser user) {
+        service.removePhoto(id, photoId, user);
+        return ApiResponse.ok();
+    }
+
     @PutMapping("/{id}")
     @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
     ApiResponse<ProjectEntity> update(@PathVariable Long id, @Valid @RequestBody UpdateRequest request,
