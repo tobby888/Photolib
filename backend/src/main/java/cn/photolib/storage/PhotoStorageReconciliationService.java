@@ -39,7 +39,7 @@ public class PhotoStorageReconciliationService {
         storage.list("").forEach(object -> actual.put(object.objectKey(), object));
 
         var photos = jdbc.sql("""
-                SELECT id, object_key, thumbnail_object_key, size, content_type
+                SELECT id, object_key, thumbnail_object_key, thumbnail_size, size, content_type
                 FROM photo
                 WHERE deleted=0 AND status IN ('AVAILABLE', 'ARCHIVED')
                 """)
@@ -47,6 +47,7 @@ public class PhotoStorageReconciliationService {
                         rs.getLong("id"),
                         rs.getString("object_key"),
                         rs.getString("thumbnail_object_key"),
+                        rs.getObject("thumbnail_size", Long.class),
                         rs.getLong("size"),
                         rs.getString("content_type")))
                 .list();
@@ -73,20 +74,25 @@ public class PhotoStorageReconciliationService {
             String contentType = storage.stat(photo.objectKey()).contentType();
             boolean thumbnailMissing = photo.thumbnailObjectKey() != null
                     && !actual.containsKey(photo.thumbnailObjectKey());
+            Long actualThumbnailSize = photo.thumbnailObjectKey() == null || thumbnailMissing
+                    ? null : actual.get(photo.thumbnailObjectKey()).size();
             if (main.size() != photo.size()
                     || !java.util.Objects.equals(contentType, photo.contentType())
-                    || thumbnailMissing) {
+                    || thumbnailMissing
+                    || !java.util.Objects.equals(actualThumbnailSize, photo.thumbnailSize())) {
                 jdbc.sql("""
                         UPDATE photo
                         SET size=:size, content_type=:contentType,
                             thumbnail_object_key=CASE WHEN :thumbnailMissing
                                 THEN NULL ELSE thumbnail_object_key END,
+                            thumbnail_size=:thumbnailSize,
                             version=version+1, updated_at=CURRENT_TIMESTAMP
                         WHERE id=:id AND deleted=0
                         """)
                         .param("size", main.size())
                         .param("contentType", contentType)
                         .param("thumbnailMissing", thumbnailMissing)
+                        .param("thumbnailSize", actualThumbnailSize)
                         .param("id", photo.id())
                         .update();
                 updated++;
@@ -98,7 +104,7 @@ public class PhotoStorageReconciliationService {
         return new ReconciliationResult(photos.size(), missing, updated);
     }
 
-    private record PhotoObject(Long id, String objectKey, String thumbnailObjectKey,
+    private record PhotoObject(Long id, String objectKey, String thumbnailObjectKey, Long thumbnailSize,
                                long size, String contentType) {
     }
 

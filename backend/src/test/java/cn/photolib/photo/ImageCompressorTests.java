@@ -59,6 +59,18 @@ class ImageCompressorTests {
     }
 
     @Test
+    void usesConfiguredJpegQualityForPreview() throws Exception {
+        byte[] source = encode(noisyImage(800, 600), "jpg");
+
+        ImageCompressor.Result lowerQuality = compressor.thumbnail(source, "image/jpeg", 480, 0.6);
+        ImageCompressor.Result higherQuality = compressor.thumbnail(source, "image/jpeg", 480, 0.9);
+
+        assertThat(lowerQuality.bytes().length).isLessThan(higherQuality.bytes().length);
+        assertThat(lowerQuality.width()).isEqualTo(480);
+        assertThat(lowerQuality.height()).isEqualTo(360);
+    }
+
+    @Test
     void heavilyCompressedJpegPrefersModerateQualityAndAdaptiveResize() throws Exception {
         BufferedImage image = noisyImage(1600, 1200);
         byte[] source = encode(image, "jpg");

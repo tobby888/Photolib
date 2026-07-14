@@ -6,13 +6,12 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
-import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 @Slf4j
 @Component
-@Order(Ordered.LOWEST_PRECEDENCE)
+@Order(100)
 @RequiredArgsConstructor
 public class LegacyMigrationRunner implements ApplicationRunner {
     private final LegacyMigrationProperties properties;

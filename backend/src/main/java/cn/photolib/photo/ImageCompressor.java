@@ -4,6 +4,7 @@ import org.springframework.stereotype.Component;
 
 import javax.imageio.IIOImage;
 import javax.imageio.ImageIO;
+import javax.imageio.ImageReadParam;
 import javax.imageio.ImageReader;
 import javax.imageio.ImageWriteParam;
 import javax.imageio.stream.ImageInputStream;
@@ -61,12 +62,65 @@ public class ImageCompressor {
     }
 
     public Result thumbnail(byte[] source, String contentType, int maxDimension) throws IOException {
+        return thumbnail(source, contentType, maxDimension, 0.82);
+    }
+
+    public Result thumbnail(byte[] source, String contentType, int maxDimension,
+                            double compressionRatio) throws IOException {
+        if (compressionRatio <= 0 || compressionRatio > 1) {
+            throw new IllegalArgumentException("预览图压缩比率必须大于 0 且不超过 1");
+        }
+        Dimensions original = dimensions(source);
+        double scale = Math.min(1.0, (double) maxDimension / Math.max(original.width(), original.height()));
+        int targetWidth = Math.max(1, (int) Math.round(original.width() * scale));
+        int targetHeight = Math.max(1, (int) Math.round(original.height() * scale));
+        // Decoding a full-resolution camera photo just to immediately throw most
+        // of it away in resize() wastes CPU and, worse, allocates a huge pixel
+        // buffer per photo (a 24MP JPEG decodes to ~100 MiB) — expensive enough
+        // that running more than one of these at once can starve a small server
+        // of both heap and CPU. Read the source pre-downscaled via JPEG/PNG
+        // decoder subsampling instead, then do one small precise resize.
+        BufferedImage decoded = scale < 1.0
+                ? decodeSubsampled(source, targetWidth, targetHeight)
+                : fullDecode(source);
+        BufferedImage resized = decoded.getWidth() == targetWidth && decoded.getHeight() == targetHeight
+                ? decoded
+                : resizeTo(decoded, targetWidth, targetHeight);
+        byte[] output = contentType.equals("image/png")
+                ? writePng(resized)
+                : writeJpeg(toRgb(resized), (float) compressionRatio);
+        return new Result(output, resized.getWidth(), resized.getHeight(), contentType);
+    }
+
+    private BufferedImage fullDecode(byte[] source) throws IOException {
         BufferedImage image = ImageIO.read(new ByteArrayInputStream(source));
         if (image == null) throw new IOException("无法解析图片");
-        double scale = Math.min(1.0, (double) maxDimension / Math.max(image.getWidth(), image.getHeight()));
-        BufferedImage resized = scale < 1.0 ? resize(image, scale) : image;
-        byte[] output = contentType.equals("image/png") ? writePng(resized) : writeJpeg(toRgb(resized), 0.82f);
-        return new Result(output, resized.getWidth(), resized.getHeight(), contentType);
+        return image;
+    }
+
+    private BufferedImage decodeSubsampled(byte[] source, int targetWidth, int targetHeight) throws IOException {
+        try (ImageInputStream input = ImageIO.createImageInputStream(new ByteArrayInputStream(source))) {
+            if (input == null) throw new IOException("无法解析图片");
+            Iterator<ImageReader> readers = ImageIO.getImageReaders(input);
+            if (!readers.hasNext()) throw new IOException("无法解析图片");
+            ImageReader reader = readers.next();
+            try {
+                reader.setInput(input, true, true);
+                int width = reader.getWidth(0);
+                int height = reader.getHeight(0);
+                int subsample = Math.max(1, Math.min(
+                        width / Math.max(1, targetWidth), height / Math.max(1, targetHeight)));
+                ImageReadParam param = reader.getDefaultReadParam();
+                if (subsample > 1) {
+                    param.setSourceSubsampling(subsample, subsample, 0, 0);
+                }
+                BufferedImage image = reader.read(0, param);
+                if (image == null) throw new IOException("无法解析图片");
+                return image;
+            } finally {
+                reader.dispose();
+            }
+        }
     }
 
     private byte[] compressJpeg(BufferedImage image, long target) throws IOException {
@@ -162,6 +216,10 @@ public class ImageCompressor {
     private BufferedImage resize(BufferedImage source, double scale) {
         int width = Math.max(1, (int) Math.round(source.getWidth() * scale));
         int height = Math.max(1, (int) Math.round(source.getHeight() * scale));
+        return resizeTo(source, width, height);
+    }
+
+    private BufferedImage resizeTo(BufferedImage source, int width, int height) {
         int type = source.getColorModel().hasAlpha() ? BufferedImage.TYPE_INT_ARGB : BufferedImage.TYPE_INT_RGB;
         BufferedImage target = new BufferedImage(width, height, type);
         Graphics2D graphics = target.createGraphics();

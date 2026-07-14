@@ -57,7 +57,6 @@ public class StatisticsController {
     }
 
     @PostMapping("/photos/batch-download")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
     ApiResponse<ExportJobEntity> photoZip(@Valid @RequestBody PhotoZipRequest request,
                                           @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(exports.createPhotoZip(request.photoIds(), user));

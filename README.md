@@ -68,6 +68,7 @@ ADMIN_DISPLAY_NAME=系统管理员
 # 本地开发使用磁盘存储，无需配置 OSS
 SPRING_PROFILES_ACTIVE=local
 LOCAL_STORAGE_SIGNING_SECRET=replace_with_a_random_secret
+PREVIEW_COMPRESSION_RATIO=0.6
 ```
 
 然后启动服务：
@@ -183,7 +184,12 @@ OSS_ENDPOINT=https://oss-cn-hangzhou-internal.aliyuncs.com
 OSS_PUBLIC_ENDPOINT=https://oss-cn-hangzhou.aliyuncs.com
 OSS_ACCESS_KEY_ID=your_access_key_id
 OSS_ACCESS_KEY_SECRET=your_access_key_secret
+PREVIEW_COMPRESSION_RATIO=0.6
 ```
+
+`PREVIEW_COMPRESSION_RATIO` 控制预览图的压缩质量，默认值为 `0.6`，有效范围为大于 `0` 且不超过 `1`。数值越小，JPEG 预览图通常越小，但画质也会相应降低；PNG 预览图仍保持 PNG 格式、无损编码和透明通道，不会转换为 JPEG。
+
+该配置同时保存在数据库 `preview_setting` 表中，每张图片当前预览图的字节数记录在 `photo.thumbnail_size`。应用每次启动都会读取 `.env` 并与数据库值比较，同时核对数据库记录的预览对象是否真实存在：数据库尚无记录、压缩比率不一致，或发现预览图缺失/体积不一致时，会在服务进入 Ready 状态后启动后台全量重建，不阻塞登录和其他系统功能。登录后的页面顶部会展示生成状态和进度，完成后提示用户刷新图库。重建采用安全切换流程，先把完整的新预览图写入独立版本目录，再通过数据库事务统一切换对象 key，成功后才清理旧对象；生成失败时继续保留旧预览图，并在页面中告警、下次启动时重新尝试。因此修改生产环境的压缩比率前，应确认 OSS 具备读取、写入和删除权限。
 
 请确保 Bucket 与 Endpoint 属于同一地域。启动生产服务时不要启用 `local` Spring Profile，否则后端会切换到本地磁盘存储。
 
@@ -206,6 +212,7 @@ Linux 服务器应按照下方“Linux 服务端部署”章节运行编译好�
 | `AUTH_SECURE_COOKIE` | HTTPS 环境应设为 `true` |
 | `OSS_BUCKET`、`OSS_ENDPOINT` | 私有 OSS Bucket 与地域 Endpoint |
 | `OSS_ACCESS_KEY_ID`、`OSS_ACCESS_KEY_SECRET` | OSS 访问凭据 |
+| `PREVIEW_COMPRESSION_RATIO` | 预览图压缩质量，取值 `(0, 1]`，默认 `0.6`；变化后会在服务就绪后于后台全量重建预览图 |
 | `DIRECTMAIL_REGION_ID`、`DIRECTMAIL_ACCOUNT_NAME` | DirectMail 地域与发信地址 |
 | `DIRECTMAIL_ACCESS_KEY_ID`、`DIRECTMAIL_ACCESS_KEY_SECRET` | DirectMail 访问凭据 |
 | `ADMIN_INITIAL_PASSWORD` | 首次启动管理员密码 |
@@ -295,6 +302,7 @@ OSS_BUCKET=photolib-prod
 OSS_ENDPOINT=https://oss-cn-hangzhou.aliyuncs.com
 OSS_ACCESS_KEY_ID=your_access_key_id
 OSS_ACCESS_KEY_SECRET=your_access_key_secret
+PREVIEW_COMPRESSION_RATIO=0.6
 
 DIRECTMAIL_REGION_ID=cn-hangzhou
 DIRECTMAIL_ACCOUNT_NAME=

@@ -27,6 +27,7 @@ public class PhotoEntity extends BaseEntity {
     private String contentType;
     private String objectKey;
     private String thumbnailObjectKey;
+    private Long thumbnailSize;
     private String originalObjectKey;
     private String storedFileName;
     private String sha256;

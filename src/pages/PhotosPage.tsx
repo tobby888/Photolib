@@ -1,5 +1,5 @@
 import {
-  App, Button, Card, Col, DatePicker, Descriptions, Drawer, Form, Image, Input, Modal,
+  App, Button, Card, Checkbox, Col, DatePicker, Descriptions, Drawer, Form, Image, Input, Modal,
   Pagination, Progress, Row, Select, Space, Tag, Typography, Upload,
 } from 'antd'
 import { CloudUploadOutlined, DeleteOutlined, DownloadOutlined, InboxOutlined, SearchOutlined } from '@ant-design/icons'
@@ -14,6 +14,13 @@ import { DataState, formatBytes, PageTitle, StatusTag } from '../components'
 import { useLoad } from '../hooks'
 import { useAuth } from '../auth'
 
+interface ExportJobView {
+  job: { status: 'PENDING' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED'; errorMessage?: string }
+  downloadUrl?: string
+}
+
+const wait = (milliseconds: number) => new Promise(resolve => window.setTimeout(resolve, milliseconds))
+
 export default function PhotosPage() {
   const navigate = useNavigate()
   const { message, modal } = App.useApp()
@@ -24,6 +31,8 @@ export default function PhotosPage() {
   const [uploadPhase, setUploadPhase] = useState<'uploading' | 'processing' | null>(null)
   const [uploadPercent, setUploadPercent] = useState(0)
   const [selected, setSelected] = useState<Photo | null>(null)
+  const [selectedIds, setSelectedIds] = useState<EntityId[]>([])
+  const [batchDownloading, setBatchDownloading] = useState(false)
   const [filters, setFilters] = useState({ page: 1, keyword: '', status: 'AVAILABLE' })
   const { data, loading, error, reload } = useLoad(
     () => api<PageData<Photo>>({ url: '/photos', params: qs({ ...filters, pageSize: 24 }) }),
@@ -89,6 +98,38 @@ export default function PhotosPage() {
       window.open(result.downloadUrl, '_blank', 'noopener')
     } catch (e) { message.error((e as Error).message) }
   }
+  const toggleSelected = (photoId: EntityId, checked: boolean) => {
+    setSelectedIds(current => checked
+      ? current.includes(photoId) ? current : [...current, photoId].slice(0, 200)
+      : current.filter(id => id !== photoId))
+  }
+  const batchDownload = async () => {
+    if (!selectedIds.length) return
+    setBatchDownloading(true)
+    try {
+      const job = await api<{ id: string }>({
+        method: 'POST', url: '/photos/batch-download', data: { photoIds: selectedIds },
+      })
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        const result = await api<ExportJobView>({ url: `/export-jobs/${job.id}` })
+        if (result.job.status === 'SUCCEEDED' && result.downloadUrl) {
+          window.location.assign(result.downloadUrl)
+          setSelectedIds([])
+          message.success('所选图片已打包为 ZIP')
+          return
+        }
+        if (result.job.status === 'FAILED') {
+          throw new Error(result.job.errorMessage || '图片打包失败')
+        }
+        await wait(1000)
+      }
+      message.info('ZIP 仍在后台生成，请稍后重新发起下载')
+    } catch (e) {
+      message.error((e as Error).message)
+    } finally {
+      setBatchDownloading(false)
+    }
+  }
   const remove = (photo: Photo) => {
     modal.confirm({
       title: '确认删除图片？',
@@ -113,6 +154,11 @@ export default function PhotosPage() {
   return <>
     <PageTitle eyebrow="LIBRARY" title="图片库" description="检索、查看并下载团队沉淀的每一帧。"
       extra={<Space wrap>
+        <Button size="large" icon={<DownloadOutlined />} loading={batchDownloading}
+          disabled={!selectedIds.length} onClick={() => void batchDownload()}>
+          打包下载{selectedIds.length ? `（${selectedIds.length}）` : ''}
+        </Button>
+        {!!selectedIds.length && <Button size="large" onClick={() => setSelectedIds([])}>清空选择</Button>}
         <Button size="large" icon={<InboxOutlined />} onClick={() => navigate('/photos/batch-upload')}>ZIP 批量上传</Button>
         <Button type="primary" size="large" icon={<CloudUploadOutlined />} onClick={() => setUploadOpen(true)}>上传图片</Button>
       </Space>} />
@@ -129,9 +175,17 @@ export default function PhotosPage() {
     <DataState loading={loading} error={error} empty={!data.items.length} onRetry={reload}>
       <Row gutter={[16, 20]} className="photo-grid">
         {data.items.map(photo => <Col xs={24} sm={12} lg={8} xxl={6} key={photo.id}>
-          <Card className="photo-card" hoverable cover={<div className="photo-cover" onClick={() => setSelected(photo)}>
+          <Card className={`photo-card${selectedIds.includes(photo.id) ? ' photo-card-selected' : ''}`} hoverable cover={<div className="photo-cover" onClick={() => setSelected(photo)}>
             {photo.thumbnailUrl ? <Image preview={false} src={photo.thumbnailUrl} alt={photo.title} /> : <div className="image-placeholder"><span>{photo.title?.slice(0, 1) || '图'}</span></div>}
-            <div className="photo-overlay"><Space><StatusTag value={photo.status} />{!!photo.adoptionCount && <Tag color="gold">已采用 × {photo.adoptionCount}</Tag>}</Space><Button shape="circle" icon={<DownloadOutlined />} onClick={e => { e.stopPropagation(); void download(photo) }} /></div>
+            <div className="photo-overlay"><Space><StatusTag value={photo.status} />{!!photo.adoptionCount && <Tag color="gold">已采用 × {photo.adoptionCount}</Tag>}</Space><Space>
+              {(photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED') && <Checkbox
+                checked={selectedIds.includes(photo.id)}
+                disabled={selectedIds.length >= 200 && !selectedIds.includes(photo.id)}
+                onClick={event => event.stopPropagation()}
+                onChange={event => toggleSelected(photo.id, event.target.checked)}
+                aria-label={`选择图片 ${photo.title || photo.id}`} />}
+              <Button shape="circle" icon={<DownloadOutlined />} onClick={e => { e.stopPropagation(); void download(photo) }} />
+            </Space></div>
           </div>}>
             <Typography.Title level={5} ellipsis>{photo.title || '未命名图片'}</Typography.Title>
             <Space size={4} wrap>{photo.tags?.slice(0, 3).map(tag => <Tag variant="filled" key={tag}>{tag}</Tag>)}</Space>
@@ -199,6 +253,7 @@ export default function PhotosPage() {
           { key: 'photographer', label: '拍摄者', children: `${selected.photographerName} · ${selected.photographerStudentId}` },
           { key: 'taken', label: '拍摄时间', children: dayjs(selected.takenAt).format('YYYY-MM-DD HH:mm') },
           { key: 'size', label: '文件信息', children: `${selected.width || '-'} × ${selected.height || '-'} · ${formatBytes(selected.size)}` },
+          { key: 'previewSize', label: '预览图体积', children: selected.thumbnailSize == null ? '-' : formatBytes(selected.thumbnailSize) },
           { key: 'file', label: '归档文件名', children: selected.storedFileName },
         ]} />
       </>}

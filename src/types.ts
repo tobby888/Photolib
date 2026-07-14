@@ -76,6 +76,7 @@ export interface Photo extends BaseEntity {
   size: number
   contentType: string
   thumbnailUrl?: string
+  thumbnailSize?: number
   storedFileName: string
   status: 'UPLOADING' | 'PROCESSING' | 'AVAILABLE' | 'ARCHIVED' | 'DELETED'
   failureReason?: string
@@ -188,6 +189,17 @@ export interface Notification {
   contentHtml?: string | null
   readAt?: string | null
   createdAt: string
+}
+
+export interface PreviewGenerationStatus {
+  status: 'PENDING' | 'GENERATING' | 'SUCCEEDED' | 'FAILED'
+  total: number
+  processed: number
+  percentage: number
+  message: string
+  errorMessage?: string | null
+  startedAt?: string | null
+  completedAt?: string | null
 }
 
 export interface AuditLog {

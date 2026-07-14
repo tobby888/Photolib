@@ -11,6 +11,7 @@ import cn.photolib.photo.model.PhotoEntity;
 import cn.photolib.photo.model.PhotoStatus;
 import cn.photolib.storage.ObjectStorageService;
 import cn.photolib.storage.StorageProperties;
+import cn.photolib.user.model.UserRole;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,6 +33,7 @@ import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -61,9 +63,25 @@ public class ExportService {
         if (photoIds == null || photoIds.isEmpty() || photoIds.size() > 200) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "批量下载需选择 1 至 200 张图片");
         }
+        List<Long> distinctIds = photoIds.stream().distinct().toList();
+        List<PhotoEntity> photos = photoMapper.selectList(Wrappers.<PhotoEntity>lambdaQuery()
+                .in(PhotoEntity::getId, distinctIds)
+                .eq(PhotoEntity::getDeleted, false));
+        if (photos.size() != distinctIds.size()) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "部分图片不存在或已被删除");
+        }
+        if (photos.stream().anyMatch(photo -> photo.getStatus() != PhotoStatus.AVAILABLE
+                && photo.getStatus() != PhotoStatus.ARCHIVED)) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "只能批量下载可用或已归档的图片");
+        }
+        if (user.role() == UserRole.CAMPUS_MANAGER && photos.stream().anyMatch(photo ->
+                !Objects.equals(photo.getUploadedBy(), user.id())
+                        || !Objects.equals(photo.getCampusId(), user.campusId()))) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权下载所选图片中的部分内容");
+        }
         ExportJobEntity job = newJob("PHOTO_BATCH", user.id());
         mapper.insert(job);
-        events.publishEvent(new PhotoZipRequested(job.getId(), photoIds.stream().distinct().toList()));
+        events.publishEvent(new PhotoZipRequested(job.getId(), distinctIds));
         return job;
     }
 
@@ -156,6 +174,9 @@ public class ExportService {
                         .in(PhotoEntity::getId, event.photoIds())
                         .eq(PhotoEntity::getDeleted, false)
                         .in(PhotoEntity::getStatus, PhotoStatus.AVAILABLE, PhotoStatus.ARCHIVED));
+                if (photos.size() != event.photoIds().size()) {
+                    throw new IllegalStateException("所选图片状态已变化，请重新选择后下载");
+                }
                 java.util.Set<String> usedNames = new java.util.HashSet<>();
                 for (PhotoEntity photo : photos) {
                     zip.putNextEntry(new ZipEntry(uniqueEntryName(usedNames, photo)));

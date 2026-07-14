@@ -22,7 +22,7 @@ class LocalObjectStorageServiceTests {
                 "http://localhost:8080/api/v1/local-storage/objects", "test-secret",
                 java.util.List.of("*"),
                 Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofDays(30),
-                10_485_760, 104_857_600);
+                10_485_760, 104_857_600, 0.6);
         LocalObjectStorageService storage = new LocalObjectStorageService(properties);
         byte[] content = "photo-content".getBytes(StandardCharsets.UTF_8);
 
@@ -52,7 +52,7 @@ class LocalObjectStorageServiceTests {
                 "http://localhost:8080/api/v1/local-storage/objects", "test-secret",
                 java.util.List.of("*"),
                 Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofDays(30),
-                10_485_760, 104_857_600);
+                10_485_760, 104_857_600, 0.6);
         LocalObjectStorageService storage = new LocalObjectStorageService(properties);
 
         assertThatThrownBy(() -> storage.put("../outside", new ByteArrayInputStream(new byte[0]),

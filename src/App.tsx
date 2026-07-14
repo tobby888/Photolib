@@ -1,17 +1,17 @@
 import {
-  App as AntApp, Avatar, Badge, Button, Divider, Dropdown, Empty, Grid, Layout, List, Menu, Popover, Space, Typography,
+  Alert, App as AntApp, Avatar, Badge, Button, Divider, Dropdown, Empty, Grid, Layout, List, Menu, Popover, Progress, Space, Typography,
 } from 'antd'
 import {
   AimOutlined, BarChartOutlined, BellOutlined, BookOutlined, BulbOutlined, CameraOutlined, ContactsOutlined,
   DashboardOutlined, EnvironmentOutlined, FolderOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SettingOutlined,
   MessageOutlined, PictureOutlined, StarOutlined, UnorderedListOutlined, UserOutlined,
 } from '@ant-design/icons'
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from './auth'
 import { roleName, NotFound } from './components'
 import { api } from './api'
-import type { BrandingSettings, Notification } from './types'
+import type { BrandingSettings, Notification, PreviewGenerationStatus } from './types'
 import dayjs from 'dayjs'
 
 const LoginPage = lazy(() => import('./pages/LoginPage'))
@@ -51,6 +51,8 @@ function Shell() {
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
   const [notificationOpen, setNotificationOpen] = useState(false)
+  const [previewStatus, setPreviewStatus] = useState<PreviewGenerationStatus | null>(null)
+  const previousPreviewState = useRef<PreviewGenerationStatus['status'] | undefined>(undefined)
   const mobile = !screens.md
   useEffect(() => {
     setCollapsed(mobile)
@@ -79,6 +81,31 @@ function Shell() {
     const timer = window.setInterval(() => void loadNotifications(), 30_000)
     return () => window.clearInterval(timer)
   }, [])
+  useEffect(() => {
+    let cancelled = false
+    let timer: number | undefined
+    const loadPreviewStatus = async () => {
+      try {
+        const current = await api<PreviewGenerationStatus>({ url: '/preview-generation/status' })
+        if (cancelled) return
+        if (previousPreviewState.current === 'GENERATING' && current.status === 'SUCCEEDED') {
+          message.success('预览图生成完成，刷新图库即可查看')
+        }
+        previousPreviewState.current = current.status
+        setPreviewStatus(current)
+        if (current.status === 'PENDING' || current.status === 'GENERATING') {
+          timer = window.setTimeout(() => void loadPreviewStatus(), 3_000)
+        }
+      } catch {
+        if (!cancelled) timer = window.setTimeout(() => void loadPreviewStatus(), 10_000)
+      }
+    }
+    void loadPreviewStatus()
+    return () => {
+      cancelled = true
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [message])
   const markRead = async (item: Notification) => {
     if (!item.readAt) {
       await api<void>({ method: 'post', url: `/notifications/${item.id}/read` })
@@ -195,6 +222,18 @@ function Shell() {
         </div>
       </Header>
       <Content className="content">
+        {(previewStatus?.status === 'PENDING' || previewStatus?.status === 'GENERATING') &&
+          <Alert className="preview-generation-alert" type="info" showIcon
+            message="预览图正在后台生成"
+            description={<div>
+              <div>您可以正常使用系统；生成期间部分图片可能暂时没有预览图。</div>
+              {previewStatus.status === 'GENERATING' && previewStatus.total > 0 &&
+                <Progress size="small" percent={previewStatus.percentage}
+                  format={() => `${previewStatus.processed}/${previewStatus.total}`} />}
+            </div>} />}
+        {previewStatus?.status === 'FAILED' &&
+          <Alert className="preview-generation-alert" type="warning" showIcon
+            message={previewStatus.message} description={previewStatus.errorMessage} />}
         <Suspense fallback={<div className="route-loading">正在整理工作台…</div>}><Routes>
           <Route path="/" element={<DashboardPage />} />
           <Route path="/projects" element={<ProjectsPage />} />
