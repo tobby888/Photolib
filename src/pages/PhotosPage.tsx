@@ -3,7 +3,7 @@ import {
   Pagination, Progress, Row, Select, Space, Tag, Typography, Upload,
 } from 'antd'
 import { CloudUploadOutlined, DeleteOutlined, DownloadOutlined, InboxOutlined, SearchOutlined } from '@ant-design/icons'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { api, emptyPage, qs } from '../api'
@@ -38,6 +38,11 @@ export default function PhotosPage() {
     () => api<PageData<Photo>>({ url: '/photos', params: qs({ ...filters, pageSize: 24 }) }),
     emptyPage<Photo>(), [filters.page, filters.keyword, filters.status],
   )
+  useEffect(() => {
+    const onPreviewRegenerated = () => void reload()
+    window.addEventListener('preview-generation-succeeded', onPreviewRegenerated)
+    return () => window.removeEventListener('preview-generation-succeeded', onPreviewRegenerated)
+  }, [reload])
   const { data: photographers, loading: photographersLoading } = useLoad(
     async () => user?.role === 'CAMPUS_MANAGER'
       ? (await api<CampusMember[]>({ url: '/campus-members', params: { enabled: true } }))

@@ -89,7 +89,8 @@ function Shell() {
         const current = await api<PreviewGenerationStatus>({ url: '/preview-generation/status' })
         if (cancelled) return
         if (previousPreviewState.current === 'GENERATING' && current.status === 'SUCCEEDED') {
-          message.success('预览图生成完成，刷新图库即可查看')
+          message.success('预览图生成完成，图库已自动刷新')
+          window.dispatchEvent(new Event('preview-generation-succeeded'))
         }
         previousPreviewState.current = current.status
         setPreviewStatus(current)
