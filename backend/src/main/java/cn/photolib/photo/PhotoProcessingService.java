@@ -32,7 +32,7 @@ public class PhotoProcessingService {
     private final PhotoUploadItemMapper batchItemMapper;
     private final PhotoUploadBatchMapper batchMapper;
 
-    @Async
+    @Async("photoProcessingExecutor")
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onRequested(PhotoProcessRequested event) {
         process(event.photoId());

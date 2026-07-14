@@ -20,6 +20,9 @@ class ImageCompressorTests {
 
         ImageCompressor.Result result = compressor.compress(source, "image/png", 10_000);
 
+        assertThat(result.bytes()).isSameAs(source);
+        assertThat(result.width()).isEqualTo(20);
+        assertThat(result.height()).isEqualTo(20);
         assertThat(result.contentType()).isEqualTo("image/png");
         assertThat(ImageIO.read(new java.io.ByteArrayInputStream(result.bytes()))
                 .getColorModel().hasAlpha()).isTrue();

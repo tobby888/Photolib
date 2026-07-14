@@ -4,7 +4,9 @@ import org.springframework.stereotype.Component;
 
 import javax.imageio.IIOImage;
 import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
 import javax.imageio.ImageWriteParam;
+import javax.imageio.stream.ImageInputStream;
 import javax.imageio.ImageWriter;
 import javax.imageio.stream.ImageOutputStream;
 import java.awt.Graphics2D;
@@ -13,6 +15,7 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.Iterator;
 
 @Component
 public class ImageCompressor {
@@ -21,19 +24,40 @@ public class ImageCompressor {
     private static final int MIN_DIMENSION = 320;
 
     public Result compress(byte[] source, String contentType, long targetBytes) throws IOException {
+        // Most camera JPEGs are already below the 10 MiB target. Read only image
+        // metadata in that case: a full ImageIO decode expands a compressed photo
+        // to tens or hundreds of MiB and caused concurrent uploads to exhaust the
+        // JVM heap even though no recompression was needed.
+        if (source.length <= targetBytes) {
+            Dimensions dimensions = dimensions(source);
+            return new Result(source, dimensions.width(), dimensions.height(), contentType);
+        }
+
         BufferedImage image = ImageIO.read(new ByteArrayInputStream(source));
         if (image == null) {
             throw new IOException("无法解析图片");
         }
         String format = contentType.equals("image/png") ? "png" : "jpeg";
-        if (source.length <= targetBytes) {
-            return new Result(source, image.getWidth(), image.getHeight(), contentType);
-        }
         byte[] output = format.equals("jpeg")
                 ? compressJpeg(image, targetBytes)
                 : compressPng(image, targetBytes);
         BufferedImage result = ImageIO.read(new ByteArrayInputStream(output));
         return new Result(output, result.getWidth(), result.getHeight(), contentType);
+    }
+
+    private Dimensions dimensions(byte[] source) throws IOException {
+        try (ImageInputStream input = ImageIO.createImageInputStream(new ByteArrayInputStream(source))) {
+            if (input == null) throw new IOException("无法解析图片");
+            Iterator<ImageReader> readers = ImageIO.getImageReaders(input);
+            if (!readers.hasNext()) throw new IOException("无法解析图片");
+            ImageReader reader = readers.next();
+            try {
+                reader.setInput(input, true, true);
+                return new Dimensions(reader.getWidth(0), reader.getHeight(0));
+            } finally {
+                reader.dispose();
+            }
+        }
     }
 
     public Result thumbnail(byte[] source, String contentType, int maxDimension) throws IOException {
@@ -166,5 +190,8 @@ public class ImageCompressor {
     }
 
     public record Result(byte[] bytes, int width, int height, String contentType) {
+    }
+
+    private record Dimensions(int width, int height) {
     }
 }
