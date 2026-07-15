@@ -21,7 +21,7 @@ public class CampusMemberController {
     private final CampusMemberService service;
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN','CAMPUS_MANAGER')")
+    @PreAuthorize("hasAnyRole('ADMIN','MINISTER','CAMPUS_MANAGER')")
     ApiResponse<List<CampusMemberEntity>> list(@RequestParam(required = false) Long campusId,
                                                @RequestParam(required = false) Boolean enabled,
                                                @AuthenticationPrincipal AuthenticatedUser user) {
