@@ -1,5 +1,8 @@
 package cn.photolib.storage;
 
+import cn.photolib.common.error.BusinessException;
+import cn.photolib.common.error.ErrorCode;
+import cn.photolib.common.util.LimitedInputStream;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -22,7 +25,9 @@ import java.nio.charset.StandardCharsets;
 @RequiredArgsConstructor
 @ConditionalOnProperty(prefix = "photolib.storage", name = "mode", havingValue = "local")
 public class LocalStorageController {
+    private static final long MAX_ARCHIVE_BYTES = 1_500_000_000L;
     private final ObjectStorageService storage;
+    private final StorageProperties properties;
 
     @PutMapping("/{token}")
     ResponseEntity<Void> upload(@PathVariable String token, HttpServletRequest request) throws IOException {
@@ -33,7 +38,13 @@ public class LocalStorageController {
         if (expectedContentType != null && !expectedContentType.equals(actualContentType)) {
             throw new IllegalArgumentException("Content-Type 不匹配: 预期 " + expectedContentType + ", 实际 " + actualContentType);
         }
-        storage.put(resolved.objectKey(), request.getInputStream(), request.getContentLengthLong(),
+        long maximum = resolved.objectKey().endsWith("/archive.zip")
+                ? MAX_ARCHIVE_BYTES : properties.imageMaxBytes();
+        long contentLength = request.getContentLengthLong();
+        if (contentLength > maximum) {
+            throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "上传内容超过允许大小");
+        }
+        storage.put(resolved.objectKey(), new LimitedInputStream(request.getInputStream(), maximum), contentLength,
                 actualContentType);
         return ResponseEntity.noContent().build();
     }

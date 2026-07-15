@@ -50,6 +50,9 @@ export interface PhotoRequest extends BaseEntity {
   status: 'DRAFT' | 'PUBLISHED' | 'ACCEPTED' | 'SUBMITTED' | 'COMPLETED' | 'CANCELLED'
   createdBy: EntityId
   firstAcceptedAt?: string
+  returnReason?: string | null
+  returnedBy?: EntityId | null
+  returnedAt?: string | null
 }
 
 export interface BatchPublishResult {

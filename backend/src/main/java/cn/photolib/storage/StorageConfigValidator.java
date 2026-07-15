@@ -16,6 +16,7 @@ public class StorageConfigValidator {
     private static final Logger log = LoggerFactory.getLogger(StorageConfigValidator.class);
     private static final Set<String> WEAK_SECRETS = Set.of(
         "photolib-test-signing-secret",
+        "photolib-local-development-secret",
         "test-secret",
         "secret",
         "changeme",

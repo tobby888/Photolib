@@ -13,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.dao.DuplicateKeyException;
 
 import java.time.LocalDateTime;
 
@@ -58,7 +59,7 @@ class AuthServiceTests {
     }
 
     @Test
-    void loginWithDuplicateLegacyEmail_shouldRejectAmbiguousIdentity() {
+    void databaseConstraint_shouldRejectDuplicateEmail() {
         UserEntity duplicate = new UserEntity();
         duplicate.setUsername("duplicate-email-user");
         duplicate.setPasswordHash(passwordEncoder.encode("anotherPassword123"));
@@ -67,11 +68,8 @@ class AuthServiceTests {
         duplicate.setEmail("test@example.com");
         duplicate.setEnabled(true);
         duplicate.setMustChangePassword(false);
-        userMapper.insert(duplicate);
-
-        assertThatThrownBy(() -> authService.login("test@example.com", "password123"))
-                .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("账号、邮箱或密码错误");
+        assertThatThrownBy(() -> userMapper.insert(duplicate))
+                .isInstanceOf(DuplicateKeyException.class);
     }
 
     @Test
@@ -133,6 +131,17 @@ class AuthServiceTests {
                         .eq(AuthSessionEntity::getRefreshTokenHash,
                             TokenSupport.hash(initialTokens.refreshToken())));
         assertThat(oldSession.getRevokedAt()).isNotNull();
+    }
+
+    @Test
+    void refreshRevocationIsConditionalAndSingleUse() {
+        AuthService.TokenPair tokens = authService.login("testuser", "password123");
+        AuthSessionEntity session = sessionMapper.selectOne(Wrappers.<AuthSessionEntity>lambdaQuery()
+                .eq(AuthSessionEntity::getRefreshTokenHash, TokenSupport.hash(tokens.refreshToken())));
+        LocalDateTime now = LocalDateTime.now();
+
+        assertThat(sessionMapper.revokeActive(session.getId(), now)).isEqualTo(1);
+        assertThat(sessionMapper.revokeActive(session.getId(), now.plusNanos(1))).isZero();
     }
 
     @Test

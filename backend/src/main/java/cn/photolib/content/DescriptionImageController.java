@@ -33,6 +33,7 @@ public class DescriptionImageController {
 
     private final DescriptionImageMapper mapper;
     private final ObjectStorageService storage;
+    private final DescriptionImageAuthorizationService authorization;
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
@@ -79,12 +80,14 @@ public class DescriptionImageController {
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("isAuthenticated()")
-    ResponseEntity<InputStreamResource> get(@PathVariable String id) {
+    @PreAuthorize("hasAnyRole('ADMIN','MINISTER','CAMPUS_MANAGER')")
+    ResponseEntity<InputStreamResource> get(@PathVariable String id,
+                                            @AuthenticationPrincipal AuthenticatedUser user) {
         DescriptionImageEntity image = mapper.selectById(id);
         if (image == null) {
             return ResponseEntity.notFound().build();
         }
+        authorization.requireReadable(image, user);
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.maxAge(Duration.ofDays(7)).cachePrivate())
                 .contentType(MediaType.parseMediaType(image.getContentType()))

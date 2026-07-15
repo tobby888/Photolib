@@ -24,4 +24,20 @@ class PhotoProcessingAsyncConfigTests {
             executor.shutdown();
         }
     }
+
+    @Test
+    void zipProcessingUsesDedicatedSingleWorker() throws Exception {
+        ThreadPoolTaskExecutor executor = new PhotoProcessingAsyncConfig().batchProcessingExecutor();
+        try {
+            assertThat(executor.getCorePoolSize()).isEqualTo(1);
+            assertThat(executor.getMaxPoolSize()).isEqualTo(1);
+            Async async = cn.photolib.photo.batch.BatchProcessingService.class
+                    .getMethod("onZipRequested",
+                            cn.photolib.photo.batch.BatchProcessingService.ZipProcessRequested.class)
+                    .getAnnotation(Async.class);
+            assertThat(async.value()).isEqualTo("batchProcessingExecutor");
+        } finally {
+            executor.shutdown();
+        }
+    }
 }

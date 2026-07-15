@@ -123,10 +123,10 @@ public class BatchUploadService {
             if (info.size() > MAX_ARCHIVE) {
                 throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "ZIP 不得超过 1.5 GB");
             }
-            batch.setStatus(BatchStatus.PROCESSING);
-            batchMapper.updateById(batch);
+            transitionBatch(id, BatchStatus.UPLOADING, BatchStatus.PROCESSING);
             events.publishEvent(new BatchProcessingService.ZipProcessRequested(id));
         } else {
+            transitionBatch(id, BatchStatus.UPLOADING, BatchStatus.PROCESSING);
             List<PhotoUploadItemEntity> items = items(id);
             for (PhotoUploadItemEntity item : items) {
                 ObjectStorageService.ObjectInfo info = storage.stat(item.getTempObjectKey());
@@ -139,8 +139,7 @@ public class BatchUploadService {
                 }
                 itemMapper.updateById(item);
             }
-            batch.setStatus(BatchStatus.WAITING_METADATA);
-            batchMapper.updateById(batch);
+            transitionBatch(id, BatchStatus.PROCESSING, BatchStatus.WAITING_METADATA);
         }
         return view(batchMapper.selectById(id));
     }
@@ -159,6 +158,7 @@ public class BatchUploadService {
         if (item.getStatus() != BatchItemStatus.WAITING_METADATA) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "当前图片不能填写元数据");
         }
+        transitionItem(itemId, BatchItemStatus.WAITING_METADATA, BatchItemStatus.PROCESSING);
         Long campusId = user.campusId();
         if (batch.getRequestId() != null) campusId = requestService.get(batch.getRequestId()).getCampusId();
         var photographer = campusMemberService.resolvePhotographer(metadata.photographerContactId(), campusId);
@@ -173,6 +173,7 @@ public class BatchUploadService {
         if (batch.getStatus() != BatchStatus.WAITING_METADATA) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "批次尚未完成解压或已开始处理");
         }
+        transitionBatch(batchId, BatchStatus.WAITING_METADATA, BatchStatus.PROCESSING);
         List<PhotoUploadItemEntity> waitingItems = itemMapper.selectList(
                 Wrappers.<PhotoUploadItemEntity>lambdaQuery()
                         .eq(PhotoUploadItemEntity::getBatchId, batchId)
@@ -185,13 +186,11 @@ public class BatchUploadService {
         if (batch.getRequestId() != null) campusId = requestService.get(batch.getRequestId()).getCampusId();
         var photographer = campusMemberService.resolvePhotographer(metadata.photographerContactId(), campusId);
         for (PhotoUploadItemEntity item : waitingItems) {
+            transitionItem(item.getId(), BatchItemStatus.WAITING_METADATA, BatchItemStatus.PROCESSING);
             createPhoto(batch, item, titleFromFileName(item.getOriginalFileName()), metadata.description(),
                     metadata.takenAt(), metadata.tags(), photographer.getStudentId(), photographer.getName(),
                     campusId, user.id());
         }
-        batch.setStatus(BatchStatus.PROCESSING);
-        batch.setUpdatedAt(LocalDateTime.now());
-        batchMapper.updateById(batch);
         return view(batchMapper.selectById(batchId));
     }
 
@@ -269,6 +268,18 @@ public class BatchUploadService {
     private List<PhotoUploadItemEntity> items(String id) {
         return itemMapper.selectList(Wrappers.<PhotoUploadItemEntity>lambdaQuery()
                 .eq(PhotoUploadItemEntity::getBatchId, id).orderByAsc(PhotoUploadItemEntity::getId));
+    }
+
+    private void transitionBatch(String id, BatchStatus expected, BatchStatus next) {
+        if (batchMapper.transition(id, expected, next, LocalDateTime.now()) != 1) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "上传批次已被其他操作修改");
+        }
+    }
+
+    private void transitionItem(Long id, BatchItemStatus expected, BatchItemStatus next) {
+        if (itemMapper.transition(id, expected, next, LocalDateTime.now()) != 1) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "批次图片已被其他操作修改");
+        }
     }
 
     private BatchView view(PhotoUploadBatchEntity batch) {

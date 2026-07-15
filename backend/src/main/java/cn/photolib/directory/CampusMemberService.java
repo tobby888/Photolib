@@ -28,6 +28,10 @@ public class CampusMemberService {
 
     public List<CampusMemberEntity> list(Long campusId, Boolean enabled, AuthenticatedUser user) {
         Long effectiveCampusId = effectiveCampus(campusId, user);
+        if (Boolean.TRUE.equals(enabled) && effectiveCampusId != null
+                && !Boolean.TRUE.equals(campusService.get(effectiveCampusId).getEnabled())) {
+            return List.of();
+        }
         return mapper.selectList(Wrappers.<CampusMemberEntity>lambdaQuery()
                 .eq(effectiveCampusId != null, CampusMemberEntity::getCampusId, effectiveCampusId)
                 .eq(enabled != null, CampusMemberEntity::getEnabled, enabled)
@@ -41,11 +45,13 @@ public class CampusMemberService {
      * campusNames 汇总该学号出现过的所有校区名。
      */
     public List<DedupedMember> listDeduped() {
+        Map<Long, String> campusNames = campusService.list(true).stream()
+                .collect(Collectors.toMap(CampusEntity::getId, CampusEntity::getName, (a, b) -> a));
+        if (campusNames.isEmpty()) return List.of();
         List<CampusMemberEntity> members = mapper.selectList(Wrappers.<CampusMemberEntity>lambdaQuery()
                 .eq(CampusMemberEntity::getEnabled, true)
+                .in(CampusMemberEntity::getCampusId, campusNames.keySet())
                 .orderByAsc(CampusMemberEntity::getId));
-        Map<Long, String> campusNames = campusService.list(null).stream()
-                .collect(Collectors.toMap(CampusEntity::getId, CampusEntity::getName, (a, b) -> a));
         LinkedHashMap<String, CampusMemberEntity> representative = new LinkedHashMap<>();
         LinkedHashMap<String, List<String>> campuses = new LinkedHashMap<>();
         for (CampusMemberEntity member : members) {
@@ -77,6 +83,7 @@ public class CampusMemberService {
         if (!Boolean.TRUE.equals(member.getEnabled())) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择有效的通讯录成员");
         }
+        requireEnabledCampus(member.getCampusId());
         if (campusId != null && !member.getCampusId().equals(campusId)) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择该校区通讯录中的成员");
         }
@@ -85,6 +92,7 @@ public class CampusMemberService {
 
     public CampusMemberEntity getForWorklog(Long id, Long requestCampusId) {
         CampusMemberEntity member = require(id);
+        requireEnabledCampus(member.getCampusId());
         if (!Boolean.TRUE.equals(member.getEnabled()) || !member.getCampusId().equals(requestCampusId)) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择需求所属校区通讯录中的有效成员");
         }
@@ -94,7 +102,7 @@ public class CampusMemberService {
     @Transactional
     public CampusMemberEntity create(Long campusId, String studentId, String name, AuthenticatedUser user) {
         Long effectiveCampusId = requireWritableCampus(campusId, user);
-        campusService.get(effectiveCampusId);
+        requireEnabledCampus(effectiveCampusId);
         String normalizedStudentId = studentId.trim();
         CampusMemberEntity existing = mapper.selectOne(Wrappers.<CampusMemberEntity>lambdaQuery()
                 .eq(CampusMemberEntity::getCampusId, effectiveCampusId)
@@ -123,6 +131,7 @@ public class CampusMemberService {
                                      int version, AuthenticatedUser user) {
         CampusMemberEntity member = require(id);
         requireWritableCampus(member.getCampusId(), user);
+        requireEnabledCampus(member.getCampusId());
         member.setStudentId(studentId.trim());
         member.setName(name.trim());
         member.setEnabled(enabled);
@@ -146,6 +155,7 @@ public class CampusMemberService {
     public void delete(Long id, AuthenticatedUser user) {
         CampusMemberEntity member = require(id);
         requireWritableCampus(member.getCampusId(), user);
+        requireEnabledCampus(member.getCampusId());
         mapper.deletePhysically(member.getId());
     }
 
@@ -179,6 +189,12 @@ public class CampusMemberService {
             return user.campusId();
         }
         throw new BusinessException(ErrorCode.FORBIDDEN, "只能维护所属校区的通讯录");
+    }
+
+    private void requireEnabledCampus(Long campusId) {
+        if (!Boolean.TRUE.equals(campusService.get(campusId).getEnabled())) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "校区已停用，不能维护通讯录或选择拍摄者");
+        }
     }
 
     public record DedupedMember(Long id, String studentId, String name, List<String> campusNames) {}

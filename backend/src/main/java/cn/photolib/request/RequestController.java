@@ -55,8 +55,9 @@ public class RequestController {
     }
 
     @GetMapping("/requests/{id}")
-    ApiResponse<PhotoRequestEntity> get(@PathVariable Long id) {
-        return ApiResponse.ok(service.get(id));
+    ApiResponse<PhotoRequestEntity> get(@PathVariable Long id,
+                                        @AuthenticationPrincipal AuthenticatedUser user) {
+        return ApiResponse.ok(service.get(id, user));
     }
 
     @PutMapping("/requests/{id}")
@@ -83,8 +84,9 @@ public class RequestController {
     }
 
     @GetMapping("/requests/{id}/participants")
-    ApiResponse<List<RequestParticipantEntity>> participants(@PathVariable Long id) {
-        return ApiResponse.ok(service.participants(id));
+    ApiResponse<List<RequestParticipantEntity>> participants(
+            @PathVariable Long id, @AuthenticationPrincipal AuthenticatedUser user) {
+        return ApiResponse.ok(service.participants(id, user));
     }
 
     @DeleteMapping("/requests/{id}/participants/me")
@@ -105,6 +107,15 @@ public class RequestController {
     @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
     ApiResponse<PhotoRequestEntity> complete(@PathVariable Long id, @Valid @RequestBody VersionRequest request) {
         return ApiResponse.ok(service.complete(id, request.version()));
+    }
+
+    @PostMapping("/requests/{id}/return")
+    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    ApiResponse<PhotoRequestEntity> returnForRevision(
+            @PathVariable Long id,
+            @Valid @RequestBody ReturnRequest request,
+            @AuthenticationPrincipal AuthenticatedUser user) {
+        return ApiResponse.ok(service.returnForRevision(id, request.reason(), request.version(), user));
     }
 
     @PostMapping("/requests/{id}/cancel")
@@ -147,5 +158,8 @@ public class RequestController {
                          @Min(1) int version) {}
 
     record CancelRequest(@NotBlank @Size(max = 500) String reason, @Min(1) int version) {
+    }
+
+    record ReturnRequest(@NotBlank @Size(max = 500) String reason, @Min(1) int version) {
     }
 }

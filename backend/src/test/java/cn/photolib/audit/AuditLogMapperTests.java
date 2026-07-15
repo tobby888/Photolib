@@ -44,4 +44,19 @@ class AuditLogMapperTests {
         assertThat(mapper.countLogs(91001L, "POST", "PROJECTS", from, to, "127.0.0.1")).isEqualTo(1);
         assertThat(mapper.countLogs(null, "DELETE", null, null, null, null)).isZero();
     }
+
+    @Test
+    void keywordTreatsLikeWildcardsAsLiteralText() {
+        jdbc.sql("""
+                INSERT INTO audit_log
+                    (action, resource_type, resource_id, request_id, detail_json, ip_address, created_at)
+                VALUES
+                    ('POST', 'PHOTOS', 'literal%value', 'one', '{}', '127.0.0.1', CURRENT_TIMESTAMP),
+                    ('POST', 'PHOTOS', 'ordinary-value', 'two', '{}', '127.0.0.2', CURRENT_TIMESTAMP)
+                """).update();
+
+        assertThat(mapper.countLogs(null, null, null, null, null, "%")).isEqualTo(1);
+        assertThat(mapper.findLogs(null, null, null, null, null, "%", 20, 0))
+                .extracting(AuditLogView::getResourceId).containsExactly("literal%value");
+    }
 }

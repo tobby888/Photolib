@@ -40,16 +40,22 @@ public class NotificationService {
             .addTags("p", "div", "h1", "h2", "h3", "img")
             .addAttributes("img", "src", "alt", "title")
             .preserveRelativeLinks(true);
+    private static final Safelist SYSTEM_MAIL_HTML = Safelist.none()
+            .addTags("p", "div", "br", "strong", "b", "em", "i")
+            .preserveRelativeLinks(false);
 
     @Transactional
     public void notifyUser(Long userId, String event, String subject, String html) {
         UserEntity user = userMapper.selectById(userId);
         if (user == null || !Boolean.TRUE.equals(user.getEnabled())) return;
+        String safeSubject = Jsoup.parse(subject == null ? "" : subject).text();
+        String safeHtml = Jsoup.clean(html == null ? "" : html, "", SYSTEM_MAIL_HTML,
+                new org.jsoup.nodes.Document.OutputSettings().prettyPrint(false));
         UserNotificationEntity notification = new UserNotificationEntity();
         notification.setUserId(userId);
         notification.setEventType(event);
-        notification.setTitle(subject);
-        notification.setContent(toPlainText(html));
+        notification.setTitle(safeSubject);
+        notification.setContent(toPlainText(safeHtml));
         notification.setActionUrl(actionUrl(event));
         notification.setCreatedAt(LocalDateTime.now());
         userNotificationMapper.insert(notification);
@@ -61,7 +67,7 @@ public class NotificationService {
         log.setEventType(event);
         log.setStatus("PENDING");
         log.setRetryCount(0);
-        log.setPayloadJson(subject + PAYLOAD_SEPARATOR + html);
+        log.setPayloadJson(safeSubject + PAYLOAD_SEPARATOR + safeHtml);
         log.setCreatedAt(LocalDateTime.now());
         log.setUpdatedAt(LocalDateTime.now());
         mapper.insert(log);

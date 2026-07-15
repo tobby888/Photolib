@@ -209,7 +209,7 @@ Linux 服务器应按照下方“Linux 服务端部署”章节运行编译好�
 | 环境变量 | 说明 |
 | --- | --- |
 | `DB_URL`、`DB_USERNAME`、`DB_PASSWORD` | MySQL 连接配置 |
-| `AUTH_SECURE_COOKIE` | HTTPS 环境应设为 `true` |
+| `AUTH_SECURE_COOKIE` | 非 `local`/`test` 环境必须为 `true`，否则应用拒绝启动 |
 | `OSS_BUCKET`、`OSS_ENDPOINT` | 私有 OSS Bucket 与地域 Endpoint |
 | `OSS_ACCESS_KEY_ID`、`OSS_ACCESS_KEY_SECRET` | OSS 访问凭据 |
 | `PREVIEW_COMPRESSION_RATIO` | 预览图压缩质量，取值 `(0, 1]`，默认 `0.6`；变化后会在服务就绪后于后台全量重建预览图 |
@@ -217,7 +217,7 @@ Linux 服务器应按照下方“Linux 服务端部署”章节运行编译好�
 | `DIRECTMAIL_ACCESS_KEY_ID`、`DIRECTMAIL_ACCESS_KEY_SECRET` | DirectMail 访问凭据 |
 | `ADMIN_INITIAL_PASSWORD` | 首次启动管理员密码 |
 
-建议使用独立的私有 Bucket，并遵循最小权限原则配置 RAM 账号。生产环境还应设置 `AUTH_SECURE_COOKIE=true`，并在 HTTPS 反向代理后运行服务。
+建议使用独立的私有 Bucket，并遵循最小权限原则配置 RAM 账号。生产环境必须设置强随机的 `ADMIN_INITIAL_PASSWORD`、保持 `AUTH_SECURE_COOKIE=true`，并在 HTTPS 反向代理后运行服务；不安全配置会触发启动失败。
 
 ## Linux 服务端部署
 

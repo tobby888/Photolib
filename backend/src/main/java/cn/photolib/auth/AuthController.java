@@ -6,6 +6,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
@@ -102,7 +103,8 @@ public class AuthController {
         response.addCookie(cookie);
     }
 
-    record LoginRequest(@NotBlank String username, @NotBlank String password) {
+    record LoginRequest(@NotBlank @Size(max = 320) String username,
+                        @NotBlank @Size(max = 72) String password) {
     }
 
     record LoginResponse(String accessToken, String tokenType, long expiresIn,

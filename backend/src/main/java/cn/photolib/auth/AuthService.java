@@ -19,6 +19,8 @@ import java.util.Locale;
 @Service
 @RequiredArgsConstructor
 public class AuthService {
+    private static final String DUMMY_PASSWORD_HASH =
+            "$2a$12$wHhY5zYDsMdG2mvvEJPi7eM6FBfXwLwqEyqfL7IGRBxV6JrxEzk3q";
     private final UserMapper userMapper;
     private final AuthSessionMapper sessionMapper;
     private final PasswordEncoder passwordEncoder;
@@ -35,8 +37,9 @@ public class AuthService {
                     .last("LIMIT 2"));
             user = emailMatches.size() == 1 ? emailMatches.getFirst() : null;
         }
-        if (user == null || !Boolean.TRUE.equals(user.getEnabled())
-                || !passwordEncoder.matches(password, user.getPasswordHash())) {
+        String passwordHash = user == null ? DUMMY_PASSWORD_HASH : user.getPasswordHash();
+        boolean passwordMatches = passwordEncoder.matches(password == null ? "" : password, passwordHash);
+        if (user == null || !Boolean.TRUE.equals(user.getEnabled()) || !passwordMatches) {
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "账号、邮箱或密码错误");
         }
         return issue(user);
@@ -54,8 +57,9 @@ public class AuthService {
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "会话已失效");
         }
         UserEntity user = requireEnabledUser(session.getUserId());
-        session.setRevokedAt(now);
-        sessionMapper.updateById(session);
+        if (sessionMapper.revokeActive(session.getId(), now) != 1) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "会话已失效");
+        }
         return issue(user);
     }
 

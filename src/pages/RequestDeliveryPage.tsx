@@ -1,5 +1,5 @@
 import {
-  App, Button, Card, Col, DatePicker, Descriptions, Form, Image, Input, Progress,
+  Alert, App, Button, Card, Col, DatePicker, Descriptions, Form, Image, Input, Progress,
   Result, Row, Select, Space, Statistic, Tag, Typography, Upload,
 } from 'antd'
 import {
@@ -179,6 +179,15 @@ export default function RequestDeliveryPage() {
               disabled={!photosState.data.total} onClick={() => void submit()}>提交交付</Button>}
         </Space>
       </section>
+
+      {request.status === 'ACCEPTED' && request.returnReason && <Alert showIcon type="warning"
+        title="需求已被打回，请修改后重新提交"
+        description={<Space direction="vertical" size={2}>
+          <span>{request.returnReason}</span>
+          {request.returnedAt && <Typography.Text type="secondary">
+            打回时间：{dayjs(request.returnedAt).format('YYYY-MM-DD HH:mm')}
+          </Typography.Text>}
+        </Space>} />}
 
       <Row gutter={[18, 18]} className="delivery-metrics">
         <Col xs={12} md={8}><Statistic title="当前列表" value={photosState.data.total} suffix="张" /></Col>

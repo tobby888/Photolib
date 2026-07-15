@@ -14,6 +14,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -53,7 +54,11 @@ public class UserService {
         user.setEmail(email);
         user.setEnabled(true);
         user.setMustChangePassword(true);
-        userMapper.insert(user);
+        try {
+            userMapper.insert(user);
+        } catch (DuplicateKeyException exception) {
+            throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE, "用户名或邮箱已被其他用户使用");
+        }
         notifications.notifyUser(user.getId(), "ACCOUNT_CREATED", "PhotoLib 账号已创建",
                 "<p>您的 PhotoLib 账号已创建，请向管理员获取初始密码并在首次登录后修改。</p>");
         return new CreatedUser(toView(user), initialPassword);
@@ -91,8 +96,12 @@ public class UserService {
         user.setEmail(email);
         user.setEnabled(command.enabled());
         user.setVersion(command.version());
-        if (userMapper.updateById(user) != 1) {
-            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "用户已被其他操作修改");
+        try {
+            if (userMapper.updateById(user) != 1) {
+                throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "用户已被其他操作修改");
+            }
+        } catch (DuplicateKeyException exception) {
+            throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE, "邮箱已被其他用户使用");
         }
         if (!command.enabled()) {
             authService.revokeAll(id);
@@ -143,6 +152,7 @@ public class UserService {
         // 重命名（保留唯一的 id 前缀）以便后续可重新创建同名账号。
         String freed = "del." + id + "." + user.getUsername();
         user.setUsername(freed.length() > 64 ? freed.substring(0, 64) : freed);
+        user.setEmail(null);
         user.setEnabled(false);
         userMapper.updateById(user);
         userMapper.deleteById(id);
