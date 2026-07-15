@@ -60,6 +60,19 @@ class CampusMemberServiceTests {
     }
 
     @Test
+    void ministerList_shouldReadAllCampusesAndSupportCampusFilter() {
+        AuthenticatedUser minister = new AuthenticatedUser(
+                2L, "minister", "部长", UserRole.MINISTER, null, false);
+
+        assertThat(service.list(null, true, minister))
+                .extracting(CampusMemberEntity::getStudentId)
+                .containsExactlyInAnyOrder("20250001", "20250002", "20250001", "20250004");
+        assertThat(service.list(campusB.getId(), true, minister))
+                .extracting(CampusMemberEntity::getStudentId)
+                .containsExactlyInAnyOrder("20250001", "20250004");
+    }
+
+    @Test
     void resolvePhotographer_sameCampus_shouldReturnMember() {
         CampusMemberEntity member = service.resolvePhotographer(500L, campusA.getId());
         assertThat(member.getStudentId()).isEqualTo("20250001");

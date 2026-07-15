@@ -119,6 +119,7 @@
 - **建议方向**：改用 `hasRole(...)`/显式登录判断替代 `isAuthenticated()`，或改为短期签名 URL，与 export-job 保持一致的限时下载模式。
 
 #### #11 `MINISTER` 越权访问未去重的全量通讯录
+- **处理状态（2026-07-15）**：产品规则已调整为部长可只读访问所有校区通讯录；部长通讯录页面仍使用按学号去重并标注所属校区的合并视图，原始列表用于需求详情按校区选择正确成员。新增、编辑、停用和删除权限仍不向部长开放，因此该项不再按越权问题处理。
 - **文件**：`backend/src/main/java/cn/photolib/directory/CampusMemberController.java:16-28`（类级权限含 `MINISTER`，`list()` 方法未做更细粒度限制）；`CampusMemberService.java:29-36, 160-168`（`effectiveCampus()` 只对 `CAMPUS_MANAGER` 强制限定校区，对 `MINISTER`/`ADMIN` 直接放行任意 `campusId`/`enabled` 参数）
 - **问题**：业务设计明确"部长只读查看去重视图 `GET /campus-members/deduped`"，但普通列表接口 `GET /campus-members`（继承类级权限）同样允许 `MINISTER` 调用，且不受 `effectiveCampus` 限制，可任意指定 `campusId`、`enabled=false`。
 - **影响**：`MINISTER` 账号可以枚举任意校区、任意启用状态的通讯录原始记录（学号、姓名、id、创建时间），包括本应通过去重视图屏蔽的"已停用成员"和逐校区明细，超出文档声明的最小权限范围。

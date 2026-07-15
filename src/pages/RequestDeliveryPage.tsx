@@ -46,14 +46,13 @@ export default function RequestDeliveryPage() {
 
   const requestState = useLoad(async () => {
     const request = await api<PhotoRequest>({ url: `/requests/${requestId}` })
-    const [project, campuses, members] = await Promise.all([
+    const [project, campuses] = await Promise.all([
       api<Project>({ url: `/projects/${request.projectId}` }),
       api<Campus[]>({ url: '/campuses', params: { enabled: true } }),
-      api<CampusMember[]>({ url: '/campus-members', params: { enabled: true, campusId: request.campusId } }),
     ])
-    return { request, project, campuses, members }
+    return { request, project, campuses }
   }, { request: null as PhotoRequest | null, project: null as Project | null,
-    campuses: [] as Campus[], members: [] as CampusMember[] }, [requestId])
+    campuses: [] as Campus[] }, [requestId])
 
   const photosState = useLoad(
     () => api<PageData<Photo>>({
@@ -68,6 +67,15 @@ export default function RequestDeliveryPage() {
   const isManager = user?.role === 'CAMPUS_MANAGER'
   const canUpload = request?.status === 'ACCEPTED'
     && (isManager || user?.role === 'ADMIN' || user?.role === 'MINISTER')
+  const membersState = useLoad(
+    () => canUpload && request
+      ? api<CampusMember[]>({
+          url: '/campus-members', params: { enabled: true, campusId: request.campusId },
+        })
+      : Promise.resolve([] as CampusMember[]),
+    [] as CampusMember[],
+    [canUpload, request?.campusId],
+  )
   const campusName = useMemo(() => request
     ? requestState.data.campuses.find(campus => campus.id === request.campusId)?.name || `校区 #${request.campusId}`
     : '', [request, requestState.data.campuses])
@@ -224,6 +232,9 @@ export default function RequestDeliveryPage() {
               onClick={() => navigate(`/photos/batch-upload?requestId=${request.id}&projectId=${request.projectId}`)}>
               上传 ZIP
             </Button>}>
+            {membersState.error && <Alert showIcon type="warning"
+              title="拍摄者通讯录加载失败"
+              description={membersState.error} />}
             <Form form={form} layout="vertical" requiredMark={false}
               initialValues={{ takenAt: dayjs() }}>
               <Form.Item name="files" valuePropName="fileList" getValueFromEvent={event => event.fileList}
@@ -249,10 +260,10 @@ export default function RequestDeliveryPage() {
               <Form.Item label="拍摄者" name="photographerContactId"
                 extra="从需求所属校区通讯录选择，通讯录在「通讯录」页维护"
                 rules={[{ required: true, message: '请从通讯录选择拍摄者' }]}>
-                <Select showSearch optionFilterProp="label"
-                  placeholder={requestState.data.members.length ? '按姓名或学号选择' : '该校区通讯录为空，请先添加成员'}
+                <Select showSearch optionFilterProp="label" loading={membersState.loading}
+                  placeholder={membersState.data.length ? '按姓名或学号选择' : '该校区通讯录为空，请先添加成员'}
                   notFoundContent="该校区通讯录中没有可用成员"
-                  options={requestState.data.members.map(member => ({
+                  options={membersState.data.map(member => ({
                     value: member.id, label: `${member.name} · ${member.studentId}`,
                   }))} />
               </Form.Item>
