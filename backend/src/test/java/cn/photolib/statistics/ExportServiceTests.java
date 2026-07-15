@@ -23,6 +23,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import static org.mockito.ArgumentMatchers.eq;
+import org.mockito.ArgumentCaptor;
+import java.time.LocalDate;
 
 @ExtendWith(MockitoExtension.class)
 class ExportServiceTests {
@@ -59,5 +63,23 @@ class ExportServiceTests {
                         exception -> org.assertj.core.api.Assertions.assertThat(exception.getCode())
                                 .isEqualTo(ErrorCode.FORBIDDEN));
         verifyNoInteractions(mapper, events);
+    }
+
+    @Test
+    void failedJobExposesGenericMessageInsteadOfInternalException() {
+        ExportJobEntity job = new ExportJobEntity();
+        job.setId("job-id");
+        when(mapper.selectById("job-id")).thenReturn(job);
+        when(statistics.members(any(), any(), any(), any(), any()))
+                .thenThrow(new IllegalStateException("C:\\secret\\bucket-name"));
+
+        exports.exportStatistics(new ExportService.StatisticsExportRequested(
+                "job-id", LocalDate.now(), LocalDate.now(), null, null));
+
+        ArgumentCaptor<ExportJobEntity> captor = ArgumentCaptor.forClass(ExportJobEntity.class);
+        verify(mapper).updateById(captor.capture());
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().getErrorMessage())
+                .isEqualTo("导出任务执行失败，请稍后重试")
+                .doesNotContain("secret", "bucket");
     }
 }

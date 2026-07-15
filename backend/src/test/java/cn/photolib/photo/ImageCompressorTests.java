@@ -8,6 +8,7 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ImageCompressorTests {
     private final ImageCompressor compressor = new ImageCompressor();
@@ -80,6 +81,24 @@ class ImageCompressorTests {
         assertThat(result.bytes().length).isLessThanOrEqualTo(180_000);
         assertThat(result.width()).isLessThan(1600).isGreaterThan(320);
         assertThat(result.height()).isLessThan(1200).isGreaterThan(320);
+    }
+
+    @Test
+    void rejectsOversizedPixelDimensionsBeforeDecode() throws Exception {
+        byte[] png = encode(new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB), "png");
+        writeInt(png, 16, ImageCompressor.MAX_DIMENSION + 1);
+        writeInt(png, 20, ImageCompressor.MAX_DIMENSION + 1);
+
+        assertThatThrownBy(() -> compressor.compress(png, "image/png", png.length + 1L))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("安全上限");
+    }
+
+    private void writeInt(byte[] bytes, int offset, int value) {
+        bytes[offset] = (byte) (value >>> 24);
+        bytes[offset + 1] = (byte) (value >>> 16);
+        bytes[offset + 2] = (byte) (value >>> 8);
+        bytes[offset + 3] = (byte) value;
     }
 
     private BufferedImage noisyImage(int width, int height) {

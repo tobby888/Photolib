@@ -55,7 +55,7 @@ class DescriptionImageControllerTests {
             assertThat(result.url()).isEqualTo("/api/v1/description-images/" + id);
             assertThat(image.getObjectKey()).startsWith("descriptions/").endsWith(".png");
             assertThat(storage.open(image.getObjectKey()).readAllBytes()).isEqualTo(png);
-            assertThat(controller.get(id).getBody().getInputStream().readAllBytes()).isEqualTo(png);
+            assertThat(controller.get(id, minister).getBody().getInputStream().readAllBytes()).isEqualTo(png);
         } finally {
             storage.delete(image.getObjectKey());
         }
@@ -69,5 +69,22 @@ class DescriptionImageControllerTests {
         assertThatThrownBy(() -> controller.upload(file, minister))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("图片内容与文件类型不匹配");
+    }
+
+    @Test
+    void unreferencedImage_shouldNotBeReadableByCampusManager() throws Exception {
+        byte[] png = {(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3};
+        String id = controller.upload(
+                new MockMultipartFile("file", "private.png", "image/png", png), minister)
+                .data().url().replaceFirst(".*/", "");
+        AuthenticatedUser manager = new AuthenticatedUser(
+                999L, "outsider", "无关负责人", UserRole.CAMPUS_MANAGER, 100L, false);
+
+        try {
+            assertThatThrownBy(() -> controller.get(id, manager))
+                    .isInstanceOf(BusinessException.class).hasMessageContaining("无权读取");
+        } finally {
+            storage.delete(mapper.selectById(id).getObjectKey());
+        }
     }
 }

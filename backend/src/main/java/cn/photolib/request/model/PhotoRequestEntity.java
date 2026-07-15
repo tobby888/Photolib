@@ -22,4 +22,7 @@ public class PhotoRequestEntity extends BaseEntity {
     private LocalDateTime firstAcceptedAt;
     private LocalDateTime completedAt;
     private String cancelReason;
+    private String returnReason;
+    private Long returnedBy;
+    private LocalDateTime returnedAt;
 }

@@ -24,6 +24,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.util.HtmlUtils;
 
 import java.time.LocalDateTime;
 import java.util.HashSet;
@@ -108,6 +109,8 @@ public class RequestService {
                 Wrappers.<PhotoRequestEntity>lambdaQuery()
                         .eq(projectId != null, PhotoRequestEntity::getProjectId, projectId)
                         .eq(status != null, PhotoRequestEntity::getStatus, status)
+                        .ne(user.role() == UserRole.CAMPUS_MANAGER,
+                                PhotoRequestEntity::getStatus, RequestStatus.DRAFT)
                         .eq(effectiveCampus != null, PhotoRequestEntity::getCampusId, effectiveCampus)
                         .in(effectiveParticipant != null, PhotoRequestEntity::getId,
                                 participatedRequestIds == null || participatedRequestIds.isEmpty()
@@ -121,6 +124,12 @@ public class RequestService {
         if (request == null) {
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "图片需求不存在");
         }
+        return request;
+    }
+
+    public PhotoRequestEntity get(Long id, AuthenticatedUser user) {
+        PhotoRequestEntity request = get(id);
+        requireVisible(request, user);
         return request;
     }
 
@@ -195,6 +204,11 @@ public class RequestService {
                 .orderByAsc(RequestParticipantEntity::getAcceptedAt));
     }
 
+    public List<RequestParticipantEntity> participants(Long id, AuthenticatedUser user) {
+        requireVisible(get(id), user);
+        return participants(id);
+    }
+
     @Transactional
     public void leave(Long id, AuthenticatedUser user) {
         get(id);
@@ -228,8 +242,10 @@ public class RequestService {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "仅已接受需求可提交");
         }
         request.setStatus(RequestStatus.SUBMITTED);
+        clearReturn(request);
         request.setVersion(version);
         updateChecked(request);
+        clearReturnFields(id);
         notifications.notifyUser(request.getCreatedBy(), "REQUEST_SUBMITTED",
                 "图片需求已提交", "<p>" + request.getTitle() + "</p>");
         return get(id);
@@ -242,9 +258,44 @@ public class RequestService {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "仅已提交需求可完成");
         }
         request.setStatus(RequestStatus.COMPLETED);
+        clearReturn(request);
         request.setCompletedAt(LocalDateTime.now());
         request.setVersion(version);
         updateChecked(request);
+        clearReturnFields(id);
+        return get(id);
+    }
+
+    @Transactional
+    public PhotoRequestEntity returnForRevision(Long id, String reason, int version, AuthenticatedUser reviewer) {
+        if (reviewer.role() != UserRole.ADMIN && reviewer.role() != UserRole.MINISTER) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "仅管理员或部长可打回需求");
+        }
+        PhotoRequestEntity request = get(id);
+        requireCreatorOrAdmin(request, reviewer);
+        if (request.getStatus() != RequestStatus.SUBMITTED) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "仅待确认需求可打回");
+        }
+        String normalizedReason = reason == null ? "" : reason.trim();
+        if (normalizedReason.isEmpty()) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "打回原因不能为空");
+        }
+        request.setStatus(RequestStatus.ACCEPTED);
+        request.setReturnReason(normalizedReason);
+        request.setReturnedBy(reviewer.id());
+        request.setReturnedAt(LocalDateTime.now());
+        request.setVersion(version);
+        updateChecked(request);
+
+        String notificationBody = "<p>需求“" + HtmlUtils.htmlEscape(request.getTitle())
+                + "”已被打回，请修改后重新提交。</p><p>打回原因："
+                + HtmlUtils.htmlEscape(normalizedReason) + "</p>";
+        participantMapper.selectList(Wrappers.<RequestParticipantEntity>lambdaQuery()
+                        .eq(RequestParticipantEntity::getRequestId, id))
+                .forEach(participant -> notifications.notifyUser(participant.getUserId(), "REQUEST_RETURNED",
+                        "图片需求被打回", notificationBody));
+        notifications.notifyUser(request.getCreatedBy(), "REQUEST_RETURNED",
+                "图片需求被打回", notificationBody);
         return get(id);
     }
 
@@ -286,6 +337,34 @@ public class RequestService {
         if (!request.getCreatedBy().equals(user.id()) && user.role() != UserRole.ADMIN) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权操作该需求");
         }
+    }
+
+    private void requireVisible(PhotoRequestEntity request, AuthenticatedUser user) {
+        if (user.role() == UserRole.ADMIN || user.role() == UserRole.MINISTER) {
+            return;
+        }
+        if (user.role() != UserRole.CAMPUS_MANAGER
+                || !request.getCampusId().equals(user.campusId())
+                || request.getStatus() == RequestStatus.DRAFT
+                || participantMapper.selectCount(Wrappers.<RequestParticipantEntity>lambdaQuery()
+                        .eq(RequestParticipantEntity::getRequestId, request.getId())
+                        .eq(RequestParticipantEntity::getUserId, user.id())) == 0) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权查看该图片需求");
+        }
+    }
+
+    private void clearReturn(PhotoRequestEntity request) {
+        request.setReturnReason(null);
+        request.setReturnedBy(null);
+        request.setReturnedAt(null);
+    }
+
+    private void clearReturnFields(Long id) {
+        mapper.update(null, Wrappers.<PhotoRequestEntity>lambdaUpdate()
+                .eq(PhotoRequestEntity::getId, id)
+                .set(PhotoRequestEntity::getReturnReason, null)
+                .set(PhotoRequestEntity::getReturnedBy, null)
+                .set(PhotoRequestEntity::getReturnedAt, null));
     }
 
     private void updateChecked(PhotoRequestEntity request) {

@@ -12,6 +12,7 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.security.access.prepost.PreAuthorize;
 
 import java.nio.charset.StandardCharsets;
 
@@ -69,5 +70,12 @@ class MessageImageControllerTests {
         assertThatThrownBy(() -> controller.upload(file, minister))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("图片内容与文件类型不匹配");
+    }
+
+    @Test
+    void imageReadRequiresAnApplicationRoleInsteadOfIsAuthenticated() throws Exception {
+        PreAuthorize authorization = MessageImageController.class
+                .getDeclaredMethod("get", String.class).getAnnotation(PreAuthorize.class);
+        assertThat(authorization.value()).contains("hasAnyRole").doesNotContain("isAuthenticated()");
     }
 }

@@ -2,6 +2,7 @@ package cn.photolib.audit;
 
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.api.PageResponse;
+import cn.photolib.common.util.SpreadsheetText;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpHeaders;
@@ -76,7 +77,6 @@ public class AuditController {
     private static LocalDateTime end(LocalDate date) { return date == null ? null : date.plusDays(1).atStartOfDay(); }
     private static String clean(String value) { return value == null ? null : value.trim(); }
     private static String csv(Object value) {
-        if (value == null) return "";
-        return "\"" + value.toString().replace("\"", "\"\"") + "\"";
+        return "\"" + SpreadsheetText.safe(value).replace("\"", "\"\"") + "\"";
     }
 }

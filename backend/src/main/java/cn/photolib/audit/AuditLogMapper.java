@@ -25,18 +25,18 @@ public interface AuditLogMapper extends BaseMapper<AuditLogEntity> {
               <if test="from != null">AND a.created_at &gt;= #{from}</if>
               <if test="to != null">AND a.created_at &lt; #{to}</if>
               <if test="keyword != null and keyword != ''">
-                AND (LOWER(u.username) LIKE LOWER(CONCAT('%', #{keyword}, '%'))
-                  OR LOWER(u.display_name) LIKE LOWER(CONCAT('%', #{keyword}, '%'))
-                  OR LOWER(a.resource_id) LIKE LOWER(CONCAT('%', #{keyword}, '%'))
-                  OR LOWER(a.request_id) LIKE LOWER(CONCAT('%', #{keyword}, '%'))
-                  OR LOWER(a.ip_address) LIKE LOWER(CONCAT('%', #{keyword}, '%')))
+                AND (LOWER(u.username) LIKE LOWER(CONCAT('%', #{keyword}, '%')) ESCAPE '!'
+                  OR LOWER(u.display_name) LIKE LOWER(CONCAT('%', #{keyword}, '%')) ESCAPE '!'
+                  OR LOWER(a.resource_id) LIKE LOWER(CONCAT('%', #{keyword}, '%')) ESCAPE '!'
+                  OR LOWER(a.request_id) LIKE LOWER(CONCAT('%', #{keyword}, '%')) ESCAPE '!'
+                  OR LOWER(a.ip_address) LIKE LOWER(CONCAT('%', #{keyword}, '%')) ESCAPE '!')
               </if>
             </where>
             ORDER BY a.created_at DESC
             LIMIT #{limit} OFFSET #{offset}
             </script>
             """)
-    List<AuditLogView> findLogs(@Param("operatorId") Long operatorId,
+    List<AuditLogView> findLogsQuery(@Param("operatorId") Long operatorId,
                                 @Param("action") String action,
                                 @Param("resourceType") String resourceType,
                                 @Param("from") LocalDateTime from,
@@ -57,19 +57,34 @@ public interface AuditLogMapper extends BaseMapper<AuditLogEntity> {
               <if test="from != null">AND a.created_at &gt;= #{from}</if>
               <if test="to != null">AND a.created_at &lt; #{to}</if>
               <if test="keyword != null and keyword != ''">
-                AND (LOWER(u.username) LIKE LOWER(CONCAT('%', #{keyword}, '%'))
-                  OR LOWER(u.display_name) LIKE LOWER(CONCAT('%', #{keyword}, '%'))
-                  OR LOWER(a.resource_id) LIKE LOWER(CONCAT('%', #{keyword}, '%'))
-                  OR LOWER(a.request_id) LIKE LOWER(CONCAT('%', #{keyword}, '%'))
-                  OR LOWER(a.ip_address) LIKE LOWER(CONCAT('%', #{keyword}, '%')))
+                AND (LOWER(u.username) LIKE LOWER(CONCAT('%', #{keyword}, '%')) ESCAPE '!'
+                  OR LOWER(u.display_name) LIKE LOWER(CONCAT('%', #{keyword}, '%')) ESCAPE '!'
+                  OR LOWER(a.resource_id) LIKE LOWER(CONCAT('%', #{keyword}, '%')) ESCAPE '!'
+                  OR LOWER(a.request_id) LIKE LOWER(CONCAT('%', #{keyword}, '%')) ESCAPE '!'
+                  OR LOWER(a.ip_address) LIKE LOWER(CONCAT('%', #{keyword}, '%')) ESCAPE '!')
               </if>
             </where>
             </script>
             """)
-    long countLogs(@Param("operatorId") Long operatorId,
+    long countLogsQuery(@Param("operatorId") Long operatorId,
                    @Param("action") String action,
                    @Param("resourceType") String resourceType,
                    @Param("from") LocalDateTime from,
                    @Param("to") LocalDateTime to,
                    @Param("keyword") String keyword);
+
+    default List<AuditLogView> findLogs(Long operatorId, String action, String resourceType,
+                                        LocalDateTime from, LocalDateTime to, String keyword,
+                                        long limit, long offset) {
+        return findLogsQuery(operatorId, action, resourceType, from, to, escapeLike(keyword), limit, offset);
+    }
+
+    default long countLogs(Long operatorId, String action, String resourceType,
+                           LocalDateTime from, LocalDateTime to, String keyword) {
+        return countLogsQuery(operatorId, action, resourceType, from, to, escapeLike(keyword));
+    }
+
+    private static String escapeLike(String value) {
+        return value == null ? null : value.replace("!", "!!").replace("%", "!%").replace("_", "!_");
+    }
 }

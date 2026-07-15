@@ -6,6 +6,7 @@ import cn.photolib.admin.AdminAlertMapper;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.common.util.PublicId;
+import cn.photolib.common.util.SpreadsheetText;
 import cn.photolib.photo.mapper.PhotoMapper;
 import cn.photolib.photo.model.PhotoEntity;
 import cn.photolib.photo.model.PhotoStatus;
@@ -228,9 +229,10 @@ public class ExportService {
     }
 
     private void fail(String id, Exception ex) {
+        log.error("导出任务 {} 执行失败", id, ex);
         ExportJobEntity job = mapper.selectById(id);
         job.setStatus("FAILED");
-        job.setErrorMessage(ex.getMessage());
+        job.setErrorMessage("导出任务执行失败，请稍后重试");
         mapper.updateById(job);
     }
 
@@ -267,7 +269,7 @@ public class ExportService {
         Row row = sheet.createRow(index);
         for (int i = 0; i < values.length; i++) {
             if (values[i] instanceof Number n) row.createCell(i).setCellValue(n.doubleValue());
-            else row.createCell(i).setCellValue(values[i] == null ? "" : values[i].toString());
+            else row.createCell(i).setCellValue(SpreadsheetText.safe(values[i]));
         }
     }
 

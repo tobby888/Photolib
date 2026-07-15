@@ -16,12 +16,14 @@ import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 @Component
 @RequiredArgsConstructor
 public class AuditInterceptor implements HandlerInterceptor {
     private static final Logger log = LoggerFactory.getLogger(AuditInterceptor.class);
     private static final Set<String> WRITES = Set.of("POST", "PUT", "PATCH", "DELETE");
+    private static final Pattern RESOURCE_ID = Pattern.compile("(?:[0-9]+|[0-9A-HJKMNP-TV-Z]{26})");
     private static final ObjectMapper objectMapper = new ObjectMapper();
     private final AuditLogMapper mapper;
 
@@ -43,7 +45,8 @@ public class AuditInterceptor implements HandlerInterceptor {
         log.setAction(request.getMethod());
         String[] segments = request.getRequestURI().split("/");
         log.setResourceType(segments.length > 3 ? segments[3].toUpperCase() : "UNKNOWN");
-        log.setResourceId(segments.length > 4 ? segments[4] : null);
+        log.setResourceId(segments.length > 4 && RESOURCE_ID.matcher(segments[4]).matches()
+                ? segments[4] : null);
         log.setRequestId(String.valueOf(request.getAttribute("requestId")));
         try {
             String detailJson = objectMapper.writeValueAsString(

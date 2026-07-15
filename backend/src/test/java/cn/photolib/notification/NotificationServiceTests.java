@@ -69,6 +69,21 @@ class NotificationServiceTests {
     }
 
     @Test
+    void notifyUser_shouldSanitizeSystemMailHtmlCentrally() {
+        jdbc.sql("UPDATE app_user SET email='safe@example.com' WHERE id=:id")
+                .param("id", USER_A).update();
+
+        service.notifyUser(USER_A, "REQUEST_RETURNED", "<b>主题</b>",
+                "<p>原因</p><script>alert(1)</script><img src='https://evil/track'>"
+                        + "<a href='https://evil/phish'>点击处理</a>");
+
+        String payload = jdbc.sql("SELECT payload_json FROM notification_log WHERE user_id=:id")
+                .param("id", USER_A).query(String.class).single();
+        assertThat(payload).contains("主题", "<p>原因</p>")
+                .doesNotContain("<b>", "<script", "<img", "<a", "evil");
+    }
+
+    @Test
     void notifyUser_forDisabledUser_shouldNotCreateNotification() {
         service.notifyUser(DISABLED_USER, "REQUEST_PUBLISHED", "新的图片需求", "<p>内容</p>");
 

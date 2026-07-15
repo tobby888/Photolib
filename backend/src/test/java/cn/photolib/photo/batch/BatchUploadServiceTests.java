@@ -32,6 +32,8 @@ class BatchUploadServiceTests {
     private ObjectStorageService storage;
     @Autowired
     private JdbcClient jdbc;
+    @Autowired
+    private PhotoUploadBatchMapper batchMapper;
 
     private AuthenticatedUser manager;
 
@@ -145,5 +147,19 @@ class BatchUploadServiceTests {
         assertThatThrownBy(() -> service.create(overLimit, manager))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("1.5 GB");
+    }
+
+    @Test
+    void batchStatusTransition_shouldOnlyBeClaimedOnce() {
+        jdbc.sql("""
+                INSERT INTO photo_upload_batch
+                    (id, mode, created_by, status, total_count, success_count, failure_count)
+                VALUES ('batch-claim-test', 'ZIP', 8101, 'WAITING_METADATA', 1, 0, 0)
+                """).update();
+
+        assertThat(batchMapper.transition("batch-claim-test", BatchStatus.WAITING_METADATA,
+                BatchStatus.PROCESSING, LocalDateTime.now())).isEqualTo(1);
+        assertThat(batchMapper.transition("batch-claim-test", BatchStatus.WAITING_METADATA,
+                BatchStatus.PROCESSING, LocalDateTime.now())).isZero();
     }
 }

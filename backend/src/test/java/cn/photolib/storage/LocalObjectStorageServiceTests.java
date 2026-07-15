@@ -7,6 +7,8 @@ import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
+import cn.photolib.common.util.LimitedInputStream;
+import cn.photolib.common.util.UploadSizeLimitExceededException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -57,5 +59,27 @@ class LocalObjectStorageServiceTests {
 
         assertThatThrownBy(() -> storage.put("../outside", new ByteArrayInputStream(new byte[0]),
                 0, "application/octet-stream")).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void limitedUploadStreamStopsChunkedBodiesAtConfiguredLimit() throws Exception {
+        LimitedInputStream input = new LimitedInputStream(
+                new ByteArrayInputStream(new byte[] {1, 2, 3, 4, 5}), 4);
+
+        assertThatThrownBy(input::readAllBytes)
+                .isInstanceOf(UploadSizeLimitExceededException.class);
+    }
+
+    @Test
+    void configValidatorRejectsRepositoryDevelopmentSecret() {
+        StorageProperties properties = new StorageProperties(
+                "local", null, null, null, null, null, directory.toString(),
+                "http://localhost:8080/api/v1/local-storage/objects",
+                "photolib-local-development-secret", java.util.List.of("*"),
+                Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofDays(30),
+                10_485_760, 104_857_600, 0.6);
+
+        assertThatThrownBy(() -> new StorageConfigValidator(properties).validateConfig())
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("弱签名密钥");
     }
 }

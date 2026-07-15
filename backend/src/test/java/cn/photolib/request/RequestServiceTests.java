@@ -7,6 +7,7 @@ import cn.photolib.common.error.BusinessException;
 import cn.photolib.project.ProjectService;
 import cn.photolib.project.model.ProjectEntity;
 import cn.photolib.project.model.ProjectStatus;
+import cn.photolib.request.model.PhotoRequestEntity;
 import cn.photolib.request.model.RequestStatus;
 import cn.photolib.user.model.UserRole;
 import org.junit.jupiter.api.BeforeEach;
@@ -266,6 +267,58 @@ class RequestServiceTests {
     }
 
     @Test
+    void returnForRevision_byMinisterAndAdmin_shouldNotifyManagerAndAllowResubmission() {
+        PhotoRequestEntity submitted = createSubmittedRequest();
+
+        var returnedByMinister = requestService.returnForRevision(
+                submitted.getId(), "请补充全景照片", submitted.getVersion(), ministerUser);
+
+        assertThat(returnedByMinister.getStatus()).isEqualTo(RequestStatus.ACCEPTED);
+        assertThat(returnedByMinister.getReturnReason()).isEqualTo("请补充全景照片");
+        assertThat(returnedByMinister.getReturnedBy()).isEqualTo(ministerUser.id());
+        assertThat(returnedByMinister.getReturnedAt()).isNotNull();
+        assertThat(returnNotificationCount()).isEqualTo(1);
+
+        var resubmitted = requestService.submit(
+                returnedByMinister.getId(), returnedByMinister.getVersion(), managerUser);
+        assertThat(resubmitted.getReturnReason()).isNull();
+        assertThat(resubmitted.getReturnedBy()).isNull();
+        assertThat(resubmitted.getReturnedAt()).isNull();
+        var returnedByAdmin = requestService.returnForRevision(
+                resubmitted.getId(), "请校正图片说明", resubmitted.getVersion(), adminUser);
+
+        assertThat(returnedByAdmin.getStatus()).isEqualTo(RequestStatus.ACCEPTED);
+        assertThat(returnedByAdmin.getReturnReason()).isEqualTo("请校正图片说明");
+        assertThat(returnedByAdmin.getReturnedBy()).isEqualTo(adminUser.id());
+        assertThat(returnNotificationCount()).isEqualTo(2);
+    }
+
+    @Test
+    void returnForRevision_whenNotSubmitted_shouldThrowException() {
+        RequestService.CreateCommand create = new RequestService.CreateCommand(
+                "执行中需求", "描述", testCampus.getId(), null,
+                LocalDateTime.now().plusDays(1));
+        var request = requestService.create(activeProject.getId(), create, ministerUser);
+        requestService.publish(request.getId(), requestService.get(request.getId()).getVersion(), ministerUser);
+        var accepted = requestService.accept(request.getId(), managerUser);
+
+        assertThatThrownBy(() -> requestService.returnForRevision(
+                accepted.getId(), "需要修改", accepted.getVersion(), ministerUser))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("仅待确认需求可打回");
+    }
+
+    @Test
+    void returnForRevision_byCampusManager_shouldBeForbidden() {
+        PhotoRequestEntity submitted = createSubmittedRequest();
+
+        assertThatThrownBy(() -> requestService.returnForRevision(
+                submitted.getId(), "自行打回", submitted.getVersion(), managerUser))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("仅管理员或部长可打回需求");
+    }
+
+    @Test
     void listRequests_asCampusManager_shouldFilterByCampus() {
         // Given: 多个校区的需求
         var anotherCampus = campusService.create("OTHER", "其他校区");
@@ -273,12 +326,14 @@ class RequestServiceTests {
         RequestService.CreateCommand myCampusRequest = new RequestService.CreateCommand(
                 "我的校区需求", "描述", testCampus.getId(), 5,
                 LocalDateTime.now().plusDays(1));
-        requestService.create(activeProject.getId(), myCampusRequest, ministerUser);
+        var mine = requestService.create(activeProject.getId(), myCampusRequest, ministerUser);
+        requestService.publish(mine.getId(), requestService.get(mine.getId()).getVersion(), ministerUser);
 
         RequestService.CreateCommand otherCampusRequest = new RequestService.CreateCommand(
                 "其他校区需求", "描述", anotherCampus.getId(), 5,
                 LocalDateTime.now().plusDays(1));
-        requestService.create(activeProject.getId(), otherCampusRequest, ministerUser);
+        var other = requestService.create(activeProject.getId(), otherCampusRequest, ministerUser);
+        requestService.publish(other.getId(), requestService.get(other.getId()).getVersion(), ministerUser);
 
         // When: 校区负责人查询需求
         var result = requestService.list(
@@ -287,6 +342,31 @@ class RequestServiceTests {
         // Then: 应该只看到自己校区的需求
         assertThat(result.items()).hasSize(1);
         assertThat(result.items().get(0).getTitle()).isEqualTo("我的校区需求");
+    }
+
+    @Test
+    void campusManager_shouldNotSeeDraftOrUnrelatedRequestDetails() {
+        var draft = requestService.create(activeProject.getId(), new RequestService.CreateCommand(
+                "内部草稿", "尚未发布", testCampus.getId(), null,
+                LocalDateTime.now().plusDays(1)), ministerUser);
+
+        assertThat(requestService.list(1, 20, null, null, null, null, managerUser).items())
+                .extracting(PhotoRequestEntity::getId).doesNotContain(draft.getId());
+        assertThatThrownBy(() -> requestService.get(draft.getId(), managerUser))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("无权查看");
+        assertThatThrownBy(() -> requestService.participants(draft.getId(), managerUser))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("无权查看");
+    }
+
+    @Test
+    void unrelatedMinister_shouldNotReturnAnotherCreatorsRequest() {
+        PhotoRequestEntity submitted = createSubmittedRequest();
+        AuthenticatedUser outsider = new AuthenticatedUser(
+                499L, "other-minister", "其他部长", UserRole.MINISTER, null, false);
+
+        assertThatThrownBy(() -> requestService.returnForRevision(
+                submitted.getId(), "越权打回", submitted.getVersion(), outsider))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("无权操作");
     }
 
     @Test
@@ -317,5 +397,28 @@ class RequestServiceTests {
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("仅管理员可删除需求");
         assertThat(requestService.get(request.getId())).isNotNull();
+    }
+
+    private PhotoRequestEntity createSubmittedRequest() {
+        RequestService.CreateCommand create = new RequestService.CreateCommand(
+                "待确认需求", "描述", testCampus.getId(), null,
+                LocalDateTime.now().plusDays(1));
+        var request = requestService.create(activeProject.getId(), create, ministerUser);
+        var published = requestService.publish(
+                request.getId(), requestService.get(request.getId()).getVersion(), ministerUser);
+        var accepted = requestService.accept(published.getId(), managerUser);
+        return requestService.submit(accepted.getId(), accepted.getVersion(), managerUser);
+    }
+
+    private long returnNotificationCount() {
+        return jdbc.sql("""
+                SELECT COUNT(*) FROM user_notification
+                WHERE user_id=:userId AND event_type='REQUEST_RETURNED'
+                  AND content LIKE :requestTitle
+                """)
+                .param("userId", managerUser.id())
+                .param("requestTitle", "%待确认需求%")
+                .query(Long.class)
+                .single();
     }
 }

@@ -2,7 +2,9 @@ import {
   App, Button, Card, DatePicker, Descriptions, Drawer, Form, Input, Modal,
   Pagination, Radio, Select, Space, Table, Tag, Typography,
 } from 'antd'
-import { CheckOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons'
+import {
+  CheckOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, RollbackOutlined, SearchOutlined,
+} from '@ant-design/icons'
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
@@ -118,6 +120,32 @@ export default function RequestsPage() {
       },
     })
   }
+  const returnForRevision = (item: PhotoRequest) => {
+    let reason = ''
+    modal.confirm({
+      title: '打回图片需求',
+      content: <Input.TextArea rows={4} maxLength={500} showCount
+        placeholder="请说明需要负责人修改或补充的内容"
+        onChange={event => { reason = event.target.value }} />,
+      okText: '确认打回',
+      cancelText: '取消',
+      onOk: async () => {
+        if (!reason.trim()) throw new Error('请填写打回原因')
+        try {
+          await api({
+            method: 'POST', url: `/requests/${item.id}/return`,
+            data: { reason: reason.trim(), version: item.version },
+          })
+          if (detail?.id === item.id) setDetail(null)
+          message.success('需求已打回，参与负责人将收到通知')
+          await reload()
+        } catch (e) {
+          message.error((e as Error).message)
+          throw e
+        }
+      },
+    })
+  }
   const actions = (item: PhotoRequest) => <Space>
     <Button type="text" icon={<EyeOutlined />} onClick={() => navigate(`/requests/${item.id}`)}>
       {user?.role === 'CAMPUS_MANAGER' ? '交付图片' : '详情'}
@@ -125,7 +153,10 @@ export default function RequestsPage() {
     {user?.role === 'CAMPUS_MANAGER' && item.status === 'PUBLISHED' && <Button type="primary" onClick={() => void action(item, 'accept')}>接受任务</Button>}
     {user?.role !== 'CAMPUS_MANAGER' && item.status === 'DRAFT' && <Button onClick={() => void action(item, 'publish')}>发布</Button>}
     {user?.role === 'CAMPUS_MANAGER' && item.status === 'ACCEPTED' && <Button onClick={() => void action(item, 'submit')}>提交</Button>}
-    {user?.role !== 'CAMPUS_MANAGER' && item.status === 'SUBMITTED' && <Button type="primary" onClick={() => void action(item, 'complete')}>确认完成</Button>}
+    {user?.role !== 'CAMPUS_MANAGER' && item.status === 'SUBMITTED' &&
+      <Button icon={<RollbackOutlined />} onClick={() => returnForRevision(item)}>打回</Button>}
+    {user?.role !== 'CAMPUS_MANAGER' && item.status === 'SUBMITTED' &&
+      <Button type="primary" onClick={() => void action(item, 'complete')}>确认完成</Button>}
     {user?.role === 'ADMIN' && <Button type="text" danger icon={<DeleteOutlined />} onClick={() => deleteRequest(item)}>删除</Button>}
   </Space>
   return <>
@@ -194,6 +225,15 @@ export default function RequestsPage() {
           { key: 'project', label: '所属项目', children: `#${detail.projectId}` },
           { key: 'campus', label: '拍摄校区', children: options.campuses.find(c => c.id === detail.campusId)?.name || `#${detail.campusId}` },
           { key: 'deadline', label: '截止时间', children: dayjs(detail.deadline).format('YYYY 年 M 月 D 日 HH:mm') },
+          ...(detail.status === 'ACCEPTED' && detail.returnReason ? [{
+            key: 'returnReason', label: '最近打回原因',
+            children: <Space direction="vertical" size={0}>
+              <span>{detail.returnReason}</span>
+              {detail.returnedAt && <Typography.Text type="secondary">
+                {dayjs(detail.returnedAt).format('YYYY-MM-DD HH:mm')}
+              </Typography.Text>}
+            </Space>,
+          }] : []),
         ]} />
         <div className="workflow-steps">
           {['需求发布', '负责人接单', '图片提交', '确认完成'].map((text, index) => <div className={index <= ['DRAFT','PUBLISHED','ACCEPTED','SUBMITTED','COMPLETED'].indexOf(detail.status) - 1 ? 'done' : ''} key={text}><i>{index < 3 ? index + 1 : <CheckOutlined />}</i><span>{text}</span></div>)}

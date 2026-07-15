@@ -15,10 +15,14 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import javax.imageio.stream.ImageInputStream;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.Set;
+import java.util.Iterator;
 
 @RestController
 @RequiredArgsConstructor
@@ -70,10 +74,13 @@ public class BrandingController {
             throw new BusinessException(ErrorCode.UNSUPPORTED_FILE_TYPE, "图标仅支持 PNG 或 JPEG");
         }
         byte[] bytes = file.getBytes();
-        BufferedImage image = ImageIO.read(new ByteArrayInputStream(bytes));
-        if (image == null) throw new BusinessException(ErrorCode.UNSUPPORTED_FILE_TYPE, "无法识别图标图片");
-        if (image.getWidth() > 1024 || image.getHeight() > 1024) {
-            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "图标尺寸不能超过 1024 × 1024 像素");
+        BufferedImage image = readIcon(bytes);
+        try (ByteArrayOutputStream normalized = new ByteArrayOutputStream()) {
+            String format = MediaType.IMAGE_PNG_VALUE.equals(file.getContentType()) ? "png" : "jpeg";
+            if (!ImageIO.write(image, format, normalized)) {
+                throw new BusinessException(ErrorCode.UNSUPPORTED_FILE_TYPE, "无法规范化图标图片");
+            }
+            bytes = normalized.toByteArray();
         }
         BrandingSettingEntity setting = mapper.selectById(SETTING_ID);
         if (setting == null) {
@@ -98,6 +105,7 @@ public class BrandingController {
         if (setting == null || setting.getCustomIcon() == null) return ResponseEntity.notFound().build();
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noCache())
+                .header("X-Content-Type-Options", "nosniff")
                 .contentType(MediaType.parseMediaType(setting.getCustomIconContentType()))
                 .body(setting.getCustomIcon());
     }
@@ -108,6 +116,30 @@ public class BrandingController {
                 : "/api/v1/branding/icon?v=" + (setting.getUpdatedAt() == null ? 0 : setting.getUpdatedAt().hashCode());
         return new BrandingResponse(setting.getTitle(), setting.getIconType(), setting.getBuiltinIcon(),
                 customIconUrl, setting.getSlogan());
+    }
+
+    private BufferedImage readIcon(byte[] bytes) throws IOException {
+        try (ImageInputStream input = ImageIO.createImageInputStream(new ByteArrayInputStream(bytes))) {
+            Iterator<ImageReader> readers = ImageIO.getImageReaders(input);
+            if (!readers.hasNext()) {
+                throw new BusinessException(ErrorCode.UNSUPPORTED_FILE_TYPE, "无法识别图标图片");
+            }
+            ImageReader reader = readers.next();
+            try {
+                reader.setInput(input, true, true);
+                if (reader.getWidth(0) > 1024 || reader.getHeight(0) > 1024) {
+                    throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                            "图标尺寸不能超过 1024 × 1024 像素");
+                }
+                BufferedImage image = reader.read(0);
+                if (image == null) {
+                    throw new BusinessException(ErrorCode.UNSUPPORTED_FILE_TYPE, "无法识别图标图片");
+                }
+                return image;
+            } finally {
+                reader.dispose();
+            }
+        }
     }
 
     private BrandingSettingEntity defaults() {

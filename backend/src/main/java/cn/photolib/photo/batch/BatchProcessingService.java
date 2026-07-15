@@ -25,7 +25,7 @@ public class BatchProcessingService {
     private final PhotoUploadItemMapper itemMapper;
     private final ObjectStorageService storage;
 
-    @Async
+    @Async("batchProcessingExecutor")
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onZipRequested(ZipProcessRequested event) {
         processZip(event.batchId());
@@ -34,7 +34,7 @@ public class BatchProcessingService {
     @Transactional
     public void processZip(String batchId) {
         PhotoUploadBatchEntity batch = batchMapper.selectById(batchId);
-        if (batch == null) return;
+        if (batch == null || batch.getStatus() != BatchStatus.PROCESSING) return;
         int count = 0;
         long total = 0;
         try (InputStream source = storage.open(batch.getArchiveObjectKey());

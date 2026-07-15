@@ -1,5 +1,8 @@
 package cn.photolib.storage;
 
+import cn.photolib.common.error.BusinessException;
+import cn.photolib.common.error.ErrorCode;
+import cn.photolib.common.util.UploadSizeLimitExceededException;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.io.IOException;
@@ -117,6 +120,9 @@ public class LocalObjectStorageService implements ObjectStorageService {
                 Files.deleteIfExists(temporary);
             }
         } catch (IOException ex) {
+            if (ex instanceof UploadSizeLimitExceededException) {
+                throw new BusinessException(ErrorCode.FILE_TOO_LARGE, ex.getMessage());
+            }
             throw new IllegalStateException("写入本地对象失败: " + objectKey, ex);
         }
     }

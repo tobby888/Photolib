@@ -115,4 +115,17 @@ class CampusMemberServiceTests {
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("不存在");
     }
+
+    @Test
+    void disabledCampus_shouldFreezeDirectoryWritesAndPhotographerSelection() {
+        campusService.update(campusA.getId(), campusA.getName(), false, 1);
+        AuthenticatedUser admin = new AuthenticatedUser(1L, "admin", "管理员", UserRole.ADMIN, null, false);
+
+        assertThatThrownBy(() -> service.resolvePhotographer(500L, campusA.getId()))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("校区已停用");
+        assertThatThrownBy(() -> service.create(campusA.getId(), "20259999", "新成员", admin))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("校区已停用");
+        assertThat(service.listDeduped()).extracting(CampusMemberService.DedupedMember::studentId)
+                .doesNotContain("20250002");
+    }
 }

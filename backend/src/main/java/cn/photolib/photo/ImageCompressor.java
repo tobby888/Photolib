@@ -23,18 +23,20 @@ public class ImageCompressor {
     private static final float JPEG_MIN_QUALITY = 0.82f;
     private static final float JPEG_MAX_QUALITY = 0.97f;
     private static final int MIN_DIMENSION = 320;
+    static final long MAX_PIXELS = 100_000_000L;
+    static final int MAX_DIMENSION = 30_000;
 
     public Result compress(byte[] source, String contentType, long targetBytes) throws IOException {
         // Most camera JPEGs are already below the 10 MiB target. Read only image
         // metadata in that case: a full ImageIO decode expands a compressed photo
         // to tens or hundreds of MiB and caused concurrent uploads to exhaust the
         // JVM heap even though no recompression was needed.
+        Dimensions dimensions = dimensions(source);
         if (source.length <= targetBytes) {
-            Dimensions dimensions = dimensions(source);
             return new Result(source, dimensions.width(), dimensions.height(), contentType);
         }
 
-        BufferedImage image = ImageIO.read(new ByteArrayInputStream(source));
+        BufferedImage image = fullDecode(source);
         if (image == null) {
             throw new IOException("无法解析图片");
         }
@@ -54,7 +56,10 @@ public class ImageCompressor {
             ImageReader reader = readers.next();
             try {
                 reader.setInput(input, true, true);
-                return new Dimensions(reader.getWidth(0), reader.getHeight(0));
+                int width = reader.getWidth(0);
+                int height = reader.getHeight(0);
+                validateDimensions(width, height);
+                return new Dimensions(width, height);
             } finally {
                 reader.dispose();
             }
@@ -93,6 +98,7 @@ public class ImageCompressor {
     }
 
     private BufferedImage fullDecode(byte[] source) throws IOException {
+        dimensions(source);
         BufferedImage image = ImageIO.read(new ByteArrayInputStream(source));
         if (image == null) throw new IOException("无法解析图片");
         return image;
@@ -108,6 +114,7 @@ public class ImageCompressor {
                 reader.setInput(input, true, true);
                 int width = reader.getWidth(0);
                 int height = reader.getHeight(0);
+                validateDimensions(width, height);
                 int subsample = Math.max(1, Math.min(
                         width / Math.max(1, targetWidth), height / Math.max(1, targetHeight)));
                 ImageReadParam param = reader.getDefaultReadParam();
@@ -120,6 +127,13 @@ public class ImageCompressor {
             } finally {
                 reader.dispose();
             }
+        }
+    }
+
+    private void validateDimensions(int width, int height) throws IOException {
+        if (width <= 0 || height <= 0 || width > MAX_DIMENSION || height > MAX_DIMENSION
+                || (long) width * height > MAX_PIXELS) {
+            throw new IOException("图片像素尺寸超过安全上限");
         }
     }
 

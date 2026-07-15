@@ -41,11 +41,11 @@ photolib:
   auth:
     access-ttl: 15m
     idle-ttl: 30m
-    secure-cookie: ${AUTH_SECURE_COOKIE:false}
+    secure-cookie: ${AUTH_SECURE_COOKIE:true}
   bootstrap:
     enabled: ${ADMIN_BOOTSTRAP_ENABLED:true}
     admin-username: ${ADMIN_USERNAME:admin}
-    admin-password: ${ADMIN_INITIAL_PASSWORD:ChangeMe123!}
+    admin-password: ${ADMIN_INITIAL_PASSWORD:}
     admin-display-name: ${ADMIN_DISPLAY_NAME:系统管理员}
   storage:
     mode: ${STORAGE_MODE:oss}

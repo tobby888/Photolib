@@ -58,4 +58,17 @@ public class PhotoProcessingAsyncConfig {
         executor.setAwaitTerminationSeconds(60);
         return executor;
     }
+
+    /** ZIP expansion has an independent, serial memory budget. */
+    @Bean(name = "batchProcessingExecutor")
+    ThreadPoolTaskExecutor batchProcessingExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(1);
+        executor.setMaxPoolSize(1);
+        executor.setQueueCapacity(100);
+        executor.setThreadNamePrefix("batch-processing-");
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(60);
+        return executor;
+    }
 }
