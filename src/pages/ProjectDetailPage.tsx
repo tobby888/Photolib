@@ -1,9 +1,9 @@
 import {
-  App, Breadcrumb, Button, Card, Col, DatePicker, Form, Image, Input,
+  App, Breadcrumb, Button, Card, Checkbox, Col, DatePicker, Form, Image, Input,
   Modal, Radio, Row, Select, Space, Statistic, Table, Tag, Typography,
 } from 'antd'
 import {
-  ArrowLeftOutlined, CameraOutlined, CheckCircleOutlined, EditOutlined, FileImageOutlined,
+  ArrowLeftOutlined, CameraOutlined, CheckCircleOutlined, DownloadOutlined, EditOutlined, FileImageOutlined,
   LinkOutlined, PlusOutlined, RocketOutlined, StopOutlined, UnorderedListOutlined,
 } from '@ant-design/icons'
 import { useState } from 'react'
@@ -16,6 +16,7 @@ import { DataState, StatusTag } from '../components'
 import { useLoad } from '../hooks'
 import MarkdownEditor from '../MarkdownEditor'
 import MarkdownRenderer, { markdownExcerpt } from '../MarkdownRenderer'
+import { preparePhotoBatchDownload } from '../photoBatchDownload'
 
 const projectStateCopy = {
   DRAFT: {
@@ -49,6 +50,8 @@ export default function ProjectDetailPage() {
   const [galleryOpen, setGalleryOpen] = useState(false)
   const [galleryKeyword, setGalleryKeyword] = useState('')
   const [selectedPhotoIds, setSelectedPhotoIds] = useState<string[]>([])
+  const [selectedDownloadPhotoIds, setSelectedDownloadPhotoIds] = useState<string[]>([])
+  const [batchDownloading, setBatchDownloading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [markingPhotoId, setMarkingPhotoId] = useState<string | null>(null)
   const { data, setData, loading, error, reload } = useLoad(async () => {
@@ -257,8 +260,47 @@ export default function ProjectDetailPage() {
     }
   }
 
+  const toggleDownloadPhoto = (photoId: string, checked: boolean) => {
+    setSelectedDownloadPhotoIds(current => checked
+      ? current.includes(photoId) ? current : [...current, photoId].slice(0, 200)
+      : current.filter(id => id !== photoId))
+  }
+
+  const selectAllDownloadablePhotos = () => {
+    const downloadableIds = data.photos
+      .filter(photo => photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED')
+      .map(photo => photo.id)
+    setSelectedDownloadPhotoIds(downloadableIds.slice(0, 200))
+    if (downloadableIds.length > 200) {
+      message.info('单次最多下载 200 张，已选择前 200 张可下载图片')
+    }
+  }
+
+  const batchDownload = async () => {
+    if (!selectedDownloadPhotoIds.length) return
+    setBatchDownloading(true)
+    try {
+      const downloadUrl = await preparePhotoBatchDownload(selectedDownloadPhotoIds)
+      if (downloadUrl) {
+        window.location.assign(downloadUrl)
+        setSelectedDownloadPhotoIds([])
+        message.success('所选项目图片已打包为 ZIP')
+      } else {
+        message.info('ZIP 仍在后台生成，请稍后重新发起下载')
+      }
+    } catch (reason) {
+      message.error((reason as Error).message)
+    } finally {
+      setBatchDownloading(false)
+    }
+  }
+
   const project = data.project
   const canManage = user?.role !== 'CAMPUS_MANAGER'
+  const canBatchDownload = user?.role === 'ADMIN' || user?.role === 'MINISTER'
+  const downloadablePhotoCount = data.photos.filter(
+    photo => photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED',
+  ).length
   const addableGalleryPhotos = galleryPhotos.items.filter(photo =>
     !photo.relatedProjectIds?.some(id => String(id) === projectId))
   return <DataState loading={loading} error={error} empty={!project} onRetry={reload}>
@@ -330,7 +372,19 @@ export default function ProjectDetailPage() {
 
       <Card
         title={`需求图片（${data.photos.length}）`}
-        extra={<Typography.Text type="secondary">汇总展示本选题下所有需求已上传的图片</Typography.Text>}
+        extra={<Space wrap>
+          <Typography.Text type="secondary">汇总展示本选题下所有需求已上传的图片</Typography.Text>
+          {canBatchDownload && <>
+            <Button type="link" disabled={!downloadablePhotoCount || batchDownloading}
+              onClick={selectAllDownloadablePhotos}>全选可下载</Button>
+            {!!selectedDownloadPhotoIds.length && <Button type="link" disabled={batchDownloading}
+              onClick={() => setSelectedDownloadPhotoIds([])}>清空选择</Button>}
+            <Button type="primary" icon={<DownloadOutlined />} loading={batchDownloading}
+              disabled={!selectedDownloadPhotoIds.length} onClick={() => void batchDownload()}>
+              打包下载{selectedDownloadPhotoIds.length ? `（${selectedDownloadPhotoIds.length}）` : ''}
+            </Button>
+          </>}
+        </Space>}
       >
         {data.photos.length ? <Row gutter={[16, 20]} className="photo-grid">
           {data.photos.map(photo => {
@@ -338,7 +392,7 @@ export default function ProjectDetailPage() {
             const request = data.requests.find(item => item.id === photo.requestId)
             return <Col xs={24} sm={12} lg={8} xxl={6} key={photo.id}>
               <Card
-                className="photo-card"
+                className={`photo-card${selectedDownloadPhotoIds.includes(photo.id) ? ' photo-card-selected' : ''}`}
                 cover={<div className="photo-cover">
                   {photo.thumbnailUrl
                     ? <Image src={photo.thumbnailUrl} alt={photo.title || '需求图片'} />
@@ -348,6 +402,13 @@ export default function ProjectDetailPage() {
                       <StatusTag value={photo.status} />
                       {adopted && <Tag color="gold">已被引</Tag>}
                     </Space>
+                    {canBatchDownload && (photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED') &&
+                      <Checkbox
+                        checked={selectedDownloadPhotoIds.includes(photo.id)}
+                        disabled={batchDownloading || (selectedDownloadPhotoIds.length >= 200
+                          && !selectedDownloadPhotoIds.includes(photo.id))}
+                        onChange={event => toggleDownloadPhoto(photo.id, event.target.checked)}
+                        aria-label={`选择项目图片 ${photo.title || photo.id}`} />}
                   </div>
                 </div>}
               >

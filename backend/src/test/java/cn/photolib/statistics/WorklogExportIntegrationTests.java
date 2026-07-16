@@ -12,6 +12,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -168,10 +169,7 @@ class WorklogExportIntegrationTests {
                 jobId, LocalDate.of(2025, 3, 1), LocalDate.of(2025, 3, 31)));
         assertThat(waitForCompletion(jobId).getStatus()).isEqualTo("SUCCEEDED");
 
-        String message = jdbc.sql("""
-                SELECT message FROM admin_alert
-                WHERE type='WORKLOG_EXPORT_UNMATCHED_ADOPTIONS' AND resource_id=:jobId
-                """).param("jobId", jobId).query(String.class).single();
+        String message = waitForUnmatchedAdoptionAlert(jobId);
         assertThat(message).contains("20259999").contains("1 张");
     }
 
@@ -270,5 +268,17 @@ class WorklogExportIntegrationTests {
         }
         return jdbc.sql("SELECT * FROM export_job WHERE id=:id")
                 .param("id", jobId).query(ExportJobEntity.class).single();
+    }
+
+    private String waitForUnmatchedAdoptionAlert(String jobId) throws InterruptedException {
+        for (int attempt = 0; attempt < 50; attempt++) {
+            List<String> messages = jdbc.sql("""
+                    SELECT message FROM admin_alert
+                    WHERE type='WORKLOG_EXPORT_UNMATCHED_ADOPTIONS' AND resource_id=:jobId
+                    """).param("jobId", jobId).query(String.class).list();
+            if (!messages.isEmpty()) return messages.getFirst();
+            Thread.sleep(100);
+        }
+        throw new AssertionError("工时导出完成后未生成被引对账告警: " + jobId);
     }
 }

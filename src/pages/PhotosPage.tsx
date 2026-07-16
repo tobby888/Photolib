@@ -13,13 +13,7 @@ import type { CampusMember, DedupedMember, EntityId, PageData, Photo } from '../
 import { DataState, formatBytes, PageTitle, StatusTag } from '../components'
 import { useLoad } from '../hooks'
 import { useAuth } from '../auth'
-
-interface ExportJobView {
-  job: { status: 'PENDING' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED'; errorMessage?: string }
-  downloadUrl?: string
-}
-
-const wait = (milliseconds: number) => new Promise(resolve => window.setTimeout(resolve, milliseconds))
+import { preparePhotoBatchDownload } from '../photoBatchDownload'
 
 export default function PhotosPage() {
   const navigate = useNavigate()
@@ -112,23 +106,14 @@ export default function PhotosPage() {
     if (!selectedIds.length) return
     setBatchDownloading(true)
     try {
-      const job = await api<{ id: string }>({
-        method: 'POST', url: '/photos/batch-download', data: { photoIds: selectedIds },
-      })
-      for (let attempt = 0; attempt < 60; attempt += 1) {
-        const result = await api<ExportJobView>({ url: `/export-jobs/${job.id}` })
-        if (result.job.status === 'SUCCEEDED' && result.downloadUrl) {
-          window.location.assign(result.downloadUrl)
-          setSelectedIds([])
-          message.success('所选图片已打包为 ZIP')
-          return
-        }
-        if (result.job.status === 'FAILED') {
-          throw new Error(result.job.errorMessage || '图片打包失败')
-        }
-        await wait(1000)
+      const downloadUrl = await preparePhotoBatchDownload(selectedIds)
+      if (downloadUrl) {
+        window.location.assign(downloadUrl)
+        setSelectedIds([])
+        message.success('所选图片已打包为 ZIP')
+      } else {
+        message.info('ZIP 仍在后台生成，请稍后重新发起下载')
       }
-      message.info('ZIP 仍在后台生成，请稍后重新发起下载')
     } catch (e) {
       message.error((e as Error).message)
     } finally {
