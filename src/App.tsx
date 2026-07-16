@@ -6,7 +6,7 @@ import {
   DashboardOutlined, EnvironmentOutlined, FolderOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SettingOutlined,
   MessageOutlined, PictureOutlined, StarOutlined, UnorderedListOutlined, UserOutlined,
 } from '@ant-design/icons'
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from './auth'
 import { roleName, NotFound } from './components'
@@ -38,6 +38,45 @@ const defaultBranding: BrandingSettings = {
 const brandIcons = {
   camera: <CameraOutlined />, aperture: <AimOutlined />, picture: <PictureOutlined />,
   bulb: <BulbOutlined />, star: <StarOutlined />,
+}
+
+function BrandCopy({ title, slogan }: Pick<BrandingSettings, 'title' | 'slogan'>) {
+  const copyRef = useRef<HTMLDivElement>(null)
+  const titleRef = useRef<HTMLElement>(null)
+
+  useLayoutEffect(() => {
+    const copy = copyRef.current
+    const titleElement = titleRef.current
+    if (!copy || !titleElement) return
+
+    let active = true
+    const fitTitle = () => {
+      titleElement.style.fontSize = ''
+      const availableWidth = Math.max(0, copy.clientWidth - 1)
+      const requiredWidth = titleElement.scrollWidth
+      const maximumFontSize = Number.parseFloat(window.getComputedStyle(titleElement).fontSize)
+      if (!availableWidth || !requiredWidth || !maximumFontSize || requiredWidth <= availableWidth) return
+
+      const calculatedFontSize = Math.floor(maximumFontSize * availableWidth / requiredWidth * 10) / 10
+      titleElement.style.fontSize = `${Math.max(10, calculatedFontSize)}px`
+    }
+
+    fitTitle()
+    const observer = new ResizeObserver(fitTitle)
+    observer.observe(copy)
+    void document.fonts.ready.then(() => {
+      if (active) fitTitle()
+    })
+    return () => {
+      active = false
+      observer.disconnect()
+    }
+  }, [title])
+
+  return <div className="brand-copy" ref={copyRef}>
+    <strong className="brand-title" ref={titleRef} title={title}>{title}</strong>
+    <span title={slogan}>{slogan}</span>
+  </div>
 }
 
 function Shell() {
@@ -160,7 +199,7 @@ function Shell() {
             ? <img src={branding.customIconUrl} alt="" />
             : brandIcons[branding.builtinIcon] || brandIcons.camera}
         </div>
-        {!collapsed && <div><strong>{branding.title}</strong><span>{branding.slogan}</span></div>}
+        {!collapsed && <BrandCopy title={branding.title} slogan={branding.slogan} />}
       </div>
       <div className="side-nav-scroll">
         {!collapsed && <Typography.Text className="nav-section">工作空间</Typography.Text>}
