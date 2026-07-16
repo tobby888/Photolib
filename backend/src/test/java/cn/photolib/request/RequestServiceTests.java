@@ -39,6 +39,7 @@ class RequestServiceTests {
 
     private AuthenticatedUser adminUser;
     private AuthenticatedUser ministerUser;
+    private AuthenticatedUser otherMinisterUser;
     private AuthenticatedUser managerUser;
     private ProjectEntity activeProject;
     private ProjectEntity completedProject;
@@ -54,13 +55,16 @@ class RequestServiceTests {
                 VALUES
                     (400, 'test-admin', 'hash', '测试管理员', 'ADMIN', null, true, false),
                     (401, 'test-minister', 'hash', '测试部长', 'MINISTER', null, true, false),
-                    (402, 'test-manager', 'hash', '测试负责人', 'CAMPUS_MANAGER', :campusId, true, false)
+                    (402, 'test-manager', 'hash', '测试负责人', 'CAMPUS_MANAGER', :campusId, true, false),
+                    (403, 'other-minister', 'hash', '其他部长', 'MINISTER', null, true, false)
                 """).param("campusId", testCampus.getId()).update();
 
         adminUser = new AuthenticatedUser(
                 400L, "test-admin", "测试管理员", UserRole.ADMIN, null, false);
         ministerUser = new AuthenticatedUser(
                 401L, "test-minister", "测试部长", UserRole.MINISTER, null, false);
+        otherMinisterUser = new AuthenticatedUser(
+                403L, "other-minister", "其他部长", UserRole.MINISTER, null, false);
         managerUser = new AuthenticatedUser(
                 402L, "test-manager", "测试负责人", UserRole.CAMPUS_MANAGER, testCampus.getId(), false);
 
@@ -359,14 +363,16 @@ class RequestServiceTests {
     }
 
     @Test
-    void unrelatedMinister_shouldNotReturnAnotherCreatorsRequest() {
+    void minister_shouldReturnAnotherCreatorsRequest() {
         PhotoRequestEntity submitted = createSubmittedRequest();
-        AuthenticatedUser outsider = new AuthenticatedUser(
-                499L, "other-minister", "其他部长", UserRole.MINISTER, null, false);
 
-        assertThatThrownBy(() -> requestService.returnForRevision(
-                submitted.getId(), "越权打回", submitted.getVersion(), outsider))
-                .isInstanceOf(BusinessException.class).hasMessageContaining("无权操作");
+        var returned = requestService.returnForRevision(
+                submitted.getId(), "请补充交付内容", submitted.getVersion(), otherMinisterUser);
+
+        assertThat(returned.getStatus()).isEqualTo(RequestStatus.ACCEPTED);
+        assertThat(returned.getReturnReason()).isEqualTo("请补充交付内容");
+        assertThat(returned.getReturnedBy()).isEqualTo(otherMinisterUser.id());
+        assertThat(returnNotificationCount()).isEqualTo(1);
     }
 
     @Test

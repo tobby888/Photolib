@@ -272,7 +272,6 @@ public class RequestService {
             throw new BusinessException(ErrorCode.FORBIDDEN, "仅管理员或部长可打回需求");
         }
         PhotoRequestEntity request = get(id);
-        requireCreatorOrAdmin(request, reviewer);
         if (request.getStatus() != RequestStatus.SUBMITTED) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "仅待确认需求可打回");
         }
