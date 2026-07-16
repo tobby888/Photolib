@@ -251,6 +251,27 @@ class ProjectServiceTests {
     }
 
     @Test
+    void minister_shouldAddAvailablePhotoToProjectAlbum() {
+        var project = projectService.create("部长选题项目", "描述", ProjectStatus.ACTIVE, ministerUser);
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, title, photographer_student_id, photographer_name, uploaded_by, campus_id,
+                     taken_at, size, content_type, object_key, sha256, status)
+                VALUES
+                    (2202, '部长添加的图库照片', '20230002', '李四', 100, 901,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/minister-gallery.jpg', :sha256, 'AVAILABLE')
+                """)
+                .param("sha256", "f".repeat(64))
+                .update();
+
+        projectService.addPhotos(project.getId(), List.of(2202L), ministerUser);
+
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM photo_project WHERE photo_id=2202 AND project_id=:projectId")
+                .param("projectId", project.getId()).query(Integer.class).single()).isEqualTo(1);
+        assertThat(projectService.getDetail(project.getId(), ministerUser).photoCount()).isEqualTo(1L);
+    }
+
+    @Test
     void addPhotos_shouldIgnoreExistingMembershipAndStillAddNewPhotos() {
         var project = projectService.create("幂等相册项目", "描述", ProjectStatus.ACTIVE, adminUser);
         jdbc.sql("""

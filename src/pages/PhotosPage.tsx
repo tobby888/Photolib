@@ -1,15 +1,17 @@
 import {
   App, Button, Card, Checkbox, Col, DatePicker, Descriptions, Drawer, Form, Image, Input, Modal,
-  Pagination, Progress, Row, Select, Space, Tag, Typography, Upload,
+  Pagination, Progress, Row, Select, Space, Table, Tag, Typography, Upload,
 } from 'antd'
-import { CloudUploadOutlined, DeleteOutlined, DownloadOutlined, InboxOutlined, SearchOutlined } from '@ant-design/icons'
+import {
+  CloudUploadOutlined, DeleteOutlined, DownloadOutlined, FolderAddOutlined, InboxOutlined, SearchOutlined,
+} from '@ant-design/icons'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { api, emptyPage, qs } from '../api'
 import { readTakenAt } from '../exif'
 import { uploadToObjectStorage } from '../storageUpload'
-import type { CampusMember, DedupedMember, EntityId, PageData, Photo } from '../types'
+import type { CampusMember, DedupedMember, EntityId, PageData, Photo, Project } from '../types'
 import { DataState, formatBytes, PageTitle, StatusTag } from '../components'
 import { useLoad } from '../hooks'
 import { useAuth } from '../auth'
@@ -19,6 +21,7 @@ export default function PhotosPage() {
   const navigate = useNavigate()
   const { message, modal } = App.useApp()
   const { user } = useAuth()
+  const canManageProjects = user?.role === 'ADMIN' || user?.role === 'MINISTER'
   const [uploadForm] = Form.useForm()
   const [uploadOpen, setUploadOpen] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -27,6 +30,10 @@ export default function PhotosPage() {
   const [selected, setSelected] = useState<Photo | null>(null)
   const [selectedIds, setSelectedIds] = useState<EntityId[]>([])
   const [batchDownloading, setBatchDownloading] = useState(false)
+  const [projectPickerOpen, setProjectPickerOpen] = useState(false)
+  const [projectSaving, setProjectSaving] = useState(false)
+  const [selectedProjectId, setSelectedProjectId] = useState<EntityId | null>(null)
+  const [projectFilters, setProjectFilters] = useState({ page: 1, keyword: '' })
   const [filters, setFilters] = useState({ page: 1, keyword: '', status: 'AVAILABLE' })
   const { data, loading, error, reload } = useLoad(
     () => api<PageData<Photo>>({ url: '/photos', params: qs({ ...filters, pageSize: 24 }) }),
@@ -44,6 +51,20 @@ export default function PhotosPage() {
       : (await api<DedupedMember[]>({ url: '/campus-members/deduped' }))
           .map(m => ({ value: m.id, label: `${m.name} · ${m.studentId}` })),
     [] as { value: EntityId; label: string }[], [user?.role],
+  )
+  const {
+    data: activeProjects,
+    loading: projectsLoading,
+    error: projectsError,
+  } = useLoad(
+    () => projectPickerOpen && canManageProjects
+      ? api<PageData<Project>>({
+          url: '/projects',
+          params: qs({ ...projectFilters, pageSize: 8, status: 'ACTIVE' }),
+        })
+      : Promise.resolve(emptyPage<Project>()),
+    emptyPage<Project>(),
+    [projectPickerOpen, canManageProjects, projectFilters.page, projectFilters.keyword],
   )
   const waitForProcessing = async (photoId: string): Promise<Photo> => {
     // complete-upload leaves the photo PROCESSING; the async pipeline flips it to
@@ -140,7 +161,55 @@ export default function PhotosPage() {
       },
     })
   }
-  const canDelete = user?.role === 'ADMIN' || user?.role === 'MINISTER'
+  const isLinkedToProject = (photo: Photo, projectId: EntityId) =>
+    photo.relatedProjects?.some(project => String(project.id) === String(projectId))
+    || photo.relatedProjectIds?.some(id => String(id) === String(projectId))
+    || false
+  const openProjectPicker = () => {
+    setSelectedProjectId(null)
+    setProjectFilters({ page: 1, keyword: '' })
+    setProjectPickerOpen(true)
+  }
+  const addSelectedPhotoToProject = async () => {
+    if (!selected || !selectedProjectId) {
+      message.warning('请选择一个选题项目')
+      return
+    }
+    const photo = selected
+    const project = activeProjects.items.find(item => String(item.id) === selectedProjectId)
+    if (!project) {
+      message.error('所选项目已不在当前列表中，请重新选择')
+      setSelectedProjectId(null)
+      return
+    }
+    setProjectSaving(true)
+    try {
+      await api({
+        method: 'POST',
+        url: `/projects/${project.id}/photos`,
+        data: { photoIds: [photo.id] },
+      })
+      setSelected(current => {
+        if (!current || current.id !== photo.id || isLinkedToProject(current, project.id)) return current
+        const onlyHasLegacyProjectIds = !current.relatedProjects?.length && !!current.relatedProjectIds?.length
+        return {
+          ...current,
+          relatedProjectIds: [...new Set([...(current.relatedProjectIds || []), project.id])],
+          relatedProjects: onlyHasLegacyProjectIds
+            ? current.relatedProjects
+            : [...(current.relatedProjects || []), { id: project.id, title: project.title }],
+        }
+      })
+      setProjectPickerOpen(false)
+      setSelectedProjectId(null)
+      message.success(`图片已添加到选题项目“${project.title}”`)
+      await reload()
+    } catch (e) {
+      message.error((e as Error).message)
+    } finally {
+      setProjectSaving(false)
+    }
+  }
   return <>
     <PageTitle eyebrow="LIBRARY" title="图片库" description="检索、查看并下载团队沉淀的每一帧。"
       extra={<Space wrap>
@@ -225,7 +294,10 @@ export default function PhotosPage() {
     </Modal>
     <Drawer title="图片详情" width={520} open={!!selected} onClose={() => setSelected(null)}
       extra={selected && <Space>
-        {canDelete && <Button danger icon={<DeleteOutlined />} onClick={() => remove(selected)}>删除图片</Button>}
+        {canManageProjects && <Button icon={<FolderAddOutlined />} disabled={selected.status !== 'AVAILABLE'}
+          title={selected.status === 'AVAILABLE' ? undefined : '仅可用图片可以添加到项目'}
+          onClick={openProjectPicker}>添加到项目</Button>}
+        {canManageProjects && <Button danger icon={<DeleteOutlined />} onClick={() => remove(selected)}>删除图片</Button>}
         <Button type="primary" icon={<DownloadOutlined />} onClick={() => void download(selected)}>下载原图</Button>
       </Space>}>
       {selected && <>
@@ -248,5 +320,51 @@ export default function PhotosPage() {
         ]} />
       </>}
     </Drawer>
+    <Modal title="添加图片到选题项目" width={760} open={projectPickerOpen}
+      onCancel={() => { if (!projectSaving) setProjectPickerOpen(false) }}
+      onOk={() => void addSelectedPhotoToProject()}
+      okText="添加到所选项目" okButtonProps={{ disabled: !selectedProjectId }}
+      confirmLoading={projectSaving} maskClosable={!projectSaving} closable={!projectSaving}
+      cancelButtonProps={{ disabled: projectSaving }} destroyOnHidden>
+      <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+          选择一个进行中的选题项目。添加后图片只会进入项目相册，不会自动标记为被引。
+        </Typography.Paragraph>
+        <Input.Search allowClear placeholder="搜索项目名称或说明" style={{ maxWidth: 420 }}
+          onSearch={keyword => {
+            setSelectedProjectId(null)
+            setProjectFilters({ page: 1, keyword })
+          }} />
+        {projectsError && <Typography.Text type="danger">项目加载失败：{projectsError}</Typography.Text>}
+        <Table<Project> rowKey="id" size="small" loading={projectsLoading}
+          dataSource={activeProjects.items}
+          rowSelection={{
+            type: 'radio',
+            selectedRowKeys: selectedProjectId ? [selectedProjectId] : [],
+            onChange: keys => setSelectedProjectId(keys.length ? String(keys[0]) : null),
+            getCheckboxProps: project => ({
+              disabled: !!selected && isLinkedToProject(selected, project.id),
+              name: project.title,
+            }),
+          }}
+          pagination={{
+            current: activeProjects.page,
+            pageSize: activeProjects.pageSize,
+            total: activeProjects.total,
+            showSizeChanger: false,
+            onChange: page => {
+              setSelectedProjectId(null)
+              setProjectFilters(current => ({ ...current, page }))
+            },
+          }}
+          locale={{ emptyText: projectsError ? '暂时无法加载项目' : '没有匹配的进行中项目' }}
+          columns={[
+            { title: '选题项目', dataIndex: 'title', render: (title, project) =>
+              <div className="table-title"><strong>{title}</strong><span>项目 #{project.id}</span></div> },
+            { title: '关联状态', width: 110, render: (_, project) => selected && isLinkedToProject(selected, project.id)
+              ? <Tag color="blue">已关联</Tag> : <Typography.Text type="secondary">可添加</Typography.Text> },
+          ]} />
+      </Space>
+    </Modal>
   </>
 }
