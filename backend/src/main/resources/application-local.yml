@@ -1,7 +1,0 @@
-photolib:
-  auth:
-    secure-cookie: false
-  bootstrap:
-    admin-password: ${ADMIN_INITIAL_PASSWORD:ChangeMe123!}
-  storage:
-    mode: local
