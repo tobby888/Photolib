@@ -12,6 +12,8 @@ import cn.photolib.storage.StorageProperties;
 import cn.photolib.user.model.UserRole;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -19,6 +21,7 @@ import org.springframework.context.ApplicationEventPublisher;
 
 import java.util.List;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -46,6 +49,25 @@ class ExportServiceTests {
     private AdminAlertMapper alertMapper;
     @InjectMocks
     private ExportService exports;
+
+    @ParameterizedTest
+    @EnumSource(value = UserRole.class, names = {"ADMIN", "MINISTER"})
+    void allowsPrivilegedUsersToCreatePhotoZip(UserRole role) {
+        PhotoEntity photo = new PhotoEntity();
+        photo.setId(42L);
+        photo.setStatus(PhotoStatus.AVAILABLE);
+        when(photoMapper.selectList(any())).thenReturn(List.of(photo));
+        AuthenticatedUser user = new AuthenticatedUser(
+                7L, "privileged", "Privileged User", role, null, false);
+
+        exports.createPhotoZip(List.of(42L), user);
+
+        verify(mapper).insert(any(ExportJobEntity.class));
+        ArgumentCaptor<ExportService.PhotoZipRequested> event =
+                ArgumentCaptor.forClass(ExportService.PhotoZipRequested.class);
+        verify(events).publishEvent(event.capture());
+        assertThat(event.getValue().photoIds()).containsExactly(42L);
+    }
 
     @Test
     void rejectsCampusManagerWhenAnySelectedPhotoIsNotOwnedAndVisible() {
