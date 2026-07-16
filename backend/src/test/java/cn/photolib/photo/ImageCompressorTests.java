@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import javax.imageio.ImageIO;
 import java.awt.Color;
 import java.awt.image.BufferedImage;
+import java.awt.image.DataBufferInt;
 import java.io.ByteArrayOutputStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -72,6 +73,26 @@ class ImageCompressorTests {
     }
 
     @Test
+    void resizesPngPreviewAndPreservesAlpha() throws Exception {
+        BufferedImage image = new BufferedImage(800, 600, BufferedImage.TYPE_INT_ARGB);
+        for (int x = 0; x < image.getWidth(); x++) {
+            for (int y = 0; y < image.getHeight(); y++) {
+                image.setRGB(x, y, new Color(x & 255, y & 255, (x + y) & 255,
+                        (x * 3 + y) & 255).getRGB());
+            }
+        }
+
+        ImageCompressor.Result result = compressor.thumbnail(
+                encode(image, "png"), "image/png", 200, 0.6);
+        BufferedImage decoded = ImageIO.read(new java.io.ByteArrayInputStream(result.bytes()));
+
+        assertThat(result.bytes()).startsWith((byte) 0x89, (byte) 0x50, (byte) 0x4e, (byte) 0x47);
+        assertThat(result.width()).isEqualTo(200);
+        assertThat(result.height()).isEqualTo(150);
+        assertThat(decoded.getColorModel().hasAlpha()).isTrue();
+    }
+
+    @Test
     void heavilyCompressedJpegPrefersModerateQualityAndAdaptiveResize() throws Exception {
         BufferedImage image = noisyImage(1600, 1200);
         byte[] source = encode(image, "jpg");
@@ -81,6 +102,23 @@ class ImageCompressorTests {
         assertThat(result.bytes().length).isLessThanOrEqualTo(180_000);
         assertThat(result.width()).isLessThan(1600).isGreaterThan(320);
         assertThat(result.height()).isLessThan(1200).isGreaterThan(320);
+    }
+
+    @Test
+    void compressesCameraSizedJpegAndBuildsPreview() throws Exception {
+        byte[] source = encode(noisyImage(4000, 3000), "jpg");
+
+        ImageCompressor.Result result = compressor.compress(source, "image/jpeg", 1_500_000);
+        ImageCompressor.Result preview = compressor.thumbnail(
+                result.bytes(), result.contentType(), 480, 0.6);
+
+        assertThat(result.bytes().length).isLessThanOrEqualTo(1_500_000);
+        assertThat(result.bytes()).startsWith((byte) 0xff, (byte) 0xd8);
+        assertThat(result.width()).isGreaterThan(320).isLessThanOrEqualTo(4000);
+        assertThat(result.height()).isGreaterThan(320).isLessThanOrEqualTo(3000);
+        assertThat(preview.width()).isEqualTo(480);
+        assertThat(preview.height()).isBetween(1, 480);
+        assertThat(ImageIO.read(new java.io.ByteArrayInputStream(preview.bytes()))).isNotNull();
     }
 
     @Test
@@ -94,6 +132,14 @@ class ImageCompressorTests {
                 .hasMessageContaining("安全上限");
     }
 
+    @Test
+    void packagesBothWindowsAndLinuxNativeLibraries() {
+        assertThat(ImageCompressor.class.getResource(
+                "/native/windows-x86_64/photolib-image.dll")).isNotNull();
+        assertThat(ImageCompressor.class.getResource(
+                "/native/linux-x86_64/libphotolib-image.so")).isNotNull();
+    }
+
     private void writeInt(byte[] bytes, int offset, int value) {
         bytes[offset] = (byte) (value >>> 24);
         bytes[offset + 1] = (byte) (value >>> 16);
@@ -103,10 +149,13 @@ class ImageCompressorTests {
 
     private BufferedImage noisyImage(int width, int height) {
         BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
-        for (int x = 0; x < width; x++) {
-            for (int y = 0; y < height; y++) {
-                image.setRGB(x, y, new Color((x * 31 + y) & 255, (x + y * 17) & 255,
-                        (x * y) & 255).getRGB());
+        int[] pixels = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int red = (x * 31 + y) & 255;
+                int green = (x + y * 17) & 255;
+                int blue = (x * y) & 255;
+                pixels[y * width + x] = (red << 16) | (green << 8) | blue;
             }
         }
         return image;
