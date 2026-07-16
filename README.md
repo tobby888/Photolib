@@ -32,7 +32,29 @@
 | 后端 | Java 21、Spring Boot 4、Spring Security、MyBatis-Plus |
 | 数据 | MySQL、Flyway |
 | 文件与通知 | 阿里云 OSS、阿里云 DirectMail |
-| 导出与处理 | Apache POI、JPG/PNG 同格式压缩、异步 ZIP 处理 |
+| 导出与处理 | Apache POI、Zig + libjpeg-turbo 原生图片处理、异步 ZIP 处理 |
+
+## 原生图片处理与 Fat JAR
+
+上传后的成品图压缩、缩略图生成和后台预览图重建不再使用 Java ImageIO，而是统一调用 `backend/native/` 中的 Zig 原生组件。JPEG 解码与编码使用 libjpeg-turbo 3.1.4.1（启用 x86-64 SIMD），PNG 解码、无损编码和透明通道处理使用固定版本的 stb；小于成品图目标体积的图片仍只读取尺寸元数据，不进行完整像素解码。
+
+Maven 在 `generate-resources` 阶段分别交叉编译以下两个 x86-64 组件，并将它们同时写入 Spring Boot Fat JAR：
+
+```text
+native/windows-x86_64/photolib-image.dll
+native/linux-x86_64/libphotolib-image.so
+```
+
+应用启动后根据 `os.name` 和 `os.arch` 从 JAR 中提取并加载当前平台的组件，不依赖服务器预装 libjpeg-turbo。Linux 组件以 glibc 2.17 为最低兼容基线；当前仅支持 Windows x86-64 和 Linux x86-64，其他系统或架构会在首次初始化图片处理器时明确报错。
+
+原生依赖下载地址与 SHA-256 固定在构建脚本中，下载后会先校验再编译。构建机除 Java 和 Node.js 外还需要：
+
+- Zig 0.16.x
+- CMake 3.24 或更高版本
+- Ninja
+- NASM（用于 libjpeg-turbo 的 x86-64 SIMD）
+
+这些工具只在编译 JAR 时需要；部署机器仍只需 Java 21。第三方许可说明会打入 JAR 的 `native/THIRD_PARTY_NOTICES.txt`。
 
 ## 本地运行
 
@@ -41,6 +63,7 @@
 - Node.js 20 或更高版本
 - Java 21
 - MySQL 8
+- Zig 0.16.x、CMake 3.24+、Ninja、NASM（编译后端或运行后端测试时）
 
 ### 1. 创建数据库
 
@@ -78,7 +101,7 @@ cd backend
 .\mvnw.cmd spring-boot:run
 ```
 
-macOS 或 Linux：
+Linux：
 
 ```bash
 cd backend
@@ -234,7 +257,7 @@ cd backend
 .\mvnw.cmd clean package
 ```
 
-macOS 或 Linux：
+Linux：
 
 ```bash
 cd backend
@@ -247,7 +270,7 @@ cd backend
 backend/target/photolib-backend-0.1.0-SNAPSHOT.jar
 ```
 
-该 JAR 同时包含 Spring Boot 后端和 React 前端。构建过程使用 Maven 管理的隔离 Node.js 环境，不依赖开发机全局安装的 Node.js。
+该 JAR 同时包含 Spring Boot 后端、React 前端，以及 Windows/Linux x86-64 两套原生图片组件。构建过程使用 Maven 管理的隔离 Node.js 环境，但原生组件编译仍要求开发机已安装 Zig、CMake、Ninja 和 NASM。
 
 ### 2. 准备 Linux 服务器
 
@@ -524,7 +547,7 @@ cd backend
 .\mvnw.cmd test
 ```
 
-macOS 或 Linux 使用 `./mvnw test`。
+Linux 使用 `./mvnw test`。当前原生图片组件不支持在 macOS 上运行。
 
 ## 项目结构
 
@@ -532,6 +555,7 @@ macOS 或 Linux 使用 `./mvnw test`。
 PhotoLib/
 ├── src/                       # React 前端
 ├── backend/
+│   ├── native/                # Zig + libjpeg-turbo 双平台图片组件
 │   └── src/
 │       ├── main/java/         # Spring Boot 业务代码
 │       ├── main/resources/    # 配置与 Flyway 迁移

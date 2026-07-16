@@ -21,9 +21,9 @@ public class PhotoProcessingAsyncConfig {
     }
 
     /**
-     * ImageIO expands compressed camera photos to large in-memory pixel buffers.
-     * Keep photo processing serial so several uploads cannot exhaust the JVM heap.
-     * Other asynchronous work continues to use Spring's default executor.
+     * Native processing keeps decoded pixels outside the JVM heap, but camera
+     * photos can still require substantial native memory. Keep photo processing
+     * serial so concurrent uploads stay within the server's total memory budget.
      */
     @Bean(name = "photoProcessingExecutor")
     ThreadPoolTaskExecutor photoProcessingExecutor() {
@@ -42,10 +42,10 @@ public class PhotoProcessingAsyncConfig {
      * its own serial executor after the application is ready so it neither
      * delays login nor competes with newly uploaded photo processing. Kept
      * strictly serial (not fanned out) — concurrent full-resolution JPEG
-     * decodes previously took a small (1-2 core, <=2GB) production box down by
+     * decodes can take a small (1-2 core, <=2GB) production box down by
      * starving Tomcat's request threads of both CPU and heap. See
-     * ImageCompressor.thumbnail()'s subsampled decode for how regeneration
-     * time is instead reduced without adding concurrency.
+     * The native JPEG path uses libjpeg-turbo's scaled decode for regeneration
+     * thumbnails, reducing memory without adding concurrency.
      */
     @Bean(name = "previewRegenerationExecutor")
     ThreadPoolTaskExecutor previewRegenerationExecutor() {

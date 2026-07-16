@@ -1,0 +1,14 @@
+PhotoLib native image component third-party notices
+===================================================
+
+libjpeg-turbo 3.1.4.1
+Project: https://github.com/libjpeg-turbo/libjpeg-turbo
+License: BSD-style licenses; see https://github.com/libjpeg-turbo/libjpeg-turbo/blob/3.1.4.1/LICENSE.md
+
+stb (commit 31c1ad37456438565541f4919958214b6e762fb4)
+Project: https://github.com/nothings/stb
+License: Public Domain or MIT; see https://github.com/nothings/stb/blob/31c1ad37456438565541f4919958214b6e762fb4/LICENSE
+
+The build downloads the pinned source archives, verifies their SHA-256
+digests, and statically links the required code into the Windows and Linux
+PhotoLib native image libraries.
