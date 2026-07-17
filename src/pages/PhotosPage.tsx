@@ -2,14 +2,16 @@ import {
   App, Button, Card, Checkbox, Col, DatePicker, Descriptions, Drawer, Form, Image, Input, Modal,
   Pagination, Progress, Row, Select, Space, Tag, Typography, Upload,
 } from 'antd'
-import { CloudUploadOutlined, DeleteOutlined, DownloadOutlined, InboxOutlined, SearchOutlined } from '@ant-design/icons'
+import {
+  CloudUploadOutlined, DeleteOutlined, DownloadOutlined, FolderAddOutlined, InboxOutlined, SearchOutlined,
+} from '@ant-design/icons'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { api, emptyPage, qs } from '../api'
 import { readTakenAt } from '../exif'
 import { uploadToObjectStorage } from '../storageUpload'
-import type { CampusMember, DedupedMember, EntityId, PageData, Photo } from '../types'
+import type { CampusMember, DedupedMember, EntityId, PageData, Photo, Project } from '../types'
 import { DataState, formatBytes, PageTitle, StatusTag } from '../components'
 import { useLoad } from '../hooks'
 import { useAuth } from '../auth'
@@ -25,9 +27,15 @@ export default function PhotosPage() {
   const [uploadPhase, setUploadPhase] = useState<'uploading' | 'processing' | null>(null)
   const [uploadPercent, setUploadPercent] = useState(0)
   const [selected, setSelected] = useState<Photo | null>(null)
-  const [selectedIds, setSelectedIds] = useState<EntityId[]>([])
+  const [selectedPhotos, setSelectedPhotos] = useState<Photo[]>([])
   const [batchDownloading, setBatchDownloading] = useState(false)
+  const [projectPickerOpen, setProjectPickerOpen] = useState(false)
+  const [projects, setProjects] = useState<Project[]>([])
+  const [projectsLoading, setProjectsLoading] = useState(false)
+  const [targetProjectId, setTargetProjectId] = useState<EntityId>()
+  const [addingToProject, setAddingToProject] = useState(false)
   const [filters, setFilters] = useState({ page: 1, keyword: '', status: 'AVAILABLE' })
+  const selectedIds = selectedPhotos.map(photo => photo.id)
   const { data, loading, error, reload } = useLoad(
     () => api<PageData<Photo>>({ url: '/photos', params: qs({ ...filters, pageSize: 24 }) }),
     emptyPage<Photo>(), [filters.page, filters.keyword, filters.status],
@@ -97,10 +105,10 @@ export default function PhotosPage() {
       window.open(result.downloadUrl, '_blank', 'noopener')
     } catch (e) { message.error((e as Error).message) }
   }
-  const toggleSelected = (photoId: EntityId, checked: boolean) => {
-    setSelectedIds(current => checked
-      ? current.includes(photoId) ? current : [...current, photoId].slice(0, 200)
-      : current.filter(id => id !== photoId))
+  const toggleSelected = (photo: Photo, checked: boolean) => {
+    setSelectedPhotos(current => checked
+      ? current.some(item => item.id === photo.id) ? current : [...current, photo].slice(0, 200)
+      : current.filter(item => item.id !== photo.id))
   }
   const batchDownload = async () => {
     if (!selectedIds.length) return
@@ -109,7 +117,7 @@ export default function PhotosPage() {
       const downloadUrl = await preparePhotoBatchDownload(selectedIds)
       if (downloadUrl) {
         window.location.assign(downloadUrl)
-        setSelectedIds([])
+        setSelectedPhotos([])
         message.success('所选图片已打包为 ZIP')
       } else {
         message.info('ZIP 仍在后台生成，请稍后重新发起下载')
@@ -118,6 +126,50 @@ export default function PhotosPage() {
       message.error((e as Error).message)
     } finally {
       setBatchDownloading(false)
+    }
+  }
+  const openProjectPicker = async () => {
+    if (!selectedPhotos.length) return
+    if (selectedPhotos.some(photo => photo.status !== 'AVAILABLE')) {
+      message.warning('项目相册仅接收可用图片，请取消选择已归档图片后重试')
+      return
+    }
+    setProjectPickerOpen(true)
+    setTargetProjectId(undefined)
+    setProjectsLoading(true)
+    try {
+      const result = await api<PageData<Project>>({
+        url: '/projects',
+        params: { page: 1, pageSize: 100, status: 'ACTIVE' },
+      })
+      setProjects(result.items)
+    } catch (e) {
+      message.error((e as Error).message)
+    } finally {
+      setProjectsLoading(false)
+    }
+  }
+  const addToProject = async () => {
+    if (!targetProjectId) {
+      message.warning('请选择目标项目')
+      return
+    }
+    setAddingToProject(true)
+    try {
+      await api({
+        method: 'POST',
+        url: `/projects/${targetProjectId}/photos`,
+        data: { photoIds: selectedIds },
+      })
+      message.success(`已将 ${selectedIds.length} 张图片添加到项目相册`)
+      setProjectPickerOpen(false)
+      setTargetProjectId(undefined)
+      setSelectedPhotos([])
+      await reload()
+    } catch (e) {
+      message.error((e as Error).message)
+    } finally {
+      setAddingToProject(false)
     }
   }
   const remove = (photo: Photo) => {
@@ -144,11 +196,15 @@ export default function PhotosPage() {
   return <>
     <PageTitle eyebrow="LIBRARY" title="图片库" description="检索、查看并下载团队沉淀的每一帧。"
       extra={<Space wrap>
+        <Button size="large" icon={<FolderAddOutlined />} disabled={!selectedIds.length}
+          onClick={() => void openProjectPicker()}>
+          添加到项目{selectedIds.length ? `（${selectedIds.length}）` : ''}
+        </Button>
         <Button size="large" icon={<DownloadOutlined />} loading={batchDownloading}
           disabled={!selectedIds.length} onClick={() => void batchDownload()}>
           打包下载{selectedIds.length ? `（${selectedIds.length}）` : ''}
         </Button>
-        {!!selectedIds.length && <Button size="large" onClick={() => setSelectedIds([])}>清空选择</Button>}
+        {!!selectedIds.length && <Button size="large" onClick={() => setSelectedPhotos([])}>清空选择</Button>}
         <Button size="large" icon={<InboxOutlined />} onClick={() => navigate('/photos/batch-upload')}>ZIP 批量上传</Button>
         <Button type="primary" size="large" icon={<CloudUploadOutlined />} onClick={() => setUploadOpen(true)}>上传图片</Button>
       </Space>} />
@@ -167,14 +223,20 @@ export default function PhotosPage() {
         {data.items.map(photo => <Col xs={24} sm={12} lg={8} xxl={6} key={photo.id}>
           <Card className={`photo-card${selectedIds.includes(photo.id) ? ' photo-card-selected' : ''}`} hoverable cover={<div className="photo-cover" onClick={() => setSelected(photo)}>
             {photo.thumbnailUrl ? <Image preview={false} src={photo.thumbnailUrl} alt={photo.title} /> : <div className="image-placeholder"><span>{photo.title?.slice(0, 1) || '图'}</span></div>}
-            <div className="photo-overlay"><Space><StatusTag value={photo.status} />{!!photo.adoptionCount && <Tag color="gold">已采用 × {photo.adoptionCount}</Tag>}</Space><Space>
+            <div className="photo-overlay">
               {(photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED') && <Checkbox
+                className="photo-select-checkbox"
                 checked={selectedIds.includes(photo.id)}
                 disabled={selectedIds.length >= 200 && !selectedIds.includes(photo.id)}
                 onClick={event => event.stopPropagation()}
-                onChange={event => toggleSelected(photo.id, event.target.checked)}
+                onChange={event => toggleSelected(photo, event.target.checked)}
                 aria-label={`选择图片 ${photo.title || photo.id}`} />}
-              <Button shape="circle" icon={<DownloadOutlined />} onClick={e => { e.stopPropagation(); void download(photo) }} />
+              <Button className="photo-download-button" shape="circle" icon={<DownloadOutlined />}
+                aria-label={`下载图片 ${photo.title || photo.id}`}
+                onClick={e => { e.stopPropagation(); void download(photo) }} />
+            </div>
+            <div className="photo-badges"><Space size={4}><StatusTag value={photo.status} />
+              {!!photo.adoptionCount && <Tag color="gold">已采用 × {photo.adoptionCount}</Tag>}
             </Space></div>
           </div>}>
             <Typography.Title level={5} ellipsis>{photo.title || '未命名图片'}</Typography.Title>
@@ -185,6 +247,22 @@ export default function PhotosPage() {
       </Row>
       <Pagination current={filters.page} pageSize={24} total={data.total} hideOnSinglePage onChange={page => setFilters({ ...filters, page })} />
     </DataState>
+    <Modal title="批量添加到项目" open={projectPickerOpen} width={520}
+      onCancel={() => { if (!addingToProject) setProjectPickerOpen(false) }}
+      onOk={() => void addToProject()} okText="添加到项目" confirmLoading={addingToProject}
+      okButtonProps={{ disabled: !targetProjectId || projectsLoading }} destroyOnHidden>
+      <Typography.Paragraph type="secondary">
+        将所选 {selectedIds.length} 张图片加入项目相册。加入相册不会自动标记为被引图片。
+      </Typography.Paragraph>
+      <Select showSearch optionFilterProp="label" style={{ width: '100%' }} size="large"
+        value={targetProjectId} onChange={setTargetProjectId} loading={projectsLoading}
+        placeholder="选择一个进行中的项目"
+        notFoundContent={projectsLoading ? '正在加载项目…' : '没有可添加图片的进行中项目'}
+        options={projects.map(project => ({
+          value: project.id,
+          label: project.title,
+        }))} />
+    </Modal>
     <Modal title="上传单张图片" width={680} open={uploadOpen} onCancel={() => { if (!uploading) setUploadOpen(false) }} onOk={submitUpload}
       okText="开始上传" confirmLoading={uploading} destroyOnHidden
       maskClosable={!uploading} closable={!uploading} cancelButtonProps={{ disabled: uploading }}>
