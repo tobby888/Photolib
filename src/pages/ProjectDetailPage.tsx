@@ -371,6 +371,7 @@ export default function ProjectDetailPage() {
       </Card>
 
       <Card
+        className="project-photo-gallery"
         title={`需求图片（${data.photos.length}）`}
         extra={<Space wrap>
           <Typography.Text type="secondary">汇总展示本选题下所有需求已上传的图片</Typography.Text>

@@ -178,6 +178,13 @@ button, input, textarea, select { font-family: inherit; }
 .project-summary { margin-bottom: 16px; }
 .project-summary .ant-card { height: 100%; }
 .project-summary .ant-statistic-content-prefix { color: #28594f; font-size: 18px; margin-right: 10px; }
+.project-photo-gallery > .ant-card-head {
+  position: sticky;
+  top: 80px;
+  z-index: 10;
+  background: var(--studio-surface, #fff);
+  box-shadow: 0 10px 16px -16px rgba(22, 50, 43, .55);
+}
 .state-guide { margin-bottom: 16px; overflow: hidden; }
 .state-guide .ant-card-body { display: flex; align-items: center; justify-content: space-between; gap: 30px; padding: 24px 28px; }
 .state-guide h4 { margin: 5px 0 3px; }
@@ -572,6 +579,7 @@ body { background: var(--studio-paper); color: var(--studio-ink); }
 }
 @media (max-width: 767px) {
   .topbar { height: 68px !important; padding: 0 16px !important; }
+  .project-photo-gallery > .ant-card-head { top: 68px; }
   .content { padding: 24px 16px 40px; }
   .dashboard-header { align-items: flex-start; flex-direction: column; }
   .dashboard-header { min-width: 0; overflow: hidden; }
