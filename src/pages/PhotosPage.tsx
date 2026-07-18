@@ -28,13 +28,16 @@ export default function PhotosPage() {
   const [uploadPhase, setUploadPhase] = useState<'uploading' | 'processing' | null>(null)
   const [uploadPercent, setUploadPercent] = useState(0)
   const [selected, setSelected] = useState<Photo | null>(null)
-  const [selectedIds, setSelectedIds] = useState<EntityId[]>([])
+  const [selectedPhotos, setSelectedPhotos] = useState<Photo[]>([])
   const [batchDownloading, setBatchDownloading] = useState(false)
   const [projectPickerOpen, setProjectPickerOpen] = useState(false)
   const [projectSaving, setProjectSaving] = useState(false)
   const [selectedProjectId, setSelectedProjectId] = useState<EntityId | null>(null)
   const [projectFilters, setProjectFilters] = useState({ page: 1, keyword: '' })
+  const [projectPickerPhotos, setProjectPickerPhotos] = useState<Photo[]>([])
+  const [projectPickerSource, setProjectPickerSource] = useState<'batch' | 'detail' | null>(null)
   const [filters, setFilters] = useState({ page: 1, keyword: '', status: 'AVAILABLE' })
+  const selectedIds = selectedPhotos.map(photo => photo.id)
   const { data, loading, error, reload } = useLoad(
     () => api<PageData<Photo>>({ url: '/photos', params: qs({ ...filters, pageSize: 24 }) }),
     emptyPage<Photo>(), [filters.page, filters.keyword, filters.status],
@@ -57,14 +60,14 @@ export default function PhotosPage() {
     loading: projectsLoading,
     error: projectsError,
   } = useLoad(
-    () => projectPickerOpen && canManageProjects
+    () => projectPickerOpen
       ? api<PageData<Project>>({
           url: '/projects',
           params: qs({ ...projectFilters, pageSize: 8, status: 'ACTIVE' }),
         })
       : Promise.resolve(emptyPage<Project>()),
     emptyPage<Project>(),
-    [projectPickerOpen, canManageProjects, projectFilters.page, projectFilters.keyword],
+    [projectPickerOpen, projectFilters.page, projectFilters.keyword],
   )
   const waitForProcessing = async (photoId: string): Promise<Photo> => {
     // complete-upload leaves the photo PROCESSING; the async pipeline flips it to
@@ -118,10 +121,10 @@ export default function PhotosPage() {
       window.open(result.downloadUrl, '_blank', 'noopener')
     } catch (e) { message.error((e as Error).message) }
   }
-  const toggleSelected = (photoId: EntityId, checked: boolean) => {
-    setSelectedIds(current => checked
-      ? current.includes(photoId) ? current : [...current, photoId].slice(0, 200)
-      : current.filter(id => id !== photoId))
+  const toggleSelected = (photo: Photo, checked: boolean) => {
+    setSelectedPhotos(current => checked
+      ? current.some(item => item.id === photo.id) ? current : [...current, photo].slice(0, 200)
+      : current.filter(item => item.id !== photo.id))
   }
   const batchDownload = async () => {
     if (!selectedIds.length) return
@@ -130,7 +133,7 @@ export default function PhotosPage() {
       const downloadUrl = await preparePhotoBatchDownload(selectedIds)
       if (downloadUrl) {
         window.location.assign(downloadUrl)
-        setSelectedIds([])
+        setSelectedPhotos([])
         message.success('所选图片已打包为 ZIP')
       } else {
         message.info('ZIP 仍在后台生成，请稍后重新发起下载')
@@ -165,44 +168,68 @@ export default function PhotosPage() {
     photo.relatedProjects?.some(project => String(project.id) === String(projectId))
     || photo.relatedProjectIds?.some(id => String(id) === String(projectId))
     || false
-  const openProjectPicker = () => {
+  const withProjectLink = (photo: Photo, project: Project): Photo => {
+    if (isLinkedToProject(photo, project.id)) return photo
+    const onlyHasLegacyProjectIds = !photo.relatedProjects?.length && !!photo.relatedProjectIds?.length
+    return {
+      ...photo,
+      relatedProjectIds: [...new Set([...(photo.relatedProjectIds || []), project.id])],
+      relatedProjects: onlyHasLegacyProjectIds
+        ? photo.relatedProjects
+        : [...(photo.relatedProjects || []), { id: project.id, title: project.title }],
+    }
+  }
+  const closeProjectPicker = () => {
+    setProjectPickerOpen(false)
     setSelectedProjectId(null)
+    setProjectPickerPhotos([])
+    setProjectPickerSource(null)
+  }
+  const openProjectPicker = (photos: Photo[], source: 'batch' | 'detail') => {
+    if (!photos.length) return
+    if (photos.some(photo => photo.status !== 'AVAILABLE')) {
+      message.warning('项目相册仅接收可用图片，请取消选择已归档图片后重试')
+      return
+    }
+    setProjectPickerPhotos(photos)
+    setProjectPickerSource(source)
     setProjectFilters({ page: 1, keyword: '' })
+    setSelectedProjectId(null)
     setProjectPickerOpen(true)
   }
-  const addSelectedPhotoToProject = async () => {
-    if (!selected || !selectedProjectId) {
+  const addPhotosToProject = async () => {
+    if (!projectPickerPhotos.length || !selectedProjectId) {
       message.warning('请选择一个选题项目')
       return
     }
-    const photo = selected
-    const project = activeProjects.items.find(item => String(item.id) === selectedProjectId)
+    const project = activeProjects.items.find(item => String(item.id) === String(selectedProjectId))
     if (!project) {
       message.error('所选项目已不在当前列表中，请重新选择')
       setSelectedProjectId(null)
       return
     }
+    const photos = projectPickerPhotos
+    const source = projectPickerSource
+    const photoIds = photos.map(photo => photo.id)
     setProjectSaving(true)
     try {
       await api({
         method: 'POST',
         url: `/projects/${project.id}/photos`,
-        data: { photoIds: [photo.id] },
+        data: { photoIds },
       })
       setSelected(current => {
-        if (!current || current.id !== photo.id || isLinkedToProject(current, project.id)) return current
-        const onlyHasLegacyProjectIds = !current.relatedProjects?.length && !!current.relatedProjectIds?.length
-        return {
-          ...current,
-          relatedProjectIds: [...new Set([...(current.relatedProjectIds || []), project.id])],
-          relatedProjects: onlyHasLegacyProjectIds
-            ? current.relatedProjects
-            : [...(current.relatedProjects || []), { id: project.id, title: project.title }],
-        }
+        if (!current || !photoIds.includes(current.id)) return current
+        return withProjectLink(current, project)
       })
-      setProjectPickerOpen(false)
-      setSelectedProjectId(null)
-      message.success(`图片已添加到选题项目“${project.title}”`)
+      if (source === 'batch') {
+        setSelectedPhotos([])
+      } else {
+        setSelectedPhotos(current => current.map(photo =>
+          photoIds.includes(photo.id) ? withProjectLink(photo, project) : photo))
+      }
+      closeProjectPicker()
+      message.success(`已将 ${photoIds.length} 张图片添加到选题项目“${project.title}”`)
       await reload()
     } catch (e) {
       message.error((e as Error).message)
@@ -213,11 +240,15 @@ export default function PhotosPage() {
   return <>
     <PageTitle eyebrow="LIBRARY" title="图片库" description="检索、查看并下载团队沉淀的每一帧。"
       extra={<Space wrap>
+        <Button size="large" icon={<FolderAddOutlined />} disabled={!selectedIds.length}
+          onClick={() => openProjectPicker(selectedPhotos, 'batch')}>
+          添加到项目{selectedIds.length ? `（${selectedIds.length}）` : ''}
+        </Button>
         <Button size="large" icon={<DownloadOutlined />} loading={batchDownloading}
           disabled={!selectedIds.length} onClick={() => void batchDownload()}>
           打包下载{selectedIds.length ? `（${selectedIds.length}）` : ''}
         </Button>
-        {!!selectedIds.length && <Button size="large" onClick={() => setSelectedIds([])}>清空选择</Button>}
+        {!!selectedIds.length && <Button size="large" onClick={() => setSelectedPhotos([])}>清空选择</Button>}
         <Button size="large" icon={<InboxOutlined />} onClick={() => navigate('/photos/batch-upload')}>ZIP 批量上传</Button>
         <Button type="primary" size="large" icon={<CloudUploadOutlined />} onClick={() => setUploadOpen(true)}>上传图片</Button>
       </Space>} />
@@ -236,14 +267,20 @@ export default function PhotosPage() {
         {data.items.map(photo => <Col xs={24} sm={12} lg={8} xxl={6} key={photo.id}>
           <Card className={`photo-card${selectedIds.includes(photo.id) ? ' photo-card-selected' : ''}`} hoverable cover={<div className="photo-cover" onClick={() => setSelected(photo)}>
             {photo.thumbnailUrl ? <Image preview={false} src={photo.thumbnailUrl} alt={photo.title} /> : <div className="image-placeholder"><span>{photo.title?.slice(0, 1) || '图'}</span></div>}
-            <div className="photo-overlay"><Space><StatusTag value={photo.status} />{!!photo.adoptionCount && <Tag color="gold">已采用 × {photo.adoptionCount}</Tag>}</Space><Space>
+            <div className="photo-overlay">
               {(photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED') && <Checkbox
+                className="photo-select-checkbox"
                 checked={selectedIds.includes(photo.id)}
                 disabled={selectedIds.length >= 200 && !selectedIds.includes(photo.id)}
                 onClick={event => event.stopPropagation()}
-                onChange={event => toggleSelected(photo.id, event.target.checked)}
+                onChange={event => toggleSelected(photo, event.target.checked)}
                 aria-label={`选择图片 ${photo.title || photo.id}`} />}
-              <Button shape="circle" icon={<DownloadOutlined />} onClick={e => { e.stopPropagation(); void download(photo) }} />
+              <Button className="photo-download-button" shape="circle" icon={<DownloadOutlined />}
+                aria-label={`下载图片 ${photo.title || photo.id}`}
+                onClick={e => { e.stopPropagation(); void download(photo) }} />
+            </div>
+            <div className="photo-badges"><Space size={4}><StatusTag value={photo.status} />
+              {!!photo.adoptionCount && <Tag color="gold">已采用 × {photo.adoptionCount}</Tag>}
             </Space></div>
           </div>}>
             <Typography.Title level={5} ellipsis>{photo.title || '未命名图片'}</Typography.Title>
@@ -296,7 +333,7 @@ export default function PhotosPage() {
       extra={selected && <Space>
         {canManageProjects && <Button icon={<FolderAddOutlined />} disabled={selected.status !== 'AVAILABLE'}
           title={selected.status === 'AVAILABLE' ? undefined : '仅可用图片可以添加到项目'}
-          onClick={openProjectPicker}>添加到项目</Button>}
+          onClick={() => openProjectPicker([selected], 'detail')}>添加到项目</Button>}
         {canManageProjects && <Button danger icon={<DeleteOutlined />} onClick={() => remove(selected)}>删除图片</Button>}
         <Button type="primary" icon={<DownloadOutlined />} onClick={() => void download(selected)}>下载原图</Button>
       </Space>}>
@@ -320,15 +357,17 @@ export default function PhotosPage() {
         ]} />
       </>}
     </Drawer>
-    <Modal title="添加图片到选题项目" width={760} open={projectPickerOpen}
-      onCancel={() => { if (!projectSaving) setProjectPickerOpen(false) }}
-      onOk={() => void addSelectedPhotoToProject()}
+    <Modal title={projectPickerPhotos.length > 1 ? '批量添加图片到选题项目' : '添加图片到选题项目'}
+      width={760} open={projectPickerOpen}
+      onCancel={() => { if (!projectSaving) closeProjectPicker() }}
+      onOk={() => void addPhotosToProject()}
       okText="添加到所选项目" okButtonProps={{ disabled: !selectedProjectId }}
       confirmLoading={projectSaving} maskClosable={!projectSaving} closable={!projectSaving}
       cancelButtonProps={{ disabled: projectSaving }} destroyOnHidden>
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          选择一个进行中的选题项目。添加后图片只会进入项目相册，不会自动标记为被引。
+          将所选 {projectPickerPhotos.length} 张图片加入一个进行中的选题项目。添加后图片只会进入项目相册，
+          不会自动标记为被引。
         </Typography.Paragraph>
         <Input.Search allowClear placeholder="搜索项目名称或说明" style={{ maxWidth: 420 }}
           onSearch={keyword => {
@@ -343,7 +382,8 @@ export default function PhotosPage() {
             selectedRowKeys: selectedProjectId ? [selectedProjectId] : [],
             onChange: keys => setSelectedProjectId(keys.length ? String(keys[0]) : null),
             getCheckboxProps: project => ({
-              disabled: !!selected && isLinkedToProject(selected, project.id),
+              disabled: !!projectPickerPhotos.length
+                && projectPickerPhotos.every(photo => isLinkedToProject(photo, project.id)),
               name: project.title,
             }),
           }}
@@ -361,8 +401,12 @@ export default function PhotosPage() {
           columns={[
             { title: '选题项目', dataIndex: 'title', render: (title, project) =>
               <div className="table-title"><strong>{title}</strong><span>项目 #{project.id}</span></div> },
-            { title: '关联状态', width: 110, render: (_, project) => selected && isLinkedToProject(selected, project.id)
-              ? <Tag color="blue">已关联</Tag> : <Typography.Text type="secondary">可添加</Typography.Text> },
+            { title: '关联状态', width: 130, render: (_, project) => {
+              const linkedCount = projectPickerPhotos.filter(photo => isLinkedToProject(photo, project.id)).length
+              if (!linkedCount) return <Typography.Text type="secondary">可添加</Typography.Text>
+              if (linkedCount === projectPickerPhotos.length) return <Tag color="blue">已全部关联</Tag>
+              return <Tag color="orange">已关联 {linkedCount}/{projectPickerPhotos.length}</Tag>
+            } },
           ]} />
       </Space>
     </Modal>

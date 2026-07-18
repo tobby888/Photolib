@@ -266,6 +266,18 @@ export default function ProjectDetailPage() {
       : current.filter(id => id !== photoId))
   }
 
+  const downloadPhoto = async (photo: Photo) => {
+    try {
+      const result = await api<{ downloadUrl: string }>({
+        method: 'POST',
+        url: `/photos/${photo.id}/download-url`,
+      })
+      window.open(result.downloadUrl, '_blank', 'noopener')
+    } catch (reason) {
+      message.error((reason as Error).message)
+    }
+  }
+
   const selectAllDownloadablePhotos = () => {
     const downloadableIds = data.photos
       .filter(photo => photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED')
@@ -399,18 +411,23 @@ export default function ProjectDetailPage() {
                     ? <Image src={photo.thumbnailUrl} alt={photo.title || '需求图片'} />
                     : <div className="image-placeholder"><span>{photo.title?.slice(0, 1) || '图'}</span></div>}
                   <div className="photo-overlay">
-                    <Space>
-                      <StatusTag value={photo.status} />
-                      {adopted && <Tag color="gold">已被引</Tag>}
-                    </Space>
                     {canBatchDownload && (photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED') &&
                       <Checkbox
+                        className="photo-select-checkbox"
                         checked={selectedDownloadPhotoIds.includes(photo.id)}
                         disabled={batchDownloading || (selectedDownloadPhotoIds.length >= 200
                           && !selectedDownloadPhotoIds.includes(photo.id))}
                         onChange={event => toggleDownloadPhoto(photo.id, event.target.checked)}
                         aria-label={`选择项目图片 ${photo.title || photo.id}`} />}
+                    {canBatchDownload && (photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED') &&
+                      <Button className="photo-download-button" shape="circle" icon={<DownloadOutlined />}
+                        aria-label={`下载项目图片 ${photo.title || photo.id}`}
+                        onClick={() => void downloadPhoto(photo)} />}
                   </div>
+                  <div className="photo-badges"><Space size={4}>
+                    <StatusTag value={photo.status} />
+                    {adopted && <Tag color="gold">已被引</Tag>}
+                  </Space></div>
                 </div>}
               >
                 <Typography.Title level={5} ellipsis>{photo.title || '未命名图片'}</Typography.Title>

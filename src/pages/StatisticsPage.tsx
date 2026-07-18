@@ -4,7 +4,7 @@ import { useState } from 'react'
 import dayjs from 'dayjs'
 import { api } from '../api'
 import type { MemberStats } from '../types'
-import { DataState, formatMinutes, PageTitle } from '../components'
+import { DataState, PageTitle } from '../components'
 import { useLoad } from '../hooks'
 
 interface ExportJobView {
@@ -13,6 +13,7 @@ interface ExportJobView {
 }
 
 const wait = (milliseconds: number) => new Promise(resolve => window.setTimeout(resolve, milliseconds))
+const formatHours = (minutes = 0) => `${Number((minutes / 60).toFixed(2))} 小时`
 
 export default function StatisticsPage() {
   const { message } = App.useApp()
@@ -73,9 +74,9 @@ export default function StatisticsPage() {
           <Table rowKey={member => `${member.studentId}-${member.campus}`} dataSource={data.members} pagination={false} columns={[
             { title: '成员', dataIndex: 'displayName' }, { title: '学号', dataIndex: 'studentId' }, { title: '校区', dataIndex: 'campus' },
             { title: '被采纳', dataIndex: 'adoptedCount', render: value => `${value} 张`, sorter: (a,b) => a.adoptedCount - b.adoptedCount },
-            { title: '拍摄', dataIndex: 'shootingMinutes', render: formatMinutes },
-            { title: '修图', dataIndex: 'retouchingMinutes', render: formatMinutes },
-            { title: '合计', dataIndex: 'totalMinutes', render: value => <strong>{formatMinutes(value)}</strong> },
+            { title: '拍摄（小时）', dataIndex: 'shootingMinutes', render: formatHours },
+            { title: '修图（小时）', dataIndex: 'retouchingMinutes', render: formatHours },
+            { title: '合计（小时）', dataIndex: 'totalMinutes', render: value => <strong>{formatHours(value)}</strong> },
           ]} />
         </Card></Col>
       </Row>
