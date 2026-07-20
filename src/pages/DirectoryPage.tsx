@@ -3,7 +3,7 @@ import { EditOutlined, PlusOutlined, StopOutlined, CheckCircleOutlined, DeleteOu
 import { useState } from 'react'
 import { api, qs } from '../api'
 import { useAuth } from '../auth'
-import type { Campus, CampusMember, DedupedMember, EntityId } from '../types'
+import type { Campus, CampusMember, EntityId } from '../types'
 import { DataState, PageTitle } from '../components'
 import { useLoad } from '../hooks'
 
@@ -17,24 +17,19 @@ export default function DirectoryPage() {
   const [selectedCampus, setSelectedCampus] = useState<EntityId | undefined>(undefined)
 
   const isManager = user?.role === 'CAMPUS_MANAGER'
-  const isAdmin = user?.role === 'ADMIN'
-  const isMinister = user?.role === 'MINISTER'
+  const canManageAllCampuses = user?.role === 'ADMIN' || user?.role === 'MINISTER'
 
   const { data: campuses } = useLoad(
-    () => isAdmin ? api<Campus[]>({ url: '/campuses', params: { enabled: true } }) : Promise.resolve([]),
+    () => canManageAllCampuses ? api<Campus[]>({ url: '/campuses', params: { enabled: true } }) : Promise.resolve([]),
     [] as Campus[], [user?.role],
   )
   const { data: members, loading, error, reload } = useLoad(
     () => isManager
       ? api<CampusMember[]>({ url: '/campus-members' })
-      : isAdmin && selectedCampus
+      : canManageAllCampuses && selectedCampus
         ? api<CampusMember[]>({ url: '/campus-members', params: { campusId: selectedCampus } })
         : Promise.resolve([] as CampusMember[]),
     [] as CampusMember[], [user?.role, selectedCampus],
-  )
-  const { data: deduped, loading: dedupedLoading, error: dedupedError, reload: reloadDeduped } = useLoad(
-    () => isMinister ? api<DedupedMember[]>({ url: '/campus-members/deduped' }) : Promise.resolve([] as DedupedMember[]),
-    [] as DedupedMember[], [user?.role],
   )
 
   const openCreate = () => { setEditing(null); form.resetFields(); form.setFieldsValue({ enabled: true }); setOpen(true) }
@@ -55,7 +50,9 @@ export default function DirectoryPage() {
         message.success('成员信息已更新')
       } else {
         await api({ method: 'POST', url: '/campus-members', data: qs({
-          campusId: isAdmin ? selectedCampus : undefined, studentId: values.studentId, name: values.name,
+          campusId: canManageAllCampuses ? selectedCampus : undefined,
+          studentId: values.studentId,
+          name: values.name,
         }) })
         message.success('成员已加入通讯录')
       }
@@ -110,38 +107,21 @@ export default function DirectoryPage() {
     })
   }
 
-  const description = isMinister
-    ? '汇总各校区负责人维护的通讯录，按学号去重后的合并结果（只读）。'
-    : isAdmin
-      ? '按校区维护摄影人员通讯录，供上传拍摄者与工时人员选择。'
-      : '维护本校区摄影人员通讯录，供上传拍摄者与工时人员选择。'
+  const description = canManageAllCampuses
+    ? '按校区维护摄影人员通讯录，供上传拍摄者与工时人员选择。'
+    : '维护本校区摄影人员通讯录，供上传拍摄者与工时人员选择。'
 
   const manageExtra = isManager
     ? <Button type="primary" size="large" icon={<PlusOutlined />} onClick={openCreate}>添加成员</Button>
-    : isAdmin
+    : canManageAllCampuses
       ? <Button type="primary" size="large" icon={<PlusOutlined />} disabled={!selectedCampus} onClick={openCreate}>添加成员</Button>
       : undefined
 
   return <>
     <PageTitle eyebrow="DIRECTORY" title="通讯录" description={description} extra={manageExtra} />
 
-    {isMinister ? (
-      <Card>
-        <DataState loading={dedupedLoading} error={dedupedError} empty={!deduped.length} onRetry={reloadDeduped}>
-          <Table
-            rowKey="studentId"
-            dataSource={deduped}
-            pagination={{ pageSize: 12, hideOnSinglePage: true }}
-            columns={[
-              { title: '姓名', dataIndex: 'name' },
-              { title: '学号', dataIndex: 'studentId' },
-              { title: '所属校区', dataIndex: 'campusNames', render: (names: string[]) => names.join('、') || '—' },
-            ]}
-          />
-        </DataState>
-      </Card>
-    ) : <>
-      {isAdmin && (
+    <>
+      {canManageAllCampuses && (
         <Card className="filter-card">
           <Space wrap>
             <span>校区</span>
@@ -158,7 +138,7 @@ export default function DirectoryPage() {
         </Card>
       )}
       <Card>
-        {isAdmin && !selectedCampus
+        {canManageAllCampuses && !selectedCampus
           ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="请先选择要维护的校区" />
           : <DataState loading={loading} error={error} empty={!members.length} onRetry={reload}>
               <Table
@@ -184,7 +164,7 @@ export default function DirectoryPage() {
               />
             </DataState>}
       </Card>
-    </>}
+    </>
 
     <Modal
       title={editing ? '编辑成员' : '添加成员'}

@@ -18,10 +18,10 @@ class CampusMemberControllerSecurityTests {
     }
 
     @Test
-    void ministerStillCannotMutateDirectory() {
+    void ministerCanMutateDirectory() {
         Arrays.stream(CampusMemberController.class.getDeclaredMethods())
                 .filter(method -> Arrays.asList("create", "update", "delete").contains(method.getName()))
                 .map(method -> method.getAnnotation(PreAuthorize.class).value())
-                .forEach(authorization -> assertThat(authorization).doesNotContain("MINISTER"));
+                .forEach(authorization -> assertThat(authorization).contains("ADMIN", "MINISTER", "CAMPUS_MANAGER"));
     }
 }
