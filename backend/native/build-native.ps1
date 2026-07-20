@@ -28,7 +28,7 @@ function Get-VerifiedArchive {
         }
     }
     if (-not (Test-Path -LiteralPath $Path)) {
-        & curl.exe -fsSL --retry 5 --retry-all-errors -o $Path $Url
+        & curl.exe -fsSL --ssl-no-revoke --retry 5 --retry-all-errors -o $Path $Url
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
@@ -72,12 +72,22 @@ function Invoke-NativeBuild {
     $libjpegBuildDirectory = Join-Path $targetBuildDirectory "libjpeg-turbo"
     $wrapperBuildDirectory = Join-Path $targetBuildDirectory "wrapper"
     $nativeOutput = Join-Path $OutputDirectory $RelativeOutput
+
+    # CMake needs single-executable tools; wrap "zig ar" / "zig ranlib" as .cmd files
+    New-Item -ItemType Directory -Force -Path $targetBuildDirectory | Out-Null
+    $zigArCmd = Join-Path $targetBuildDirectory "zig-ar.cmd"
+    $zigRanlibCmd = Join-Path $targetBuildDirectory "zig-ranlib.cmd"
+    "@echo off`nzig ar %*" | Set-Content -Path $zigArCmd -Encoding ASCII
+    "@echo off`nzig ranlib %*" | Set-Content -Path $zigRanlibCmd -Encoding ASCII
+
     $env:CC = "zig cc -target $ZigTarget"
 
     & cmake -S $libjpegSource -B $libjpegBuildDirectory -G Ninja `
         "-DCMAKE_BUILD_TYPE=Release" `
         "-DCMAKE_SYSTEM_NAME=$SystemName" `
         "-DCMAKE_SYSTEM_PROCESSOR=x86_64" `
+        "-DCMAKE_AR=$zigArCmd" `
+        "-DCMAKE_RANLIB=$zigRanlibCmd" `
         "-DENABLE_SHARED=OFF" `
         "-DENABLE_STATIC=ON" `
         "-DWITH_ARITH_DEC=OFF" `
@@ -95,6 +105,8 @@ function Invoke-NativeBuild {
         "-DCMAKE_BUILD_TYPE=Release" `
         "-DCMAKE_SYSTEM_NAME=$SystemName" `
         "-DCMAKE_SYSTEM_PROCESSOR=x86_64" `
+        "-DCMAKE_AR=$zigArCmd" `
+        "-DCMAKE_RANLIB=$zigRanlibCmd" `
         "-DPL_LIBJPEG_SOURCE=$libjpegSource" `
         "-DPL_LIBJPEG_BUILD=$libjpegBuildDirectory" `
         "-DPL_STB_SOURCE=$stbSource" `
