@@ -35,14 +35,14 @@ public class CampusMemberController {
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN','CAMPUS_MANAGER')")
+    @PreAuthorize("hasAnyRole('ADMIN','MINISTER','CAMPUS_MANAGER')")
     ApiResponse<CampusMemberEntity> create(@Valid @RequestBody MemberRequest request,
                                            @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.create(request.campusId(), request.studentId(), request.name(), user));
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','CAMPUS_MANAGER')")
+    @PreAuthorize("hasAnyRole('ADMIN','MINISTER','CAMPUS_MANAGER')")
     ApiResponse<CampusMemberEntity> update(@PathVariable Long id, @Valid @RequestBody UpdateRequest request,
                                            @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.update(id, request.studentId(), request.name(),
@@ -50,7 +50,7 @@ public class CampusMemberController {
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','CAMPUS_MANAGER')")
+    @PreAuthorize("hasAnyRole('ADMIN','MINISTER','CAMPUS_MANAGER')")
     ApiResponse<Void> delete(@PathVariable Long id, @AuthenticationPrincipal AuthenticatedUser user) {
         service.delete(id, user);
         return ApiResponse.ok();

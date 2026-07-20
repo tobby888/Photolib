@@ -178,7 +178,7 @@ public class CampusMemberService {
     }
 
     private Long requireWritableCampus(Long requestedCampusId, AuthenticatedUser user) {
-        if (user.role() == UserRole.ADMIN) {
+        if (user.role() == UserRole.ADMIN || user.role() == UserRole.MINISTER) {
             if (requestedCampusId == null) {
                 throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择校区");
             }

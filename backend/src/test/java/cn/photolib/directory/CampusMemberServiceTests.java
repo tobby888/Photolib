@@ -17,7 +17,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.*;
 
 /**
- * 通讯录服务测试：拍摄者解析校验与部长去重视图。
+ * 通讯录服务测试：拍摄者解析校验、部长维护权限与去重视图。
  */
 @SpringBootTest
 @Transactional
@@ -70,6 +70,29 @@ class CampusMemberServiceTests {
         assertThat(service.list(campusB.getId(), true, minister))
                 .extracting(CampusMemberEntity::getStudentId)
                 .containsExactlyInAnyOrder("20250001", "20250004");
+    }
+
+    @Test
+    void ministerShouldCreateUpdateAndDeleteMembersAcrossCampuses() {
+        AuthenticatedUser minister = new AuthenticatedUser(
+                2L, "minister", "部长", UserRole.MINISTER, null, false);
+
+        CampusMemberEntity created = service.create(campusB.getId(), "20250005", "孙七", minister);
+        assertThat(created.getCampusId()).isEqualTo(campusB.getId());
+
+        CampusMemberEntity persisted = service.list(campusB.getId(), null, minister).stream()
+                .filter(member -> member.getId().equals(created.getId()))
+                .findFirst()
+                .orElseThrow();
+        CampusMemberEntity updated = service.update(persisted.getId(), "20250005", "孙小七",
+                false, persisted.getVersion(), minister);
+        assertThat(updated.getName()).isEqualTo("孙小七");
+        assertThat(updated.getEnabled()).isFalse();
+
+        service.delete(created.getId(), minister);
+        assertThat(service.list(campusB.getId(), null, minister))
+                .extracting(CampusMemberEntity::getStudentId)
+                .doesNotContain("20250005");
     }
 
     @Test
