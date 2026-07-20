@@ -2,15 +2,18 @@ package cn.photolib.photo.batch;
 
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.error.BusinessException;
+import cn.photolib.photo.PhotoProcessingProperties;
 import cn.photolib.photo.PhotoProcessingWorkspace;
 import cn.photolib.storage.ObjectStorageService;
 import cn.photolib.user.model.UserRole;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -25,7 +28,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest
-@Transactional
 class BatchUploadServiceTests {
     @Autowired
     private BatchUploadService service;
@@ -39,6 +41,8 @@ class BatchUploadServiceTests {
     private PhotoUploadBatchMapper batchMapper;
     @Autowired
     private PhotoProcessingWorkspace workspace;
+    @Autowired
+    private PhotoProcessingProperties processingProperties;
 
     private AuthenticatedUser manager;
 
@@ -65,7 +69,29 @@ class BatchUploadServiceTests {
                 8101L, "batch-manager", "批量上传负责人", UserRole.CAMPUS_MANAGER, 8100L, false);
     }
 
+    @AfterEach
+    void cleanUpCommittedFixture() {
+        if (TransactionSynchronizationManager.isActualTransactionActive()) return;
+        jdbc.sql("""
+                SELECT temp_local_path FROM photo_upload_item
+                WHERE batch_id IN ('batch-unzip-test', 'batch-unzip-rollback')
+                  AND temp_local_path IS NOT NULL
+                """).query(String.class).list().forEach(value -> {
+            Path path = Path.of(value);
+            if (Files.exists(path)) workspace.deleteBatchFile(path);
+        });
+        deleteObject("temporary/batches/batch-unzip-test/archive.zip");
+        deleteObject("temporary/batches/batch-unzip-rollback/archive.zip");
+        jdbc.sql("DELETE FROM photo_upload_item WHERE batch_id IN "
+                + "('batch-unzip-test', 'batch-unzip-rollback')").update();
+        jdbc.sql("DELETE FROM photo_upload_batch WHERE created_by = 8101").update();
+        jdbc.sql("DELETE FROM campus_member WHERE id = 8102").update();
+        jdbc.sql("DELETE FROM app_user WHERE id = 8101").update();
+        jdbc.sql("DELETE FROM campus WHERE id = 8100").update();
+    }
+
     @Test
+    @Transactional
     void batchMetadata_shouldUseOriginalFileNamesAsTitles() {
         jdbc.sql("""
                 INSERT INTO photo_upload_batch
@@ -102,6 +128,7 @@ class BatchUploadServiceTests {
 
     @Test
     void processZip_shouldExtractSupportedImagesOnBackend() throws Exception {
+        assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
         String archiveKey = "temporary/batches/batch-unzip-test/archive.zip";
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (ZipOutputStream zip = new ZipOutputStream(bytes)) {
@@ -161,6 +188,56 @@ class BatchUploadServiceTests {
     }
 
     @Test
+    void processZip_shouldRollbackAllItemsWhenShortPersistenceTransactionFails() throws Exception {
+        assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+        String batchId = "batch-unzip-rollback";
+        String archiveKey = "temporary/batches/" + batchId + "/archive.zip";
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (ZipOutputStream zip = new ZipOutputStream(bytes)) {
+            zip.putNextEntry(new ZipEntry("first.jpg"));
+            zip.write(new byte[] {1, 2, 3});
+            zip.closeEntry();
+            zip.putNextEntry(new ZipEntry("x".repeat(260) + ".jpg"));
+            zip.write(new byte[] {4, 5, 6});
+            zip.closeEntry();
+        }
+        storage.put(archiveKey, new ByteArrayInputStream(bytes.toByteArray()),
+                bytes.size(), "application/zip");
+        jdbc.sql("""
+                INSERT INTO photo_upload_batch
+                    (id, mode, created_by, archive_object_key, archive_file_name, archive_size,
+                     status, total_count, success_count, failure_count)
+                VALUES
+                    (:id, 'ZIP', 8101, :archiveKey, 'rollback.zip', :archiveSize,
+                     'PROCESSING', 0, 0, 0)
+                """)
+                .param("id", batchId)
+                .param("archiveKey", archiveKey)
+                .param("archiveSize", bytes.size())
+                .update();
+
+        processingService.processZip(batchId);
+
+        assertThat(jdbc.sql("SELECT status FROM photo_upload_batch WHERE id = :id")
+                .param("id", batchId).query(String.class).single()).isEqualTo("FAILED");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM photo_upload_item WHERE batch_id = :id")
+                .param("id", batchId).query(Long.class).single()).isZero();
+        assertThat(Files.exists(processingProperties.temporaryRoot()
+                .resolve("batches").resolve(batchId))).isFalse();
+        assertThatThrownBy(() -> storage.stat(archiveKey))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @Transactional
+    void processZip_shouldRejectInvocationInsideCallerTransaction() {
+        assertThatThrownBy(() -> processingService.processZip("not-needed"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("不能在数据库事务中执行");
+    }
+
+    @Test
+    @Transactional
     void zipTicket_shouldKeepOnePointFiveGigabyteLimit() {
         BatchUploadService.CreateBatch atLimit = new BatchUploadService.CreateBatch(
                 BatchMode.ZIP, null, null, "photos.zip", 1_500_000_000L, null);
@@ -175,6 +252,7 @@ class BatchUploadServiceTests {
     }
 
     @Test
+    @Transactional
     void batchStatusTransition_shouldOnlyBeClaimedOnce() {
         jdbc.sql("""
                 INSERT INTO photo_upload_batch
@@ -186,5 +264,13 @@ class BatchUploadServiceTests {
                 BatchStatus.PROCESSING, LocalDateTime.now())).isEqualTo(1);
         assertThat(batchMapper.transition("batch-claim-test", BatchStatus.WAITING_METADATA,
                 BatchStatus.PROCESSING, LocalDateTime.now())).isZero();
+    }
+
+    private void deleteObject(String key) {
+        try {
+            storage.delete(key);
+        } catch (RuntimeException ignored) {
+            // Cleanup is best effort when processing already removed the object.
+        }
     }
 }

@@ -24,8 +24,8 @@ Maven 前端工具链：Node.js 20.19.4、npm 10.8.2
 | 检查 | 命令/范围 | 结果 |
 | --- | --- | --- |
 | 定向后端测试 | `mvn ... -Dtest=PhotoProcessingAsyncConfigTests,ImageCompressorTests,BatchUploadServiceTests,PhotoProcessingFilePipelineTests,PreviewRegenerationServiceTests,PreviewRegenerationCoordinatorTests` | 23 个测试通过，0 失败，0 错误 |
-| 后端全量测试 | `backend\\mvnw.cmd test` | 195 个测试，0 失败，0 错误，1 跳过 |
-| 从零完整打包 | `backend\\mvnw.cmd clean package` | 成功；再次运行 195 个测试，0 失败，0 错误，1 跳过 |
+| 后端全量测试 | `backend\\mvnw.cmd test` | 197 个测试，0 失败，0 错误，1 跳过 |
+| 从零完整打包 | `backend\\mvnw.cmd clean package` | 成功；再次运行 197 个测试，0 失败，0 错误，1 跳过 |
 | 主前端 lint | `npx eslint src` | 通过 |
 | 主前端生产构建 | Maven `npm run build -- --base=/` | TypeScript 与 Vite 构建通过，npm 审计 0 个漏洞 |
 | Git 差异检查 | `git diff --cached --check` | 通过 |
@@ -55,7 +55,10 @@ Maven 前端工具链：Node.js 20.19.4、npm 10.8.2
 - ZIP 中 JPEG/PNG 条目解压后形成受管本地文件，数据库保存内部路径，但序列化字段带 `@JsonIgnore`。
 - 解压后的图片不会先写入对象存储；原 ZIP 对象在解压完成后删除，并显式清空数据库 `archive_object_key`。
 - 空包、非法路径、图片数量、单图大小和展开总量沿用原有限制。
-- 解压失败会删除已经产生的本地文件和已插入条目。
+- ZIP 网络读取和磁盘解压阶段没有活动数据库事务；运行时防护会拒绝从外层事务直接调用该阶段。
+- 全部条目解压成功后，使用 `TransactionTemplate` 在一个短事务中原子插入最多 100 条记录并切换批次状态。
+- 任一条记录落库失败时短事务整体回滚，数据库不会留下部分条目，已经产生的本地文件会全部删除。
+- 失败状态、原 ZIP 对象删除后的键清理分别使用独立短事务；若失败状态无法写回数据库，则保留原 ZIP 对象供排查或重试。
 
 ### 3.4 端到端图片处理
 
@@ -70,7 +73,7 @@ Maven 前端工具链：Node.js 20.19.4、npm 10.8.2
 
 ## 4. 构建产物核验
 
-最终 JAR：`backend/target/photolib-backend-0.1.0-SNAPSHOT.jar`，大小 68,203,073 字节。
+最终 JAR：`backend/target/photolib-backend-0.1.0-SNAPSHOT.jar`，大小 68,206,230 字节。
 
 确认包含：
 
@@ -88,4 +91,4 @@ Maven 前端工具链：Node.js 20.19.4、npm 10.8.2
 
 ## 6. 结论
 
-实现与自动化测试表明，ZIP 条目不再整块进入 Java 堆，Java 与 Zig 之间也不再复制整张图片字节数组。Zig 原生内存并发由统一、可配置的固定线程池约束；本地辅助文件在处理完成后清理。除上述明确记录的外部集成与生产容量压测外，本次改造通过了项目完整测试和最终打包验证。
+实现与自动化测试表明，ZIP 条目不再整块进入 Java 堆，ZIP 网络/磁盘 I/O 也不会持有长数据库事务，Java 与 Zig 之间不再复制整张图片字节数组。Zig 原生内存并发由统一、可配置的固定线程池约束；本地辅助文件在处理完成后清理。除上述明确记录的外部集成与生产容量压测外，本次改造通过了项目完整测试和最终打包验证。
