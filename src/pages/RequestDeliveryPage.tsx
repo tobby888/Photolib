@@ -17,6 +17,7 @@ import { DataState, StatusTag } from '../components'
 import { useLoad } from '../hooks'
 import type { Campus, CampusMember, EntityId, PageData, Photo, PhotoRequest, Project } from '../types'
 import MarkdownRenderer from '../MarkdownRenderer'
+import { photoTitleFromFileName } from '../photoTitle'
 
 type UploadValues = {
   files: { originFileObj?: File }[]
@@ -139,7 +140,7 @@ export default function RequestDeliveryPage() {
           method: 'POST',
           url: `/photos/${ticket.photoId}/complete-upload`,
           data: {
-            title: file.name.replace(/\.[^.]+$/, ''),
+            title: photoTitleFromFileName(file.name),
             description: values.description,
             tags: values.tags || [],
           },

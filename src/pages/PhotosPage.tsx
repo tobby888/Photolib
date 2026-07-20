@@ -16,6 +16,7 @@ import { DataState, formatBytes, PageTitle, StatusTag } from '../components'
 import { useLoad } from '../hooks'
 import { useAuth } from '../auth'
 import { preparePhotoBatchDownload } from '../photoBatchDownload'
+import { photoTitleFromFileName } from '../photoTitle'
 
 export default function PhotosPage() {
   const navigate = useNavigate()
@@ -297,6 +298,7 @@ export default function PhotosPage() {
       <Form form={uploadForm} layout="vertical" requiredMark={false}>
         <Form.Item name="file" valuePropName="fileList" getValueFromEvent={e => e.fileList} rules={[{ required: true, message: '请选择图片' }]}>
           <Upload.Dragger accept=".jpg,.jpeg,.png" maxCount={1} beforeUpload={async file => {
+            uploadForm.setFieldValue('title', photoTitleFromFileName(file.name))
             const takenAt = await readTakenAt(file)
             if (takenAt) {
               uploadForm.setFieldsValue({ takenAt })
