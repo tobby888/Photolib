@@ -1,5 +1,6 @@
 package cn.photolib.photo.batch;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Getter;
@@ -14,6 +15,7 @@ public class PhotoUploadItemEntity {
     private String batchId;
     private String originalFileName;
     private String tempObjectKey;
+    @JsonIgnore private String tempLocalPath;
     private String contentType;
     private Long size;
     private String sha256;

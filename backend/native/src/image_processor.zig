@@ -13,6 +13,7 @@ const OP_COMPRESS: i32 = 1;
 const OP_THUMBNAIL: i32 = 2;
 const MAX_DIMENSION: i32 = 30_000;
 const MAX_PIXELS: u64 = 100_000_000;
+const MAX_INPUT_BYTES: usize = 100 * 1024 * 1024;
 const MIN_DIMENSION: i32 = 320;
 const JPEG_MIN_QUALITY: i32 = 82;
 const JPEG_MAX_QUALITY: i32 = 97;
@@ -26,6 +27,8 @@ const NativeError = error{
     ResizeFailed,
     OutOfMemory,
     OutputTooLarge,
+    ReadFailed,
+    WriteFailed,
 };
 
 pub const PlDimensions = extern struct {
@@ -35,8 +38,7 @@ pub const PlDimensions = extern struct {
     error_message: [256]u8,
 };
 
-pub const PlResult = extern struct {
-    data: ?[*]u8,
+pub const PlFileResult = extern struct {
     length: u64,
     width: i32,
     height: i32,
@@ -74,14 +76,24 @@ const Encoded = struct {
     }
 };
 
-export fn photolib_dimensions(input: ?[*]const u8, input_length: u64, format: i32, output: ?*PlDimensions) callconv(.c) i32 {
+const FileSource = struct {
+    data: [*]u8,
+    length: usize,
+
+    fn deinit(self: FileSource) void {
+        c.free(self.data);
+    }
+};
+
+export fn photolib_dimensions_file(input_path: ?[*:0]const u8, format: i32, output: ?*PlDimensions) callconv(.c) i32 {
     const out = output orelse return 1;
     out.* = std.mem.zeroes(PlDimensions);
-    const source = input orelse return fail(&out.error_message, NativeError.InvalidInput);
-    const source_length = std.math.cast(usize, input_length) orelse
-        return fail(&out.error_message, NativeError.InvalidInput);
+    const path = input_path orelse return fail(&out.error_message, NativeError.InvalidInput);
+    const source = readFile(path) catch |err|
+        return fail(&out.error_message, err);
+    defer source.deinit();
 
-    const dimensions = readDimensions(source, source_length, format) catch |err|
+    const dimensions = readDimensions(source.data, source.length, format) catch |err|
         return fail(&out.error_message, err);
     out.width = dimensions.width;
     out.height = dimensions.height;
@@ -89,25 +101,24 @@ export fn photolib_dimensions(input: ?[*]const u8, input_length: u64, format: i3
     return 0;
 }
 
-export fn photolib_process(input: ?[*]const u8, input_length: u64, format: i32, operation: i32, target_bytes: u64, max_dimension: i32, quality: f64, output: ?*PlResult) callconv(.c) i32 {
+export fn photolib_process_file(input_path: ?[*:0]const u8, output_path: ?[*:0]const u8, format: i32, operation: i32, target_bytes: u64, max_dimension: i32, quality: f64, output: ?*PlFileResult) callconv(.c) i32 {
     const out = output orelse return 1;
-    out.* = std.mem.zeroes(PlResult);
-    const source = input orelse return fail(&out.error_message, NativeError.InvalidInput);
-    const source_length = std.math.cast(usize, input_length) orelse
-        return fail(&out.error_message, NativeError.InvalidInput);
-    if (source_length == 0) return fail(&out.error_message, NativeError.InvalidInput);
-
-    const processed = process(source[0..source_length], format, operation, target_bytes, max_dimension, quality) catch |err|
+    out.* = std.mem.zeroes(PlFileResult);
+    const source_path = input_path orelse return fail(&out.error_message, NativeError.InvalidInput);
+    const destination_path = output_path orelse return fail(&out.error_message, NativeError.InvalidInput);
+    const source = readFile(source_path) catch |err|
         return fail(&out.error_message, err);
-    out.data = processed.encoded.data;
+    defer source.deinit();
+
+    const processed = process(source.data[0..source.length], format, operation, target_bytes, max_dimension, quality) catch |err|
+        return fail(&out.error_message, err);
+    defer processed.encoded.deinit();
+    if (c.pl_file_write_utf8(destination_path, processed.encoded.data, processed.encoded.length) == 0)
+        return fail(&out.error_message, NativeError.WriteFailed);
     out.length = processed.encoded.length;
     out.width = processed.width;
     out.height = processed.height;
     return 0;
-}
-
-export fn photolib_free(pointer: ?*anyopaque) callconv(.c) void {
-    c.free(pointer);
 }
 
 const Processed = struct {
@@ -115,6 +126,17 @@ const Processed = struct {
     width: i32,
     height: i32,
 };
+
+fn readFile(path: [*:0]const u8) NativeError!FileSource {
+    var length: usize = 0;
+    const memory = c.pl_file_read_utf8(path, &length) orelse return NativeError.ReadFailed;
+    const data: [*]u8 = @ptrCast(memory);
+    if (length == 0 or length > MAX_INPUT_BYTES) {
+        c.free(data);
+        return NativeError.InvalidInput;
+    }
+    return .{ .data = data, .length = length };
+}
 
 fn process(source: []const u8, format: i32, operation: i32, target_bytes: u64, max_dimension: i32, quality: f64) NativeError!Processed {
     _ = try readDimensions(source.ptr, source.len, format);
@@ -446,6 +468,8 @@ fn fail(buffer: *[256]u8, err: NativeError) i32 {
         NativeError.ResizeFailed => "原生图片缩放失败",
         NativeError.OutOfMemory => "原生图片内存分配失败",
         NativeError.OutputTooLarge => "原生图片输出过大",
+        NativeError.ReadFailed => "无法读取本地图片文件",
+        NativeError.WriteFailed => "无法写入本地图片文件",
     };
     @memcpy(buffer[0..message.len], message);
     buffer[message.len] = 0;

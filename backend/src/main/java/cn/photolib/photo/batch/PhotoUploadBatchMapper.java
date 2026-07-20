@@ -15,4 +15,10 @@ public interface PhotoUploadBatchMapper extends BaseMapper<PhotoUploadBatchEntit
             """)
     int transition(@Param("id") String id, @Param("expected") BatchStatus expected,
                    @Param("next") BatchStatus next, @Param("now") LocalDateTime now);
+
+    @Update("""
+            UPDATE photo_upload_batch SET archive_object_key = NULL, updated_at = #{now}
+            WHERE id = #{id}
+            """)
+    int clearArchiveObjectKey(@Param("id") String id, @Param("now") LocalDateTime now);
 }

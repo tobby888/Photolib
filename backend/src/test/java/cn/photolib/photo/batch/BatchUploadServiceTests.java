@@ -2,6 +2,7 @@ package cn.photolib.photo.batch;
 
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.error.BusinessException;
+import cn.photolib.photo.PhotoProcessingWorkspace;
 import cn.photolib.storage.ObjectStorageService;
 import cn.photolib.user.model.UserRole;
 import org.junit.jupiter.api.BeforeEach;
@@ -14,6 +15,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.time.LocalDateTime;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -34,6 +37,8 @@ class BatchUploadServiceTests {
     private JdbcClient jdbc;
     @Autowired
     private PhotoUploadBatchMapper batchMapper;
+    @Autowired
+    private PhotoProcessingWorkspace workspace;
 
     private AuthenticatedUser manager;
 
@@ -133,6 +138,26 @@ class BatchUploadServiceTests {
                 WHERE batch_id = 'batch-unzip-test' ORDER BY id
                 """).query(String.class).list())
                 .containsExactly("第一张.jpg", "第二张.png");
+        var localItems = jdbc.sql("""
+                SELECT temp_local_path, temp_object_key FROM photo_upload_item
+                WHERE batch_id = 'batch-unzip-test' ORDER BY id
+                """).query((rs, rowNum) -> new String[]{
+                        rs.getString("temp_local_path"), rs.getString("temp_object_key")}).list();
+        assertThat(localItems).hasSize(2);
+        for (String[] item : localItems) {
+            Path path = Path.of(item[0]);
+            assertThat(path).isRegularFile();
+            assertThat(Files.size(path)).isEqualTo(3);
+            assertThatThrownBy(() -> storage.stat(item[1]))
+                    .isInstanceOf(IllegalArgumentException.class);
+            workspace.deleteBatchFile(path);
+        }
+        assertThat(jdbc.sql("""
+                SELECT archive_object_key FROM photo_upload_batch
+                WHERE id = 'batch-unzip-test'
+                """).query(String.class).optional()).isEmpty();
+        assertThatThrownBy(() -> storage.stat(archiveKey))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

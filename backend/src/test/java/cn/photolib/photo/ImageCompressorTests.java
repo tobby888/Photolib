@@ -1,12 +1,16 @@
 package cn.photolib.photo;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import javax.imageio.ImageIO;
 import java.awt.Color;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
 import java.io.ByteArrayOutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -14,60 +18,57 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class ImageCompressorTests {
     private final ImageCompressor compressor = new ImageCompressor();
 
+    @TempDir
+    Path temporaryDirectory;
+
     @Test
     void keepsSmallPngFormatAndAlpha() throws Exception {
         BufferedImage image = new BufferedImage(20, 20, BufferedImage.TYPE_INT_ARGB);
         image.setRGB(0, 0, new Color(255, 0, 0, 64).getRGB());
-        byte[] source = encode(image, "png");
+        byte[] sourceBytes = encode(image, "png");
+        Path source = writeSource(sourceBytes, ".png");
 
-        ImageCompressor.Result result = compressor.compress(source, "image/png", 10_000);
+        ImageCompressor.FileResult result = compress(source, "image/png", 10_000);
 
-        assertThat(result.bytes()).isSameAs(source);
+        assertThat(Files.readAllBytes(result.path())).isEqualTo(sourceBytes);
         assertThat(result.width()).isEqualTo(20);
         assertThat(result.height()).isEqualTo(20);
         assertThat(result.contentType()).isEqualTo("image/png");
-        assertThat(ImageIO.read(new java.io.ByteArrayInputStream(result.bytes()))
-                .getColorModel().hasAlpha()).isTrue();
+        assertThat(ImageIO.read(result.path().toFile()).getColorModel().hasAlpha()).isTrue();
     }
 
     @Test
     void compressesJpegBelowTarget() throws Exception {
-        BufferedImage image = new BufferedImage(1000, 1000, BufferedImage.TYPE_INT_RGB);
-        for (int x = 0; x < image.getWidth(); x++) {
-            for (int y = 0; y < image.getHeight(); y++) {
-                image.setRGB(x, y, new Color((x * 31 + y) & 255, (x + y * 17) & 255,
-                        (x * y) & 255).getRGB());
-            }
-        }
-        byte[] source = encode(image, "jpg");
+        BufferedImage image = noisyImage(1000, 1000);
+        Path source = writeSource(encode(image, "jpg"), ".jpg");
 
-        ImageCompressor.Result result = compressor.compress(source, "image/jpeg", 80_000);
+        ImageCompressor.FileResult result = compress(source, "image/jpeg", 80_000);
 
-        assertThat(result.bytes().length).isLessThanOrEqualTo(80_000);
+        assertThat(result.size()).isLessThanOrEqualTo(80_000);
         assertThat(result.contentType()).isEqualTo("image/jpeg");
     }
 
     @Test
     void slightlyOversizedJpegKeepsOriginalDimensions() throws Exception {
-        BufferedImage image = noisyImage(1200, 800);
-        byte[] source = compressor.thumbnail(encode(image, "jpg"), "image/jpeg", 1200).bytes();
-        long target = compressor.thumbnail(source, "image/jpeg", 1200).bytes().length;
+        Path original = writeSource(encode(noisyImage(1200, 800), "jpg"), ".jpg");
+        ImageCompressor.FileResult source = thumbnail(original, "image/jpeg", 1200, 0.82);
+        long target = thumbnail(source.path(), "image/jpeg", 1200, 0.82).size();
 
-        ImageCompressor.Result result = compressor.compress(source, "image/jpeg", target);
+        ImageCompressor.FileResult result = compress(source.path(), "image/jpeg", target);
 
-        assertThat((long) result.bytes().length).isLessThanOrEqualTo(target);
+        assertThat(result.size()).isLessThanOrEqualTo(target);
         assertThat(result.width()).isEqualTo(1200);
         assertThat(result.height()).isEqualTo(800);
     }
 
     @Test
     void usesConfiguredJpegQualityForPreview() throws Exception {
-        byte[] source = encode(noisyImage(800, 600), "jpg");
+        Path source = writeSource(encode(noisyImage(800, 600), "jpg"), ".jpg");
 
-        ImageCompressor.Result lowerQuality = compressor.thumbnail(source, "image/jpeg", 480, 0.6);
-        ImageCompressor.Result higherQuality = compressor.thumbnail(source, "image/jpeg", 480, 0.9);
+        ImageCompressor.FileResult lowerQuality = thumbnail(source, "image/jpeg", 480, 0.6);
+        ImageCompressor.FileResult higherQuality = thumbnail(source, "image/jpeg", 480, 0.9);
 
-        assertThat(lowerQuality.bytes().length).isLessThan(higherQuality.bytes().length);
+        assertThat(lowerQuality.size()).isLessThan(higherQuality.size());
         assertThat(lowerQuality.width()).isEqualTo(480);
         assertThat(lowerQuality.height()).isEqualTo(360);
     }
@@ -81,12 +82,13 @@ class ImageCompressorTests {
                         (x * 3 + y) & 255).getRGB());
             }
         }
+        Path source = writeSource(encode(image, "png"), ".png");
 
-        ImageCompressor.Result result = compressor.thumbnail(
-                encode(image, "png"), "image/png", 200, 0.6);
-        BufferedImage decoded = ImageIO.read(new java.io.ByteArrayInputStream(result.bytes()));
+        ImageCompressor.FileResult result = thumbnail(source, "image/png", 200, 0.6);
+        byte[] output = Files.readAllBytes(result.path());
+        BufferedImage decoded = ImageIO.read(result.path().toFile());
 
-        assertThat(result.bytes()).startsWith((byte) 0x89, (byte) 0x50, (byte) 0x4e, (byte) 0x47);
+        assertThat(output).startsWith((byte) 0x89, (byte) 0x50, (byte) 0x4e, (byte) 0x47);
         assertThat(result.width()).isEqualTo(200);
         assertThat(result.height()).isEqualTo(150);
         assertThat(decoded.getColorModel().hasAlpha()).isTrue();
@@ -94,31 +96,29 @@ class ImageCompressorTests {
 
     @Test
     void heavilyCompressedJpegPrefersModerateQualityAndAdaptiveResize() throws Exception {
-        BufferedImage image = noisyImage(1600, 1200);
-        byte[] source = encode(image, "jpg");
+        Path source = writeSource(encode(noisyImage(1600, 1200), "jpg"), ".jpg");
 
-        ImageCompressor.Result result = compressor.compress(source, "image/jpeg", 180_000);
+        ImageCompressor.FileResult result = compress(source, "image/jpeg", 180_000);
 
-        assertThat(result.bytes().length).isLessThanOrEqualTo(180_000);
+        assertThat(result.size()).isLessThanOrEqualTo(180_000);
         assertThat(result.width()).isLessThan(1600).isGreaterThan(320);
         assertThat(result.height()).isLessThan(1200).isGreaterThan(320);
     }
 
     @Test
     void compressesCameraSizedJpegAndBuildsPreview() throws Exception {
-        byte[] source = encode(noisyImage(4000, 3000), "jpg");
+        Path source = writeSource(encode(noisyImage(4000, 3000), "jpg"), ".jpg");
 
-        ImageCompressor.Result result = compressor.compress(source, "image/jpeg", 1_500_000);
-        ImageCompressor.Result preview = compressor.thumbnail(
-                result.bytes(), result.contentType(), 480, 0.6);
+        ImageCompressor.FileResult result = compress(source, "image/jpeg", 1_500_000);
+        ImageCompressor.FileResult preview = thumbnail(result.path(), "image/jpeg", 480, 0.6);
 
-        assertThat(result.bytes().length).isLessThanOrEqualTo(1_500_000);
-        assertThat(result.bytes()).startsWith((byte) 0xff, (byte) 0xd8);
+        assertThat(result.size()).isLessThanOrEqualTo(1_500_000);
+        assertThat(Files.readAllBytes(result.path())).startsWith((byte) 0xff, (byte) 0xd8);
         assertThat(result.width()).isGreaterThan(320).isLessThanOrEqualTo(4000);
         assertThat(result.height()).isGreaterThan(320).isLessThanOrEqualTo(3000);
         assertThat(preview.width()).isEqualTo(480);
         assertThat(preview.height()).isBetween(1, 480);
-        assertThat(ImageIO.read(new java.io.ByteArrayInputStream(preview.bytes()))).isNotNull();
+        assertThat(ImageIO.read(preview.path().toFile())).isNotNull();
     }
 
     @Test
@@ -126,8 +126,11 @@ class ImageCompressorTests {
         byte[] png = encode(new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB), "png");
         writeInt(png, 16, ImageCompressor.MAX_DIMENSION + 1);
         writeInt(png, 20, ImageCompressor.MAX_DIMENSION + 1);
+        Path source = writeSource(png, ".png");
+        Path destination = temporaryDirectory.resolve("oversized-output.png");
 
-        assertThatThrownBy(() -> compressor.compress(png, "image/png", png.length + 1L))
+        assertThatThrownBy(() -> compressor.compress(
+                source, destination, "image/png", png.length + 1L))
                 .isInstanceOf(java.io.IOException.class)
                 .hasMessageContaining("安全上限");
     }
@@ -138,6 +141,45 @@ class ImageCompressorTests {
                 "/native/windows-x86_64/photolib-image.dll")).isNotNull();
         assertThat(ImageCompressor.class.getResource(
                 "/native/linux-x86_64/libphotolib-image.so")).isNotNull();
+    }
+
+    @Test
+    void processesImagesThroughUnicodeFilePaths() throws Exception {
+        Path source = temporaryDirectory.resolve("输入图片-活动现场.jpg");
+        Path compressed = temporaryDirectory.resolve("成品图片.jpg");
+        Path preview = temporaryDirectory.resolve("预览图片.jpg");
+        Files.write(source, encode(noisyImage(1600, 1200), "jpg"));
+
+        ImageCompressor.FileResult result = compressor.compress(
+                source, compressed, "image/jpeg", 180_000);
+        ImageCompressor.FileResult thumbnail = compressor.thumbnail(
+                compressed, preview, "image/jpeg", 480, 0.6);
+
+        assertThat(result.path()).isEqualTo(compressed);
+        assertThat(result.size()).isEqualTo(Files.size(compressed)).isLessThanOrEqualTo(180_000);
+        assertThat(thumbnail.path()).isEqualTo(preview);
+        assertThat(thumbnail.size()).isEqualTo(Files.size(preview));
+        assertThat(thumbnail.width()).isEqualTo(480);
+        assertThat(ImageIO.read(preview.toFile())).isNotNull();
+    }
+
+    private ImageCompressor.FileResult compress(Path source, String contentType,
+                                                long targetBytes) throws Exception {
+        Path destination = temporaryDirectory.resolve(UUID.randomUUID()
+                + ("image/png".equals(contentType) ? ".png" : ".jpg"));
+        return compressor.compress(source, destination, contentType, targetBytes);
+    }
+
+    private ImageCompressor.FileResult thumbnail(Path source, String contentType,
+                                                 int maxDimension, double quality) throws Exception {
+        Path destination = temporaryDirectory.resolve(UUID.randomUUID()
+                + ("image/png".equals(contentType) ? ".png" : ".jpg"));
+        return compressor.thumbnail(source, destination, contentType, maxDimension, quality);
+    }
+
+    private Path writeSource(byte[] bytes, String extension) throws Exception {
+        Path source = temporaryDirectory.resolve(UUID.randomUUID() + extension);
+        return Files.write(source, bytes);
     }
 
     private void writeInt(byte[] bytes, int offset, int value) {
