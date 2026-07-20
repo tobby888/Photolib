@@ -15,4 +15,10 @@ public interface PhotoUploadItemMapper extends BaseMapper<PhotoUploadItemEntity>
             """)
     int transition(@Param("id") Long id, @Param("expected") BatchItemStatus expected,
                    @Param("next") BatchItemStatus next, @Param("now") LocalDateTime now);
+
+    @Update("""
+            UPDATE photo_upload_item SET temp_local_path = NULL, updated_at = #{now}
+            WHERE id = #{id}
+            """)
+    int clearTempLocalPath(@Param("id") Long id, @Param("now") LocalDateTime now);
 }

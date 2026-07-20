@@ -19,4 +19,8 @@ unsigned char *pl_png_encode(const unsigned char *pixels, int width, int height,
 
 void pl_stb_free(void *pointer);
 
+unsigned char *pl_file_read_utf8(const char *path, size_t *output_length);
+
+int pl_file_write_utf8(const char *path, const unsigned char *data, size_t length);
+
 #endif

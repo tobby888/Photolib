@@ -1,12 +1,14 @@
 package cn.photolib.photo;
 
 import org.springframework.boot.task.ThreadPoolTaskExecutorBuilder;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 @Configuration(proxyBeanMethods = false)
+@EnableConfigurationProperties(PhotoProcessingProperties.class)
 public class PhotoProcessingAsyncConfig {
 
     /**
@@ -21,15 +23,15 @@ public class PhotoProcessingAsyncConfig {
     }
 
     /**
-     * Native processing keeps decoded pixels outside the JVM heap, but camera
-     * photos can still require substantial native memory. Keep photo processing
-     * serial so concurrent uploads stay within the server's total memory budget.
+     * Every production call into the Zig image processor is dispatched through
+     * this shared pool. Operators choose its fixed concurrency from .env so the
+     * server can trade throughput for a bounded native-memory budget.
      */
     @Bean(name = "photoProcessingExecutor")
-    ThreadPoolTaskExecutor photoProcessingExecutor() {
+    ThreadPoolTaskExecutor photoProcessingExecutor(PhotoProcessingProperties properties) {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(1);
-        executor.setMaxPoolSize(1);
+        executor.setCorePoolSize(properties.threads());
+        executor.setMaxPoolSize(properties.threads());
         executor.setQueueCapacity(1000);
         executor.setThreadNamePrefix("photo-processing-");
         executor.setWaitForTasksToCompleteOnShutdown(true);
@@ -39,13 +41,9 @@ public class PhotoProcessingAsyncConfig {
 
     /**
      * Preview regeneration can take a long time for a large library. Run it on
-     * its own serial executor after the application is ready so it neither
-     * delays login nor competes with newly uploaded photo processing. Kept
-     * strictly serial (not fanned out) — concurrent full-resolution JPEG
-     * decodes can take a small (1-2 core, <=2GB) production box down by
-     * starving Tomcat's request threads of both CPU and heap. See
-     * The native JPEG path uses libjpeg-turbo's scaled decode for regeneration
-     * thumbnails, reducing memory without adding concurrency.
+     * its own serial coordinator after the application is ready so it does not
+     * delay login. Individual native operations are still submitted to the
+     * shared photoProcessingExecutor and therefore obey the same memory budget.
      */
     @Bean(name = "previewRegenerationExecutor")
     ThreadPoolTaskExecutor previewRegenerationExecutor() {
@@ -59,7 +57,7 @@ public class PhotoProcessingAsyncConfig {
         return executor;
     }
 
-    /** ZIP expansion has an independent, serial memory budget. */
+    /** ZIP expansion streams entries to disk on an independent serial worker. */
     @Bean(name = "batchProcessingExecutor")
     ThreadPoolTaskExecutor batchProcessingExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();

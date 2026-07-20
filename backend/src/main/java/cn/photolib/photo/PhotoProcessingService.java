@@ -10,89 +10,129 @@ import cn.photolib.storage.StorageProperties;
 import cn.photolib.user.mapper.UserMapper;
 import cn.photolib.user.model.UserEntity;
 import lombok.RequiredArgsConstructor;
-import org.springframework.scheduling.annotation.Async;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
-import java.io.ByteArrayInputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.DigestInputStream;
+import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.HexFormat;
+import java.util.concurrent.CompletableFuture;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class PhotoProcessingService {
     private final PhotoMapper photoMapper;
     private final UserMapper userMapper;
     private final ObjectStorageService storage;
     private final StorageProperties properties;
-    private final ImageCompressor compressor;
+    private final NativeImageTaskPool nativeTasks;
+    private final PhotoProcessingWorkspace workspace;
     private final PhotoUploadItemMapper batchItemMapper;
     private final PhotoUploadBatchMapper batchMapper;
 
-    @Async("photoProcessingExecutor")
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onRequested(PhotoProcessRequested event) {
-        process(event.photoId());
+        submit(event.photoId()).exceptionally(exception -> {
+            log.error("提交的图片处理任务异常结束: photoId={}", event.photoId(), exception);
+            return null;
+        });
     }
 
-    @Transactional
-    public void process(Long photoId) {
+    CompletableFuture<Void> submit(Long photoId) {
+        return nativeTasks.submit(compressor -> {
+            process(photoId, compressor);
+            return null;
+        });
+    }
+
+    private void process(Long photoId, ImageCompressor compressor) {
         PhotoEntity photo = photoMapper.selectById(photoId);
         if (photo == null || photo.getStatus() != PhotoStatus.PROCESSING) return;
+        PhotoUploadItemEntity batchItem = findBatchItem(photoId);
+        Path batchSource = null;
+        Path taskDirectory = null;
         try {
-            ObjectStorageService.ObjectInfo info = storage.stat(photo.getOriginalObjectKey());
-            if (info.size() > properties.imageMaxBytes()) {
-                throw new IllegalArgumentException("图片超过 100 MiB");
+            taskDirectory = workspace.createTaskDirectory(photoId);
+            Path source;
+            if (batchItem != null && batchItem.getTempLocalPath() != null) {
+                batchSource = workspace.resolveStoredPath(batchItem.getTempLocalPath());
+                source = batchSource;
+            } else {
+                source = workspace.taskFile(taskDirectory, "source" + extension(photo.getContentType()));
+                downloadOriginal(photo, source);
             }
-            byte[] source;
-            try (InputStream input = storage.open(photo.getOriginalObjectKey())) {
-                source = input.readAllBytes();
+            long sourceSize = Files.size(source);
+            if (sourceSize <= 0 || sourceSize > properties.imageMaxBytes()) {
+                throw new IllegalArgumentException("图片超过 100 MiB");
             }
             validateMagic(source, photo.getContentType());
             if (!"0".repeat(64).equals(photo.getSha256())
                     && !sha256(source).equalsIgnoreCase(photo.getSha256())) {
                 throw new IllegalArgumentException("图片 SHA-256 校验失败");
             }
-            ImageCompressor.Result result = compressor.compress(
-                    source, photo.getContentType(), properties.imageTargetBytes());
-            if (result.bytes().length > properties.imageTargetBytes()) {
+            if (batchSource != null) {
+                upload(photo.getOriginalObjectKey(), source, sourceSize, photo.getContentType());
+            }
+
+            Path processedPath = workspace.taskFile(taskDirectory,
+                    "processed" + extension(photo.getContentType()));
+            ImageCompressor.FileResult result = compressor.compress(
+                    source, processedPath, photo.getContentType(), properties.imageTargetBytes());
+            if (result.size() > properties.imageTargetBytes()) {
                 throw new IllegalArgumentException("图片无法在保留最低可用尺寸的同时压缩至 10 MiB");
             }
-            storage.put(photo.getObjectKey(), new ByteArrayInputStream(result.bytes()),
-                    result.bytes().length, result.contentType());
-            ImageCompressor.Result thumbnail = compressor.thumbnail(result.bytes(), result.contentType(), 480,
+            upload(photo.getObjectKey(), result.path(), result.size(), result.contentType());
+
+            Path thumbnailPath = workspace.taskFile(taskDirectory,
+                    "thumbnail" + extension(photo.getContentType()));
+            ImageCompressor.FileResult thumbnail = compressor.thumbnail(
+                    result.path(), thumbnailPath, result.contentType(), 480,
                     properties.previewCompressionRatio());
             String thumbnailKey = "thumbnails/" + photo.getId()
                     + (photo.getContentType().equals("image/png") ? ".png" : ".jpg");
-            storage.put(thumbnailKey, new ByteArrayInputStream(thumbnail.bytes()),
-                    thumbnail.bytes().length, thumbnail.contentType());
+            upload(thumbnailKey, thumbnail.path(), thumbnail.size(), thumbnail.contentType());
             UserEntity uploader = userMapper.selectById(photo.getUploadedBy());
             String extension = photo.getContentType().equals("image/png") ? "png" : "jpg";
             photo.setStoredFileName(fileName(uploader.getDisplayName(), photo.getPhotographerName(),
                     photo.getTakenAt(), extension));
-            photo.setSize((long) result.bytes().length);
+            photo.setSize(result.size());
             photo.setWidth(result.width());
             photo.setHeight(result.height());
             photo.setThumbnailObjectKey(thumbnailKey);
-            photo.setThumbnailSize((long) thumbnail.bytes().length);
+            photo.setThumbnailSize(thumbnail.size());
             photo.setOriginalDeleteAfter(LocalDateTime.now().plus(properties.originalRetention()));
             photo.setStatus(PhotoStatus.AVAILABLE);
             photo.setFailureReason(null);
         } catch (Exception ex) {
             photo.setStatus(PhotoStatus.UPLOADING);
             photo.setFailureReason(ex.getMessage());
+        } finally {
+            if (batchSource != null && batchItem != null && cleanupBatchSource(batchSource)) {
+                batchItem.setTempLocalPath(null);
+                batchItemMapper.clearTempLocalPath(batchItem.getId(), LocalDateTime.now());
+            }
+            cleanupTaskDirectory(taskDirectory);
         }
         photoMapper.updateById(photo);
-        updateBatch(photo);
+        updateBatch(photo, batchItem);
     }
 
-    private void updateBatch(PhotoEntity photo) {
-        PhotoUploadItemEntity item = batchItemMapper.selectOne(
+    private PhotoUploadItemEntity findBatchItem(Long photoId) {
+        return batchItemMapper.selectOne(
                 Wrappers.<PhotoUploadItemEntity>lambdaQuery()
-                        .eq(PhotoUploadItemEntity::getPhotoId, photo.getId()));
+                        .eq(PhotoUploadItemEntity::getPhotoId, photoId));
+    }
+
+    private void updateBatch(PhotoEntity photo, PhotoUploadItemEntity item) {
         if (item == null) return;
         item.setStatus(photo.getStatus() == PhotoStatus.AVAILABLE
                 ? BatchItemStatus.SUCCEEDED : BatchItemStatus.FAILED);
@@ -132,10 +172,44 @@ public class PhotoProcessingService {
         return value.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_").trim();
     }
 
-    private void validateMagic(byte[] bytes, String contentType) {
-        boolean jpeg = bytes.length >= 3 && (bytes[0] & 0xff) == 0xff
+    private void downloadOriginal(PhotoEntity photo, Path destination) throws Exception {
+        ObjectStorageService.ObjectInfo info = storage.stat(photo.getOriginalObjectKey());
+        if (info.size() <= 0 || info.size() > properties.imageMaxBytes()) {
+            throw new IllegalArgumentException("图片超过 100 MiB");
+        }
+        try (InputStream input = storage.open(photo.getOriginalObjectKey());
+             OutputStream output = Files.newOutputStream(destination)) {
+            copyLimited(input, output, properties.imageMaxBytes());
+        }
+    }
+
+    private void upload(String objectKey, Path source, long size, String contentType) throws Exception {
+        try (InputStream input = Files.newInputStream(source)) {
+            storage.put(objectKey, input, size, contentType);
+        }
+    }
+
+    private void copyLimited(InputStream input, OutputStream output, long limit) throws Exception {
+        byte[] buffer = new byte[64 * 1024];
+        long total = 0;
+        int read;
+        while ((read = input.read(buffer)) >= 0) {
+            if (read == 0) continue;
+            total += read;
+            if (total > limit) throw new IllegalArgumentException("图片超过 100 MiB");
+            output.write(buffer, 0, read);
+        }
+    }
+
+    private void validateMagic(Path source, String contentType) throws Exception {
+        byte[] bytes = new byte[8];
+        int length;
+        try (InputStream input = Files.newInputStream(source)) {
+            length = input.read(bytes);
+        }
+        boolean jpeg = length >= 3 && (bytes[0] & 0xff) == 0xff
                 && (bytes[1] & 0xff) == 0xd8 && (bytes[2] & 0xff) == 0xff;
-        boolean png = bytes.length >= 8 && (bytes[0] & 0xff) == 0x89
+        boolean png = length >= 8 && (bytes[0] & 0xff) == 0x89
                 && bytes[1] == 0x50 && bytes[2] == 0x4e && bytes[3] == 0x47
                 && bytes[4] == 0x0d && bytes[5] == 0x0a && bytes[6] == 0x1a && bytes[7] == 0x0a;
         if (contentType.equals("image/jpeg") && !jpeg || contentType.equals("image/png") && !png) {
@@ -143,9 +217,35 @@ public class PhotoProcessingService {
         }
     }
 
-    private String sha256(byte[] bytes) throws java.security.NoSuchAlgorithmException {
-        return java.util.HexFormat.of().formatHex(
-                java.security.MessageDigest.getInstance("SHA-256").digest(bytes));
+    private String sha256(Path source) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        try (InputStream input = new DigestInputStream(Files.newInputStream(source), digest)) {
+            input.transferTo(OutputStream.nullOutputStream());
+        }
+        return HexFormat.of().formatHex(digest.digest());
+    }
+
+    private boolean cleanupBatchSource(Path source) {
+        try {
+            workspace.deleteBatchFile(source);
+            return true;
+        } catch (RuntimeException exception) {
+            log.warn("清理 ZIP 图片临时文件失败: {}", source, exception);
+            return false;
+        }
+    }
+
+    private void cleanupTaskDirectory(Path directory) {
+        if (directory == null) return;
+        try {
+            workspace.deleteRecursively(directory);
+        } catch (RuntimeException exception) {
+            log.warn("清理图片处理辅助目录失败: {}", directory, exception);
+        }
+    }
+
+    private String extension(String contentType) {
+        return "image/png".equals(contentType) ? ".png" : ".jpg";
     }
 
     public record PhotoProcessRequested(Long photoId) {

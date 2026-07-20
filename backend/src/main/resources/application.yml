@@ -38,6 +38,9 @@ management:
         include: health,info
 
 photolib:
+  photo-processing:
+    threads: ${PHOTO_PROCESSING_THREADS:1}
+    temporary-directory: ${PHOTO_PROCESSING_TEMPORARY_DIRECTORY:./data/photo-processing}
   auth:
     access-ttl: 15m
     idle-ttl: 30m

@@ -2,7 +2,6 @@ package cn.photolib.photo;
 
 import com.sun.jna.Library;
 import com.sun.jna.Native;
-import com.sun.jna.Pointer;
 import com.sun.jna.Structure;
 
 import java.io.IOException;
@@ -30,9 +29,9 @@ final class NativeImageProcessor {
         return Holder.INSTANCE;
     }
 
-    Dimensions dimensions(byte[] source, String contentType) throws IOException {
+    Dimensions dimensions(Path source, String contentType) throws IOException {
         NativeDimensions result = new NativeDimensions();
-        int status = library.photolib_dimensions(source, source.length, format(contentType), result);
+        int status = library.photolib_dimensions_file(nativePath(source), format(contentType), result);
         result.read();
         if (status != 0) {
             throw failure(result.errorMessage);
@@ -40,36 +39,43 @@ final class NativeImageProcessor {
         return new Dimensions(result.width, result.height);
     }
 
-    ProcessedImage compress(byte[] source, String contentType, long targetBytes) throws IOException {
-        return process(source, contentType, OP_COMPRESS, targetBytes, 0, 0);
+    ProcessedFile compress(Path source, Path destination, String contentType,
+                           long targetBytes) throws IOException {
+        return processFile(source, destination, contentType, OP_COMPRESS,
+                targetBytes, 0, 0);
     }
 
-    ProcessedImage thumbnail(byte[] source, String contentType, int maxDimension,
-                             double quality) throws IOException {
-        return process(source, contentType, OP_THUMBNAIL, 0, maxDimension, quality);
+    ProcessedFile thumbnail(Path source, Path destination, String contentType,
+                            int maxDimension, double quality) throws IOException {
+        return processFile(source, destination, contentType, OP_THUMBNAIL,
+                0, maxDimension, quality);
     }
 
-    private ProcessedImage process(byte[] source, String contentType, int operation,
-                                   long targetBytes, int maxDimension, double quality) throws IOException {
-        NativeResult result = new NativeResult();
-        int status = library.photolib_process(source, source.length, format(contentType), operation,
-                targetBytes, maxDimension, quality, result);
+    private ProcessedFile processFile(Path source, Path destination, String contentType,
+                                      int operation, long targetBytes,
+                                      int maxDimension, double quality) throws IOException {
+        NativeFileResult result = new NativeFileResult();
+        int status = library.photolib_process_file(nativePath(source), nativePath(destination),
+                format(contentType), operation, targetBytes, maxDimension, quality, result);
         result.read();
         if (status != 0) {
             throw failure(result.errorMessage);
         }
-        if (result.data == null || result.length <= 0 || result.length > Integer.MAX_VALUE) {
-            if (result.data != null) {
-                library.photolib_free(result.data);
-            }
-            throw new IOException("原生图片处理器返回了无效结果");
+        if (result.length <= 0 || !Files.isRegularFile(destination)) {
+            throw new IOException("原生图片处理器未生成有效的本地文件");
         }
-        try {
-            return new ProcessedImage(result.data.getByteArray(0, (int) result.length),
-                    result.width, result.height);
-        } finally {
-            library.photolib_free(result.data);
+        return new ProcessedFile(destination, result.length, result.width, result.height);
+    }
+
+    private byte[] nativePath(Path path) {
+        String value = path.toAbsolutePath().normalize().toString();
+        if (value.indexOf('\0') >= 0) {
+            throw new IllegalArgumentException("本地图片路径包含非法字符");
         }
+        byte[] encoded = value.getBytes(StandardCharsets.UTF_8);
+        byte[] terminated = java.util.Arrays.copyOf(encoded, encoded.length + 1);
+        terminated[encoded.length] = 0;
+        return terminated;
     }
 
     private int format(String contentType) {
@@ -110,7 +116,7 @@ final class NativeImageProcessor {
     record Dimensions(int width, int height) {
     }
 
-    record ProcessedImage(byte[] bytes, int width, int height) {
+    record ProcessedFile(Path path, long length, int width, int height) {
     }
 
     @Structure.FieldOrder({"width", "height", "channels", "errorMessage"})
@@ -121,9 +127,8 @@ final class NativeImageProcessor {
         public byte[] errorMessage = new byte[ERROR_CAPACITY];
     }
 
-    @Structure.FieldOrder({"data", "length", "width", "height", "errorMessage"})
-    public static final class NativeResult extends Structure {
-        public Pointer data;
+    @Structure.FieldOrder({"length", "width", "height", "errorMessage"})
+    public static final class NativeFileResult extends Structure {
         public long length;
         public int width;
         public int height;
@@ -131,12 +136,11 @@ final class NativeImageProcessor {
     }
 
     private interface NativeLibrary extends Library {
-        int photolib_dimensions(byte[] input, long inputLength, int format, NativeDimensions output);
+        int photolib_dimensions_file(byte[] inputPath, int format, NativeDimensions output);
 
-        int photolib_process(byte[] input, long inputLength, int format, int operation,
-                             long targetBytes, int maxDimension, double quality, NativeResult output);
-
-        void photolib_free(Pointer pointer);
+        int photolib_process_file(byte[] inputPath, byte[] outputPath, int format, int operation,
+                                  long targetBytes, int maxDimension, double quality,
+                                  NativeFileResult output);
     }
 
     private record PlatformResource(String resourcePath, String fileName) {

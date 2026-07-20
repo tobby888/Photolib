@@ -9,8 +9,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 
-import java.io.ByteArrayInputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
@@ -23,6 +25,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.Objects;
+import java.util.concurrent.CompletionException;
 
 @Slf4j
 @Service
@@ -34,7 +37,8 @@ public class PreviewRegenerationService {
     private final JdbcClient jdbc;
     private final ObjectStorageService storage;
     private final StorageProperties properties;
-    private final ImageCompressor compressor;
+    private final NativeImageTaskPool nativeTasks;
+    private final PhotoProcessingWorkspace workspace;
     private final TransactionTemplate transactions;
 
     /**
@@ -149,22 +153,48 @@ public class PreviewRegenerationService {
     }
 
     private GeneratedPreview generate(PreviewPhoto photo, String generation, double ratio) {
-        byte[] source;
-        try (InputStream input = storage.open(photo.objectKey())) {
-            source = input.readAllBytes();
-        } catch (Exception exception) {
-            throw new IllegalStateException("读取图片以重建预览图失败，photoId=" + photo.id(), exception);
-        }
         try {
+            return nativeTasks.submit(compressor -> generateOnWorker(
+                    photo, generation, ratio, compressor)).join();
+        } catch (CompletionException exception) {
+            Throwable cause = exception.getCause() == null ? exception : exception.getCause();
+            throw new IllegalStateException("重新生成预览图失败，photoId=" + photo.id(), cause);
+        }
+    }
+
+    private GeneratedPreview generateOnWorker(PreviewPhoto photo, String generation, double ratio,
+                                               ImageCompressor compressor) throws Exception {
+        Path taskDirectory = workspace.createTaskDirectory(photo.id());
+        try {
+            Path source = workspace.taskFile(taskDirectory, "source.img");
+            ObjectStorageService.ObjectInfo info = storage.stat(photo.objectKey());
+            if (info.size() <= 0 || info.size() > properties.imageMaxBytes()) {
+                throw new IllegalArgumentException("预览图来源文件超过图片大小上限");
+            }
+            try (InputStream input = storage.open(photo.objectKey());
+                 OutputStream output = Files.newOutputStream(source)) {
+                copyLimited(input, output, properties.imageMaxBytes());
+            }
             String contentType = normalizedContentType(source, photo.contentType());
-            ImageCompressor.Result preview = compressor.thumbnail(
-                    source, contentType, MAX_DIMENSION, ratio);
+            Path output = workspace.taskFile(taskDirectory,
+                    "preview" + ("image/png".equals(contentType) ? ".png" : ".jpg"));
+            ImageCompressor.FileResult preview = compressor.thumbnail(
+                    source, output, contentType, MAX_DIMENSION, ratio);
             String previewKey = previewKey(generation, photo.id(), contentType);
-            storage.put(previewKey, new ByteArrayInputStream(preview.bytes()),
-                    preview.bytes().length, preview.contentType());
-            return new GeneratedPreview(photo.id(), previewKey, preview.bytes().length);
-        } catch (Exception exception) {
-            throw new IllegalStateException("重新生成预览图失败，photoId=" + photo.id(), exception);
+            try (InputStream input = Files.newInputStream(preview.path())) {
+                storage.put(previewKey, input, preview.size(), preview.contentType());
+            }
+            return new GeneratedPreview(photo.id(), previewKey, preview.size());
+        } finally {
+            cleanupTaskDirectory(taskDirectory);
+        }
+    }
+
+    private void cleanupTaskDirectory(Path directory) {
+        try {
+            workspace.deleteRecursively(directory);
+        } catch (RuntimeException exception) {
+            log.warn("清理预览图处理辅助目录失败: {}", directory, exception);
         }
     }
 
@@ -230,16 +260,33 @@ public class PreviewRegenerationService {
         return BigDecimal.valueOf(value).setScale(4, RoundingMode.HALF_UP);
     }
 
-    private String normalizedContentType(byte[] bytes, String declared) {
-        boolean jpeg = bytes.length >= 3 && (bytes[0] & 0xff) == 0xff
+    private String normalizedContentType(Path source, String declared) throws Exception {
+        byte[] bytes = new byte[8];
+        int length;
+        try (InputStream input = Files.newInputStream(source)) {
+            length = input.read(bytes);
+        }
+        boolean jpeg = length >= 3 && (bytes[0] & 0xff) == 0xff
                 && (bytes[1] & 0xff) == 0xd8 && (bytes[2] & 0xff) == 0xff;
-        boolean png = bytes.length >= 8 && (bytes[0] & 0xff) == 0x89
+        boolean png = length >= 8 && (bytes[0] & 0xff) == 0x89
                 && bytes[1] == 0x50 && bytes[2] == 0x4e && bytes[3] == 0x47
                 && bytes[4] == 0x0d && bytes[5] == 0x0a && bytes[6] == 0x1a && bytes[7] == 0x0a;
         if (jpeg) return "image/jpeg";
         if (png) return "image/png";
         if ("image/jpeg".equals(declared) || "image/png".equals(declared)) return declared;
         throw new IllegalArgumentException("不支持的图片格式");
+    }
+
+    private void copyLimited(InputStream input, OutputStream output, long limit) throws Exception {
+        byte[] buffer = new byte[64 * 1024];
+        long total = 0;
+        int read;
+        while ((read = input.read(buffer)) >= 0) {
+            if (read == 0) continue;
+            total += read;
+            if (total > limit) throw new IllegalArgumentException("图片超过大小上限");
+            output.write(buffer, 0, read);
+        }
     }
 
     private String generationId(BigDecimal ratio) {

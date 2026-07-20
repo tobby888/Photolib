@@ -36,7 +36,9 @@
 
 ## 原生图片处理与 Fat JAR
 
-上传后的成品图压缩、缩略图生成和后台预览图重建不再使用 Java ImageIO，而是统一调用 `backend/native/` 中的 Zig 原生组件。JPEG 解码与编码使用 libjpeg-turbo 3.1.4.1（启用 x86-64 SIMD），PNG 解码、无损编码和透明通道处理使用固定版本的 stb；小于成品图目标体积的图片仍只读取尺寸元数据，不进行完整像素解码。
+上传后的成品图压缩、缩略图生成和后台预览图重建不再使用 Java ImageIO，而是统一提交到共享图片处理线程池，再调用 `backend/native/` 中的 Zig 原生组件。Java 只向 Zig 传递受管本地文件路径，Zig 从文件读取并把结果写回文件，Java 随后以流式方式上传原图、成品图和预览图并清理辅助文件。JPEG 解码与编码使用 libjpeg-turbo 3.1.4.1（启用 x86-64 SIMD），PNG 解码、无损编码和透明通道处理使用固定版本的 stb；小于成品图目标体积的图片仍只读取尺寸元数据，不进行完整像素解码。
+
+`PHOTO_PROCESSING_THREADS` 控制共享线程池的固定线程数，范围为 1～32、默认 1。每个工作线程都可能同时持有一张高像素图片的原生像素缓冲，不应简单按 CPU 核数设置；应结合服务器总内存和真实相机大图压力测试逐步提高。ZIP 条目会以 64 KiB 缓冲流式解压到 `PHOTO_PROCESSING_TEMPORARY_DIRECTORY`，不会完整进入 Java 堆；该目录需要具备足够磁盘空间并允许服务账号读写。
 
 Maven 在 `generate-resources` 阶段分别交叉编译以下两个 x86-64 组件，并将它们同时写入 Spring Boot Fat JAR：
 
@@ -92,6 +94,8 @@ ADMIN_DISPLAY_NAME=系统管理员
 SPRING_PROFILES_ACTIVE=local
 LOCAL_STORAGE_SIGNING_SECRET=replace_with_a_random_secret
 PREVIEW_COMPRESSION_RATIO=0.6
+PHOTO_PROCESSING_THREADS=1
+PHOTO_PROCESSING_TEMPORARY_DIRECTORY=./data/photo-processing
 ```
 
 然后启动服务：
@@ -208,6 +212,8 @@ OSS_PUBLIC_ENDPOINT=https://oss-cn-hangzhou.aliyuncs.com
 OSS_ACCESS_KEY_ID=your_access_key_id
 OSS_ACCESS_KEY_SECRET=your_access_key_secret
 PREVIEW_COMPRESSION_RATIO=0.6
+PHOTO_PROCESSING_THREADS=1
+PHOTO_PROCESSING_TEMPORARY_DIRECTORY=/opt/photolib/data/photo-processing
 ```
 
 `PREVIEW_COMPRESSION_RATIO` 控制预览图的压缩质量，默认值为 `0.6`，有效范围为大于 `0` 且不超过 `1`。数值越小，JPEG 预览图通常越小，但画质也会相应降低；PNG 预览图仍保持 PNG 格式、无损编码和透明通道，不会转换为 JPEG。
@@ -236,6 +242,8 @@ Linux 服务器应按照下方“Linux 服务端部署”章节运行编译好�
 | `OSS_BUCKET`、`OSS_ENDPOINT` | 私有 OSS Bucket 与地域 Endpoint |
 | `OSS_ACCESS_KEY_ID`、`OSS_ACCESS_KEY_SECRET` | OSS 访问凭据 |
 | `PREVIEW_COMPRESSION_RATIO` | 预览图压缩质量，取值 `(0, 1]`，默认 `0.6`；变化后会在服务就绪后于后台全量重建预览图 |
+| `PHOTO_PROCESSING_THREADS` | Zig 图片处理共享线程池大小，取值 `1`～`32`，默认 `1`；增大前必须核算每张大图的原生内存峰值 |
+| `PHOTO_PROCESSING_TEMPORARY_DIRECTORY` | ZIP 解压和图片处理辅助文件目录，默认 `./data/photo-processing`；生产环境应放在容量充足的本地磁盘 |
 | `DIRECTMAIL_REGION_ID`、`DIRECTMAIL_ACCOUNT_NAME` | DirectMail 地域与发信地址 |
 | `DIRECTMAIL_ACCESS_KEY_ID`、`DIRECTMAIL_ACCESS_KEY_SECRET` | DirectMail 访问凭据 |
 | `ADMIN_INITIAL_PASSWORD` | 首次启动管理员密码 |
@@ -326,6 +334,8 @@ OSS_ENDPOINT=https://oss-cn-hangzhou.aliyuncs.com
 OSS_ACCESS_KEY_ID=your_access_key_id
 OSS_ACCESS_KEY_SECRET=your_access_key_secret
 PREVIEW_COMPRESSION_RATIO=0.6
+PHOTO_PROCESSING_THREADS=1
+PHOTO_PROCESSING_TEMPORARY_DIRECTORY=/opt/photolib/data/photo-processing
 
 DIRECTMAIL_REGION_ID=cn-hangzhou
 DIRECTMAIL_ACCOUNT_NAME=

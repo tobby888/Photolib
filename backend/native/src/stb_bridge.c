@@ -1,8 +1,14 @@
 #include "stb_bridge.h"
 
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <wchar.h>
+#endif
 
 #define STBI_ONLY_PNG
 #define STB_IMAGE_IMPLEMENTATION
@@ -87,4 +93,74 @@ unsigned char *pl_png_encode(const unsigned char *pixels, int width, int height,
 
 void pl_stb_free(void *pointer) {
     stbi_image_free(pointer);
+}
+
+static FILE *open_utf8(const char *path, const char *mode) {
+#ifdef _WIN32
+    int path_length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                          path, -1, NULL, 0);
+    int mode_length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                          mode, -1, NULL, 0);
+    if (path_length <= 0 || mode_length <= 0) return NULL;
+
+    wchar_t *wide_path = (wchar_t *)malloc((size_t)path_length * sizeof(wchar_t));
+    wchar_t *wide_mode = (wchar_t *)malloc((size_t)mode_length * sizeof(wchar_t));
+    if (wide_path == NULL || wide_mode == NULL) {
+        free(wide_path);
+        free(wide_mode);
+        return NULL;
+    }
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1,
+                            wide_path, path_length) <= 0 ||
+        MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, mode, -1,
+                            wide_mode, mode_length) <= 0) {
+        free(wide_path);
+        free(wide_mode);
+        return NULL;
+    }
+    FILE *file = _wfopen(wide_path, wide_mode);
+    free(wide_path);
+    free(wide_mode);
+    return file;
+#else
+    return fopen(path, mode);
+#endif
+}
+
+unsigned char *pl_file_read_utf8(const char *path, size_t *output_length) {
+    if (path == NULL || output_length == NULL) return NULL;
+    FILE *file = open_utf8(path, "rb");
+    if (file == NULL) return NULL;
+    if (fseek(file, 0, SEEK_END) != 0) {
+        fclose(file);
+        return NULL;
+    }
+    long signed_length = ftell(file);
+    if (signed_length <= 0 || fseek(file, 0, SEEK_SET) != 0) {
+        fclose(file);
+        return NULL;
+    }
+    size_t length = (size_t)signed_length;
+    unsigned char *data = (unsigned char *)malloc(length);
+    if (data == NULL) {
+        fclose(file);
+        return NULL;
+    }
+    size_t read = fread(data, 1, length, file);
+    int close_result = fclose(file);
+    if (read != length || close_result != 0) {
+        free(data);
+        return NULL;
+    }
+    *output_length = length;
+    return data;
+}
+
+int pl_file_write_utf8(const char *path, const unsigned char *data, size_t length) {
+    if (path == NULL || data == NULL || length == 0) return 0;
+    FILE *file = open_utf8(path, "wb");
+    if (file == NULL) return 0;
+    size_t written = fwrite(data, 1, length, file);
+    int close_result = fclose(file);
+    return written == length && close_result == 0;
 }
