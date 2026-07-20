@@ -190,7 +190,10 @@ function Shell() {
   if (user.mustChangePassword) return <Navigate to="/initial-password" replace />
   const selected = location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`
 
-  return <Layout className="app-shell">
+  return <Layout className="app-shell" onPointerMove={(event) => {
+    event.currentTarget.style.setProperty('--pointer-x', `${event.clientX}px`)
+    event.currentTarget.style.setProperty('--pointer-y', `${event.clientY}px`)
+  }}>
     <Sider className="side-nav" width={258} collapsedWidth={mobile ? 0 : 76}
       collapsed={collapsed} breakpoint="md" trigger={null}>
       <div className="brand" onClick={() => navigate('/')}>
@@ -214,9 +217,15 @@ function Shell() {
     </Sider>
     <Layout>
       <Header className="topbar">
-        <Button type="text" className="collapse-button"
-          icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-          onClick={() => setCollapsed(!collapsed)} />
+        <div className="topbar-leading">
+          <Button type="text" className="collapse-button"
+            icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+            onClick={() => setCollapsed(!collapsed)} />
+          <div className="topbar-context">
+            <span>PHOTOLIB /</span>
+            <strong>{nav.find((item) => item.key === selected)?.label}</strong>
+          </div>
+        </div>
         <div className="topbar-actions">
           <Popover open={notificationOpen} onOpenChange={(open) => {
             setNotificationOpen(open)
@@ -274,23 +283,25 @@ function Shell() {
         {previewStatus?.status === 'FAILED' &&
           <Alert className="preview-generation-alert" type="warning" showIcon
             message={previewStatus.message} description={previewStatus.errorMessage} />}
-        <Suspense fallback={<div className="route-loading">正在整理工作台…</div>}><Routes>
-          <Route path="/" element={<DashboardPage />} />
-          <Route path="/projects" element={<ProjectsPage />} />
-          <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
-          <Route path="/requests" element={<RequestsPage />} />
-          <Route path="/requests/:requestId" element={<RequestDeliveryPage />} />
-          <Route path="/photos" element={<PhotosPage />} />
-          <Route path="/photos/batch-upload" element={<BatchUploadPage />} />
-          <Route path="/worklogs" element={<WorklogsPage />} />
-          <Route path="/directory" element={<DirectoryPage />} />
-          <Route path="/notifications" element={<NotificationsPage />} />
-          <Route path="/notifications/:notificationId" element={<NotificationDetailPage />} />
-          <Route path="/statistics" element={user.role === 'CAMPUS_MANAGER' ? <Navigate to="/" /> : <StatisticsPage />} />
-          <Route path="/manager-campuses" element={user.role === 'CAMPUS_MANAGER' ? <Navigate to="/" /> : <ManagerCampusesPage />} />
-          <Route path="/admin" element={user.role === 'ADMIN' ? <AdminPage /> : <Navigate to="/" />} />
-          <Route path="*" element={<NotFound />} />
-        </Routes></Suspense>
+        <div className="route-stage" key={location.pathname}>
+          <Suspense fallback={<div className="route-loading">正在整理工作台…</div>}><Routes>
+            <Route path="/" element={<DashboardPage />} />
+            <Route path="/projects" element={<ProjectsPage />} />
+            <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
+            <Route path="/requests" element={<RequestsPage />} />
+            <Route path="/requests/:requestId" element={<RequestDeliveryPage />} />
+            <Route path="/photos" element={<PhotosPage />} />
+            <Route path="/photos/batch-upload" element={<BatchUploadPage />} />
+            <Route path="/worklogs" element={<WorklogsPage />} />
+            <Route path="/directory" element={<DirectoryPage />} />
+            <Route path="/notifications" element={<NotificationsPage />} />
+            <Route path="/notifications/:notificationId" element={<NotificationDetailPage />} />
+            <Route path="/statistics" element={user.role === 'CAMPUS_MANAGER' ? <Navigate to="/" /> : <StatisticsPage />} />
+            <Route path="/manager-campuses" element={user.role === 'CAMPUS_MANAGER' ? <Navigate to="/" /> : <ManagerCampusesPage />} />
+            <Route path="/admin" element={user.role === 'ADMIN' ? <AdminPage /> : <Navigate to="/" />} />
+            <Route path="*" element={<NotFound />} />
+          </Routes></Suspense>
+        </div>
       </Content>
     </Layout>
   </Layout>
