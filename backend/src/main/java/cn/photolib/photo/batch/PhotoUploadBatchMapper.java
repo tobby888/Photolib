@@ -18,7 +18,25 @@ public interface PhotoUploadBatchMapper extends BaseMapper<PhotoUploadBatchEntit
 
     @Update("""
             UPDATE photo_upload_batch SET archive_object_key = NULL, updated_at = #{now}
-            WHERE id = #{id}
+            WHERE id = #{id} AND archive_object_key = #{objectKey}
             """)
-    int clearArchiveObjectKey(@Param("id") String id, @Param("now") LocalDateTime now);
+    int clearArchiveObjectKey(@Param("id") String id, @Param("objectKey") String objectKey,
+                              @Param("now") LocalDateTime now);
+
+    @Update("""
+            UPDATE photo_upload_batch
+            SET status = 'WAITING_METADATA', total_count = #{totalCount},
+                failure_reason = NULL, updated_at = #{now}
+            WHERE id = #{id} AND status = 'PROCESSING'
+            """)
+    int finishExtraction(@Param("id") String id, @Param("totalCount") int totalCount,
+                         @Param("now") LocalDateTime now);
+
+    @Update("""
+            UPDATE photo_upload_batch
+            SET status = 'FAILED', failure_reason = #{failureReason}, updated_at = #{now}
+            WHERE id = #{id} AND status = 'PROCESSING'
+            """)
+    int failExtraction(@Param("id") String id, @Param("failureReason") String failureReason,
+                       @Param("now") LocalDateTime now);
 }
