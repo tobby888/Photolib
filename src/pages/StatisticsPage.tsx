@@ -66,7 +66,7 @@ export default function StatisticsPage() {
         <Col xs={24} xl={9}><Card title="采纳贡献">
           <div className="ranking-list">{data.members.slice().sort((a,b) => b.adoptedCount - a.adoptedCount).slice(0, 6).map((member, index) => <div className="ranking-item" key={`${member.studentId}-${member.campus}`}>
             <span className={`rank rank-${index + 1}`}>{index + 1}</span><div><strong>{member.displayName}</strong><Typography.Text type="secondary">{member.campus}</Typography.Text></div>
-            <Progress percent={Math.round(member.adoptedCount / maxAdopted * 100)} showInfo={false} strokeColor="#e9b16c" />
+            <Progress percent={Math.round(member.adoptedCount / maxAdopted * 100)} showInfo={false} strokeColor="#4682B4" />
             <strong>{member.adoptedCount} 张</strong>
           </div>)}</div>
         </Card></Col>

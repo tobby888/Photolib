@@ -194,8 +194,8 @@ function Shell() {
     event.currentTarget.style.setProperty('--pointer-x', `${event.clientX}px`)
     event.currentTarget.style.setProperty('--pointer-y', `${event.clientY}px`)
   }}>
-    <Sider className="side-nav" width={258} collapsedWidth={mobile ? 0 : 76}
-      collapsed={collapsed} breakpoint="md" trigger={null}>
+    <Sider className="side-nav" width={236} collapsedWidth={mobile ? 0 : 72}
+      collapsed={collapsed} breakpoint="md" trigger={null} theme="light">
       <div className="brand" onClick={() => navigate('/')}>
         <div className={`brand-mark ${branding.iconType === 'custom' ? 'brand-mark-custom' : ''}`}>
           {branding.iconType === 'custom' && branding.customIconUrl
@@ -206,7 +206,7 @@ function Shell() {
       </div>
       <div className="side-nav-scroll">
         {!collapsed && <Typography.Text className="nav-section">工作空间</Typography.Text>}
-        <Menu theme="dark" mode="inline" selectedKeys={[selected]} items={nav}
+        <Menu theme="light" mode="inline" selectedKeys={[selected]} items={nav}
           onClick={({ key }) => { navigate(key); if (mobile) setCollapsed(true) }} />
       </div>
       <div className="side-foot">
@@ -264,7 +264,7 @@ function Shell() {
               onClick: async () => { await logout(); message.success('已安全退出'); navigate('/login') } },
           ] }}>
             <Space className="user-menu">
-              <Avatar style={{ background: '#e9b16c', color: '#173b35' }}>{user.displayName.slice(0, 1)}</Avatar>
+              <Avatar style={{ background: '#E0FFFF', color: '#4682B4' }}>{user.displayName.slice(0, 1)}</Avatar>
               {!mobile && <div><strong>{user.displayName}</strong><span>{roleName[user.role]}</span></div>}
             </Space>
           </Dropdown>

@@ -66,7 +66,7 @@ export default function InitialPasswordPage() {
         </Form.Item>
         <div className="password-strength">
           <Progress percent={strength} showInfo={false} size="small"
-            strokeColor={strength < 60 ? '#c57a3d' : '#3f7b65'} />
+            strokeColor={strength < 60 ? '#87CEFA' : '#4682B4'} />
           <Typography.Text type="secondary">{strength < 60 ? '请继续增强密码' : strength < 100 ? '密码强度良好' : '密码强度很高'}</Typography.Text>
         </div>
         <Form.Item label="确认新密码" name="confirmPassword" dependencies={['newPassword']} rules={[
