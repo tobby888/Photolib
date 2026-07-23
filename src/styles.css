@@ -2085,6 +2085,7 @@ body {
 .story-meta { color: rgba(255, 255, 255, .56); }
 .login-form-side { background: var(--porcelain-paper) !important; }
 .login-card {
+  width: min(520px, 100%);
   border: 0;
   border-radius: 0;
   background: transparent !important;
@@ -2092,7 +2093,7 @@ body {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
-.login-card .ant-card-body { padding: 0; }
+.login-card .ant-card-body { padding: 40px; }
 .login-card h2 { color: var(--porcelain-ink); }
 .login-card > .ant-card-body > p { color: var(--porcelain-muted); }
 .login-help { color: var(--sky-muted) !important; }
@@ -2135,7 +2136,7 @@ body {
   .contact-sheet { grid-template-columns: repeat(2, 1fr); grid-auto-rows: 150px; }
   .queue-item { grid-template-columns: 34px minmax(0, 1fr); }
   .queue-item .ant-progress { grid-column: 2; }
-  .login-card .ant-card-body { padding: 0; }
+  .login-card .ant-card-body { padding: 28px 22px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
