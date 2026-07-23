@@ -15,6 +15,9 @@ import java.io.IOException;
 @Component
 public class EndpointUploadLimitFilter extends OncePerRequestFilter {
     private static final long MULTIPART_OVERHEAD = 64 * 1024;
+    private static final long SCHEDULED_ICON_MULTIPART_OVERHEAD = 1024 * 1024;
+    private static final long BRAND_ICON_MAX_BYTES = 512L * 1024;
+    private static final int SCHEDULED_ICON_MAX_COUNT = 20;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
@@ -44,10 +47,16 @@ public class EndpointUploadLimitFilter extends OncePerRequestFilter {
     }
 
     private long limitFor(HttpServletRequest request) {
-        if (!"POST".equals(request.getMethod())) return -1;
         String path = request.getRequestURI();
-        if (path.endsWith("/branding/icon")) return 512L * 1024 + MULTIPART_OVERHEAD;
-        if (path.endsWith("/description-images") || path.endsWith("/notifications/images")) {
+        if ("POST".equals(request.getMethod()) && path.endsWith("/branding/icon")) {
+            return BRAND_ICON_MAX_BYTES + MULTIPART_OVERHEAD;
+        }
+        if ("PUT".equals(request.getMethod()) && path.endsWith("/branding/scheduled-icons")) {
+            return SCHEDULED_ICON_MAX_COUNT * BRAND_ICON_MAX_BYTES
+                    + SCHEDULED_ICON_MULTIPART_OVERHEAD;
+        }
+        if ("POST".equals(request.getMethod())
+                && (path.endsWith("/description-images") || path.endsWith("/notifications/images"))) {
             return 5L * 1024 * 1024 + MULTIPART_OVERHEAD;
         }
         return -1;

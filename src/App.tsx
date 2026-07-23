@@ -103,6 +103,15 @@ function Shell() {
     window.addEventListener('branding-updated', loadBranding)
     return () => window.removeEventListener('branding-updated', loadBranding)
   }, [])
+  useEffect(() => {
+    if (!branding.nextIconRefreshAt) return
+    const refreshAt = Date.parse(branding.nextIconRefreshAt)
+    if (!Number.isFinite(refreshAt)) return
+    const timer = window.setTimeout(() => {
+      window.dispatchEvent(new Event('branding-updated'))
+    }, Math.max(1000, refreshAt - Date.now() + 1000))
+    return () => window.clearTimeout(timer)
+  }, [branding.nextIconRefreshAt])
   const loadNotifications = async () => {
     try {
       const [items, unread] = await Promise.all([
@@ -189,6 +198,8 @@ function Shell() {
   if (!user) return <Navigate to="/login" replace state={{ from: location }} />
   if (user.mustChangePassword) return <Navigate to="/initial-password" replace />
   const selected = location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`
+  const displayIconType = branding.displayIconType ?? branding.iconType
+  const displayIconUrl = branding.displayIconUrl ?? branding.customIconUrl
 
   return <Layout className="app-shell" onPointerMove={(event) => {
     event.currentTarget.style.setProperty('--pointer-x', `${event.clientX}px`)
@@ -197,9 +208,9 @@ function Shell() {
     <Sider className="side-nav" width={236} collapsedWidth={mobile ? 0 : 72}
       collapsed={collapsed} breakpoint="md" trigger={null} theme="light">
       <div className="brand" onClick={() => navigate('/')}>
-        <div className={`brand-mark ${branding.iconType === 'custom' ? 'brand-mark-custom' : ''}`}>
-          {branding.iconType === 'custom' && branding.customIconUrl
-            ? <img src={branding.customIconUrl} alt="" />
+        <div className={`brand-mark ${displayIconType === 'custom' ? 'brand-mark-custom' : ''}`}>
+          {displayIconType === 'custom' && displayIconUrl
+            ? <img src={displayIconUrl} alt="" />
             : brandIcons[branding.builtinIcon] || brandIcons.camera}
         </div>
         {!collapsed && <BrandCopy title={branding.title} slogan={branding.slogan} />}

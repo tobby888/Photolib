@@ -180,6 +180,15 @@ export interface BrandingSettings {
   builtinIcon: 'camera' | 'aperture' | 'picture' | 'bulb' | 'star'
   customIconUrl?: string | null
   slogan: string
+  displayIconType?: 'builtin' | 'custom'
+  displayIconUrl?: string | null
+  nextIconRefreshAt?: string
+}
+
+export interface ScheduledBrandIcon {
+  id: EntityId
+  cronExpression: string
+  iconUrl: string
 }
 
 export interface Notification {

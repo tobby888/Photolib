@@ -70,6 +70,7 @@ button, input, textarea, select { font-family: inherit; }
 .branding-form { max-width: 520px; margin-top: 28px; }
 .custom-icon-preview { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
 .custom-icon-preview img { width: 48px; height: 48px; object-fit: contain; border: 1px solid #e8e4dc; border-radius: 10px; }
+.scheduled-icon-preview { margin-top: 0; }
 .nav-section { display: block; margin: 15px 24px 8px; color: rgba(255,255,255,.35) !important; font-size: 10px; letter-spacing: .18em; }
 .side-nav .ant-menu { border-inline-end: 0 !important; padding: 0 10px; }
 .side-nav .ant-menu-item { margin-block: 6px; height: 46px; line-height: 46px; border-radius: 10px; }
