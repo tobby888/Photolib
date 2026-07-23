@@ -205,8 +205,9 @@ button, input, textarea, select { font-family: inherit; }
 .photo-download-button { border-color: rgba(255, 255, 255, .82); background: rgba(255, 255, 255, .94); box-shadow: 0 2px 8px rgba(15, 31, 27, .2); }
 .photo-card h5 { margin: 0 0 8px; }
 .photo-cover { height: 230px; position: relative; overflow: hidden; background: #e8e5de; }
-.photo-cover .ant-image, .photo-cover img { width: 100%; height: 100%; object-fit: contain; transition: transform .45s ease; }
-.photo-card:hover .photo-cover img { transform: scale(1.035); }
+.photo-cover .ant-image { display: block; width: 100%; height: 100%; }
+.photo-cover .ant-image-img, .photo-cover img { width: 100%; height: 100%; object-fit: cover; object-position: center center; transition: transform .45s ease; }
+.photo-card:hover .photo-cover .ant-image-img, .photo-card:hover .photo-cover img { transform: scale(1.035); }
 .photo-overlay { position: absolute; z-index: 2; top: 12px; left: 12px; right: 12px; display: flex; align-items: flex-start; justify-content: space-between; pointer-events: none; }
 .photo-overlay > * { pointer-events: auto; }
 .photo-overlay > .photo-download-button:only-child { margin-left: auto; }
@@ -214,8 +215,9 @@ button, input, textarea, select { font-family: inherit; }
 .photo-meta { padding-bottom: 0; margin-top: 10px; }
 .image-placeholder { height: 100%; width: 100%; display: grid; place-items: center; background: linear-gradient(135deg, #d8e1dc, #b8cbc3); }
 .image-placeholder span { display: grid; place-items: center; width: 70px; height: 70px; border: 1px solid rgba(255,255,255,.6); color: white; font-size: 32px; border-radius: 50%; }
-.detail-image { height: 300px; overflow: hidden; border-radius: 12px; margin-bottom: 20px; }
-.detail-image .ant-image, .detail-image img { width: 100%; height: 100%; object-fit: contain; }
+.detail-image { border-radius: 12px; margin-bottom: 20px; display: flex; justify-content: center; background: #f0ede6; }
+.detail-image .ant-image { max-width: 100%; }
+.detail-image .ant-image-img, .detail-image img { max-width: 100%; height: auto; display: block; border-radius: 12px; }
 .detail-hero { padding: 4px 0 20px; }
 .detail-hero h3 { margin: 8px 0; }
 .workflow-steps { margin-top: 28px; display: grid; gap: 0; }
@@ -497,8 +499,9 @@ body { background: var(--studio-paper); color: var(--studio-ink); }
 .recent-gallery .ant-card-body { padding: 14px; }
 .contact-sheet { display: grid; grid-template-columns: repeat(4, 1fr); grid-auto-rows: 180px; gap: 4px; overflow: hidden; border-radius: 8px; background: #e8e8e2; }
 .contact-frame { position: relative; min-width: 0; padding: 0; overflow: hidden; border: 0; background: #e3e5df; cursor: pointer; }
-.contact-frame .ant-image, .contact-frame img { width: 100%; height: 100%; object-fit: contain; transition: transform .35s ease, filter .35s ease; }
-.contact-frame:hover img { transform: scale(1.035); filter: saturate(1.04); }
+.contact-frame .ant-image { display: block; width: 100%; height: 100%; }
+.contact-frame .ant-image-img, .contact-frame img { width: 100%; height: 100%; object-fit: cover; object-position: center center; transition: transform .35s ease, filter .35s ease; }
+.contact-frame:hover .ant-image-img, .contact-frame:hover img { transform: scale(1.035); filter: saturate(1.04); }
 .contact-caption { position: absolute; left: 0; right: 0; bottom: 0; padding: 26px 10px 9px; overflow: hidden; color: white; background: linear-gradient(transparent, rgba(7, 20, 17, .72)); font-size: 11px; text-align: left; text-overflow: ellipsis; white-space: nowrap; opacity: 0; transition: opacity .2s ease; }
 .contact-frame:hover .contact-caption, .contact-frame:focus-visible .contact-caption { opacity: 1; }
 .contact-frame:focus-visible { outline: 3px solid var(--studio-amber); outline-offset: -3px; }
@@ -568,7 +571,8 @@ body { background: var(--studio-paper); color: var(--studio-ink); }
 .delivery-gallery { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
 .delivery-gallery article { min-width: 0; }
 .delivery-gallery article > div { position: relative; height: 180px; overflow: hidden; border-radius: 10px; background: #edf0ea; }
-.delivery-gallery .ant-image, .delivery-gallery img { width: 100%; height: 100%; object-fit: contain; }
+.delivery-gallery .ant-image { display: block; width: 100%; height: 100%; }
+.delivery-gallery .ant-image-img, .delivery-gallery img { width: 100%; height: 100%; object-fit: cover; object-position: center center; }
 .delivery-gallery article > div > .ant-tag { position: absolute; left: 9px; bottom: 9px; }
 .delivery-gallery article > strong, .delivery-gallery article > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .delivery-gallery article > strong { margin-top: 9px; font-size: 13px; }
