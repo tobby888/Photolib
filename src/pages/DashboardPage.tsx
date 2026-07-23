@@ -46,8 +46,8 @@ export default function DashboardPage() {
       </div>
       <Space wrap>
         {user?.role !== 'CAMPUS_MANAGER' &&
-          <Button size="large" icon={<PlusOutlined />} onClick={() => navigate('/projects')}>新建项目</Button>}
-        <Button type="primary" size="large" icon={<CameraOutlined />} onClick={() => navigate('/photos')}>上传图片</Button>
+          <Button type="primary" size="large" icon={<PlusOutlined />} onClick={() => navigate('/projects')}>新建项目</Button>}
+        <Button size="large" icon={<CameraOutlined />} onClick={() => navigate('/photos')}>上传图片</Button>
       </Space>
     </section>
 
@@ -79,18 +79,6 @@ export default function DashboardPage() {
             </div>}
           </Card>
 
-          <Card className="work-queue" title="我的待办"
-            extra={<Button type="link" onClick={() => navigate('/requests')}>查看全部 <ArrowRightOutlined /></Button>}>
-            <List dataSource={data.requests.items.slice(0, 5)} locale={{ emptyText: '暂无待处理任务' }}
-              renderItem={(item) => <List.Item className="queue-item" onClick={() => navigate('/requests')}>
-                <div className="queue-type"><CameraOutlined /></div>
-                <div className="queue-copy">
-                  <Space wrap><Typography.Text strong>{item.title}</Typography.Text><StatusTag value={item.status} /></Space>
-                  <Typography.Text type="secondary">{dayjs(item.deadline).format('M 月 D 日 HH:mm')} 截止</Typography.Text>
-                </div>
-                <Progress percent={requestProgress[item.status]} showInfo={false} strokeColor="#28594f" />
-              </List.Item>} />
-          </Card>
         </Col>
 
         <Col xs={24} xl={8}>
@@ -100,6 +88,19 @@ export default function DashboardPage() {
               renderItem={(item) => <List.Item className="deadline-item" onClick={() => navigate('/requests')}>
                 <div className="deadline-date"><strong>{dayjs(item.deadline).format('DD')}</strong><span>{dayjs(item.deadline).format('MM 月')}</span></div>
                 <div><Typography.Text strong>{item.title}</Typography.Text><Typography.Text type="secondary">剩余 {Math.max(0, dayjs(item.deadline).diff(dayjs(), 'day'))} 天</Typography.Text></div>
+              </List.Item>} />
+          </Card>
+
+          <Card className="work-queue" title="我的待办"
+            extra={<Button type="link" onClick={() => navigate('/requests')}>查看全部 <ArrowRightOutlined /></Button>}>
+            <List dataSource={data.requests.items.slice(0, 5)} locale={{ emptyText: '暂无待处理任务' }}
+              renderItem={(item) => <List.Item className="queue-item" onClick={() => navigate('/requests')}>
+                <div className="queue-type"><CameraOutlined /></div>
+                <div className="queue-copy">
+                  <Space wrap><Typography.Text strong>{item.title}</Typography.Text><StatusTag value={item.status} /></Space>
+                  <Typography.Text type="secondary">{dayjs(item.deadline).format('M 月 D 日 HH:mm')} 截止</Typography.Text>
+                </div>
+                <Progress percent={requestProgress[item.status]} showInfo={false} strokeColor="#4682B4" />
               </List.Item>} />
           </Card>
         </Col>

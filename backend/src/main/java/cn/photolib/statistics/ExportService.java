@@ -18,6 +18,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.CellStyle;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Async;
@@ -42,6 +43,8 @@ import java.util.zip.ZipOutputStream;
 @Service
 @RequiredArgsConstructor
 public class ExportService {
+    private static final double MINUTES_PER_HOUR = 60.0;
+
     private final ExportJobMapper mapper;
     private final StatisticsService statistics;
     private final PhotoMapper photoMapper;
@@ -139,12 +142,17 @@ public class ExportService {
     public void exportWorklogs(WorklogExportRequested event) {
         try (XSSFWorkbook workbook = new XSSFWorkbook(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             Sheet worklogs = workbook.createSheet("工时统计");
-            row(worklogs, 0, "姓名", "学号", "校区", "拍摄分钟", "修图分钟", "总分钟", "被引张数");
+            row(worklogs, 0, "姓名", "学号", "校区", "拍摄时长（小时）", "修图时长（小时）", "总时长（小时）", "被引张数");
+            CellStyle hourStyle = workbook.createCellStyle();
+            hourStyle.setDataFormat(workbook.createDataFormat().getFormat("0.00"));
             int index = 1;
             for (var value : statistics.worklogs(event.from(), event.to())) {
-                row(worklogs, index++, value.memberName(), value.studentId(), value.campus(),
-                        value.shootingMinutes(), value.retouchingMinutes(), value.totalMinutes(),
+                Row exportRow = row(worklogs, index++, value.memberName(), value.studentId(), value.campus(),
+                        hours(value.shootingMinutes()), hours(value.retouchingMinutes()), hours(value.totalMinutes()),
                         value.adoptedCount());
+                for (int column = 3; column <= 5; column++) {
+                    exportRow.getCell(column).setCellStyle(hourStyle);
+                }
             }
             for (int column = 0; column < 7; column++) {
                 try {
@@ -265,12 +273,17 @@ public class ExportService {
         }
     }
 
-    private void row(Sheet sheet, int index, Object... values) {
+    private double hours(int minutes) {
+        return minutes / MINUTES_PER_HOUR;
+    }
+
+    private Row row(Sheet sheet, int index, Object... values) {
         Row row = sheet.createRow(index);
         for (int i = 0; i < values.length; i++) {
             if (values[i] instanceof Number n) row.createCell(i).setCellValue(n.doubleValue());
             else row.createCell(i).setCellValue(SpreadsheetText.safe(values[i]));
         }
+        return row;
     }
 
     private String uniqueEntryName(java.util.Set<String> used, PhotoEntity photo) {

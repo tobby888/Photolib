@@ -1,6 +1,8 @@
 package cn.photolib.statistics;
 
 import cn.photolib.storage.ObjectStorageService;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.CellType;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
@@ -16,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 
 @SpringBootTest
 class WorklogExportIntegrationTests {
@@ -112,9 +115,10 @@ class WorklogExportIntegrationTests {
                 rows.put(sheet.getRow(index).getCell(1).getStringCellValue(), sheet.getRow(index));
             }
             // 成员甲：被引按 DISTINCT 照片计为 2（photoOne 虽被两个项目采用也只算一次）。
-            assertExportRow(rows.get("20260001"), "成员甲", "测试校区", 75, 75, 150, 2);
+            assertExportRow(rows.get("20260001"), "成员甲", "测试校区", 1.25, 1.25, 2.5, 2);
             // 成员乙：仅 CONFIRMED 工时计入（20/10），SUBMITTED 的 500/500 被排除。
-            assertExportRow(rows.get("20260002"), "成员乙", "测试校区", 20, 10, 30, 0);
+            assertExportRow(rows.get("20260002"), "成员乙", "测试校区",
+                    20.0 / 60.0, 10.0 / 60.0, 0.5, 0);
         }
 
         // 本例所有被引摄影师均能匹配到已确认工时，不应产生对账告警。
@@ -242,21 +246,27 @@ class WorklogExportIntegrationTests {
         assertThat(row.getCell(0).getStringCellValue()).isEqualTo("姓名");
         assertThat(row.getCell(1).getStringCellValue()).isEqualTo("学号");
         assertThat(row.getCell(2).getStringCellValue()).isEqualTo("校区");
-        assertThat(row.getCell(3).getStringCellValue()).isEqualTo("拍摄分钟");
-        assertThat(row.getCell(4).getStringCellValue()).isEqualTo("修图分钟");
-        assertThat(row.getCell(5).getStringCellValue()).isEqualTo("总分钟");
+        assertThat(row.getCell(3).getStringCellValue()).isEqualTo("拍摄时长（小时）");
+        assertThat(row.getCell(4).getStringCellValue()).isEqualTo("修图时长（小时）");
+        assertThat(row.getCell(5).getStringCellValue()).isEqualTo("总时长（小时）");
         assertThat(row.getCell(6).getStringCellValue()).isEqualTo("被引张数");
     }
 
-    private void assertExportRow(Row row, String name, String campus, int shooting,
-                                 int retouching, int total, int adopted) {
+    private void assertExportRow(Row row, String name, String campus, double shooting,
+                                 double retouching, double total, int adopted) {
         assertThat(row).isNotNull();
         assertThat(row.getCell(0).getStringCellValue()).isEqualTo(name);
         assertThat(row.getCell(2).getStringCellValue()).isEqualTo(campus);
-        assertThat(row.getCell(3).getNumericCellValue()).isEqualTo(shooting);
-        assertThat(row.getCell(4).getNumericCellValue()).isEqualTo(retouching);
-        assertThat(row.getCell(5).getNumericCellValue()).isEqualTo(total);
+        assertHourCell(row.getCell(3), shooting);
+        assertHourCell(row.getCell(4), retouching);
+        assertHourCell(row.getCell(5), total);
         assertThat(row.getCell(6).getNumericCellValue()).isEqualTo(adopted);
+    }
+
+    private void assertHourCell(Cell cell, double expected) {
+        assertThat(cell.getCellType()).isEqualTo(CellType.NUMERIC);
+        assertThat(cell.getNumericCellValue()).isCloseTo(expected, within(0.000000001));
+        assertThat(cell.getCellStyle().getDataFormatString()).isEqualTo("0.00");
     }
 
     private ExportJobEntity waitForCompletion(String jobId) throws InterruptedException {
