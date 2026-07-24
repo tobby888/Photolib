@@ -581,3 +581,9 @@ PhotoLib/
 - [项目说明](./HELP.md)：角色、业务线与技术栈的原始说明。
 - [后端说明](./backend/README.md)：后端启动方式与当前实现范围。
 - [旧系统迁移](./docs/PHOTO_WAREHOUSE_SERVER_MIGRATION.md)：PhotoWarehouse 导出/导入迁移的详细步骤与约束。
+
+# 奶龙
+
+本项目欢迎所有的奶家人加入。在项目的 `MilkDragon`目录下可以提交大量的奶龙。大家可以在pr里面注明这次提交是奶龙，作者会秒合并的。
+
+![](C:\Users\ASUS\Desktop\P\PhotoLib\MilkDragon\惊鸿一瞥.jpg)
