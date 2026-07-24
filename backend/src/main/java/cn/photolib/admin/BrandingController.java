@@ -14,24 +14,22 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
-import javax.imageio.ImageIO;
-import javax.imageio.ImageReader;
-import javax.imageio.stream.ImageInputStream;
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZonedDateTime;
+import java.util.List;
 import java.util.Set;
-import java.util.Iterator;
 
 @RestController
 @RequiredArgsConstructor
 public class BrandingController {
     private static final int SETTING_ID = 1;
-    private static final long MAX_ICON_BYTES = 512 * 1024;
     private static final Set<String> ICONS = Set.of("camera", "aperture", "picture", "bulb", "star");
-    private static final Set<String> IMAGE_TYPES = Set.of(MediaType.IMAGE_PNG_VALUE, MediaType.IMAGE_JPEG_VALUE);
     private final BrandingSettingMapper mapper;
+    private final BrandIconValidator iconValidator;
+    private final ScheduledBrandIconService scheduledIconService;
 
     @GetMapping("/branding")
     ApiResponse<BrandingResponse> get() {
@@ -59,6 +57,7 @@ public class BrandingController {
         setting.setIconType(request.iconType());
         setting.setBuiltinIcon(request.builtinIcon());
         setting.setSlogan(request.slogan().trim());
+        setting.setUpdatedAt(LocalDateTime.now());
         if (mapper.selectById(SETTING_ID) == null) mapper.insert(setting); else mapper.updateById(setting);
         return ApiResponse.ok(toResponse(setting));
     }
@@ -66,34 +65,21 @@ public class BrandingController {
     @PostMapping(value = "/branding/icon", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasRole('ADMIN')")
     ApiResponse<BrandingResponse> uploadIcon(@RequestPart("file") MultipartFile file) throws IOException {
-        if (file.isEmpty()) throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择图标文件");
-        if (file.getSize() > MAX_ICON_BYTES) {
-            throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "图标不能超过 512 KB");
-        }
-        if (!IMAGE_TYPES.contains(file.getContentType())) {
-            throw new BusinessException(ErrorCode.UNSUPPORTED_FILE_TYPE, "图标仅支持 PNG 或 JPEG");
-        }
-        byte[] bytes = file.getBytes();
-        BufferedImage image = readIcon(bytes);
-        try (ByteArrayOutputStream normalized = new ByteArrayOutputStream()) {
-            String format = MediaType.IMAGE_PNG_VALUE.equals(file.getContentType()) ? "png" : "jpeg";
-            if (!ImageIO.write(image, format, normalized)) {
-                throw new BusinessException(ErrorCode.UNSUPPORTED_FILE_TYPE, "无法规范化图标图片");
-            }
-            bytes = normalized.toByteArray();
-        }
+        BrandIconValidator.NormalizedIcon normalized = iconValidator.normalize(file);
         BrandingSettingEntity setting = mapper.selectById(SETTING_ID);
         if (setting == null) {
             setting = defaults();
             setting.setId(SETTING_ID);
-            setting.setCustomIcon(bytes);
-            setting.setCustomIconContentType(file.getContentType());
+            setting.setCustomIcon(normalized.bytes());
+            setting.setCustomIconContentType(normalized.contentType());
             setting.setIconType("custom");
+            setting.setUpdatedAt(LocalDateTime.now());
             mapper.insert(setting);
         } else {
-            setting.setCustomIcon(bytes);
-            setting.setCustomIconContentType(file.getContentType());
+            setting.setCustomIcon(normalized.bytes());
+            setting.setCustomIconContentType(normalized.contentType());
             setting.setIconType("custom");
+            setting.setUpdatedAt(LocalDateTime.now());
             mapper.updateById(setting);
         }
         return ApiResponse.ok(toResponse(setting));
@@ -110,36 +96,50 @@ public class BrandingController {
                 .body(setting.getCustomIcon());
     }
 
+    @GetMapping("/branding/scheduled-icons")
+    @PreAuthorize("hasRole('ADMIN')")
+    ApiResponse<List<ScheduledBrandIconService.ScheduledIconView>> scheduledIcons() {
+        return ApiResponse.ok(scheduledIconService.list());
+    }
+
+    @PutMapping(value = "/branding/scheduled-icons", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasRole('ADMIN')")
+    ApiResponse<List<ScheduledBrandIconService.ScheduledIconView>> replaceScheduledIcons(
+            @RequestPart("rules") List<ScheduledIconRuleRequest> rules,
+            @RequestPart(value = "files", required = false) List<MultipartFile> files) throws IOException {
+        List<ScheduledBrandIconService.RuleInput> inputs = (rules == null ? List.<ScheduledIconRuleRequest>of() : rules)
+                .stream().map(rule -> rule == null ? null : new ScheduledBrandIconService.RuleInput(
+                        rule.id(), rule.cronExpression(), rule.fileIndex()))
+                .toList();
+        return ApiResponse.ok(scheduledIconService.replace(inputs, files));
+    }
+
+    @GetMapping("/branding/scheduled-icons/{id}/icon")
+    ResponseEntity<byte[]> scheduledIcon(@PathVariable long id) {
+        ScheduledBrandIconEntity icon = scheduledIconService.getIcon(id);
+        if (icon == null) return ResponseEntity.notFound().build();
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noCache())
+                .header("X-Content-Type-Options", "nosniff")
+                .contentType(MediaType.parseMediaType(icon.getIconContentType()))
+                .body(icon.getIcon());
+    }
+
     private BrandingResponse toResponse(BrandingSettingEntity setting) {
         if (setting == null) setting = defaults();
         String customIconUrl = setting.getCustomIcon() == null ? null
                 : "/api/v1/branding/icon?v=" + (setting.getUpdatedAt() == null ? 0 : setting.getUpdatedAt().hashCode());
+        ZonedDateTime now = ZonedDateTime.now(ScheduledBrandIconService.SYSTEM_ZONE);
+        LocalDate today = now.toLocalDate();
+        ScheduledBrandIconEntity activeIcon = scheduledIconService.findActive(today);
+        String displayIconType = activeIcon == null ? setting.getIconType() : "custom";
+        String displayIconUrl = activeIcon == null ? customIconUrl
+                : "/api/v1/branding/scheduled-icons/" + activeIcon.getId() + "/icon?v="
+                + (activeIcon.getUpdatedAt() == null ? 0 : activeIcon.getUpdatedAt().hashCode());
+        OffsetDateTime nextIconRefreshAt = today.plusDays(1)
+                .atStartOfDay(ScheduledBrandIconService.SYSTEM_ZONE).toOffsetDateTime();
         return new BrandingResponse(setting.getTitle(), setting.getIconType(), setting.getBuiltinIcon(),
-                customIconUrl, setting.getSlogan());
-    }
-
-    private BufferedImage readIcon(byte[] bytes) throws IOException {
-        try (ImageInputStream input = ImageIO.createImageInputStream(new ByteArrayInputStream(bytes))) {
-            Iterator<ImageReader> readers = ImageIO.getImageReaders(input);
-            if (!readers.hasNext()) {
-                throw new BusinessException(ErrorCode.UNSUPPORTED_FILE_TYPE, "无法识别图标图片");
-            }
-            ImageReader reader = readers.next();
-            try {
-                reader.setInput(input, true, true);
-                if (reader.getWidth(0) > 1024 || reader.getHeight(0) > 1024) {
-                    throw new BusinessException(ErrorCode.VALIDATION_ERROR,
-                            "图标尺寸不能超过 1024 × 1024 像素");
-                }
-                BufferedImage image = reader.read(0);
-                if (image == null) {
-                    throw new BusinessException(ErrorCode.UNSUPPORTED_FILE_TYPE, "无法识别图标图片");
-                }
-                return image;
-            } finally {
-                reader.dispose();
-            }
-        }
+                customIconUrl, setting.getSlogan(), displayIconType, displayIconUrl, nextIconRefreshAt);
     }
 
     private BrandingSettingEntity defaults() {
@@ -159,5 +159,8 @@ public class BrandingController {
     ) {}
 
     record BrandingResponse(String title, String iconType, String builtinIcon,
-                            String customIconUrl, String slogan) {}
+                            String customIconUrl, String slogan, String displayIconType,
+                            String displayIconUrl, OffsetDateTime nextIconRefreshAt) {}
+
+    record ScheduledIconRuleRequest(String id, String cronExpression, Integer fileIndex) {}
 }

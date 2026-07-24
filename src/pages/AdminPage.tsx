@@ -1,13 +1,14 @@
 import {
-  App, Button, Card, Form, Input, Modal, Select, Space, Switch, Table, Tabs, Tag, Typography, Upload,
+  Alert, App, Button, Card, Divider, Form, Input, Modal, Select, Space, Switch, Table, Tabs, Tag, Typography, Upload,
 } from 'antd'
 import {
   AimOutlined, BgColorsOutlined, BulbOutlined, CameraOutlined, PictureOutlined,
-  EditOutlined, FileTextOutlined, PlusOutlined, SafetyCertificateOutlined, StarOutlined, TeamOutlined, UploadOutlined,
+  ClockCircleOutlined, DeleteOutlined, EditOutlined, FileTextOutlined, PlusOutlined,
+  SafetyCertificateOutlined, StarOutlined, TeamOutlined, UploadOutlined,
 } from '@ant-design/icons'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api, emptyPage } from '../api'
-import type { BrandingSettings, Campus, PageData, User } from '../types'
+import type { BrandingSettings, Campus, PageData, ScheduledBrandIcon, User } from '../types'
 import { DataState, PageTitle, roleName } from '../components'
 import { useLoad } from '../hooks'
 import AuditLogsPanel from '../AuditLogsPanel'
@@ -20,6 +21,30 @@ interface BrandingFormValues {
 
 interface EmailFormValues {
   email?: string
+}
+
+interface ScheduledIconDraft {
+  key: string
+  id?: string
+  cronExpression: string
+  iconUrl?: string
+  file?: File
+}
+
+function ScheduledIconPreview({ file, iconUrl }: Pick<ScheduledIconDraft, 'file' | 'iconUrl'>) {
+  const [previewUrl, setPreviewUrl] = useState(iconUrl)
+
+  useEffect(() => {
+    if (!file) {
+      setPreviewUrl(iconUrl)
+      return
+    }
+    const objectUrl = URL.createObjectURL(file)
+    setPreviewUrl(objectUrl)
+    return () => URL.revokeObjectURL(objectUrl)
+  }, [file, iconUrl])
+
+  return previewUrl ? <img src={previewUrl} alt="定时图标预览" /> : null
 }
 
 export default function AdminPage() {
@@ -46,6 +71,27 @@ export default function AdminPage() {
     () => api<BrandingSettings>({ url: '/branding' }),
     { title: 'PhotoLib', iconType: 'builtin', builtinIcon: 'camera', slogan: '摄影工作站' } as BrandingSettings, [],
   )
+  const {
+    data: scheduledIcons,
+    loading: scheduledIconsLoading,
+    error: scheduledIconsError,
+    reload: reloadScheduledIcons,
+  } = useLoad(
+    () => api<ScheduledBrandIcon[]>({ url: '/branding/scheduled-icons' }),
+    [] as ScheduledBrandIcon[], [],
+  )
+  const [scheduledIconDrafts, setScheduledIconDrafts] = useState<ScheduledIconDraft[]>([])
+  const [savingScheduledIcons, setSavingScheduledIcons] = useState(false)
+
+  useEffect(() => {
+    setScheduledIconDrafts(scheduledIcons.map(icon => ({
+      key: icon.id,
+      id: icon.id,
+      cronExpression: icon.cronExpression,
+      iconUrl: icon.iconUrl,
+    })))
+  }, [scheduledIcons])
+
   const saveBranding = async () => {
     try {
       const values = await brandingForm.validateFields()
@@ -77,6 +123,61 @@ export default function AdminPage() {
       message.success('自定义图标已上传并启用')
       await reloadBranding()
     } catch (e) { message.error((e as Error).message) }
+  }
+  const addScheduledIcon = () => {
+    if (scheduledIconDrafts.length >= 20) {
+      message.warning('定时图标规则不能超过 20 条')
+      return
+    }
+    setScheduledIconDrafts(items => [...items, {
+      key: crypto.randomUUID(), cronExpression: '',
+    }])
+  }
+  const updateScheduledIcon = (key: string, values: Partial<ScheduledIconDraft>) => {
+    setScheduledIconDrafts(items => items.map(item => item.key === key ? { ...item, ...values } : item))
+  }
+  const chooseScheduledIcon = (key: string, file: File) => {
+    if (!['image/png', 'image/jpeg'].includes(file.type)) {
+      message.error('图标仅支持 PNG 或 JPEG')
+      return
+    }
+    if (file.size > 512 * 1024) {
+      message.error('图标不能超过 512 KB')
+      return
+    }
+    updateScheduledIcon(key, { file })
+  }
+  const saveScheduledIcons = async () => {
+    const missingExpression = scheduledIconDrafts.findIndex(item => !item.cronExpression.trim())
+    if (missingExpression >= 0) {
+      message.error(`请填写第 ${missingExpression + 1} 条 Cron 表达式`)
+      return
+    }
+    const missingIcon = scheduledIconDrafts.findIndex(item => !item.id && !item.file)
+    if (missingIcon >= 0) {
+      message.error(`请为第 ${missingIcon + 1} 条规则上传图标`)
+      return
+    }
+
+    setSavingScheduledIcons(true)
+    try {
+      const files: File[] = []
+      const rules = scheduledIconDrafts.map(item => {
+        const fileIndex = item.file ? files.push(item.file) - 1 : undefined
+        return { id: item.id, cronExpression: item.cronExpression.trim(), fileIndex }
+      })
+      const data = new FormData()
+      data.append('rules', new Blob([JSON.stringify(rules)], { type: 'application/json' }))
+      files.forEach(file => data.append('files', file))
+      await api<ScheduledBrandIcon[]>({ method: 'PUT', url: '/branding/scheduled-icons', data })
+      await reloadScheduledIcons()
+      window.dispatchEvent(new Event('branding-updated'))
+      message.success('定时图标规则已保存')
+    } catch (e) {
+      message.error((e as Error).message)
+    } finally {
+      setSavingScheduledIcons(false)
+    }
   }
   const createUser = async () => {
     try {
@@ -187,6 +288,51 @@ export default function AdminPage() {
                 </Form.Item>
                 <Button type="primary" onClick={() => void saveBranding()}>保存品牌设置</Button>
               </Form>
+              <Divider />
+              <div className="branding-form scheduled-icon-settings">
+                <div className="tab-toolbar"><div>
+                  <Typography.Title level={4}><ClockCircleOutlined /> 定时图标</Typography.Title>
+                  <Typography.Text type="secondary">
+                    为不同日期配置专属图标；未命中规则时继续使用上方的面板图标。
+                  </Typography.Text>
+                </div></div>
+                <Alert type="info" showIcon message="使用 Spring 6 段 Cron：秒 分 时 日 月 周"
+                  description="表达式只要在某一天内触发一次，图标就在该日全天生效（Asia/Shanghai）。例如国庆节：0 0 0 1 10 *。保存时后端会检查完整日历周期内是否有规则冲突。" />
+                <DataState loading={scheduledIconsLoading} error={scheduledIconsError} onRetry={reloadScheduledIcons}>
+                  <Space direction="vertical" size="middle" style={{ width: '100%', marginTop: 16 }}>
+                    {scheduledIconDrafts.map((item, index) => <Card key={item.key} size="small"
+                      title={`规则 ${index + 1}`}
+                      extra={<Button type="text" danger icon={<DeleteOutlined />}
+                        aria-label={`删除规则 ${index + 1}`}
+                        onClick={() => setScheduledIconDrafts(items => items.filter(rule => rule.key !== item.key))} />}>
+                      <Space direction="vertical" style={{ width: '100%' }}>
+                        <Input value={item.cronExpression} maxLength={128}
+                          placeholder="例如：0 0 0 1 10 *"
+                          onChange={event => updateScheduledIcon(item.key, { cronExpression: event.target.value })} />
+                        <Space wrap>
+                          <Upload accept="image/png,image/jpeg" maxCount={1} showUploadList={false}
+                            beforeUpload={file => { chooseScheduledIcon(item.key, file); return false }}>
+                            <Button icon={<UploadOutlined />}>{item.id ? '替换图标' : '选择图标'}</Button>
+                          </Upload>
+                          <div className="custom-icon-preview scheduled-icon-preview">
+                            <ScheduledIconPreview file={item.file} iconUrl={item.iconUrl} />
+                            <Typography.Text type="secondary">
+                              {item.file ? item.file.name : item.id ? '已保存的图标' : '尚未选择图标'}
+                            </Typography.Text>
+                          </div>
+                        </Space>
+                      </Space>
+                    </Card>)}
+                    {!scheduledIconDrafts.length && <Typography.Text type="secondary">暂无定时图标规则。</Typography.Text>}
+                    <Space wrap>
+                      <Button icon={<PlusOutlined />} disabled={scheduledIconDrafts.length >= 20}
+                        onClick={addScheduledIcon}>添加规则</Button>
+                      <Button type="primary" loading={savingScheduledIcons}
+                        onClick={() => void saveScheduledIcons()}>保存定时图标</Button>
+                    </Space>
+                  </Space>
+                </DataState>
+              </div>
             </div>
           </DataState> },
         { key: 'users', label: <span><TeamOutlined /> 账号管理</span>, children: <>

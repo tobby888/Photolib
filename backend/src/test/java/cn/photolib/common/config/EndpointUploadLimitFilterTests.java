@@ -20,4 +20,18 @@ class EndpointUploadLimitFilterTests {
         assertThat(response.getStatus()).isEqualTo(413);
         assertThat(response.getContentAsString()).contains("FILE_TOO_LARGE");
     }
+
+    @Test
+    void rejectsOversizedScheduledIconBatchOnPut() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest(
+                "PUT", "/api/v1/branding/scheduled-icons");
+        request.setRequestURI("/api/v1/branding/scheduled-icons");
+        request.setContent(new byte[12 * 1024 * 1024]);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        new EndpointUploadLimitFilter().doFilter(request, response, new MockFilterChain());
+
+        assertThat(response.getStatus()).isEqualTo(413);
+        assertThat(response.getContentAsString()).contains("FILE_TOO_LARGE");
+    }
 }
