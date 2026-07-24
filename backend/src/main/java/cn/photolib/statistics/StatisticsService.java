@@ -78,8 +78,8 @@ public class StatisticsService {
 
     public List<WorklogExportRow> worklogs(LocalDate from, LocalDate to) {
         return jdbc.sql("""
-                WITH matched_worklogs AS (
-                    SELECT w.member_student_id, w.member_name, MIN(c.name) AS campus,
+                WITH confirmed_worklogs AS (
+                    SELECT w.member_student_id, MIN(w.member_name) AS member_name, MIN(c.name) AS campus,
                            SUM(w.shooting_minutes) AS shooting_minutes,
                            SUM(w.retouching_minutes) AS retouching_minutes
                     FROM worklog w
@@ -88,29 +88,58 @@ public class StatisticsService {
                     WHERE w.deleted=0
                       AND w.status='CONFIRMED'
                       AND w.work_date BETWEEN :fromDate AND :toDate
-                    GROUP BY w.member_student_id, w.member_name
+                    GROUP BY w.member_student_id
+                ),
+                worklog_statuses AS (
+                    SELECT w.member_student_id,
+                           MAX(CASE WHEN w.status='CONFIRMED' THEN 1 ELSE 0 END) AS has_confirmed,
+                           MAX(CASE WHEN w.status='SUBMITTED' THEN 1 ELSE 0 END) AS has_submitted,
+                           MAX(CASE WHEN w.status='REJECTED' THEN 1 ELSE 0 END) AS has_rejected,
+                           MAX(CASE WHEN w.status='DRAFT' THEN 1 ELSE 0 END) AS has_draft
+                    FROM worklog w
+                    WHERE w.deleted=0
+                      AND w.work_date BETWEEN :fromDate AND :toDate
+                    GROUP BY w.member_student_id
                 ),
                 adoption_totals AS (
-                    SELECT a.photographer_student_id, COUNT(DISTINCT a.photo_id) AS adopted_count
+                    SELECT a.photographer_student_id,
+                           MIN(a.photographer_name) AS photographer_name,
+                           MIN(c.name) AS campus,
+                           COUNT(DISTINCT a.photo_id) AS adopted_count
                     FROM adoption a
                     JOIN project p ON p.id=a.project_id
+                    JOIN photo ph ON ph.id=a.photo_id
+                    LEFT JOIN campus c ON c.id=ph.campus_id
                     WHERE a.deleted=0
                       AND p.deleted=0
                       AND p.status='COMPLETED'
                       AND p.completed_at >= :fromDate AND p.completed_at < :toExclusive
-                      AND EXISTS (
-                          SELECT 1 FROM matched_worklogs mw
-                          WHERE mw.member_student_id=a.photographer_student_id
-                      )
                     GROUP BY a.photographer_student_id
+                ),
+                export_people AS (
+                    SELECT member_student_id AS student_id FROM confirmed_worklogs
+                    UNION
+                    SELECT photographer_student_id AS student_id FROM adoption_totals
                 )
-                SELECT mw.member_name, mw.member_student_id, mw.campus,
-                       mw.shooting_minutes, mw.retouching_minutes,
-                       COALESCE(a.adopted_count, 0)
-                FROM matched_worklogs mw
+                SELECT COALESCE(mw.member_name, a.photographer_name), people.student_id,
+                       COALESCE(mw.campus, a.campus),
+                       COALESCE(mw.shooting_minutes, 0), COALESCE(mw.retouching_minutes, 0),
+                       COALESCE(a.adopted_count, 0),
+                       CASE
+                           WHEN statuses.has_confirmed=1 THEN '已确认'
+                           WHEN statuses.has_submitted=1 THEN '待确认'
+                           WHEN statuses.has_rejected=1 THEN '已退回'
+                           WHEN statuses.has_draft=1 THEN '草稿'
+                           ELSE '未申报'
+                       END
+                FROM export_people people
+                LEFT JOIN confirmed_worklogs mw
+                  ON mw.member_student_id=people.student_id
                 LEFT JOIN adoption_totals a
-                  ON a.photographer_student_id=mw.member_student_id
-                ORDER BY mw.member_name, mw.member_student_id
+                  ON a.photographer_student_id=people.student_id
+                LEFT JOIN worklog_statuses statuses
+                  ON statuses.member_student_id=people.student_id
+                ORDER BY COALESCE(mw.member_name, a.photographer_name), people.student_id
                 """)
                 .param("fromDate", from)
                 .param("toDate", to)
@@ -119,7 +148,7 @@ public class StatisticsService {
                     int shooting = rs.getInt(4);
                     int retouching = rs.getInt(5);
                     return new WorklogExportRow(rs.getString(1), rs.getString(2), rs.getString(3),
-                            shooting, retouching, shooting + retouching, rs.getLong(6));
+                            shooting, retouching, shooting + retouching, rs.getLong(6), rs.getString(7));
                 }).list();
     }
 
@@ -146,7 +175,7 @@ public class StatisticsService {
     /**
      * 找出该期已完成项目中有被引（采用）记录、但其学号无法匹配到任何该期已确认工时成员的摄影师。
      * 口径与 {@link #worklogs} 的被引侧一致（项目 COMPLETED 且 completed_at 落在区间）。
-     * 这类摄影师会因学号对不上而在工时导出里被引数归零，属于潜在漏发，需要人工核对。
+     * 这类摄影师会进入工时导出并显示实际被引数，同时标注其申报/审核状态，仍需人工核对。
      */
     public List<UnmatchedAdoption> unmatchedAdoptions(LocalDate from, LocalDate to) {
         return jdbc.sql("""
@@ -183,7 +212,7 @@ public class StatisticsService {
                                      long adoptedCount) {}
     public record WorklogExportRow(String memberName, String studentId, String campus,
                                    int shootingMinutes, int retouchingMinutes, int totalMinutes,
-                                   long adoptedCount) {}
+                                   long adoptedCount, String worklogStatus) {}
     public record UnmatchedAdoption(String photographerStudentId, String photographerName,
                                     long adoptedCount) {}
 }
