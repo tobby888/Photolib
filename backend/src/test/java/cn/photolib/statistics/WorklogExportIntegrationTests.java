@@ -83,10 +83,10 @@ class WorklogExportIntegrationTests {
         long photoTwo = insertPhoto(base + 21, insideProjectId, requestId, campusId, userId,
                 "20260001", "成员甲", "inside-2-" + base + ".jpg");
         long outsidePhoto = insertPhoto(base + 22, outsideProjectId, requestId, campusId, userId,
-                "20260001", "成员甲", "outside-" + base + ".jpg");
+                "20269999", "范围外摄影师", "outside-" + base + ".jpg");
         insertAdoption(base + 30, insideProjectId, photoOne, userId, "20260001", "成员甲");
         insertAdoption(base + 31, insideProjectId, photoTwo, userId, "20260001", "成员甲");
-        insertAdoption(base + 32, outsideProjectId, outsidePhoto, userId, "20260001", "成员甲");
+        insertAdoption(base + 32, outsideProjectId, outsidePhoto, userId, "20269999", "范围外摄影师");
         // 同一张照片被第二个（同样在范围内完成的）项目再次采用；被引张数应按 DISTINCT 照片计，
         // 成员甲仍应是 2 张而非 3，避免一图多项目导致工资重复计发。
         insertAdoption(base + 33, secondInsideProjectId, photoOne, userId, "20260001", "成员甲");
@@ -115,10 +115,11 @@ class WorklogExportIntegrationTests {
                 rows.put(sheet.getRow(index).getCell(1).getStringCellValue(), sheet.getRow(index));
             }
             // 成员甲：被引按 DISTINCT 照片计为 2（photoOne 虽被两个项目采用也只算一次）。
-            assertExportRow(rows.get("20260001"), "成员甲", "测试校区", 1.25, 1.25, 2.5, 2);
+            assertExportRow(rows.get("20260001"), "成员甲", "测试校区", 1.25, 1.25, 2.5, 2, "已确认");
             // 成员乙：仅 CONFIRMED 工时计入（20/10），SUBMITTED 的 500/500 被排除。
             assertExportRow(rows.get("20260002"), "成员乙", "测试校区",
-                    20.0 / 60.0, 10.0 / 60.0, 0.5, 0);
+                    20.0 / 60.0, 10.0 / 60.0, 0.5, 0, "已确认");
+            assertThat(rows).doesNotContainKey("20269999");
         }
 
         // 本例所有被引摄影师均能匹配到已确认工时，不应产生对账告警。
@@ -130,7 +131,7 @@ class WorklogExportIntegrationTests {
     }
 
     @Test
-    void alertsWhenAdoptionHasNoMatchingConfirmedWorklog() throws Exception {
+    void exportsAndAlertsWhenAdoptionHasNoMatchingConfirmedWorklog() throws Exception {
         long base = System.nanoTime() & Long.MAX_VALUE;
         long userId = base;
         long campusId = base + 1;
@@ -171,10 +172,26 @@ class WorklogExportIntegrationTests {
 
         exports.exportWorklogs(new ExportService.WorklogExportRequested(
                 jobId, LocalDate.of(2025, 3, 1), LocalDate.of(2025, 3, 31)));
-        assertThat(waitForCompletion(jobId).getStatus()).isEqualTo("SUCCEEDED");
+        ExportJobEntity job = waitForCompletion(jobId);
+        assertThat(job.getStatus()).isEqualTo("SUCCEEDED");
+
+        try (XSSFWorkbook workbook = new XSSFWorkbook(storage.open(job.getObjectKey()))) {
+            Sheet sheet = workbook.getSheet("工时统计");
+            assertHeader(sheet.getRow(0));
+            assertThat(sheet.getLastRowNum()).isEqualTo(2);
+
+            Map<String, Row> rows = new HashMap<>();
+            for (int index = 1; index <= sheet.getLastRowNum(); index++) {
+                rows.put(sheet.getRow(index).getCell(1).getStringCellValue(), sheet.getRow(index));
+            }
+            assertExportRow(rows.get("20250001"), "有工时成员", "对账校区",
+                    1, 0, 1, 0, "已确认");
+            assertExportRow(rows.get("20259999"), "无工时摄影师", "对账校区",
+                    0, 0, 0, 1, "未申报");
+        }
 
         String message = waitForUnmatchedAdoptionAlert(jobId);
-        assertThat(message).contains("20259999").contains("1 张");
+        assertThat(message).contains("20259999").contains("1 张").contains("核对工时申报和审核状态");
     }
 
     private void insertProject(long id, long userId, String title, LocalDateTime completedAt) {
@@ -250,10 +267,11 @@ class WorklogExportIntegrationTests {
         assertThat(row.getCell(4).getStringCellValue()).isEqualTo("修图时长（小时）");
         assertThat(row.getCell(5).getStringCellValue()).isEqualTo("总时长（小时）");
         assertThat(row.getCell(6).getStringCellValue()).isEqualTo("被引张数");
+        assertThat(row.getCell(7).getStringCellValue()).isEqualTo("工时状态");
     }
 
     private void assertExportRow(Row row, String name, String campus, double shooting,
-                                 double retouching, double total, int adopted) {
+                                 double retouching, double total, int adopted, String worklogStatus) {
         assertThat(row).isNotNull();
         assertThat(row.getCell(0).getStringCellValue()).isEqualTo(name);
         assertThat(row.getCell(2).getStringCellValue()).isEqualTo(campus);
@@ -261,6 +279,7 @@ class WorklogExportIntegrationTests {
         assertHourCell(row.getCell(4), retouching);
         assertHourCell(row.getCell(5), total);
         assertThat(row.getCell(6).getNumericCellValue()).isEqualTo(adopted);
+        assertThat(row.getCell(7).getStringCellValue()).isEqualTo(worklogStatus);
     }
 
     private void assertHourCell(Cell cell, double expected) {

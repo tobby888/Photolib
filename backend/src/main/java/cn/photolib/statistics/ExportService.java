@@ -142,19 +142,19 @@ public class ExportService {
     public void exportWorklogs(WorklogExportRequested event) {
         try (XSSFWorkbook workbook = new XSSFWorkbook(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             Sheet worklogs = workbook.createSheet("工时统计");
-            row(worklogs, 0, "姓名", "学号", "校区", "拍摄时长（小时）", "修图时长（小时）", "总时长（小时）", "被引张数");
+            row(worklogs, 0, "姓名", "学号", "校区", "拍摄时长（小时）", "修图时长（小时）", "总时长（小时）", "被引张数", "工时状态");
             CellStyle hourStyle = workbook.createCellStyle();
             hourStyle.setDataFormat(workbook.createDataFormat().getFormat("0.00"));
             int index = 1;
             for (var value : statistics.worklogs(event.from(), event.to())) {
                 Row exportRow = row(worklogs, index++, value.memberName(), value.studentId(), value.campus(),
                         hours(value.shootingMinutes()), hours(value.retouchingMinutes()), hours(value.totalMinutes()),
-                        value.adoptedCount());
+                        value.adoptedCount(), value.worklogStatus());
                 for (int column = 3; column <= 5; column++) {
                     exportRow.getCell(column).setCellStyle(hourStyle);
                 }
             }
-            for (int column = 0; column < 7; column++) {
+            for (int column = 0; column < 8; column++) {
                 try {
                     worklogs.autoSizeColumn(column);
                 } catch (Exception ignored) {
@@ -246,7 +246,7 @@ public class ExportService {
 
     /**
      * 工时导出后核对：若该期存在被引（采用）但学号匹配不到已确认工时成员的摄影师，
-     * 其被引数会在导出里静默归零，属于潜在漏发工资。此处写入管理员告警提醒人工核对，
+     * 导出表会保留其被引数并标注工时状态；此处同时写入管理员告警提醒人工核对，
      * 但告警失败不得影响已成功的导出任务。
      */
     private void alertUnmatchedAdoptions(WorklogExportRequested event) {
@@ -260,7 +260,7 @@ public class ExportService {
                     .reduce((a, b) -> a + "，" + b).orElse("");
             String message = "工时导出（" + event.from() + " 至 " + event.to() + "）发现 "
                     + unmatched.size() + " 名摄影师共 " + photos
-                    + " 张被引图片无法匹配到已确认工时成员，被引数可能被漏算：" + detail;
+                    + " 张被引图片无法匹配到已确认工时成员，请核对工时申报和审核状态：" + detail;
             AdminAlertEntity alert = new AdminAlertEntity();
             alert.setType("WORKLOG_EXPORT_UNMATCHED_ADOPTIONS");
             alert.setMessage(message.length() > 1000 ? message.substring(0, 1000) : message);
