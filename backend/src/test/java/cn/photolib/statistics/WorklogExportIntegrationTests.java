@@ -256,6 +256,18 @@ class WorklogExportIntegrationTests {
         org.assertj.core.api.Assertions.assertThatThrownBy(
                 () -> statistics.members(from, to, null, campusB, null, principal))
                 .hasMessageContaining("无权查看该校区");
+
+        // 数据范围为校区、但一个授权校区都没有的账号（例如权限组的数据范围刚被从 GLOBAL
+        // 改成 CAMPUS，成员还没补授权校区）必须命中零行，而不能被当成全局范围放行全量数据。
+        var withoutCampuses = new AuthenticatedUser(userId, "scope-none", "无授权校区账号",
+                UserRole.CAMPUS_MANAGER, null, false, 98L, "PENDING_CAMPUS", "待补校区组",
+                DataScope.CAMPUS,
+                Set.of(PermissionCode.STATISTICS_DOWNLOAD, PermissionCode.WORKLOG_EXPORT), Set.of());
+
+        assertThat(statistics.members(from, to, null, null, null, withoutCampuses)).isEmpty();
+        assertThat(statistics.overview(from, to, null, withoutCampuses))
+                .containsEntry("projects", 0L).containsEntry("requests", 0L)
+                .containsEntry("photos", 0L).containsEntry("adoptions", 0L);
     }
 
     private void insertProject(long id, long userId, String title, LocalDateTime completedAt) {

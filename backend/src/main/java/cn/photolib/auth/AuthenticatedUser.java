@@ -82,4 +82,18 @@ public record AuthenticatedUser(
     public boolean hasSystemAccess() {
         return isAdministrator() || dataScope != DataScope.NONE;
     }
+
+    /**
+     * 用于统计/导出类查询的校区范围。全局范围返回空集合表示"不加校区过滤"；
+     * 校区范围永远返回非空集合，未授权任何校区时返回哨兵 -1 以命中零行。
+     * 不能直接用 {@link #campusIds()}：校区范围账号的授权校区可能为空
+     * （例如权限组的数据范围被从 GLOBAL 改成 CAMPUS 后成员尚未补授权校区），
+     * 此时"空集合"会被下游误判为全局范围而放行全量数据。
+     */
+    public Set<Long> scopedCampusIds() {
+        if (dataScope != DataScope.CAMPUS) {
+            return Set.of();
+        }
+        return campusIds == null || campusIds.isEmpty() ? Set.of(-1L) : Set.copyOf(campusIds);
+    }
 }

@@ -27,8 +27,7 @@ public class StatisticsService {
         if (principal.isCampusScoped() && campusId != null && !principal.canAccessCampus(campusId)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权查看该校区的统计数据");
         }
-        return members(from, to, projectId, campusId, userId,
-                principal.isCampusScoped() ? principal.campusIds() : Set.of());
+        return members(from, to, projectId, campusId, userId, principal.scopedCampusIds());
     }
 
     public List<MemberStatistics> members(LocalDate from, LocalDate to, Long projectId,
@@ -195,8 +194,7 @@ public class StatisticsService {
 
     public Map<String, Long> overview(LocalDate from, LocalDate to, Long projectId,
                                       AuthenticatedUser principal) {
-        return overview(from, to, projectId,
-                principal.isCampusScoped() ? principal.campusIds() : Set.of());
+        return overview(from, to, projectId, principal.scopedCampusIds());
     }
 
     private Map<String, Long> overview(LocalDate from, LocalDate to, Long projectId,

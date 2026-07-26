@@ -246,8 +246,7 @@ public class WorklogService {
     }
 
     private String campusIdList(AuthenticatedUser user) {
-        if (user.campusIds() == null || user.campusIds().isEmpty()) return "-1";
-        return user.campusIds().stream().sorted().map(String::valueOf)
+        return user.scopedCampusIds().stream().sorted().map(String::valueOf)
                 .collect(Collectors.joining(","));
     }
 

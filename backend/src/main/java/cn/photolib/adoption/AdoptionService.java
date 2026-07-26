@@ -21,6 +21,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -102,7 +103,17 @@ public class AdoptionService {
     public PageResponse<AdoptionEntity> list(Long projectId, int page, int pageSize, String studentId,
                                               AuthenticatedUser user) {
         projectService.getVisible(projectId, user);
-        return list(projectId, page, pageSize, studentId);
+        // getVisible 只校验"能看到这个选题"（参与过其中任一需求即可），并不限制选题内
+        // 其他校区的采用记录。校区范围账号必须再按图片校区收窄，否则会读到越权数据。
+        Page<AdoptionEntity> result = mapper.selectPage(Page.of(page, pageSize),
+                Wrappers.<AdoptionEntity>lambdaQuery()
+                        .eq(AdoptionEntity::getProjectId, projectId)
+                        .eq(studentId != null, AdoptionEntity::getPhotographerStudentId, studentId)
+                        .inSql(user.isCampusScoped(), AdoptionEntity::getPhotoId,
+                                "SELECT id FROM photo WHERE deleted=0 AND campus_id IN ("
+                                        + campusIdList(user) + ")")
+                        .orderByDesc(AdoptionEntity::getAdoptedAt));
+        return PageResponse.from(result);
     }
 
     @Transactional
@@ -120,7 +131,24 @@ public class AdoptionService {
     @Transactional
     public void cancel(Long projectId, Long adoptionId, AuthenticatedUser user) {
         projectService.getVisible(projectId, user);
+        if (user.isCampusScoped()) {
+            // 与 list 同理：选题可见不等于该采用记录所属图片在授权范围内。
+            AdoptionEntity adoption = mapper.selectById(adoptionId);
+            if (adoption == null || !adoption.getProjectId().equals(projectId)) {
+                throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "采用记录不存在");
+            }
+            PhotoEntity photo = photoMapper.selectById(adoption.getPhotoId());
+            if (photo == null || !user.canAccessCampus(photo.getCampusId())
+                    || !photo.getUploadedBy().equals(user.id())) {
+                throw new BusinessException(ErrorCode.FORBIDDEN, "无权取消该图片的被引标记");
+            }
+        }
         cancel(projectId, adoptionId);
+    }
+
+    private String campusIdList(AuthenticatedUser user) {
+        return user.scopedCampusIds().stream().sorted()
+                .map(String::valueOf).collect(Collectors.joining(","));
     }
 
     public List<Ranking> ranking(LocalDate from, LocalDate to, Long projectId, Long campusId) {
@@ -133,7 +161,7 @@ public class AdoptionService {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权查看该校区的统计数据");
         }
         return ranking(from, to, projectId, campusId, user.isCampusScoped(),
-                user.isCampusScoped() ? user.campusIds() : Set.of(-1L));
+                user.isCampusScoped() ? user.scopedCampusIds() : Set.of(-1L));
     }
 
     private List<Ranking> ranking(LocalDate from, LocalDate to, Long projectId, Long campusId,

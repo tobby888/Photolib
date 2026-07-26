@@ -112,6 +112,13 @@ public class PermissionGroupService {
             throw new BusinessException(ErrorCode.FORBIDDEN, "最低权限组不能编辑");
         }
         validateMutableFields(command.name(), command.dataScope(), command.permissions());
+        Set<PermissionCode> permissions = command.permissions();
+        if ("ADMIN".equals(group.getCode())) {
+            // 系统管理员组是权限系统自身的管理入口（权限组、账号、校区、操作日志都靠
+            // hasRole('ADMIN')）。允许裁剪它的权限明细会造出"能进管理页但业务权限被削掉"
+            // 的不一致状态，且没有其他角色能恢复，因此固定为全集。
+            permissions = Set.of(PermissionCode.values());
+        }
         if (!Boolean.TRUE.equals(group.getBuiltIn())) {
             group.setName(command.name().trim());
             group.setDescription(normalizeDescription(command.description()));
@@ -121,7 +128,7 @@ public class PermissionGroupService {
         if (mapper.updateById(group) != 1) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "权限组已被其他操作修改");
         }
-        replacePermissions(id, command.permissions());
+        replacePermissions(id, permissions);
         return get(id);
     }
 

@@ -113,6 +113,21 @@ class PermissionGroupServiceTests {
     }
 
     @Test
+    void administratorGroupKeepsFullPermissionMatrixEvenWhenEditRequestTriesToTrimIt() {
+        var admin = groups.get(groups.requireByCode("ADMIN").getId());
+
+        // 系统管理员组是权限系统自身的管理入口，裁剪它会造出"能进管理页但业务权限被削掉"
+        // 的不一致状态，因此写入请求里的权限明细必须被忽略。
+        var updated = groups.update(admin.id(), new PermissionGroupService.UpdateCommand(
+                admin.name(), admin.description(), DataScope.GLOBAL,
+                Set.of(PermissionCode.PHOTO_VIEW), admin.version()));
+
+        assertThat(updated.permissions()).containsExactlyInAnyOrder(PermissionCode.values());
+        assertThat(groups.get(admin.id()).permissions())
+                .containsExactlyInAnyOrder(PermissionCode.values());
+    }
+
+    @Test
     void builtInAndLowestGroupsCannotBeDeletedOrMisconfigured() {
         var admin = groups.get(groups.requireByCode("ADMIN").getId());
         var noAccess = groups.get(groups.requireByCode("NO_ACCESS").getId());

@@ -65,7 +65,7 @@ public class ExportService {
         ExportJobEntity job = newJob("MEMBER_STATISTICS", user.id());
         mapper.insert(job);
         events.publishEvent(new StatisticsExportRequested(job.getId(), from, to, projectId, campusId,
-                user.isCampusScoped() ? Set.copyOf(user.campusIds()) : Set.of()));
+                user.scopedCampusIds()));
         return job;
     }
 
@@ -103,7 +103,7 @@ public class ExportService {
         ExportJobEntity job = newJob("WORKLOGS", user.id());
         mapper.insert(job);
         events.publishEvent(new WorklogExportRequested(job.getId(), from, to,
-                user.isCampusScoped() ? Set.copyOf(user.campusIds()) : Set.of()));
+                user.scopedCampusIds()));
         return job;
     }
 
