@@ -151,6 +151,17 @@ public class RequestService {
         return request;
     }
 
+    /**
+     * Revalidates both the caller's current campus scope and the persisted participant
+     * relationship. Historical participation must not outlive a revoked campus grant.
+     */
+    public PhotoRequestEntity requireParticipantAccess(Long id, AuthenticatedUser user) {
+        PhotoRequestEntity request = get(id);
+        requireCampusAccess(request, user);
+        requireParticipantOrAdmin(id, user);
+        return request;
+    }
+
     @Transactional
     public PhotoRequestEntity publish(Long id, int version, AuthenticatedUser user) {
         requirePermission(user, PermissionCode.REQUEST_CREATE);
@@ -260,8 +271,7 @@ public class RequestService {
     @Transactional
     public PhotoRequestEntity submit(Long id, int version, AuthenticatedUser user) {
         requirePermission(user, PermissionCode.REQUEST_VIEW);
-        PhotoRequestEntity request = get(id);
-        requireParticipantOrAdmin(id, user);
+        PhotoRequestEntity request = requireParticipantAccess(id, user);
         if (request.getStatus() != RequestStatus.ACCEPTED) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "仅已接受需求可提交");
         }

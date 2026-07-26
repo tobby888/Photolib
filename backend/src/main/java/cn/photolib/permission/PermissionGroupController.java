@@ -38,6 +38,11 @@ public class PermissionGroupController {
         return ApiResponse.ok(service.list());
     }
 
+    @GetMapping("/{id}")
+    ApiResponse<PermissionGroupService.GroupView> get(@PathVariable Long id) {
+        return ApiResponse.ok(service.get(id));
+    }
+
     @PostMapping
     ApiResponse<PermissionGroupService.GroupView> create(@Valid @RequestBody CreateRequest request) {
         return ApiResponse.ok(service.create(new PermissionGroupService.CreateCommand(

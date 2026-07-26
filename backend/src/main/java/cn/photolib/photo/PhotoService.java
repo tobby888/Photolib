@@ -12,6 +12,8 @@ import cn.photolib.request.RequestService;
 import cn.photolib.request.mapper.RequestParticipantMapper;
 import cn.photolib.request.model.PhotoRequestEntity;
 import cn.photolib.request.model.RequestParticipantEntity;
+import cn.photolib.project.ProjectService;
+import cn.photolib.project.model.ProjectStatus;
 import cn.photolib.storage.ObjectStorageService;
 import cn.photolib.storage.StorageProperties;
 import cn.photolib.permission.PermissionCode;
@@ -36,6 +38,7 @@ public class PhotoService {
     private static final Logger log = LoggerFactory.getLogger(PhotoService.class);
     private final PhotoMapper mapper;
     private final RequestService requestService;
+    private final ProjectService projectService;
     private final RequestParticipantMapper participantMapper;
     private final ObjectStorageService storage;
     private final StorageProperties properties;
@@ -49,7 +52,18 @@ public class PhotoService {
         validateFile(command.fileName(), command.contentType(), command.size());
         requireUploadPermission(command.requestId(), user);
 
-        // 检查 SHA256 哈希是否重复
+        Long campusId;
+        Long projectId;
+        if (command.requestId() != null) {
+            PhotoRequestEntity request = requestService.requireParticipantAccess(command.requestId(), user);
+            campusId = request.getCampusId();
+            projectId = request.getProjectId();
+        } else {
+            campusId = requireGalleryUploadCampus(user);
+            projectId = command.projectId();
+            if (projectId != null) requireProjectUploadAccess(projectId, user);
+        }
+        // 先完成业务上下文授权，再执行可能暴露既有图片标题的全库哈希查询。
         String sha256Lower = command.sha256().toLowerCase();
         PhotoEntity existing = mapper.selectOne(Wrappers.<PhotoEntity>lambdaQuery()
                 .eq(PhotoEntity::getSha256, sha256Lower)
@@ -58,17 +72,6 @@ public class PhotoService {
         if (existing != null) {
             throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE,
                     "已经上传过该图片（标题：" + existing.getTitle() + "）");
-        }
-
-        Long campusId = user.campusId();
-        Long projectId = command.projectId();
-        if (command.requestId() != null) {
-            PhotoRequestEntity request = requestService.get(command.requestId());
-            campusId = request.getCampusId();
-            projectId = request.getProjectId();
-            if (user.isCampusScoped() && !isParticipant(command.requestId(), user.id())) {
-                throw new BusinessException(ErrorCode.FORBIDDEN, "仅需求参与人可上传图片");
-            }
         }
         // 强制拍摄者来自通讯录：解析放在文件校验、参与人校区校验之后，快照姓名/学号写入照片。
         var photographer = campusMemberService.resolvePhotographer(command.photographerContactId(), campusId);
@@ -108,6 +111,7 @@ public class PhotoService {
     public PhotoView complete(Long id, CompleteUpload command, AuthenticatedUser user) {
         PhotoEntity photo = require(id);
         requireUploaderOrAdmin(photo, user);
+        requireUploadContext(photo, user);
         if (photo.getStatus() != PhotoStatus.UPLOADING) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "图片不处于待上传状态");
         }
@@ -145,9 +149,8 @@ public class PhotoService {
                                         boolean includeAllStatuses,
                                         AuthenticatedUser user) {
         requireListPermission(projectId, requestId, user);
-        if (requestId != null && user.isCampusScoped()) {
-            requestService.get(requestId, user);
-        }
+        if (requestId != null && user.isCampusScoped()) requestService.requireParticipantAccess(requestId, user);
+        if (projectId != null) projectService.getVisible(projectId, user);
         Long effectiveUploader = user.isCampusScoped() && requestId == null ? user.id() : uploadedBy;
         // status explicitly given -> filter by it; otherwise default to AVAILABLE unless the
         // caller opts into every status (used by the project detail gallery to match photoCount).
@@ -350,6 +353,32 @@ public class PhotoService {
                 ? PermissionCode.PHOTO_UPLOAD : PermissionCode.REQUEST_PHOTO_MANAGE;
         if (!user.hasPermission(required)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权上传图片");
+        }
+    }
+
+    private void requireUploadContext(PhotoEntity photo, AuthenticatedUser user) {
+        requireUploadPermission(photo.getRequestId(), user);
+        if (photo.getRequestId() != null) {
+            requestService.requireParticipantAccess(photo.getRequestId(), user);
+        } else if (user.isCampusScoped() && !user.canAccessCampus(photo.getCampusId())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权继续处理原校区的图库上传");
+        }
+    }
+
+    private Long requireGalleryUploadCampus(AuthenticatedUser user) {
+        Long campusId = user.campusId();
+        if (user.isCampusScoped() && (campusId == null || !user.canAccessCampus(campusId))) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "校区范围账号尚未分配可用校区");
+        }
+        return campusId;
+    }
+
+    private void requireProjectUploadAccess(Long projectId, AuthenticatedUser user) {
+        if (!user.hasPermission(PermissionCode.PROJECT_ADOPT)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权将上传图片加入项目相册");
+        }
+        if (projectService.getVisible(projectId, user).getStatus() != ProjectStatus.ACTIVE) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "仅进行中项目可上传图片");
         }
     }
 

@@ -1,6 +1,7 @@
 package cn.photolib.auth;
 
 import cn.photolib.permission.DataScope;
+import cn.photolib.permission.PermissionCode;
 import cn.photolib.user.model.UserRole;
 import jakarta.servlet.FilterChain;
 import org.junit.jupiter.api.Test;
@@ -52,6 +53,26 @@ class AccessTokenFilterPermissionTests {
             verify(chain).doFilter(request, response);
             assertThat(response.getStatus()).isEqualTo(200);
         }
+    }
+
+    @Test
+    void campusScopedAccountWithoutAnyCampusFailsClosed() throws Exception {
+        AuthService auth = mock(AuthService.class);
+        AccessTokenFilter filter = new AccessTokenFilter(auth);
+        var user = new AuthenticatedUser(9L, "empty-campus", "未分配校区", UserRole.CAMPUS_MANAGER,
+                null, false, 9L, "EMPTY_CAMPUS", "未分配校区",
+                DataScope.CAMPUS, Set.of(PermissionCode.PHOTO_UPLOAD), Set.of());
+        when(auth.authenticate("token")).thenReturn(new AuthService.SessionAuthentication(90L, user));
+        MockHttpServletRequest request = request("/api/v1/photos/upload-tickets");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        FilterChain chain = mock(FilterChain.class);
+
+        filter.doFilterInternal(request, response, chain);
+
+        assertThat(response.getStatus()).isEqualTo(403);
+        assertThat(response.getContentAsString()).contains("尚未分配可用权限组");
+        verify(chain, never()).doFilter(request, response);
+        verify(auth, never()).touch(90L);
     }
 
     private MockHttpServletRequest request(String path) {

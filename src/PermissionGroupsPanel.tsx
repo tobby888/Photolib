@@ -1,7 +1,10 @@
 import {
-  App, Button, Card, Checkbox, Col, Form, Input, Modal, Row, Select, Space, Table, Tag, Typography,
+  Alert, App, Button, Card, Checkbox, Col, Descriptions, Form, Input, Modal, Row, Select, Space,
+  Table, Tag, Typography,
 } from 'antd'
-import { DeleteOutlined, EditOutlined, PlusOutlined, SaveOutlined, SafetyCertificateOutlined } from '@ant-design/icons'
+import {
+  DeleteOutlined, EditOutlined, EyeOutlined, PlusOutlined, SaveOutlined, SafetyCertificateOutlined,
+} from '@ant-design/icons'
 import { useState } from 'react'
 import { api, emptyPage } from './api'
 import { DataState } from './components'
@@ -30,7 +33,10 @@ export default function PermissionGroupsPanel() {
   const [savingUserId, setSavingUserId] = useState<EntityId | null>(null)
   const [drafts, setDrafts] = useState<Record<EntityId, AuthorizationDraft>>({})
   const [search, setSearch] = useState('')
+  const [permissionGroupFilter, setPermissionGroupFilter] = useState<EntityId | undefined>()
   const [userPage, setUserPage] = useState(1)
+  const [detailGroupId, setDetailGroupId] = useState<EntityId | null>(null)
+  const [memberPage, setMemberPage] = useState(1)
 
   const groupsState = useLoad(
     () => api<PermissionGroup[]>({ url: '/permission-groups' }), [] as PermissionGroup[], [],
@@ -42,11 +48,26 @@ export default function PermissionGroupsPanel() {
   const usersState = useLoad(
     () => api<PageData<User>>({ url: '/users', params: {
       page: userPage, pageSize: 20, keyword: search || undefined,
+      permissionGroupId: permissionGroupFilter,
     } }),
-    emptyPage<User>(), [userPage, search],
+    emptyPage<User>(), [userPage, search, permissionGroupFilter],
   )
   const campusesState = useLoad(
     () => api<Campus[]>({ url: '/campuses', params: { enabled: true } }), [] as Campus[], [],
+  )
+  const detailGroupState = useLoad(
+    () => detailGroupId
+      ? api<PermissionGroup>({ url: `/permission-groups/${detailGroupId}` })
+      : Promise.resolve(null),
+    null as PermissionGroup | null, [detailGroupId],
+  )
+  const membersState = useLoad(
+    () => detailGroupId
+      ? api<PageData<User>>({ url: '/users', params: {
+        page: memberPage, pageSize: 10, permissionGroupId: detailGroupId,
+      } })
+      : Promise.resolve(emptyPage<User>()),
+    emptyPage<User>(), [detailGroupId, memberPage],
   )
 
   const openCreate = () => {
@@ -67,6 +88,11 @@ export default function PermissionGroupsPanel() {
       dataScope: group.dataScope === 'GLOBAL' ? 'GLOBAL' : 'CAMPUS',
     })
     setGroupOpen(true)
+  }
+
+  const openDetails = (group: PermissionGroup) => {
+    setMemberPage(1)
+    setDetailGroupId(group.id)
   }
 
   const toggleCategory = (category: PermissionCategoryDefinition, checked: boolean) => {
@@ -112,6 +138,8 @@ export default function PermissionGroupsPanel() {
     okText: '确认删除', okButtonProps: { danger: true }, cancelText: '取消',
     onOk: async () => {
       await api({ method: 'DELETE', url: `/permission-groups/${group.id}` })
+      if (permissionGroupFilter === group.id) setPermissionGroupFilter(undefined)
+      if (detailGroupId === group.id) setDetailGroupId(null)
       setDrafts({})
       await Promise.all([groupsState.reload(), usersState.reload()])
       message.success('权限组已删除，相关账号已降为最低权限组')
@@ -167,7 +195,9 @@ export default function PermissionGroupsPanel() {
       <DataState loading={groupsState.loading} error={groupsState.error} onRetry={groupsState.reload}>
         <Table rowKey="id" dataSource={groupsState.data} pagination={false} scroll={{ x: 900 }} columns={[
           { title: '权限组', render: (_: unknown, group: PermissionGroup) => <div className="table-title">
-            <strong>{group.name}</strong><span>{group.code}</span>
+            <Button type="link" style={{ height: 'auto', padding: 0 }} onClick={() => openDetails(group)}>
+              <strong>{group.name}</strong>
+            </Button><span>{group.code}</span>
           </div> },
           { title: '数据范围', dataIndex: 'dataScope', render: (scope: DataScope) =>
             <Tag color={scope === 'GLOBAL' ? 'blue' : scope === 'CAMPUS' ? 'cyan' : 'default'}>
@@ -179,6 +209,7 @@ export default function PermissionGroupsPanel() {
             {group.builtIn && <Tag>系统内置</Tag>}{group.lowest && <Tag color="warning">最低权限</Tag>}
           </Space> },
           { title: '操作', fixed: 'right' as const, render: (_: unknown, group: PermissionGroup) => <Space>
+            <Button icon={<EyeOutlined />} onClick={() => openDetails(group)}>查看详情</Button>
             <Button icon={<EditOutlined />} disabled={group.lowest} onClick={() => openEdit(group)}>编辑权限</Button>
             <Button danger icon={<DeleteOutlined />} disabled={group.builtIn} onClick={() => deleteGroup(group)}>删除</Button>
           </Space> },
@@ -186,10 +217,16 @@ export default function PermissionGroupsPanel() {
       </DataState>
     </Card>
 
-    <Card title="账户权限组与校区授权" extra={<Input.Search allowClear style={{ width: 280 }}
-      placeholder="搜索姓名或账号" onSearch={value => { setUserPage(1); setSearch(value.trim()) }} onChange={event => {
-        if (!event.target.value) { setUserPage(1); setSearch('') }
-      }} />}>
+    <Card title="账户权限组与校区授权" extra={<Space wrap>
+      <Select allowClear style={{ width: 220 }} placeholder="按权限组筛选账户"
+        value={permissionGroupFilter}
+        options={groupsState.data.map(group => ({ value: group.id, label: group.name }))}
+        onChange={value => { setUserPage(1); setPermissionGroupFilter(value) }} />
+      <Input.Search allowClear style={{ width: 280 }}
+        placeholder="搜索姓名或账号" onSearch={value => { setUserPage(1); setSearch(value.trim()) }} onChange={event => {
+          if (!event.target.value) { setUserPage(1); setSearch('') }
+        }} />
+    </Space>}>
       <Typography.Paragraph type="secondary">
         校区范围账号可同时授权多个校区；全局权限组不使用校区授权。此处变更会在账号下一次请求时立即生效。
       </Typography.Paragraph>
@@ -233,6 +270,10 @@ export default function PermissionGroupsPanel() {
       open={groupOpen} onCancel={() => setGroupOpen(false)} onOk={() => void saveGroup()}
       okText="保存" confirmLoading={savingGroup} destroyOnHidden>
       <Form form={form} layout="vertical" requiredMark={false}>
+        {editing && !editing.builtIn && editing.memberCount > 0 && <Alert showIcon type="warning"
+          style={{ marginBottom: 16 }}
+          message={`当前权限组仍有 ${editing.memberCount} 个成员，数据范围不可修改`}
+          description="请先在权限组详情中确认成员，并在下方“账户权限组与校区授权”中将全部成员迁移到其他权限组。" />}
         <Row gutter={16}>
           <Col xs={24} md={8}><Form.Item label="权限组代码" name="code" rules={[
             { required: true }, { pattern: /^[A-Za-z][A-Za-z0-9_]{2,63}$/, message: '3-64 位字母、数字或下划线' },
@@ -240,7 +281,7 @@ export default function PermissionGroupsPanel() {
           <Col xs={24} md={8}><Form.Item label="权限组名称" name="name" rules={[{ required: true }, { max: 100 }]}>
             <Input disabled={editing?.builtIn} /></Form.Item></Col>
           <Col xs={24} md={8}><Form.Item label="数据范围" name="dataScope" rules={[{ required: true }]}>
-            <Select disabled={editing?.builtIn} options={[
+            <Select disabled={editing?.builtIn || Boolean(editing?.memberCount)} options={[
               { value: 'CAMPUS', label: '按账户授权校区' }, { value: 'GLOBAL', label: '全局数据' },
             ]} /></Form.Item></Col>
         </Row>
@@ -268,6 +309,52 @@ export default function PermissionGroupsPanel() {
           })}
         </Row>
       </Form>
+    </Modal>
+
+    <Modal title="权限组详情" width={820} open={detailGroupId !== null} footer={null}
+      onCancel={() => setDetailGroupId(null)} destroyOnHidden>
+      <DataState loading={detailGroupState.loading || membersState.loading}
+        error={detailGroupState.error || membersState.error}
+        onRetry={() => { void detailGroupState.reload(); void membersState.reload() }}>
+        {detailGroupState.data && <Space direction="vertical" size="large" style={{ width: '100%' }}>
+          <Descriptions bordered size="small" column={{ xs: 1, sm: 2 }}>
+            <Descriptions.Item label="权限组">{detailGroupState.data.name}</Descriptions.Item>
+            <Descriptions.Item label="代码"><Typography.Text code>{detailGroupState.data.code}</Typography.Text></Descriptions.Item>
+            <Descriptions.Item label="数据范围">
+              {detailGroupState.data.dataScope === 'GLOBAL' ? '全局数据'
+                : detailGroupState.data.dataScope === 'CAMPUS' ? '按账户授权校区' : '不可访问'}
+            </Descriptions.Item>
+            <Descriptions.Item label="成员数">{detailGroupState.data.memberCount}</Descriptions.Item>
+            <Descriptions.Item label="说明" span={2}>{detailGroupState.data.description || '-'}</Descriptions.Item>
+          </Descriptions>
+          <div>
+            <Typography.Title level={5}>权限明细</Typography.Title>
+            <Space wrap>
+              {detailGroupState.data.permissions.length
+                ? detailGroupState.data.permissions.map(code => <Tag key={code} color="blue">
+                  {definitionsState.data.flatMap(category => category.permissions)
+                    .find(permission => permission.code === code)?.label || code}
+                </Tag>)
+                : <Typography.Text type="secondary">未授予业务权限</Typography.Text>}
+            </Space>
+          </div>
+          <div>
+            <Typography.Title level={5}>权限组成员</Typography.Title>
+            <Table rowKey="id" size="small" dataSource={membersState.data.items} pagination={{
+              current: memberPage, pageSize: 10, total: membersState.data.total,
+              showTotal: total => `共 ${total} 个成员`, onChange: setMemberPage,
+            }} columns={[
+              { title: '成员', render: (_: unknown, user: User) => <div className="table-title">
+                <strong>{user.displayName}</strong><span>@{user.username}</span>
+              </div> },
+              { title: '授权校区', dataIndex: 'campusIds', render: (ids: EntityId[] = []) => ids.length
+                ? ids.map(id => campusesState.data.find(campus => campus.id === id)?.name || `#${id}`).join('、') : '-' },
+              { title: '状态', dataIndex: 'enabled', render: (enabled: boolean) =>
+                <Tag color={enabled ? 'green' : 'default'}>{enabled ? '正常' : '已停用'}</Tag> },
+            ]} />
+          </div>
+        </Space>}
+      </DataState>
     </Modal>
   </Space>
 }

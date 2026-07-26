@@ -2,6 +2,8 @@ package cn.photolib.project;
 
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.error.BusinessException;
+import cn.photolib.permission.DataScope;
+import cn.photolib.permission.PermissionCode;
 import cn.photolib.project.model.ProjectStatus;
 import cn.photolib.user.model.UserRole;
 import org.junit.jupiter.api.BeforeEach;
@@ -12,6 +14,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -328,6 +331,32 @@ class ProjectServiceTests {
                 .doesNotContain(hidden.getId());
         assertThat(projectService.getDetail(assigned.getId(), managerUser).id()).isEqualTo(assigned.getId());
         assertThatThrownBy(() -> projectService.getDetail(hidden.getId(), managerUser))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("无权查看");
+    }
+
+    @Test
+    void historicalParticipationDoesNotKeepProjectVisibleAfterCampusGrantIsRevoked() {
+        var assigned = projectService.create("历史参与项目", "描述", ProjectStatus.ACTIVE, adminUser);
+        jdbc.sql("INSERT INTO campus (id, code, name, enabled) VALUES (902, 'PROJECT-OTHER', '其他校区', true)")
+                .update();
+        jdbc.sql("""
+                INSERT INTO photo_request
+                    (id, project_id, title, campus_id, required_count, deadline, status, created_by)
+                VALUES (9102, :projectId, '历史参与需求', 901, 1,
+                        DATEADD('DAY', 1, CURRENT_TIMESTAMP), 'ACCEPTED', :adminId)
+                """).param("projectId", assigned.getId()).param("adminId", adminUser.id()).update();
+        jdbc.sql("""
+                INSERT INTO request_participant (request_id, user_id, accepted_at)
+                VALUES (9102, :userId, CURRENT_TIMESTAMP)
+                """).param("userId", managerUser.id()).update();
+        var movedManager = new AuthenticatedUser(managerUser.id(), "test-manager", "测试负责人",
+                UserRole.CAMPUS_MANAGER, 902L, false, -10L, "MOVED_MANAGER", "已迁移负责人",
+                DataScope.CAMPUS, Set.of(PermissionCode.PROJECT_VIEW), Set.of(902L));
+
+        assertThat(projectService.list(1, 20, null, null, movedManager).items())
+                .extracting(project -> project.getId()).doesNotContain(assigned.getId());
+        assertThatThrownBy(() -> projectService.getVisible(assigned.getId(), movedManager))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("无权查看");
     }

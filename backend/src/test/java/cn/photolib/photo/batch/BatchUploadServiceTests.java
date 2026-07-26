@@ -2,6 +2,8 @@ package cn.photolib.photo.batch;
 
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.error.BusinessException;
+import cn.photolib.permission.DataScope;
+import cn.photolib.permission.PermissionCode;
 import cn.photolib.photo.PhotoProcessingProperties;
 import cn.photolib.photo.PhotoProcessingWorkspace;
 import cn.photolib.storage.ObjectStorageService;
@@ -21,6 +23,7 @@ import java.time.LocalDateTime;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -249,6 +252,98 @@ class BatchUploadServiceTests {
         assertThatThrownBy(() -> service.create(overLimit, manager))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("1.5 GB");
+    }
+
+    @Test
+    @Transactional
+    void galleryBatchCannotInjectProjectMembershipWithPhotoUploadPermissionAlone() {
+        jdbc.sql("""
+                INSERT INTO project (id, title, description, status, created_by, version, deleted)
+                VALUES (8200, '批量上传目标', '描述', 'ACTIVE', 8101, 1, false)
+                """).update();
+        var uploadOnly = new AuthenticatedUser(manager.id(), "batch-upload-only", "仅批量上传",
+                UserRole.CAMPUS_MANAGER, null, false, -30L, "BATCH_UPLOAD_ONLY", "仅批量上传",
+                DataScope.GLOBAL, Set.of(PermissionCode.PHOTO_UPLOAD), Set.of());
+
+        assertThatThrownBy(() -> service.create(new BatchUploadService.CreateBatch(
+                BatchMode.ZIP, null, 8200L, "injected.zip", 100L, null), uploadOnly))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("无权将批量上传图片加入项目相册");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM photo_upload_batch WHERE project_id=8200")
+                .query(Long.class).single()).isZero();
+    }
+
+    @Test
+    @Transactional
+    void requestBatchAlwaysUsesTheRequestsPersistedProject() {
+        jdbc.sql("""
+                INSERT INTO project (id, title, description, status, created_by, version, deleted)
+                VALUES
+                    (8201, '真实需求项目', '描述', 'ACTIVE', 8101, 1, false),
+                    (8202, '客户端伪造项目', '描述', 'ACTIVE', 8101, 1, false)
+                """).update();
+        jdbc.sql("""
+                INSERT INTO photo_request
+                    (id, project_id, title, campus_id, deadline, status, created_by, version, deleted)
+                VALUES (8203, 8201, '批量上传需求', 8100,
+                        DATEADD('DAY', 1, CURRENT_TIMESTAMP), 'ACCEPTED', 8101, 1, false)
+                """).update();
+        jdbc.sql("""
+                INSERT INTO request_participant(request_id, user_id, accepted_at)
+                VALUES (8203, 8101, CURRENT_TIMESTAMP)
+                """).update();
+
+        var ticket = service.create(new BatchUploadService.CreateBatch(
+                BatchMode.ZIP, 8203L, 8202L, "request.zip", 100L, null), manager);
+
+        assertThat(jdbc.sql("SELECT project_id FROM photo_upload_batch WHERE id=:id")
+                .param("id", ticket.batchId()).query(Long.class).single()).isEqualTo(8201L);
+    }
+
+    @Test
+    @Transactional
+    void requestBatchIsRejectedAfterParticipantLosesTheRequestsCampus() {
+        jdbc.sql("INSERT INTO campus (id, code, name, enabled) VALUES (8103, 'BATCH-MOVED', '迁移后校区', true)")
+                .update();
+        jdbc.sql("""
+                INSERT INTO project (id, title, description, status, created_by, version, deleted)
+                VALUES (8204, '撤销校区项目', '描述', 'ACTIVE', 8101, 1, false)
+                """).update();
+        jdbc.sql("""
+                INSERT INTO photo_request
+                    (id, project_id, title, campus_id, deadline, status, created_by, version, deleted)
+                VALUES (8205, 8204, '撤销校区需求', 8100,
+                        DATEADD('DAY', 1, CURRENT_TIMESTAMP), 'ACCEPTED', 8101, 1, false)
+                """).update();
+        jdbc.sql("""
+                INSERT INTO request_participant(request_id, user_id, accepted_at)
+                VALUES (8205, 8101, CURRENT_TIMESTAMP)
+                """).update();
+        var movedManager = new AuthenticatedUser(manager.id(), manager.username(), manager.displayName(),
+                UserRole.CAMPUS_MANAGER, 8103L, false, -31L, "MOVED_BATCH", "已迁移负责人",
+                DataScope.CAMPUS, Set.of(PermissionCode.REQUEST_PHOTO_MANAGE), Set.of(8103L));
+
+        assertThatThrownBy(() -> service.create(new BatchUploadService.CreateBatch(
+                BatchMode.ZIP, 8205L, null, "revoked.zip", 100L, null), movedManager))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("无权操作该校区");
+    }
+
+    @Test
+    @Transactional
+    void galleryBatchCannotUseRequestPermissionForFollowUpCalls() {
+        var galleryUploader = new AuthenticatedUser(manager.id(), manager.username(), manager.displayName(),
+                UserRole.CAMPUS_MANAGER, 8100L, false, -32L, "GALLERY_BATCH", "图库批量上传",
+                DataScope.CAMPUS, Set.of(PermissionCode.PHOTO_UPLOAD), Set.of(8100L));
+        var ticket = service.create(new BatchUploadService.CreateBatch(
+                BatchMode.ZIP, null, null, "gallery.zip", 100L, null), galleryUploader);
+        var wrongPermission = new AuthenticatedUser(manager.id(), manager.username(), manager.displayName(),
+                UserRole.CAMPUS_MANAGER, 8100L, false, -32L, "GALLERY_BATCH", "图库批量上传",
+                DataScope.CAMPUS, Set.of(PermissionCode.REQUEST_PHOTO_MANAGE), Set.of(8100L));
+
+        assertThatThrownBy(() -> service.get(ticket.batchId(), wrongPermission))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("当前权限不能继续处理");
     }
 
     @Test

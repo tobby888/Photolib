@@ -80,7 +80,9 @@ public record AuthenticatedUser(
     }
 
     public boolean hasSystemAccess() {
-        return isAdministrator() || dataScope != DataScope.NONE;
+        return isAdministrator()
+                || dataScope == DataScope.GLOBAL
+                || (dataScope == DataScope.CAMPUS && campusIds != null && !campusIds.isEmpty());
     }
 
     /**
