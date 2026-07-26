@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.util.List;
+import java.util.ArrayList;
 
 @Component
 @RequiredArgsConstructor
@@ -35,8 +35,23 @@ public class AccessTokenFilter extends OncePerRequestFilter {
                             "{\"code\":\"FORBIDDEN\",\"message\":\"首次登录必须先修改密码\",\"details\":[]}");
                     return;
                 }
+                if (!user.hasSystemAccess() && !isAllowedWithoutSystemAccess(request.getServletPath())) {
+                    response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                    response.setContentType("application/json;charset=UTF-8");
+                    response.getWriter().write(
+                            "{\"code\":\"FORBIDDEN\",\"message\":\"账号尚未分配可用权限组\",\"details\":[]}");
+                    return;
+                }
+                var authorities = new ArrayList<SimpleGrantedAuthority>();
+                if ("ADMIN".equals(user.permissionGroupCode())
+                        || "MINISTER".equals(user.permissionGroupCode())
+                        || "CAMPUS_MANAGER".equals(user.permissionGroupCode())) {
+                    authorities.add(new SimpleGrantedAuthority("ROLE_" + user.permissionGroupCode()));
+                }
+                user.permissions().forEach(permission ->
+                        authorities.add(new SimpleGrantedAuthority(permission.name())));
                 var authentication = new UsernamePasswordAuthenticationToken(
-                        user, null, List.of(new SimpleGrantedAuthority("ROLE_" + user.role().name())));
+                        user, null, authorities);
                 SecurityContextHolder.getContext().setAuthentication(authentication);
                 authService.touch(authenticated.sessionId());
             }
@@ -47,6 +62,13 @@ public class AccessTokenFilter extends OncePerRequestFilter {
     private boolean isAllowedBeforePasswordChange(String path) {
         return path.equals("/api/v1/auth/me")
                 || path.equals("/api/v1/auth/initial-password")
+                || path.equals("/api/v1/auth/logout");
+    }
+
+    private boolean isAllowedWithoutSystemAccess(String path) {
+        return path.equals("/api/v1/auth/me")
+                || path.equals("/api/v1/auth/initial-password")
+                || path.equals("/api/v1/auth/password")
                 || path.equals("/api/v1/auth/logout");
     }
 }

@@ -50,7 +50,7 @@ public class UserNotificationController {
     }
 
     @PostMapping("/messages")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    @PreAuthorize("hasAuthority('MESSAGE_SEND')")
     ApiResponse<SendResult> send(@Valid @RequestBody SendMessageRequest request,
                                  @AuthenticationPrincipal AuthenticatedUser user) {
         int recipients = service.sendMessage(user.id(), request.targetUserId(), request.broadcast(),

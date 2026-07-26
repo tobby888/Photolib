@@ -26,13 +26,14 @@ public class ProjectController {
     private final ProjectService service;
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    @PreAuthorize("hasAuthority('PROJECT_CREATE')")
     ApiResponse<ProjectEntity> create(@Valid @RequestBody CreateRequest request,
                                       @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.create(request.title(), request.description(), request.status(), user));
     }
 
     @GetMapping
+    @PreAuthorize("hasAuthority('PROJECT_VIEW')")
     ApiResponse<PageResponse<ProjectEntity>> list(
             @RequestParam(defaultValue = "1") @Min(1) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int pageSize,
@@ -43,12 +44,14 @@ public class ProjectController {
     }
 
     @GetMapping("/{id}")
+    @PreAuthorize("hasAuthority('PROJECT_VIEW')")
     ApiResponse<ProjectService.ProjectDetail> get(@PathVariable Long id,
                                                   @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.getDetail(id, user));
     }
 
     @PostMapping("/{id}/photos")
+    @PreAuthorize("hasAuthority('PROJECT_ADOPT')")
     ApiResponse<Void> addPhotos(@PathVariable Long id, @Valid @RequestBody AddPhotosRequest request,
                                 @AuthenticationPrincipal AuthenticatedUser user) {
         service.addPhotos(id, request.photoIds(), user);
@@ -56,14 +59,14 @@ public class ProjectController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    @PreAuthorize("hasAuthority('PROJECT_CREATE')")
     ApiResponse<ProjectEntity> update(@PathVariable Long id, @Valid @RequestBody UpdateRequest request,
                                       @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.update(id, request.title(), request.description(), request.version(), user));
     }
 
     @PostMapping("/{id}/status")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    @PreAuthorize("hasAnyAuthority('PROJECT_CREATE','PROJECT_COMPLETE')")
     ApiResponse<ProjectEntity> status(@PathVariable Long id, @Valid @RequestBody StatusRequest request,
                                       @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.changeStatus(id, request.status(), request.version(), user));
@@ -76,7 +79,7 @@ public class ProjectController {
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    @PreAuthorize("hasAuthority('PROJECT_CREATE')")
     ApiResponse<Void> delete(@PathVariable Long id, @AuthenticationPrincipal AuthenticatedUser user) {
         service.delete(id, user);
         return ApiResponse.ok();

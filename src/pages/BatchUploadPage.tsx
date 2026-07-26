@@ -51,14 +51,14 @@ export default function BatchUploadPage() {
       ? (await api<CampusMember[]>({
           url: '/campus-members', params: { enabled: true, campusId: request.campusId },
         })).map(member => ({ value: member.id, label: `${member.name} · ${member.studentId}` }))
-      : user?.role === 'CAMPUS_MANAGER'
+      : user?.dataScope === 'CAMPUS'
         ? (await api<CampusMember[]>({ url: '/campus-members', params: { enabled: true } }))
             .map(member => ({ value: member.id, label: `${member.name} · ${member.studentId}` }))
         : (await api<DedupedMember[]>({ url: '/campus-members/deduped' }))
             .map(member => ({ value: member.id, label: `${member.name} · ${member.studentId}` }))
     return { request, members }
   }, { request: null as PhotoRequest | null, members: [] as { value: EntityId; label: string }[] },
-  [requestId, user?.role])
+  [requestId, user?.dataScope])
 
   const currentStep = useMemo(() => {
     if (phase === 'uploading') return 0

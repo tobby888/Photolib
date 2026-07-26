@@ -9,7 +9,7 @@ import cn.photolib.photo.model.PhotoEntity;
 import cn.photolib.photo.model.PhotoStatus;
 import cn.photolib.project.ProjectService;
 import cn.photolib.project.model.ProjectStatus;
-import cn.photolib.user.model.UserRole;
+import cn.photolib.permission.PermissionCode;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
@@ -20,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -32,6 +33,9 @@ public class AdoptionService {
     @Transactional
     public List<AdoptionEntity> adopt(Long projectId, List<Long> photoIds, String remark,
                                      AuthenticatedUser user) {
+        if (!user.hasPermission(PermissionCode.PROJECT_ADOPT)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权标记图片被引");
+        }
         if (photoIds == null || photoIds.isEmpty() || photoIds.size() > 200) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择 1 至 200 张图片");
         }
@@ -44,7 +48,7 @@ public class AdoptionService {
             if (photo == null || photo.getStatus() != PhotoStatus.AVAILABLE) {
                 throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "存在不可采用的图片");
             }
-            if (user.role() == UserRole.CAMPUS_MANAGER && !photo.getUploadedBy().equals(user.id())) {
+            if (user.isCampusScoped() && !photo.getUploadedBy().equals(user.id())) {
                 throw new BusinessException(ErrorCode.FORBIDDEN, "无权使用不可见的图库图片");
             }
             long membership = jdbc.sql("SELECT COUNT(*) FROM photo_project WHERE photo_id=:photoId AND project_id=:projectId")
@@ -95,6 +99,12 @@ public class AdoptionService {
         return PageResponse.from(result);
     }
 
+    public PageResponse<AdoptionEntity> list(Long projectId, int page, int pageSize, String studentId,
+                                              AuthenticatedUser user) {
+        projectService.getVisible(projectId, user);
+        return list(projectId, page, pageSize, studentId);
+    }
+
     @Transactional
     public void cancel(Long projectId, Long adoptionId) {
         if (projectService.get(projectId).getStatus() == ProjectStatus.COMPLETED) {
@@ -107,7 +117,27 @@ public class AdoptionService {
         mapper.deleteById(adoptionId);
     }
 
+    @Transactional
+    public void cancel(Long projectId, Long adoptionId, AuthenticatedUser user) {
+        projectService.getVisible(projectId, user);
+        cancel(projectId, adoptionId);
+    }
+
     public List<Ranking> ranking(LocalDate from, LocalDate to, Long projectId, Long campusId) {
+        return ranking(from, to, projectId, campusId, false, Set.of(-1L));
+    }
+
+    public List<Ranking> ranking(LocalDate from, LocalDate to, Long projectId, Long campusId,
+                                 AuthenticatedUser user) {
+        if (user.isCampusScoped() && campusId != null && !user.canAccessCampus(campusId)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权查看该校区的统计数据");
+        }
+        return ranking(from, to, projectId, campusId, user.isCampusScoped(),
+                user.isCampusScoped() ? user.campusIds() : Set.of(-1L));
+    }
+
+    private List<Ranking> ranking(LocalDate from, LocalDate to, Long projectId, Long campusId,
+                                  boolean campusScoped, Set<Long> campusIds) {
         String sql = """
                 SELECT a.photographer_student_id, a.photographer_name, COUNT(*) adopted_count
                 FROM adoption a JOIN photo p ON p.id=a.photo_id
@@ -116,12 +146,14 @@ public class AdoptionService {
                   AND (:toExclusive IS NULL OR a.adopted_at<:toExclusive)
                   AND (:projectId IS NULL OR a.project_id=:projectId)
                   AND (:campusId IS NULL OR p.campus_id=:campusId)
+                  AND (:campusScoped=FALSE OR p.campus_id IN (:campusIds))
                 GROUP BY a.photographer_student_id, a.photographer_name
                 ORDER BY adopted_count DESC, a.photographer_student_id
                 """;
         List<Ranking> rows = jdbc.sql(sql).param("fromDate", from)
                 .param("toExclusive", to == null ? null : to.plusDays(1))
                 .param("projectId", projectId).param("campusId", campusId)
+                .param("campusScoped", campusScoped).param("campusIds", campusIds)
                 .query((rs, n) -> new Ranking(0, rs.getString(1), rs.getString(2), rs.getLong(3))).list();
         long previous = -1; int rank = 0;
         for (int i = 0; i < rows.size(); i++) {

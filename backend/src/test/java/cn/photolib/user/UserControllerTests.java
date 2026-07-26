@@ -1,5 +1,6 @@
 package cn.photolib.user;
 
+import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.campus.CampusService;
 import cn.photolib.user.model.UserRole;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,25 +38,27 @@ class UserControllerTests {
     }
 
     @Test
-    @WithMockUser(roles = "ADMIN")
+    @WithMockUser(authorities = "MANAGER_CAMPUS_ASSIGN")
     void admin_shouldUpdateManagerCampus() {
         var current = userService.get(manager.user().id());
         var request = new UserController.UpdateCampusRequest(
                 targetCampusId, current.version());
 
-        var result = controller.updateCampus(manager.user().id(), request).data();
+        var result = controller.updateCampus(manager.user().id(), request,
+                principal(UserRole.ADMIN)).data();
 
         assertThat(result.campusId()).isEqualTo(targetCampusId);
     }
 
     @Test
-    @WithMockUser(roles = "MINISTER")
+    @WithMockUser(authorities = "MANAGER_CAMPUS_ASSIGN")
     void minister_shouldUpdateManagerCampus() {
         var current = userService.get(manager.user().id());
         var request = new UserController.UpdateCampusRequest(
                 targetCampusId, current.version());
 
-        var result = controller.updateCampus(manager.user().id(), request).data();
+        var result = controller.updateCampus(manager.user().id(), request,
+                principal(UserRole.MINISTER)).data();
 
         assertThat(result.campusId()).isEqualTo(targetCampusId);
     }
@@ -67,7 +70,13 @@ class UserControllerTests {
         var request = new UserController.UpdateCampusRequest(
                 targetCampusId, current.version());
 
-        assertThatThrownBy(() -> controller.updateCampus(manager.user().id(), request))
+        assertThatThrownBy(() -> controller.updateCampus(manager.user().id(), request,
+                principal(UserRole.CAMPUS_MANAGER)))
                 .isInstanceOf(AccessDeniedException.class);
+    }
+
+    private AuthenticatedUser principal(UserRole role) {
+        return new AuthenticatedUser(999L, "operator", "操作人", role,
+                role == UserRole.CAMPUS_MANAGER ? manager.user().campusId() : null, false);
     }
 }

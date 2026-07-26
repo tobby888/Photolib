@@ -16,12 +16,12 @@ import java.util.List;
 @RestController
 @RequestMapping("/campus-members")
 @RequiredArgsConstructor
-@PreAuthorize("hasAnyRole('ADMIN','MINISTER','CAMPUS_MANAGER')")
+@PreAuthorize("hasAnyAuthority('DIRECTORY_VIEW','DIRECTORY_MANAGE','PHOTO_UPLOAD','REQUEST_PHOTO_MANAGE','WORKLOG_SUBMIT')")
 public class CampusMemberController {
     private final CampusMemberService service;
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER','CAMPUS_MANAGER')")
+    @PreAuthorize("hasAnyAuthority('DIRECTORY_VIEW','DIRECTORY_MANAGE','PHOTO_UPLOAD','REQUEST_PHOTO_MANAGE','WORKLOG_SUBMIT')")
     ApiResponse<List<CampusMemberEntity>> list(@RequestParam(required = false) Long campusId,
                                                @RequestParam(required = false) Boolean enabled,
                                                @AuthenticationPrincipal AuthenticatedUser user) {
@@ -29,20 +29,21 @@ public class CampusMemberController {
     }
 
     @GetMapping("/deduped")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
-    ApiResponse<List<CampusMemberService.DedupedMember>> deduped() {
-        return ApiResponse.ok(service.listDeduped());
+    @PreAuthorize("hasAnyAuthority('DIRECTORY_VIEW','DIRECTORY_MANAGE','PHOTO_UPLOAD','REQUEST_PHOTO_MANAGE','WORKLOG_SUBMIT')")
+    ApiResponse<List<CampusMemberService.DedupedMember>> deduped(
+            @AuthenticationPrincipal AuthenticatedUser user) {
+        return ApiResponse.ok(service.listDeduped(user));
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER','CAMPUS_MANAGER')")
+    @PreAuthorize("hasAuthority('DIRECTORY_MANAGE')")
     ApiResponse<CampusMemberEntity> create(@Valid @RequestBody MemberRequest request,
                                            @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.create(request.campusId(), request.studentId(), request.name(), user));
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER','CAMPUS_MANAGER')")
+    @PreAuthorize("hasAuthority('DIRECTORY_MANAGE')")
     ApiResponse<CampusMemberEntity> update(@PathVariable Long id, @Valid @RequestBody UpdateRequest request,
                                            @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.update(id, request.studentId(), request.name(),
@@ -50,7 +51,7 @@ public class CampusMemberController {
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER','CAMPUS_MANAGER')")
+    @PreAuthorize("hasAuthority('DIRECTORY_MANAGE')")
     ApiResponse<Void> delete(@PathVariable Long id, @AuthenticationPrincipal AuthenticatedUser user) {
         service.delete(id, user);
         return ApiResponse.ok();

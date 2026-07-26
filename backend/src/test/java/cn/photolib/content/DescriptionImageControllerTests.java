@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest
 @Transactional
-@WithMockUser(roles = "MINISTER")
+@WithMockUser(authorities = "PROJECT_CREATE")
 class DescriptionImageControllerTests {
     @Autowired
     private DescriptionImageController controller;

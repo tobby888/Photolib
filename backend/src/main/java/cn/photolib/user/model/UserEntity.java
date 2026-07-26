@@ -13,6 +13,7 @@ public class UserEntity extends BaseEntity {
     private String passwordHash;
     private String displayName;
     private UserRole role;
+    private Long permissionGroupId;
     private Long campusId;
     private String phone;
     private String email;

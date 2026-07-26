@@ -12,7 +12,7 @@ import cn.photolib.photo.model.PhotoEntity;
 import cn.photolib.photo.model.PhotoStatus;
 import cn.photolib.storage.ObjectStorageService;
 import cn.photolib.storage.StorageProperties;
-import cn.photolib.user.model.UserRole;
+import cn.photolib.permission.PermissionCode;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,6 +26,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
+import org.springframework.jdbc.core.simple.JdbcClient;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -35,7 +36,7 @@ import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Objects;
+import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -52,13 +53,19 @@ public class ExportService {
     private final StorageProperties storageProperties;
     private final ApplicationEventPublisher events;
     private final AdminAlertMapper alertMapper;
+    private final JdbcClient jdbc;
 
     @Transactional
     public ExportJobEntity createStatistics(LocalDate from, LocalDate to, Long projectId,
                                             Long campusId, AuthenticatedUser user) {
+        requirePermission(user, PermissionCode.STATISTICS_DOWNLOAD);
+        if (user.isCampusScoped() && campusId != null && !user.canAccessCampus(campusId)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权导出该校区的统计数据");
+        }
         ExportJobEntity job = newJob("MEMBER_STATISTICS", user.id());
         mapper.insert(job);
-        events.publishEvent(new StatisticsExportRequested(job.getId(), from, to, projectId, campusId));
+        events.publishEvent(new StatisticsExportRequested(job.getId(), from, to, projectId, campusId,
+                user.isCampusScoped() ? Set.copyOf(user.campusIds()) : Set.of()));
         return job;
     }
 
@@ -78,9 +85,7 @@ public class ExportService {
                 && photo.getStatus() != PhotoStatus.ARCHIVED)) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "只能批量下载可用或已归档的图片");
         }
-        if (user.role() == UserRole.CAMPUS_MANAGER && photos.stream().anyMatch(photo ->
-                !Objects.equals(photo.getUploadedBy(), user.id())
-                        || !Objects.equals(photo.getCampusId(), user.campusId()))) {
+        if (photos.stream().anyMatch(photo -> !canDownload(photo, user))) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权下载所选图片中的部分内容");
         }
         ExportJobEntity job = newJob("PHOTO_BATCH", user.id());
@@ -91,19 +96,21 @@ public class ExportService {
 
     @Transactional
     public ExportJobEntity createWorklogs(LocalDate from, LocalDate to, AuthenticatedUser user) {
+        requirePermission(user, PermissionCode.WORKLOG_EXPORT);
         if (from == null || to == null || from.isAfter(to)) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "工时日期范围无效");
         }
         ExportJobEntity job = newJob("WORKLOGS", user.id());
         mapper.insert(job);
-        events.publishEvent(new WorklogExportRequested(job.getId(), from, to));
+        events.publishEvent(new WorklogExportRequested(job.getId(), from, to,
+                user.isCampusScoped() ? Set.copyOf(user.campusIds()) : Set.of()));
         return job;
     }
 
     public JobView get(String id, AuthenticatedUser user) {
         ExportJobEntity job = mapper.selectById(id);
         if (job == null) throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "导出任务不存在");
-        if (!job.getCreatedBy().equals(user.id()) && user.role() != cn.photolib.user.model.UserRole.ADMIN) {
+        if (!job.getCreatedBy().equals(user.id()) && !user.isAdministrator()) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权查看该任务");
         }
         String url = null;
@@ -118,6 +125,40 @@ public class ExportService {
         return new JobView(job, url, expires);
     }
 
+    private boolean canDownload(PhotoEntity photo, AuthenticatedUser user) {
+        if (!user.canAccessCampus(photo.getCampusId())) return false;
+        if (!user.isCampusScoped() && user.hasPermission(PermissionCode.PHOTO_DOWNLOAD)) {
+            return true;
+        }
+        boolean requestParticipant = photo.getRequestId() != null && (!user.isCampusScoped()
+                || jdbc.sql("""
+                        SELECT COUNT(*) FROM request_participant
+                        WHERE request_id=:requestId AND user_id=:userId
+                        """).param("requestId", photo.getRequestId()).param("userId", user.id())
+                        .query(Long.class).single() > 0);
+        boolean requestAllowed = requestParticipant
+                && user.hasPermission(PermissionCode.REQUEST_PHOTO_MANAGE);
+        boolean galleryAllowed = user.hasPermission(PermissionCode.PHOTO_DOWNLOAD)
+                && (!user.isCampusScoped() || photo.getUploadedBy().equals(user.id()));
+        boolean projectAllowed = user.hasPermission(PermissionCode.PROJECT_DOWNLOAD)
+                && jdbc.sql("""
+                        SELECT COUNT(*) FROM photo_project pp
+                        WHERE pp.photo_id=:photoId
+                          AND (:globalScope=TRUE OR EXISTS (
+                              SELECT 1 FROM photo_request r
+                              JOIN request_participant rp ON rp.request_id=r.id
+                              WHERE r.project_id=pp.project_id AND r.deleted=FALSE AND rp.user_id=:userId))
+                        """).param("photoId", photo.getId()).param("globalScope", !user.isCampusScoped())
+                .param("userId", user.id()).query(Long.class).single() > 0;
+        return requestAllowed || galleryAllowed || projectAllowed;
+    }
+
+    private void requirePermission(AuthenticatedUser user, PermissionCode permission) {
+        if (!user.hasPermission(permission)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权创建该导出任务");
+        }
+    }
+
     @Async
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void exportStatistics(StatisticsExportRequested event) {
@@ -125,7 +166,8 @@ public class ExportService {
             Sheet worklogs = workbook.createSheet("工时统计");
             row(worklogs, 0, "姓名", "学号", "校区", "拍摄分钟", "修图分钟", "总分钟", "被引张数");
             int index = 1;
-            for (var value : statistics.members(event.from(), event.to(), event.projectId(), event.campusId(), null)) {
+            for (var value : statistics.members(event.from(), event.to(), event.projectId(),
+                    event.campusId(), null, event.campusIds())) {
                 row(worklogs, index++, value.displayName(), value.studentId(), value.campus(),
                         value.shootingMinutes(), value.retouchingMinutes(), value.totalMinutes(),
                         value.adoptedCount());
@@ -146,7 +188,7 @@ public class ExportService {
             CellStyle hourStyle = workbook.createCellStyle();
             hourStyle.setDataFormat(workbook.createDataFormat().getFormat("0.00"));
             int index = 1;
-            for (var value : statistics.worklogs(event.from(), event.to())) {
+            for (var value : statistics.worklogs(event.from(), event.to(), event.campusIds())) {
                 Row exportRow = row(worklogs, index++, value.memberName(), value.studentId(), value.campus(),
                         hours(value.shootingMinutes()), hours(value.retouchingMinutes()), hours(value.totalMinutes()),
                         value.adoptedCount(), value.worklogStatus());
@@ -252,7 +294,7 @@ public class ExportService {
     private void alertUnmatchedAdoptions(WorklogExportRequested event) {
         try {
             List<StatisticsService.UnmatchedAdoption> unmatched =
-                    statistics.unmatchedAdoptions(event.from(), event.to());
+                    statistics.unmatchedAdoptions(event.from(), event.to(), event.campusIds());
             if (unmatched.isEmpty()) return;
             long photos = unmatched.stream().mapToLong(StatisticsService.UnmatchedAdoption::adoptedCount).sum();
             String detail = unmatched.stream().limit(20)
@@ -305,8 +347,18 @@ public class ExportService {
     }
 
     public record StatisticsExportRequested(String jobId, LocalDate from, LocalDate to,
-                                            Long projectId, Long campusId) {}
-    public record WorklogExportRequested(String jobId, LocalDate from, LocalDate to) {}
+                                            Long projectId, Long campusId, Set<Long> campusIds) {
+        public StatisticsExportRequested(String jobId, LocalDate from, LocalDate to,
+                                         Long projectId, Long campusId) {
+            this(jobId, from, to, projectId, campusId, Set.of());
+        }
+    }
+    public record WorklogExportRequested(String jobId, LocalDate from, LocalDate to,
+                                         Set<Long> campusIds) {
+        public WorklogExportRequested(String jobId, LocalDate from, LocalDate to) {
+            this(jobId, from, to, Set.of());
+        }
+    }
     public record PhotoZipRequested(String jobId, List<Long> photoIds) {}
     public record JobView(ExportJobEntity job, String downloadUrl, java.time.Instant expiresAt) {}
 }

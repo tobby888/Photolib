@@ -33,7 +33,7 @@ public class MessageImageController {
     private final ObjectStorageService storage;
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    @PreAuthorize("hasAuthority('MESSAGE_SEND')")
     ApiResponse<UploadResult> upload(@RequestPart("file") MultipartFile file,
                                      @AuthenticationPrincipal AuthenticatedUser user) throws IOException {
         if (file.isEmpty()) throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择图片");
@@ -67,7 +67,7 @@ public class MessageImageController {
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER','CAMPUS_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     ResponseEntity<InputStreamResource> get(@PathVariable String id) {
         MessageImageEntity image = mapper.selectById(id);
         if (image == null) return ResponseEntity.notFound().build();

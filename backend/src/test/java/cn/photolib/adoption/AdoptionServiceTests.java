@@ -4,6 +4,8 @@ import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.campus.CampusService;
 import cn.photolib.campus.model.CampusEntity;
 import cn.photolib.common.error.BusinessException;
+import cn.photolib.permission.DataScope;
+import cn.photolib.permission.PermissionCode;
 import cn.photolib.project.ProjectService;
 import cn.photolib.project.model.ProjectEntity;
 import cn.photolib.project.model.ProjectStatus;
@@ -16,6 +18,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -294,6 +297,17 @@ class AdoptionServiceTests {
         assertThat(topPhotographer.photographerStudentId()).isEqualTo("20230001");
         assertThat(topPhotographer.photographerName()).isEqualTo("张三");
         assertThat(topPhotographer.adoptedCount()).isEqualTo(2);
+
+        var otherCampus = campusService.create("RANK-OTHER", "排名权限外校区");
+        var scopedStatisticsUser = new AuthenticatedUser(
+                -88L, "scoped-statistics", "校区统计员", UserRole.CAMPUS_MANAGER,
+                otherCampus.getId(), false, -88L, "SCOPED_STATISTICS", "校区统计员",
+                DataScope.CAMPUS, Set.of(PermissionCode.STATISTICS_DOWNLOAD), Set.of(otherCampus.getId()));
+        assertThat(adoptionService.ranking(null, null, activeProject.getId(), null, scopedStatisticsUser))
+                .isEmpty();
+        assertThatThrownBy(() -> adoptionService.ranking(
+                null, null, activeProject.getId(), testCampus.getId(), scopedStatisticsUser))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("无权查看该校区");
     }
 
     @Test

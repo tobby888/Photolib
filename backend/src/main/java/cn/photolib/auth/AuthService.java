@@ -6,8 +6,9 @@ import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.user.mapper.UserMapper;
 import cn.photolib.user.model.UserEntity;
+import cn.photolib.permission.PermissionGroupService;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,7 +18,6 @@ import java.util.List;
 import java.util.Locale;
 
 @Service
-@RequiredArgsConstructor
 public class AuthService {
     private static final String DUMMY_PASSWORD_HASH =
             "$2a$12$wHhY5zYDsMdG2mvvEJPi7eM6FBfXwLwqEyqfL7IGRBxV6JrxEzk3q";
@@ -25,6 +25,23 @@ public class AuthService {
     private final AuthSessionMapper sessionMapper;
     private final PasswordEncoder passwordEncoder;
     private final AuthProperties properties;
+    private final PermissionGroupService permissionGroups;
+
+    @Autowired
+    public AuthService(UserMapper userMapper, AuthSessionMapper sessionMapper,
+                       PasswordEncoder passwordEncoder, AuthProperties properties,
+                       PermissionGroupService permissionGroups) {
+        this.userMapper = userMapper;
+        this.sessionMapper = sessionMapper;
+        this.passwordEncoder = passwordEncoder;
+        this.properties = properties;
+        this.permissionGroups = permissionGroups;
+    }
+
+    public AuthService(UserMapper userMapper, AuthSessionMapper sessionMapper,
+                       PasswordEncoder passwordEncoder, AuthProperties properties) {
+        this(userMapper, sessionMapper, passwordEncoder, properties, null);
+    }
 
     @Transactional
     public TokenPair login(String loginIdentifier, String password) {
@@ -160,8 +177,10 @@ public class AuthService {
     }
 
     private AuthenticatedUser toPrincipal(UserEntity user) {
-        return new AuthenticatedUser(user.getId(), user.getUsername(), user.getDisplayName(),
-                user.getRole(), user.getCampusId(), Boolean.TRUE.equals(user.getMustChangePassword()));
+        return permissionGroups == null
+                ? new AuthenticatedUser(user.getId(), user.getUsername(), user.getDisplayName(),
+                user.getRole(), user.getCampusId(), Boolean.TRUE.equals(user.getMustChangePassword()))
+                : permissionGroups.toPrincipal(user);
     }
 
     public record TokenPair(String accessToken, String refreshToken, long expiresIn,

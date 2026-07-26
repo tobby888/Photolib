@@ -8,8 +8,9 @@ import dayjs from 'dayjs'
 import { useAuth } from '../auth'
 import { api, emptyPage } from '../api'
 import type { PageData, Photo, PhotoRequest, Project } from '../types'
-import { DataState, StatusTag, roleName } from '../components'
+import { DataState, StatusTag } from '../components'
 import { useLoad } from '../hooks'
+import { hasPermission } from '../permissions'
 
 const requestProgress: Record<PhotoRequest['status'], number> = {
   DRAFT: 10, PUBLISHED: 20, ACCEPTED: 45, SUBMITTED: 80, COMPLETED: 100, CANCELLED: 0,
@@ -20,14 +21,14 @@ export default function DashboardPage() {
   const navigate = useNavigate()
   const { data, loading, error, reload } = useLoad(async () => {
     const [projects, requests, photos] = await Promise.all([
-      api<PageData<Project>>({ url: '/projects', params: { page: 1, pageSize: 8 } }).catch(() => emptyPage<Project>()),
-      api<PageData<PhotoRequest>>({ url: '/requests', params: { page: 1, pageSize: 8 } }).catch(() => emptyPage<PhotoRequest>()),
-      api<PageData<Photo>>({ url: '/photos', params: { page: 1, pageSize: 8, status: 'AVAILABLE' } }).catch(() => emptyPage<Photo>()),
+      hasPermission(user, 'PROJECT_VIEW') ? api<PageData<Project>>({ url: '/projects', params: { page: 1, pageSize: 8 } }).catch(() => emptyPage<Project>()) : emptyPage<Project>(),
+      hasPermission(user, 'REQUEST_VIEW') ? api<PageData<PhotoRequest>>({ url: '/requests', params: { page: 1, pageSize: 8 } }).catch(() => emptyPage<PhotoRequest>()) : emptyPage<PhotoRequest>(),
+      hasPermission(user, 'PHOTO_VIEW') ? api<PageData<Photo>>({ url: '/photos', params: { page: 1, pageSize: 8, status: 'AVAILABLE' } }).catch(() => emptyPage<Photo>()) : emptyPage<Photo>(),
     ])
     return { projects, requests, photos }
   }, {
     projects: emptyPage<Project>(), requests: emptyPage<PhotoRequest>(), photos: emptyPage<Photo>(),
-  }, [])
+  }, [user?.permissionGroupId])
 
   const active = data.projects.items.filter((item) => item.status === 'ACTIVE').length
   const pending = data.requests.items.filter((item) => ['PUBLISHED', 'ACCEPTED'].includes(item.status)).length
@@ -42,12 +43,13 @@ export default function DashboardPage() {
       <div>
         <Typography.Text className="eyebrow">{dayjs().format('YYYY 年 M 月 D 日 · dddd')}</Typography.Text>
         <Typography.Title level={1}>欢迎回来，{user?.displayName}</Typography.Title>
-        <Typography.Paragraph>以{roleName[user?.role || '']}身份登录。让我们一起记录每个精彩瞬间，用影像讲述校园故事。</Typography.Paragraph>
+        <Typography.Paragraph>当前权限组：{user?.permissionGroupName || '未命名权限组'}。让我们一起记录每个精彩瞬间，用影像讲述校园故事。</Typography.Paragraph>
       </div>
       <Space wrap>
-        {user?.role !== 'CAMPUS_MANAGER' &&
+        {hasPermission(user, 'PROJECT_CREATE') &&
           <Button type="primary" size="large" icon={<PlusOutlined />} onClick={() => navigate('/projects')}>新建项目</Button>}
-        <Button size="large" icon={<CameraOutlined />} onClick={() => navigate('/photos')}>上传图片</Button>
+        {hasPermission(user, 'PHOTO_UPLOAD') &&
+          <Button size="large" icon={<CameraOutlined />} onClick={() => navigate('/photos')}>上传图片</Button>}
       </Space>
     </section>
 

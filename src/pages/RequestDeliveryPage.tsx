@@ -1,10 +1,10 @@
 import {
-  Alert, App, Button, Card, Col, DatePicker, Descriptions, Form, Image, Input, Progress,
+  Alert, App, Button, Card, Checkbox, Col, DatePicker, Descriptions, Form, Image, Input, Progress,
   Result, Row, Select, Space, Statistic, Tag, Typography, Upload,
 } from 'antd'
 import {
-  ArrowLeftOutlined, CheckCircleOutlined, CloudUploadOutlined, InboxOutlined,
-  PictureOutlined, SendOutlined,
+  ArrowLeftOutlined, CheckCircleOutlined, CloudUploadOutlined, DeleteOutlined, DownloadOutlined,
+  InboxOutlined, PictureOutlined, SendOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useMemo, useState } from 'react'
@@ -18,6 +18,8 @@ import { useLoad } from '../hooks'
 import type { Campus, CampusMember, EntityId, PageData, Photo, PhotoRequest, Project } from '../types'
 import MarkdownRenderer from '../MarkdownRenderer'
 import { photoTitleFromFileName } from '../photoTitle'
+import { hasPermission } from '../permissions'
+import { preparePhotoBatchDownload } from '../photoBatchDownload'
 
 type UploadValues = {
   files: { originFileObj?: File }[]
@@ -38,17 +40,19 @@ export default function RequestDeliveryPage() {
   const { requestId = '' } = useParams()
   const navigate = useNavigate()
   const { user } = useAuth()
-  const { message } = App.useApp()
+  const { message, modal } = App.useApp()
   const [form] = Form.useForm<UploadValues>()
   const [photoStatus, setPhotoStatus] = useState('AVAILABLE')
   const [uploading, setUploading] = useState(false)
   const [progress, setProgress] = useState(0)
   const [actioning, setActioning] = useState(false)
+  const [selectedPhotoIds, setSelectedPhotoIds] = useState<EntityId[]>([])
+  const [batchWorking, setBatchWorking] = useState(false)
 
   const requestState = useLoad(async () => {
     const request = await api<PhotoRequest>({ url: `/requests/${requestId}` })
     const [project, campuses] = await Promise.all([
-      api<Project>({ url: `/projects/${request.projectId}` }),
+      api<Project>({ url: `/projects/${request.projectId}` }).catch(() => null),
       api<Campus[]>({ url: '/campuses', params: { enabled: true } }),
     ])
     return { request, project, campuses }
@@ -65,9 +69,10 @@ export default function RequestDeliveryPage() {
   )
 
   const request = requestState.data.request
-  const isManager = user?.role === 'CAMPUS_MANAGER'
-  const canUpload = request?.status === 'ACCEPTED'
-    && (isManager || user?.role === 'ADMIN' || user?.role === 'MINISTER')
+  const campusScoped = user?.dataScope === 'CAMPUS'
+  const canManagePhotos = hasPermission(user, 'REQUEST_PHOTO_MANAGE')
+  const canUpload = canManagePhotos && request?.status === 'ACCEPTED'
+  const canDelete = canManagePhotos && request?.status !== 'COMPLETED' && request?.status !== 'CANCELLED'
   const membersState = useLoad(
     () => canUpload && request
       ? api<CampusMember[]>({
@@ -158,6 +163,41 @@ export default function RequestDeliveryPage() {
     }
   }
 
+  const batchDownload = async () => {
+    if (!selectedPhotoIds.length) return
+    setBatchWorking(true)
+    try {
+      const downloadUrl = await preparePhotoBatchDownload(selectedPhotoIds)
+      if (downloadUrl) window.location.assign(downloadUrl)
+      else message.info('ZIP 仍在后台生成，请稍后重试')
+    } catch (error) {
+      message.error((error as Error).message)
+    } finally {
+      setBatchWorking(false)
+    }
+  }
+
+  const batchDelete = () => {
+    if (!selectedPhotoIds.length) return
+    const selectedCount = selectedPhotoIds.length
+    modal.confirm({
+      title: `删除 ${selectedCount} 张需求图片？`,
+      content: '删除后图片记录和存储对象会被清理，且无法恢复。',
+      okText: '确认删除', okButtonProps: { danger: true }, cancelText: '取消',
+      onOk: async () => {
+        setBatchWorking(true)
+        try {
+          await api({ method: 'POST', url: '/photos/batch-delete', data: { photoIds: selectedPhotoIds } })
+          setSelectedPhotoIds([])
+          message.success(`已删除 ${selectedCount} 张需求图片`)
+          await photosState.reload()
+        } finally {
+          setBatchWorking(false)
+        }
+      },
+    })
+  }
+
   if (requestState.error) {
     return <Result status="403" title="无法访问这个需求" subTitle={requestState.error}
       extra={<Button onClick={() => navigate('/requests')}>返回需求列表</Button>} />
@@ -181,11 +221,11 @@ export default function RequestDeliveryPage() {
           </Space>
         </div>
         <Space wrap>
-          {isManager && request.status === 'PUBLISHED' &&
+          {campusScoped && request.status === 'PUBLISHED' &&
             <Button size="large" type="primary" loading={actioning} onClick={() => void accept()}>接受任务</Button>}
-          {isManager && request.status === 'ACCEPTED' &&
+          {campusScoped && request.status === 'ACCEPTED' &&
             <Button size="large" icon={<SendOutlined />} loading={actioning}
-              disabled={!photosState.data.total} onClick={() => void submit()}>提交交付</Button>}
+              onClick={() => void submit()}>提交交付</Button>}
         </Space>
       </section>
 
@@ -207,13 +247,27 @@ export default function RequestDeliveryPage() {
 
       <Row gutter={[20, 20]}>
         <Col xs={24} xl={canUpload ? 15 : 24}>
-          <Card title="需求图片" extra={<Select value={photoStatus} options={photoStatuses}
-            onChange={setPhotoStatus} style={{ width: 130 }} />}>
+          <Card title="需求图片" extra={<Space wrap>
+            {!!selectedPhotoIds.length && <Typography.Text>已选 {selectedPhotoIds.length} 张</Typography.Text>}
+            {canManagePhotos && <Button icon={<DownloadOutlined />} disabled={!selectedPhotoIds.length}
+              loading={batchWorking} onClick={() => void batchDownload()}>批量下载</Button>}
+            {canDelete && <Button danger icon={<DeleteOutlined />} disabled={!selectedPhotoIds.length}
+              loading={batchWorking} onClick={batchDelete}>批量删除</Button>}
+            <Select value={photoStatus} options={photoStatuses} onChange={value => {
+              setPhotoStatus(value); setSelectedPhotoIds([])
+            }} style={{ width: 130 }} />
+          </Space>}>
             <DataState loading={photosState.loading} error={photosState.error}
               empty={!photosState.data.items.length} onRetry={photosState.reload}>
               <div className="delivery-gallery">
                 {photosState.data.items.map(photo => <article key={photo.id}>
                   <div>
+                    {canManagePhotos && (photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED') &&
+                      <Checkbox checked={selectedPhotoIds.includes(photo.id)}
+                        disabled={selectedPhotoIds.length >= 200 && !selectedPhotoIds.includes(photo.id)}
+                        onChange={event => setSelectedPhotoIds(current => event.target.checked
+                          ? [...new Set([...current, photo.id])].slice(0, 200)
+                          : current.filter(id => id !== photo.id))} />}
                     {photo.thumbnailUrl
                       ? <Image preview src={photo.thumbnailUrl} alt={photo.title} />
                       : <div className="delivery-placeholder"><PictureOutlined /></div>}

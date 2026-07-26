@@ -12,6 +12,7 @@ import { DataState, PageTitle, StatusTag } from '../components'
 import { useLoad } from '../hooks'
 import MarkdownEditor from '../MarkdownEditor'
 import { markdownExcerpt } from '../MarkdownRenderer'
+import { hasPermission } from '../permissions'
 
 const statusOptions = [
   { value: 'DRAFT', label: '草稿' }, { value: 'ACTIVE', label: '进行中' },
@@ -41,7 +42,7 @@ export default function ProjectsPage() {
   }
   return <>
     <PageTitle eyebrow="PROJECTS" title="选题项目" description="从一个清晰的选题开始，组织需求、图片和采纳记录。"
-      extra={user?.role !== 'CAMPUS_MANAGER' && <Button type="primary" size="large" icon={<PlusOutlined />} onClick={() => setOpen(true)}>新建项目</Button>} />
+      extra={hasPermission(user, 'PROJECT_CREATE') && <Button type="primary" size="large" icon={<PlusOutlined />} onClick={() => setOpen(true)}>新建项目</Button>} />
     <Card className="filter-card">
       <Space wrap>
         <Input allowClear prefix={<SearchOutlined />} placeholder="搜索项目名称" style={{ width: 260 }}

@@ -1,5 +1,5 @@
 import {
-  Alert, App as AntApp, Avatar, Badge, Button, Divider, Dropdown, Empty, Grid, Layout, List, Menu, Popover, Progress, Space, Typography,
+  Alert, App as AntApp, Avatar, Badge, Button, Divider, Dropdown, Empty, Grid, Layout, List, Menu, Popover, Progress, Result, Space, Typography,
 } from 'antd'
 import {
   AimOutlined, BarChartOutlined, BellOutlined, BookOutlined, BulbOutlined, CameraOutlined, ContactsOutlined,
@@ -9,9 +9,10 @@ import {
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from './auth'
-import { roleName, NotFound } from './components'
+import { NotFound } from './components'
 import { api } from './api'
 import type { BrandingSettings, Notification, PreviewGenerationStatus } from './types'
+import { hasAnyPermission, hasPermission, hasSystemAccess } from './permissions'
 import dayjs from 'dayjs'
 
 const LoginPage = lazy(() => import('./pages/LoginPage'))
@@ -125,11 +126,13 @@ function Shell() {
     }
   }
   useEffect(() => {
+    if (user?.dataScope === 'NONE') return
     void loadNotifications()
     const timer = window.setInterval(() => void loadNotifications(), 30_000)
     return () => window.clearInterval(timer)
-  }, [])
+  }, [user?.dataScope])
   useEffect(() => {
+    if (user?.dataScope === 'NONE') return
     let cancelled = false
     let timer: number | undefined
     const loadPreviewStatus = async () => {
@@ -154,7 +157,7 @@ function Shell() {
       cancelled = true
       if (timer !== undefined) window.clearTimeout(timer)
     }
-  }, [message])
+  }, [message, user?.dataScope])
   const markRead = async (item: Notification) => {
     if (!item.readAt) {
       await api<void>({ method: 'post', url: `/notifications/${item.id}/read` })
@@ -176,27 +179,37 @@ function Shell() {
     setUnreadCount(0)
   }
   const nav = useMemo(() => {
-    const common = [
-      { key: '/', icon: <DashboardOutlined />, label: '工作台' },
-      { key: '/projects', icon: <FolderOutlined />, label: '选题项目' },
-      { key: '/requests', icon: <UnorderedListOutlined />, label: '图片需求' },
-      { key: '/photos', icon: <CameraOutlined />, label: '图片库' },
-      { key: '/worklogs', icon: <BookOutlined />, label: '工时记录' },
-      { key: '/directory', icon: <ContactsOutlined />, label: '通讯录' },
-      { key: '/notifications', icon: <MessageOutlined />, label: '消息中心' },
-    ]
-    if (user?.role !== 'CAMPUS_MANAGER') common.push(
-      { key: '/statistics', icon: <BarChartOutlined />, label: '数据统计' },
-      { key: '/manager-campuses', icon: <EnvironmentOutlined />, label: '负责人校区' },
-    )
-    if (user?.role === 'ADMIN') common.push(
+    const common = [{ key: '/', icon: <DashboardOutlined />, label: '工作台' }]
+    if (hasPermission(user, 'PROJECT_VIEW')) common.push(
+      { key: '/projects', icon: <FolderOutlined />, label: '选题项目' })
+    if (hasPermission(user, 'REQUEST_VIEW')) common.push(
+      { key: '/requests', icon: <UnorderedListOutlined />, label: '图片需求' })
+    if (hasPermission(user, 'PHOTO_VIEW')) common.push(
+      { key: '/photos', icon: <CameraOutlined />, label: '图片库' })
+    if (hasAnyPermission(user, 'WORKLOG_SUBMIT', 'WORKLOG_CONFIRM', 'WORKLOG_EXPORT')) common.push(
+      { key: '/worklogs', icon: <BookOutlined />, label: '工时记录' })
+    if (hasAnyPermission(user, 'DIRECTORY_VIEW', 'DIRECTORY_MANAGE')) common.push(
+      { key: '/directory', icon: <ContactsOutlined />, label: '通讯录' })
+    common.push({ key: '/notifications', icon: <MessageOutlined />, label: '消息中心' })
+    if (hasPermission(user, 'STATISTICS_DOWNLOAD')) common.push(
+      { key: '/statistics', icon: <BarChartOutlined />, label: '数据统计' })
+    if (hasPermission(user, 'MANAGER_CAMPUS_ASSIGN')) common.push(
+      { key: '/manager-campuses', icon: <EnvironmentOutlined />, label: '负责人校区' })
+    if (user?.permissionGroupCode === 'ADMIN') common.push(
       { key: '/admin', icon: <SettingOutlined />, label: '系统管理' },
     )
     return common
-  }, [user?.role])
+  }, [user])
 
   if (!user) return <Navigate to="/login" replace state={{ from: location }} />
   if (user.mustChangePassword) return <Navigate to="/initial-password" replace />
+  if (!hasSystemAccess(user)) return <div className="access-pending-page">
+    <Result status="403" title="账号暂未分配可用权限"
+      subTitle="原权限组可能已被删除。您仍可登录账号，但暂时无法进入系统，请联系管理员重新分配权限组。"
+      extra={<Button type="primary" onClick={async () => {
+        await logout(); navigate('/login')
+      }}>退出登录</Button>} />
+  </div>
   const selected = location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`
   const displayIconType = branding.displayIconType ?? branding.iconType
   const displayIconUrl = branding.displayIconUrl ?? branding.customIconUrl
@@ -276,7 +289,7 @@ function Shell() {
           ] }}>
             <Space className="user-menu">
               <Avatar style={{ background: '#E0FFFF', color: '#4682B4' }}>{user.displayName.slice(0, 1)}</Avatar>
-              {!mobile && <div><strong>{user.displayName}</strong><span>{roleName[user.role]}</span></div>}
+              {!mobile && <div><strong>{user.displayName}</strong><span>{user.permissionGroupName || user.role}</span></div>}
             </Space>
           </Dropdown>
         </div>
@@ -297,19 +310,19 @@ function Shell() {
         <div className="route-stage" key={location.pathname}>
           <Suspense fallback={<div className="route-loading">正在整理工作台…</div>}><Routes>
             <Route path="/" element={<DashboardPage />} />
-            <Route path="/projects" element={<ProjectsPage />} />
-            <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
-            <Route path="/requests" element={<RequestsPage />} />
-            <Route path="/requests/:requestId" element={<RequestDeliveryPage />} />
-            <Route path="/photos" element={<PhotosPage />} />
-            <Route path="/photos/batch-upload" element={<BatchUploadPage />} />
-            <Route path="/worklogs" element={<WorklogsPage />} />
-            <Route path="/directory" element={<DirectoryPage />} />
+            <Route path="/projects" element={hasPermission(user, 'PROJECT_VIEW') ? <ProjectsPage /> : <Navigate to="/" />} />
+            <Route path="/projects/:projectId" element={hasPermission(user, 'PROJECT_VIEW') ? <ProjectDetailPage /> : <Navigate to="/" />} />
+            <Route path="/requests" element={hasPermission(user, 'REQUEST_VIEW') ? <RequestsPage /> : <Navigate to="/" />} />
+            <Route path="/requests/:requestId" element={hasPermission(user, 'REQUEST_VIEW') ? <RequestDeliveryPage /> : <Navigate to="/" />} />
+            <Route path="/photos" element={hasPermission(user, 'PHOTO_VIEW') ? <PhotosPage /> : <Navigate to="/" />} />
+            <Route path="/photos/batch-upload" element={hasAnyPermission(user, 'PHOTO_UPLOAD', 'REQUEST_PHOTO_MANAGE') ? <BatchUploadPage /> : <Navigate to="/" />} />
+            <Route path="/worklogs" element={hasAnyPermission(user, 'WORKLOG_SUBMIT', 'WORKLOG_CONFIRM', 'WORKLOG_EXPORT') ? <WorklogsPage /> : <Navigate to="/" />} />
+            <Route path="/directory" element={hasAnyPermission(user, 'DIRECTORY_VIEW', 'DIRECTORY_MANAGE') ? <DirectoryPage /> : <Navigate to="/" />} />
             <Route path="/notifications" element={<NotificationsPage />} />
             <Route path="/notifications/:notificationId" element={<NotificationDetailPage />} />
-            <Route path="/statistics" element={user.role === 'CAMPUS_MANAGER' ? <Navigate to="/" /> : <StatisticsPage />} />
-            <Route path="/manager-campuses" element={user.role === 'CAMPUS_MANAGER' ? <Navigate to="/" /> : <ManagerCampusesPage />} />
-            <Route path="/admin" element={user.role === 'ADMIN' ? <AdminPage /> : <Navigate to="/" />} />
+            <Route path="/statistics" element={hasPermission(user, 'STATISTICS_DOWNLOAD') ? <StatisticsPage /> : <Navigate to="/" />} />
+            <Route path="/manager-campuses" element={hasPermission(user, 'MANAGER_CAMPUS_ASSIGN') ? <ManagerCampusesPage /> : <Navigate to="/" />} />
+            <Route path="/admin" element={user.permissionGroupCode === 'ADMIN' ? <AdminPage /> : <Navigate to="/" />} />
             <Route path="*" element={<NotFound />} />
           </Routes></Suspense>
         </div>

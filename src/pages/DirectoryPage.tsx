@@ -6,6 +6,7 @@ import { useAuth } from '../auth'
 import type { Campus, CampusMember, EntityId } from '../types'
 import { DataState, PageTitle } from '../components'
 import { useLoad } from '../hooks'
+import { hasPermission } from '../permissions'
 
 export default function DirectoryPage() {
   const { user } = useAuth()
@@ -14,22 +15,27 @@ export default function DirectoryPage() {
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [editing, setEditing] = useState<CampusMember | null>(null)
-  const [selectedCampus, setSelectedCampus] = useState<EntityId | undefined>(undefined)
+  const [selectedCampus, setSelectedCampus] = useState<EntityId | undefined>(
+    user?.campusIds?.length === 1 ? user.campusIds[0] : undefined)
 
-  const isManager = user?.role === 'CAMPUS_MANAGER'
-  const canManageAllCampuses = user?.role === 'ADMIN' || user?.role === 'MINISTER'
+  const campusScoped = user?.dataScope === 'CAMPUS'
+  const canManage = hasPermission(user, 'DIRECTORY_MANAGE')
+  const showCampusPicker = !campusScoped || (user?.campusIds?.length || 0) > 1
 
   const { data: campuses } = useLoad(
-    () => canManageAllCampuses ? api<Campus[]>({ url: '/campuses', params: { enabled: true } }) : Promise.resolve([]),
-    [] as Campus[], [user?.role],
+    () => showCampusPicker ? api<Campus[]>({ url: '/campuses', params: { enabled: true } }) : Promise.resolve([]),
+    [] as Campus[], [showCampusPicker],
   )
+  const visibleCampuses = campusScoped
+    ? campuses.filter(campus => user?.campusIds?.includes(campus.id))
+    : campuses
   const { data: members, loading, error, reload } = useLoad(
-    () => isManager
+    () => !showCampusPicker
       ? api<CampusMember[]>({ url: '/campus-members' })
-      : canManageAllCampuses && selectedCampus
+      : selectedCampus
         ? api<CampusMember[]>({ url: '/campus-members', params: { campusId: selectedCampus } })
         : Promise.resolve([] as CampusMember[]),
-    [] as CampusMember[], [user?.role, selectedCampus],
+    [] as CampusMember[], [showCampusPicker, selectedCampus],
   )
 
   const openCreate = () => { setEditing(null); form.resetFields(); form.setFieldsValue({ enabled: true }); setOpen(true) }
@@ -50,7 +56,7 @@ export default function DirectoryPage() {
         message.success('成员信息已更新')
       } else {
         await api({ method: 'POST', url: '/campus-members', data: qs({
-          campusId: canManageAllCampuses ? selectedCampus : undefined,
+          campusId: showCampusPicker ? selectedCampus : undefined,
           studentId: values.studentId,
           name: values.name,
         }) })
@@ -107,21 +113,20 @@ export default function DirectoryPage() {
     })
   }
 
-  const description = canManageAllCampuses
-    ? '按校区维护摄影人员通讯录，供上传拍摄者与工时人员选择。'
-    : '维护本校区摄影人员通讯录，供上传拍摄者与工时人员选择。'
+  const description = canManage
+    ? '按授权校区维护摄影人员通讯录，供上传拍摄者与工时人员选择。'
+    : '查看摄影人员通讯录。'
 
-  const manageExtra = isManager
-    ? <Button type="primary" size="large" icon={<PlusOutlined />} onClick={openCreate}>添加成员</Button>
-    : canManageAllCampuses
-      ? <Button type="primary" size="large" icon={<PlusOutlined />} disabled={!selectedCampus} onClick={openCreate}>添加成员</Button>
-      : undefined
+  const manageExtra = canManage
+    ? <Button type="primary" size="large" icon={<PlusOutlined />}
+        disabled={showCampusPicker && !selectedCampus} onClick={openCreate}>添加成员</Button>
+    : undefined
 
   return <>
     <PageTitle eyebrow="DIRECTORY" title="通讯录" description={description} extra={manageExtra} />
 
     <>
-      {canManageAllCampuses && (
+      {showCampusPicker && (
         <Card className="filter-card">
           <Space wrap>
             <span>校区</span>
@@ -131,15 +136,15 @@ export default function DirectoryPage() {
               style={{ width: 240 }}
               placeholder="请选择要维护的校区"
               value={selectedCampus}
-              options={campuses.map(campus => ({ value: campus.id, label: campus.name }))}
+              options={visibleCampuses.map(campus => ({ value: campus.id, label: campus.name }))}
               onChange={(value) => setSelectedCampus(value)}
             />
           </Space>
         </Card>
       )}
       <Card>
-        {canManageAllCampuses && !selectedCampus
-          ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="请先选择要维护的校区" />
+        {showCampusPicker && !selectedCampus
+          ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="请先选择要查看的校区" />
           : <DataState loading={loading} error={error} empty={!members.length} onRetry={reload}>
               <Table
                 rowKey="id"
@@ -153,13 +158,13 @@ export default function DirectoryPage() {
                     render: (enabled: boolean) => enabled
                       ? <Tag color="green">启用</Tag>
                       : <Tag>停用</Tag> },
-                  { title: '操作', width: 280, render: (_, member: CampusMember) => <Space>
+                  ...(canManage ? [{ title: '操作', width: 280, render: (_: unknown, member: CampusMember) => <Space>
                     <Button type="text" icon={<EditOutlined />} onClick={() => openEdit(member)}>编辑</Button>
                     {member.enabled
                       ? <Button type="text" danger icon={<StopOutlined />} onClick={() => confirmToggle(member)}>停用</Button>
                       : <Button type="text" icon={<CheckCircleOutlined />} onClick={() => confirmToggle(member)}>启用</Button>}
                     <Button type="text" danger icon={<DeleteOutlined />} onClick={() => confirmDelete(member)}>删除</Button>
-                  </Space> },
+                  </Space> }] : []),
                 ]}
               />
             </DataState>}

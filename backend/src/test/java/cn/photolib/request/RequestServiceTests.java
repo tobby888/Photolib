@@ -4,6 +4,8 @@ import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.campus.CampusService;
 import cn.photolib.campus.model.CampusEntity;
 import cn.photolib.common.error.BusinessException;
+import cn.photolib.permission.DataScope;
+import cn.photolib.permission.PermissionCode;
 import cn.photolib.project.ProjectService;
 import cn.photolib.project.model.ProjectEntity;
 import cn.photolib.project.model.ProjectStatus;
@@ -18,6 +20,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -263,7 +266,7 @@ class RequestServiceTests {
 
         // When: 完成需求
         int completeVersion = requestService.get(request.getId()).getVersion();
-        var completed = requestService.complete(request.getId(), completeVersion);
+        var completed = requestService.complete(request.getId(), completeVersion, ministerUser);
 
         // Then: 状态应该变为已完成
         assertThat(completed.getStatus()).isEqualTo(RequestStatus.COMPLETED);
@@ -310,6 +313,26 @@ class RequestServiceTests {
                 accepted.getId(), "需要修改", accepted.getVersion(), ministerUser))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("仅待确认需求可打回");
+    }
+
+    @Test
+    void campusScopedReviewerCannotConfirmReturnOrDeleteOutsideAssignedCampuses() {
+        PhotoRequestEntity submitted = createSubmittedRequest();
+        var otherCampus = campusService.create("REVIEW-OTHER", "审核权限外校区");
+        var scopedReviewer = new AuthenticatedUser(
+                -99L, "scoped-reviewer", "校区审核员", UserRole.CAMPUS_MANAGER,
+                otherCampus.getId(), false, -99L, "SCOPED_REVIEWER", "校区审核员",
+                DataScope.CAMPUS, Set.of(PermissionCode.REQUEST_CONFIRM, PermissionCode.REQUEST_DELETE),
+                Set.of(otherCampus.getId()));
+
+        assertThatThrownBy(() -> requestService.complete(
+                submitted.getId(), submitted.getVersion(), scopedReviewer))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("无权操作该校区");
+        assertThatThrownBy(() -> requestService.returnForRevision(
+                submitted.getId(), "越权打回", submitted.getVersion(), scopedReviewer))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("无权操作该校区");
+        assertThatThrownBy(() -> requestService.delete(submitted.getId(), scopedReviewer))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("无权操作该校区");
     }
 
     @Test
@@ -401,7 +424,7 @@ class RequestServiceTests {
 
         assertThatThrownBy(() -> requestService.delete(request.getId(), ministerUser))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("仅管理员可删除需求");
+                .hasMessageContaining("无权执行该需求操作");
         assertThat(requestService.get(request.getId())).isNotNull();
     }
 

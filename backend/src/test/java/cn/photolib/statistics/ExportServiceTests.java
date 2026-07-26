@@ -24,6 +24,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anySet;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verify;
@@ -92,7 +93,7 @@ class ExportServiceTests {
         ExportJobEntity job = new ExportJobEntity();
         job.setId("job-id");
         when(mapper.selectById("job-id")).thenReturn(job);
-        when(statistics.members(any(), any(), any(), any(), any()))
+        when(statistics.members(any(), any(), any(), any(), any(), anySet()))
                 .thenThrow(new IllegalStateException("C:\\secret\\bucket-name"));
 
         exports.exportStatistics(new ExportService.StatisticsExportRequested(

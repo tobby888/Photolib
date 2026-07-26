@@ -13,7 +13,7 @@ import cn.photolib.request.mapper.RequestParticipantMapper;
 import cn.photolib.request.model.RequestParticipantEntity;
 import cn.photolib.storage.ObjectStorageService;
 import cn.photolib.storage.StorageProperties;
-import cn.photolib.user.model.UserRole;
+import cn.photolib.permission.PermissionCode;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
@@ -43,6 +43,11 @@ public class BatchUploadService {
 
     @Transactional
     public BatchTicket create(CreateBatch command, AuthenticatedUser user) {
+        PermissionCode requiredPermission = command.requestId() == null
+                ? PermissionCode.PHOTO_UPLOAD : PermissionCode.REQUEST_PHOTO_MANAGE;
+        if (!user.hasPermission(requiredPermission)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权批量上传图片");
+        }
         if (command.mode() == BatchMode.FILES && (command.files() == null
                 || command.files().isEmpty() || command.files().size() > 100)) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "FILES 模式需上传 1 至 100 张图片");
@@ -54,7 +59,7 @@ public class BatchUploadService {
         }
         if (command.requestId() != null) {
             requestService.get(command.requestId());
-            if (user.role() == UserRole.CAMPUS_MANAGER
+            if (user.isCampusScoped()
                     && participantMapper.selectCount(Wrappers.<RequestParticipantEntity>lambdaQuery()
                     .eq(RequestParticipantEntity::getRequestId, command.requestId())
                     .eq(RequestParticipantEntity::getUserId, user.id())) == 0) {
@@ -259,7 +264,7 @@ public class BatchUploadService {
     private PhotoUploadBatchEntity requireOwned(String id, AuthenticatedUser user) {
         PhotoUploadBatchEntity batch = batchMapper.selectById(id);
         if (batch == null) throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "上传批次不存在");
-        if (!batch.getCreatedBy().equals(user.id()) && user.role() != cn.photolib.user.model.UserRole.ADMIN) {
+        if (!batch.getCreatedBy().equals(user.id()) && !user.isAdministrator()) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该上传批次");
         }
         return batch;

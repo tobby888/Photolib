@@ -17,6 +17,7 @@ import { useLoad } from '../hooks'
 import MarkdownEditor from '../MarkdownEditor'
 import MarkdownRenderer, { markdownExcerpt } from '../MarkdownRenderer'
 import { preparePhotoBatchDownload } from '../photoBatchDownload'
+import { hasPermission } from '../permissions'
 
 const projectStateCopy = {
   DRAFT: {
@@ -60,7 +61,7 @@ export default function ProjectDetailPage() {
       api<PageData<PhotoRequest>>({ url: '/requests', params: { page: 1, pageSize: 100, projectId } }),
       api<Campus[]>({ url: '/campuses', params: { enabled: true } }),
       api<PageData<Photo>>({ url: '/photos', params: { page: 1, pageSize: 100, projectId, includeAllStatuses: true } }),
-      user?.role === 'CAMPUS_MANAGER'
+      user?.dataScope === 'CAMPUS'
         ? Promise.resolve(emptyPage<Adoption>())
         : api<PageData<Adoption>>({ url: `/projects/${projectId}/adoptions`, params: { page: 1, pageSize: 100 } }),
     ])
@@ -98,14 +99,15 @@ export default function ProjectDetailPage() {
     campuses: [] as Campus[],
     photos: [] as Photo[],
     adoptions: [] as Adoption[],
-  }, [projectId, user?.role])
+  }, [projectId, user?.dataScope])
   const { data: galleryPhotos, loading: galleryLoading } = useLoad(
-    () => api<PageData<Photo>>({
+    () => galleryOpen && hasPermission(user, 'PROJECT_ADOPT') && hasPermission(user, 'PHOTO_VIEW')
+      ? api<PageData<Photo>>({
       url: '/photos',
       params: { page: 1, pageSize: 100, status: 'AVAILABLE', keyword: galleryKeyword || undefined },
-    }),
+    }) : Promise.resolve(emptyPage<Photo>()),
     emptyPage<Photo>(),
-    [galleryKeyword],
+    [galleryOpen, galleryKeyword, user?.permissionGroupId],
   )
 
   const toggleAdoption = async (photo: Photo) => {
@@ -308,8 +310,11 @@ export default function ProjectDetailPage() {
   }
 
   const project = data.project
-  const canManage = user?.role !== 'CAMPUS_MANAGER'
-  const canBatchDownload = user?.role === 'ADMIN' || user?.role === 'MINISTER'
+  const canEdit = hasPermission(user, 'PROJECT_CREATE')
+  const canCreateRequest = hasPermission(user, 'REQUEST_CREATE')
+  const canComplete = hasPermission(user, 'PROJECT_COMPLETE')
+  const canAdopt = hasPermission(user, 'PROJECT_ADOPT')
+  const canBatchDownload = hasPermission(user, 'PROJECT_DOWNLOAD')
   const downloadablePhotoCount = data.photos.filter(
     photo => photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED',
   ).length
@@ -332,15 +337,15 @@ export default function ProjectDetailPage() {
               : <Typography.Paragraph>尚未添加项目说明。清晰的说明能帮助负责人准确理解拍摄目标。</Typography.Paragraph>}
           </div>
           <Space wrap>
-            {project.status === 'ACTIVE' &&
+            {canAdopt && project.status === 'ACTIVE' &&
               <Button icon={<FileImageOutlined />} onClick={() => setGalleryOpen(true)}>从图库添加图片</Button>}
-            {canManage && <>
+            {canEdit && <>
             {project.status !== 'COMPLETED' && project.status !== 'CANCELLED' &&
               <Button icon={<EditOutlined />} onClick={() => {
                 editForm.setFieldsValue({ title: project.title, description: project.description })
                 setEditOpen(true)
               }}>编辑项目</Button>}
-            {(project.status === 'DRAFT' || project.status === 'ACTIVE') &&
+            {canCreateRequest && (project.status === 'DRAFT' || project.status === 'ACTIVE') &&
               <Button type="primary" icon={<PlusOutlined />} onClick={() => setRequestOpen(true)}>新建图片需求</Button>}
             </>}
           </Space>
@@ -360,17 +365,17 @@ export default function ProjectDetailPage() {
           <Typography.Title level={4}>{projectStateCopy[project.status].title}</Typography.Title>
           <Typography.Paragraph>{projectStateCopy[project.status].description}</Typography.Paragraph>
         </div>
-        {canManage && <Space wrap>
-          {project.status === 'DRAFT' && <Button type="primary" icon={<RocketOutlined />} onClick={() => void changeStatus('ACTIVE')}>启动项目</Button>}
-          {project.status === 'ACTIVE' && <Button type="primary" icon={<CheckCircleOutlined />} onClick={() => void changeStatus('COMPLETED')}>标记为已完成</Button>}
-          {['DRAFT', 'ACTIVE'].includes(project.status) && <Button danger icon={<StopOutlined />}
+        <Space wrap>
+          {canEdit && project.status === 'DRAFT' && <Button type="primary" icon={<RocketOutlined />} onClick={() => void changeStatus('ACTIVE')}>启动项目</Button>}
+          {canComplete && project.status === 'ACTIVE' && <Button type="primary" icon={<CheckCircleOutlined />} onClick={() => void changeStatus('COMPLETED')}>标记为已完成</Button>}
+          {canEdit && ['DRAFT', 'ACTIVE'].includes(project.status) && <Button danger icon={<StopOutlined />}
             onClick={() => modal.confirm({ title: '确认取消这个项目？', content: '取消后不能再创建需求，已有记录会继续保留。',
               okText: '确认取消', okButtonProps: { danger: true }, onOk: () => changeStatus('CANCELLED') })}>取消项目</Button>}
-          {project.status === 'COMPLETED' && user?.role === 'ADMIN' && <Button type="primary" onClick={reopen}>重新开放</Button>}
-        </Space>}
+          {project.status === 'COMPLETED' && user?.permissionGroupCode === 'ADMIN' && <Button type="primary" onClick={reopen}>重新开放</Button>}
+        </Space>
       </Card>
 
-      <Card title="项目图片需求" extra={canManage && ['DRAFT', 'ACTIVE'].includes(project.status) &&
+      <Card title="项目图片需求" extra={canCreateRequest && ['DRAFT', 'ACTIVE'].includes(project.status) &&
         <Button type="link" icon={<PlusOutlined />} onClick={() => setRequestOpen(true)}>新建需求</Button>}>
         <Table rowKey="id" dataSource={data.requests} pagination={false} locale={{ emptyText: '这个项目还没有图片需求' }}
           columns={[
@@ -438,7 +443,7 @@ export default function ProjectDetailPage() {
                   <span>{photo.photographerName}</span>
                   <span>{dayjs(photo.takenAt).format('YYYY.MM.DD')}</span>
                 </div>
-                {canManage && <Button
+                {canAdopt && <Button
                   block
                   type={adopted ? 'default' : 'primary'}
                   danger={adopted}

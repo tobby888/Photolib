@@ -1,5 +1,8 @@
 package cn.photolib.statistics;
 
+import cn.photolib.auth.AuthenticatedUser;
+import cn.photolib.common.error.BusinessException;
+import cn.photolib.common.error.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
@@ -7,6 +10,7 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -15,6 +19,22 @@ public class StatisticsService {
 
     public List<MemberStatistics> members(LocalDate from, LocalDate to, Long projectId,
                                           Long campusId, Long userId) {
+        return members(from, to, projectId, campusId, userId, Set.of());
+    }
+
+    public List<MemberStatistics> members(LocalDate from, LocalDate to, Long projectId,
+                                          Long campusId, Long userId, AuthenticatedUser principal) {
+        if (principal.isCampusScoped() && campusId != null && !principal.canAccessCampus(campusId)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权查看该校区的统计数据");
+        }
+        return members(from, to, projectId, campusId, userId,
+                principal.isCampusScoped() ? principal.campusIds() : Set.of());
+    }
+
+    public List<MemberStatistics> members(LocalDate from, LocalDate to, Long projectId,
+                                          Long campusId, Long userId, Set<Long> allowedCampusIds) {
+        Set<Long> scopedIds = normalizedCampusIds(allowedCampusIds);
+        boolean campusScoped = allowedCampusIds != null && !allowedCampusIds.isEmpty();
         return jdbc.sql("""
                 WITH eligible_projects AS (
                     SELECT id
@@ -30,6 +50,7 @@ public class StatisticsService {
                     JOIN eligible_projects ep ON ep.id=a.project_id
                     WHERE a.deleted=0
                       AND (:campusId=0 OR p.campus_id=:campusId)
+                      AND (:campusScoped=FALSE OR p.campus_id IN (:campusIds))
                     GROUP BY a.photographer_student_id
                 )
                 SELECT MIN(w.user_id), w.member_student_id, w.member_name, MIN(c.name),
@@ -43,6 +64,7 @@ public class StatisticsService {
                 LEFT JOIN adoption_totals a ON a.photographer_student_id=w.member_student_id
                 WHERE w.deleted=0 AND w.status='CONFIRMED'
                   AND (:campusId=0 OR r.campus_id=:campusId)
+                  AND (:campusScoped=FALSE OR r.campus_id IN (:campusIds))
                   AND (:userId=0 OR w.user_id=:userId)
                 GROUP BY w.member_student_id,w.member_name
                 ORDER BY w.member_name
@@ -50,6 +72,8 @@ public class StatisticsService {
                 .param("toExclusive", to == null ? LocalDate.of(3000,1,1) : to.plusDays(1))
                 .param("projectId", projectId == null ? 0L : projectId)
                 .param("campusId", campusId == null ? 0L : campusId)
+                .param("campusScoped", campusScoped)
+                .param("campusIds", scopedIds)
                 .param("userId", userId == null ? 0L : userId)
                 .query((rs, n) -> {
                     int shooting = rs.getInt(5);
@@ -77,6 +101,13 @@ public class StatisticsService {
     }
 
     public List<WorklogExportRow> worklogs(LocalDate from, LocalDate to) {
+        return worklogs(from, to, Set.of());
+    }
+
+    public List<WorklogExportRow> worklogs(LocalDate from, LocalDate to,
+                                           Set<Long> allowedCampusIds) {
+        Set<Long> scopedIds = normalizedCampusIds(allowedCampusIds);
+        boolean campusScoped = allowedCampusIds != null && !allowedCampusIds.isEmpty();
         return jdbc.sql("""
                 WITH confirmed_worklogs AS (
                     SELECT w.member_student_id, MIN(w.member_name) AS member_name, MIN(c.name) AS campus,
@@ -88,6 +119,7 @@ public class StatisticsService {
                     WHERE w.deleted=0
                       AND w.status='CONFIRMED'
                       AND w.work_date BETWEEN :fromDate AND :toDate
+                      AND (:campusScoped=FALSE OR r.campus_id IN (:campusIds))
                     GROUP BY w.member_student_id
                 ),
                 worklog_statuses AS (
@@ -97,8 +129,10 @@ public class StatisticsService {
                            MAX(CASE WHEN w.status='REJECTED' THEN 1 ELSE 0 END) AS has_rejected,
                            MAX(CASE WHEN w.status='DRAFT' THEN 1 ELSE 0 END) AS has_draft
                     FROM worklog w
+                    JOIN photo_request status_r ON status_r.id=w.request_id
                     WHERE w.deleted=0
                       AND w.work_date BETWEEN :fromDate AND :toDate
+                      AND (:campusScoped=FALSE OR status_r.campus_id IN (:campusIds))
                     GROUP BY w.member_student_id
                 ),
                 adoption_totals AS (
@@ -114,6 +148,7 @@ public class StatisticsService {
                       AND p.deleted=0
                       AND p.status='COMPLETED'
                       AND p.completed_at >= :fromDate AND p.completed_at < :toExclusive
+                      AND (:campusScoped=FALSE OR ph.campus_id IN (:campusIds))
                     GROUP BY a.photographer_student_id
                 ),
                 export_people AS (
@@ -144,6 +179,8 @@ public class StatisticsService {
                 .param("fromDate", from)
                 .param("toDate", to)
                 .param("toExclusive", to.plusDays(1))
+                .param("campusScoped", campusScoped)
+                .param("campusIds", scopedIds)
                 .query((rs, n) -> {
                     int shooting = rs.getInt(4);
                     int retouching = rs.getInt(5);
@@ -153,19 +190,51 @@ public class StatisticsService {
     }
 
     public Map<String, Long> overview(LocalDate from, LocalDate to, Long projectId) {
-        long projects = jdbc.sql("SELECT COUNT(*) FROM project WHERE deleted=0 AND (:p=0 OR id=:p)")
-                .param("p", projectId == null ? 0L : projectId).query(Long.class).single();
-        long requests = jdbc.sql("SELECT COUNT(*) FROM photo_request WHERE deleted=0 AND (:p=0 OR project_id=:p)")
-                .param("p", projectId == null ? 0L : projectId).query(Long.class).single();
+        return overview(from, to, projectId, Set.of());
+    }
+
+    public Map<String, Long> overview(LocalDate from, LocalDate to, Long projectId,
+                                      AuthenticatedUser principal) {
+        return overview(from, to, projectId,
+                principal.isCampusScoped() ? principal.campusIds() : Set.of());
+    }
+
+    private Map<String, Long> overview(LocalDate from, LocalDate to, Long projectId,
+                                       Set<Long> allowedCampusIds) {
+        Set<Long> scopedIds = normalizedCampusIds(allowedCampusIds);
+        boolean campusScoped = allowedCampusIds != null && !allowedCampusIds.isEmpty();
+        long projects = jdbc.sql("""
+                SELECT COUNT(*) FROM project p WHERE p.deleted=0 AND (:p=0 OR p.id=:p)
+                  AND (:campusScoped=FALSE OR EXISTS (
+                      SELECT 1 FROM photo_request r WHERE r.project_id=p.id AND r.deleted=FALSE
+                        AND r.campus_id IN (:campusIds)))
+                """).param("p", projectId == null ? 0L : projectId)
+                .param("campusScoped", campusScoped).param("campusIds", scopedIds)
+                .query(Long.class).single();
+        long requests = jdbc.sql("""
+                SELECT COUNT(*) FROM photo_request
+                WHERE deleted=0 AND (:p=0 OR project_id=:p)
+                  AND (:campusScoped=FALSE OR campus_id IN (:campusIds))
+                """).param("p", projectId == null ? 0L : projectId)
+                .param("campusScoped", campusScoped).param("campusIds", scopedIds)
+                .query(Long.class).single();
         long photos = jdbc.sql("""
                 SELECT COUNT(*) FROM photo p WHERE p.deleted=0 AND p.status='AVAILABLE'
                   AND (:p=0 OR EXISTS (SELECT 1 FROM photo_project pp
                                         WHERE pp.photo_id=p.id AND pp.project_id=:p))
+                  AND (:campusScoped=FALSE OR p.campus_id IN (:campusIds))
                 """)
-                .param("p", projectId == null ? 0L : projectId).query(Long.class).single();
-        long adoptions = jdbc.sql("SELECT COUNT(*) FROM adoption WHERE deleted=0 AND (:p=0 OR project_id=:p)")
-                .param("p", projectId == null ? 0L : projectId).query(Long.class).single();
-        List<MemberStatistics> members = members(from, to, projectId, null, null);
+                .param("p", projectId == null ? 0L : projectId)
+                .param("campusScoped", campusScoped).param("campusIds", scopedIds)
+                .query(Long.class).single();
+        long adoptions = jdbc.sql("""
+                SELECT COUNT(*) FROM adoption a JOIN photo ph ON ph.id=a.photo_id
+                WHERE a.deleted=0 AND (:p=0 OR a.project_id=:p)
+                  AND (:campusScoped=FALSE OR ph.campus_id IN (:campusIds))
+                """).param("p", projectId == null ? 0L : projectId)
+                .param("campusScoped", campusScoped).param("campusIds", scopedIds)
+                .query(Long.class).single();
+        List<MemberStatistics> members = members(from, to, projectId, null, null, allowedCampusIds);
         long shooting = members.stream().mapToLong(MemberStatistics::shootingMinutes).sum();
         long retouching = members.stream().mapToLong(MemberStatistics::retouchingMinutes).sum();
         return Map.of("projects", projects, "requests", requests, "photos", photos,
@@ -178,16 +247,25 @@ public class StatisticsService {
      * 这类摄影师会进入工时导出并显示实际被引数，同时标注其申报/审核状态，仍需人工核对。
      */
     public List<UnmatchedAdoption> unmatchedAdoptions(LocalDate from, LocalDate to) {
+        return unmatchedAdoptions(from, to, Set.of());
+    }
+
+    public List<UnmatchedAdoption> unmatchedAdoptions(LocalDate from, LocalDate to,
+                                                       Set<Long> allowedCampusIds) {
+        Set<Long> scopedIds = normalizedCampusIds(allowedCampusIds);
+        boolean campusScoped = allowedCampusIds != null && !allowedCampusIds.isEmpty();
         return jdbc.sql("""
                 SELECT a.photographer_student_id,
                        MIN(a.photographer_name) AS photographer_name,
                        COUNT(DISTINCT a.photo_id) AS adopted_count
                 FROM adoption a
                 JOIN project p ON p.id=a.project_id
+                JOIN photo ph ON ph.id=a.photo_id
                 WHERE a.deleted=0
                   AND p.deleted=0
                   AND p.status='COMPLETED'
                   AND p.completed_at >= :fromDate AND p.completed_at < :toExclusive
+                  AND (:campusScoped=FALSE OR ph.campus_id IN (:campusIds))
                   AND NOT EXISTS (
                       SELECT 1 FROM worklog w
                       WHERE w.deleted=0
@@ -201,8 +279,14 @@ public class StatisticsService {
                 .param("fromDate", from)
                 .param("toDate", to)
                 .param("toExclusive", to.plusDays(1))
+                .param("campusScoped", campusScoped)
+                .param("campusIds", scopedIds)
                 .query((rs, n) -> new UnmatchedAdoption(rs.getString(1), rs.getString(2), rs.getLong(3)))
                 .list();
+    }
+
+    private Set<Long> normalizedCampusIds(Set<Long> allowedCampusIds) {
+        return allowedCampusIds == null || allowedCampusIds.isEmpty() ? Set.of(-1L) : allowedCampusIds;
     }
 
     public record MemberStatistics(Long userId, String studentId, String displayName, String campus,
