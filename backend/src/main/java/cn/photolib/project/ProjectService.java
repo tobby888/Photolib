@@ -58,8 +58,10 @@ public class ProjectService {
             List<Long> visibleProjectIds = jdbc.sql(
                 "SELECT DISTINCT r.project_id FROM photo_request r " +
                 "JOIN request_participant rp ON rp.request_id = r.id " +
-                "WHERE r.deleted = 0 AND rp.user_id = :userId"
+                "WHERE r.deleted = 0 AND rp.user_id = :userId " +
+                "AND r.campus_id IN (:campusIds)"
             ).param("userId", user.id())
+             .param("campusIds", user.scopedCampusIds())
              .query((rs, rowNum) -> rs.getLong("project_id"))
              .list();
 
@@ -121,18 +123,22 @@ public class ProjectService {
                 SELECT
                     (SELECT COUNT(*) FROM photo_request r
                         WHERE r.project_id=:id AND r.deleted=0
+                          AND r.campus_id IN (:campusIds)
                           AND EXISTS (SELECT 1 FROM request_participant rp
                                       WHERE rp.request_id=r.id AND rp.user_id=:userId)) AS request_count,
                     (SELECT COUNT(*) FROM photo p JOIN photo_project pp ON pp.photo_id=p.id
-                        WHERE pp.project_id=:id AND p.deleted=0 AND p.uploaded_by=:userId) AS photo_count,
+                        WHERE pp.project_id=:id AND p.deleted=0 AND p.uploaded_by=:userId
+                          AND p.campus_id IN (:campusIds)) AS photo_count,
                     (SELECT COUNT(*) FROM adoption a
                         WHERE a.project_id=:id AND a.deleted=0
                           AND EXISTS (SELECT 1 FROM photo p
                                       WHERE p.id=a.photo_id AND p.deleted=0
-                                        AND p.uploaded_by=:userId)) AS adoption_count
+                                        AND p.uploaded_by=:userId
+                                        AND p.campus_id IN (:campusIds))) AS adoption_count
                 """)
                 .param("id", id)
                 .param("userId", user.id())
+                .param("campusIds", user.scopedCampusIds())
                 .query((rs, rowNum) -> new ProjectSummary(
                         rs.getLong("request_count"),
                         rs.getLong("photo_count"),
@@ -255,9 +261,11 @@ public class ProjectService {
                 FROM photo_request r
                 JOIN request_participant rp ON rp.request_id=r.id
                 WHERE r.project_id=:projectId AND r.deleted=0 AND rp.user_id=:userId
+                  AND r.campus_id IN (:campusIds)
                 """)
                 .param("projectId", project.getId())
                 .param("userId", user.id())
+                .param("campusIds", user.scopedCampusIds())
                 .query(Long.class)
                 .single();
         if (assignments == 0) {

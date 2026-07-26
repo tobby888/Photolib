@@ -65,6 +65,22 @@ public class PermissionGroupService {
         return group;
     }
 
+    /**
+     * Serializes permission-group scope changes with account assignment. Callers must
+     * already run in a transaction so the row lock is held through the user write.
+     */
+    public PermissionGroupEntity requireForAuthorization(Long id) {
+        Long lockedId = jdbc.sql("""
+                SELECT id FROM permission_group
+                WHERE id=:id AND deleted=FALSE
+                FOR UPDATE
+                """).param("id", id).query(Long.class).optional().orElse(null);
+        if (lockedId == null) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "权限组不存在");
+        }
+        return require(lockedId);
+    }
+
     public PermissionGroupEntity requireByCode(String code) {
         PermissionGroupEntity group = mapper.selectOne(Wrappers.<PermissionGroupEntity>lambdaQuery()
                 .eq(PermissionGroupEntity::getCode, code));
@@ -107,11 +123,17 @@ public class PermissionGroupService {
 
     @Transactional
     public GroupView update(Long id, UpdateCommand command) {
-        PermissionGroupEntity group = require(id);
+        PermissionGroupEntity group = requireForAuthorization(id);
         if (Boolean.TRUE.equals(group.getLowest())) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "最低权限组不能编辑");
         }
         validateMutableFields(command.name(), command.dataScope(), command.permissions());
+        DataScope targetScope = Boolean.TRUE.equals(group.getBuiltIn())
+                ? group.getDataScope() : command.dataScope();
+        if (group.getDataScope() != targetScope && memberCount(id) > 0) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
+                    "修改数据范围前必须先清空权限组成员");
+        }
         Set<PermissionCode> permissions = command.permissions();
         if ("ADMIN".equals(group.getCode())) {
             // 系统管理员组是权限系统自身的管理入口（权限组、账号、校区、操作日志都靠
@@ -273,12 +295,15 @@ public class PermissionGroupService {
     }
 
     private GroupView toView(PermissionGroupEntity group) {
-        long memberCount = userMapper.selectCount(Wrappers.<UserEntity>lambdaQuery()
-                .eq(UserEntity::getPermissionGroupId, group.getId()));
         return new GroupView(group.getId(), group.getCode(), group.getName(), group.getDescription(),
                 group.getDataScope(), Boolean.TRUE.equals(group.getBuiltIn()),
-                Boolean.TRUE.equals(group.getLowest()), permissionCodes(group.getId()), memberCount,
+                Boolean.TRUE.equals(group.getLowest()), permissionCodes(group.getId()), memberCount(group.getId()),
                 group.getCreatedAt(), group.getUpdatedAt(), group.getVersion());
+    }
+
+    private long memberCount(Long groupId) {
+        return userMapper.selectCount(Wrappers.<UserEntity>lambdaQuery()
+                .eq(UserEntity::getPermissionGroupId, groupId));
     }
 
     public record PermissionDefinition(String code, String label) {}

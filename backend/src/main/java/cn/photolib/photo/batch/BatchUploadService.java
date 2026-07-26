@@ -9,11 +9,12 @@ import cn.photolib.photo.mapper.PhotoMapper;
 import cn.photolib.photo.model.PhotoEntity;
 import cn.photolib.photo.model.PhotoStatus;
 import cn.photolib.request.RequestService;
-import cn.photolib.request.mapper.RequestParticipantMapper;
-import cn.photolib.request.model.RequestParticipantEntity;
+import cn.photolib.request.model.PhotoRequestEntity;
 import cn.photolib.storage.ObjectStorageService;
 import cn.photolib.storage.StorageProperties;
 import cn.photolib.permission.PermissionCode;
+import cn.photolib.project.ProjectService;
+import cn.photolib.project.model.ProjectStatus;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
@@ -34,7 +35,7 @@ public class BatchUploadService {
     private final PhotoUploadItemMapper itemMapper;
     private final PhotoMapper photoMapper;
     private final RequestService requestService;
-    private final RequestParticipantMapper participantMapper;
+    private final ProjectService projectService;
     private final ObjectStorageService storage;
     private final StorageProperties storageProperties;
     private final ApplicationEventPublisher events;
@@ -57,14 +58,13 @@ public class BatchUploadService {
                 || command.archiveSize() > MAX_ARCHIVE)) {
             throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "ZIP 不得超过 1.5 GB");
         }
+        Long projectId = command.projectId();
         if (command.requestId() != null) {
-            requestService.get(command.requestId());
-            if (user.isCampusScoped()
-                    && participantMapper.selectCount(Wrappers.<RequestParticipantEntity>lambdaQuery()
-                    .eq(RequestParticipantEntity::getRequestId, command.requestId())
-                    .eq(RequestParticipantEntity::getUserId, user.id())) == 0) {
-                throw new BusinessException(ErrorCode.FORBIDDEN, "仅需求参与人可批量上传图片");
-            }
+            PhotoRequestEntity request = requestService.requireParticipantAccess(command.requestId(), user);
+            projectId = request.getProjectId();
+        } else {
+            requireGalleryUploadCampus(user);
+            if (projectId != null) requireProjectUploadAccess(projectId, user);
         }
         String batchId = PublicId.next();
         LocalDateTime now = LocalDateTime.now();
@@ -72,7 +72,7 @@ public class BatchUploadService {
         batch.setId(batchId);
         batch.setMode(command.mode());
         batch.setRequestId(command.requestId());
-        batch.setProjectId(command.projectId());
+        batch.setProjectId(projectId);
         batch.setCreatedBy(user.id());
         batch.setStatus(BatchStatus.UPLOADING);
         batch.setTotalCount(command.mode() == BatchMode.FILES ? command.files().size() : 0);
@@ -120,6 +120,9 @@ public class BatchUploadService {
     @Transactional
     public BatchView complete(String id, AuthenticatedUser user) {
         PhotoUploadBatchEntity batch = requireOwned(id, user);
+        if (batch.getRequestId() == null && batch.getProjectId() != null) {
+            requireProjectUploadAccess(batch.getProjectId(), user);
+        }
         if (batch.getStatus() != BatchStatus.UPLOADING) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "批次不处于上传状态");
         }
@@ -156,6 +159,9 @@ public class BatchUploadService {
     @Transactional
     public BatchView setMetadata(String batchId, Long itemId, ItemMetadata metadata, AuthenticatedUser user) {
         PhotoUploadBatchEntity batch = requireOwned(batchId, user);
+        if (batch.getRequestId() == null && batch.getProjectId() != null) {
+            requireProjectUploadAccess(batch.getProjectId(), user);
+        }
         PhotoUploadItemEntity item = itemMapper.selectById(itemId);
         if (item == null || !item.getBatchId().equals(batchId)) {
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "批次图片不存在");
@@ -164,8 +170,9 @@ public class BatchUploadService {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "当前图片不能填写元数据");
         }
         transitionItem(itemId, BatchItemStatus.WAITING_METADATA, BatchItemStatus.PROCESSING);
-        Long campusId = user.campusId();
-        if (batch.getRequestId() != null) campusId = requestService.get(batch.getRequestId()).getCampusId();
+        Long campusId = batch.getRequestId() == null
+                ? requireGalleryUploadCampus(user)
+                : requestService.get(batch.getRequestId()).getCampusId();
         var photographer = campusMemberService.resolvePhotographer(metadata.photographerContactId(), campusId);
         createPhoto(batch, item, metadata.title(), metadata.description(), metadata.takenAt(),
                 metadata.tags(), photographer.getStudentId(), photographer.getName(), campusId, user.id());
@@ -175,6 +182,9 @@ public class BatchUploadService {
     @Transactional
     public BatchView setMetadataForAll(String batchId, BatchMetadata metadata, AuthenticatedUser user) {
         PhotoUploadBatchEntity batch = requireOwned(batchId, user);
+        if (batch.getRequestId() == null && batch.getProjectId() != null) {
+            requireProjectUploadAccess(batch.getProjectId(), user);
+        }
         if (batch.getStatus() != BatchStatus.WAITING_METADATA) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "批次尚未完成解压或已开始处理");
         }
@@ -187,8 +197,9 @@ public class BatchUploadService {
         if (waitingItems.isEmpty()) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "批次中没有可整理的图片");
         }
-        Long campusId = user.campusId();
-        if (batch.getRequestId() != null) campusId = requestService.get(batch.getRequestId()).getCampusId();
+        Long campusId = batch.getRequestId() == null
+                ? requireGalleryUploadCampus(user)
+                : requestService.get(batch.getRequestId()).getCampusId();
         var photographer = campusMemberService.resolvePhotographer(metadata.photographerContactId(), campusId);
         for (PhotoUploadItemEntity item : waitingItems) {
             transitionItem(item.getId(), BatchItemStatus.WAITING_METADATA, BatchItemStatus.PROCESSING);
@@ -267,7 +278,34 @@ public class BatchUploadService {
         if (!batch.getCreatedBy().equals(user.id()) && !user.isAdministrator()) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该上传批次");
         }
+        PermissionCode requiredPermission = batch.getRequestId() == null
+                ? PermissionCode.PHOTO_UPLOAD : PermissionCode.REQUEST_PHOTO_MANAGE;
+        if (!user.hasPermission(requiredPermission)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "当前权限不能继续处理该上传批次");
+        }
+        if (batch.getRequestId() != null) {
+            requestService.requireParticipantAccess(batch.getRequestId(), user);
+        } else {
+            requireGalleryUploadCampus(user);
+        }
         return batch;
+    }
+
+    private Long requireGalleryUploadCampus(AuthenticatedUser user) {
+        Long campusId = user.campusId();
+        if (user.isCampusScoped() && (campusId == null || !user.canAccessCampus(campusId))) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "校区范围账号尚未分配可用校区");
+        }
+        return campusId;
+    }
+
+    private void requireProjectUploadAccess(Long projectId, AuthenticatedUser user) {
+        if (!user.hasPermission(PermissionCode.PROJECT_ADOPT)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权将批量上传图片加入项目相册");
+        }
+        if (projectService.getVisible(projectId, user).getStatus() != ProjectStatus.ACTIVE) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "仅进行中项目可批量上传图片");
+        }
     }
 
     private List<PhotoUploadItemEntity> items(String id) {

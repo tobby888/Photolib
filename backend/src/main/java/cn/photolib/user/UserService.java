@@ -191,7 +191,7 @@ public class UserService {
     @Transactional
     public UserView updateAuthorization(Long id, Long permissionGroupId, Set<Long> campusIds, int version) {
         UserEntity user = require(id);
-        PermissionGroupEntity group = permissionGroups.require(permissionGroupId);
+        PermissionGroupEntity group = permissionGroups.requireForAuthorization(permissionGroupId);
         Set<Long> normalizedCampuses = campusIds == null ? Set.of() : new LinkedHashSet<>(campusIds);
         validateAuthorization(group, normalizedCampuses);
         requireAdminCanChange(user, group.getId(), Boolean.TRUE.equals(user.getEnabled()));
@@ -252,9 +252,11 @@ public class UserService {
     }
 
     private PermissionGroupEntity resolveGroup(Long permissionGroupId, UserRole legacyRole) {
-        return permissionGroupId == null
-                ? permissionGroups.resolveLegacyRole(legacyRole)
-                : permissionGroups.require(permissionGroupId);
+        if (permissionGroupId != null) {
+            return permissionGroups.requireForAuthorization(permissionGroupId);
+        }
+        PermissionGroupEntity legacyGroup = permissionGroups.resolveLegacyRole(legacyRole);
+        return permissionGroups.requireForAuthorization(legacyGroup.getId());
     }
 
     private Set<Long> resolveCampusIds(Set<Long> campusIds, Long legacyCampusId) {

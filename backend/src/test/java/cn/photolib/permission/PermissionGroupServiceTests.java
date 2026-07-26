@@ -86,6 +86,58 @@ class PermissionGroupServiceTests {
     }
 
     @Test
+    void changingDataScopeRequiresAdministratorsToClearEveryMemberFirst() {
+        var campus = campuses.create("PERM-SCOPE", "范围切换测试校区");
+        var campusGroup = groups.create(new PermissionGroupService.CreateCommand(
+                "SCOPE_SWITCH", "范围切换组", null, DataScope.CAMPUS,
+                Set.of(PermissionCode.PHOTO_VIEW)));
+        var member = users.create(new UserService.CreateUser(
+                "permission-scope-member", "范围切换成员", null, null, null, null,
+                campusGroup.id(), Set.of(campus.getId())));
+
+        assertThat(users.list(1, 20, null, null, campusGroup.id(), null, null).items())
+                .extracting(UserService.UserView::id).containsExactly(member.user().id());
+        assertThatThrownBy(() -> groups.update(campusGroup.id(),
+                new PermissionGroupService.UpdateCommand(campusGroup.name(), campusGroup.description(),
+                        DataScope.GLOBAL, campusGroup.permissions(), campusGroup.version())))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("先清空权限组成员");
+
+        var noAccess = groups.requireByCode("NO_ACCESS");
+        users.updateAuthorization(member.user().id(), noAccess.getId(), Set.of(),
+                users.get(member.user().id()).version());
+        var updated = groups.update(campusGroup.id(), new PermissionGroupService.UpdateCommand(
+                campusGroup.name(), campusGroup.description(), DataScope.GLOBAL,
+                campusGroup.permissions(), campusGroup.version()));
+
+        assertThat(updated.dataScope()).isEqualTo(DataScope.GLOBAL);
+        assertThat(updated.memberCount()).isZero();
+    }
+
+    @Test
+    void changingGlobalGroupToCampusScopeAlsoRequiresAnEmptyGroup() {
+        var globalGroup = groups.create(new PermissionGroupService.CreateCommand(
+                "GLOBAL_SWITCH", "全局切换组", null, DataScope.GLOBAL,
+                Set.of(PermissionCode.PHOTO_VIEW)));
+        var member = users.create(new UserService.CreateUser(
+                "global-scope-member", "全局范围成员", null, null, null, null,
+                globalGroup.id(), Set.of()));
+
+        assertThatThrownBy(() -> groups.update(globalGroup.id(),
+                new PermissionGroupService.UpdateCommand(globalGroup.name(), globalGroup.description(),
+                        DataScope.CAMPUS, globalGroup.permissions(), globalGroup.version())))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("先清空权限组成员");
+
+        var noAccess = groups.requireByCode("NO_ACCESS");
+        users.updateAuthorization(member.user().id(), noAccess.getId(), Set.of(),
+                users.get(member.user().id()).version());
+        assertThat(groups.update(globalGroup.id(), new PermissionGroupService.UpdateCommand(
+                globalGroup.name(), globalGroup.description(), DataScope.CAMPUS,
+                globalGroup.permissions(), globalGroup.version())).dataScope()).isEqualTo(DataScope.CAMPUS);
+    }
+
+    @Test
     void deletingCustomGroupDemotesMembersAndKeepsLoginAvailable() {
         var campus = campuses.create("PERM-D", "权限删除测试校区");
         var group = groups.create(new PermissionGroupService.CreateCommand(

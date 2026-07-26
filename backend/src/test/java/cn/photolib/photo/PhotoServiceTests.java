@@ -119,6 +119,8 @@ class PhotoServiceTests {
 
     @Test
     void createTicket_forRequest_shouldAutomaticallyUseRequestsProject() {
+        ProjectEntity untrustedProject = projectService.create(
+                "客户端伪造项目", "不应被采用", ProjectStatus.ACTIVE, adminUser);
         jdbc.sql("""
                 INSERT INTO photo_request
                     (id, project_id, title, campus_id, required_count, deadline, status, created_by)
@@ -132,7 +134,7 @@ class PhotoServiceTests {
                 .update();
 
         var ticket = photoService.createTicket(new PhotoService.CreateTicket(
-                2901L, null, "request-photo.jpg", "image/jpeg", 1024L,
+                2901L, untrustedProject.getId(), "request-photo.jpg", "image/jpeg", 1024L,
                 "d".repeat(64), photographerContactId, LocalDateTime.now()), adminUser);
 
         var stored = jdbc.sql("SELECT request_id, project_id FROM photo WHERE id=:id")
@@ -140,6 +142,74 @@ class PhotoServiceTests {
                 .query((rs, rowNum) -> new long[]{rs.getLong("request_id"), rs.getLong("project_id")})
                 .single();
         assertThat(stored).containsExactly(2901L, testProject.getId());
+    }
+
+    @Test
+    void galleryUploadCannotInjectProjectMembershipWithPhotoUploadPermissionAlone() {
+        var uploadOnly = new AuthenticatedUser(ministerUser.id(), "upload-only", "仅图库上传",
+                UserRole.CAMPUS_MANAGER, null, false, -20L, "UPLOAD_ONLY", "仅图库上传",
+                DataScope.GLOBAL, Set.of(PermissionCode.PHOTO_UPLOAD), Set.of());
+
+        assertThatThrownBy(() -> photoService.createTicket(new PhotoService.CreateTicket(
+                null, testProject.getId(), "injected.jpg", "image/jpeg", 1024L,
+                "2".repeat(64), photographerContactId, LocalDateTime.now()), uploadOnly))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("无权将上传图片加入项目相册");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM photo WHERE sha256=:sha")
+                .param("sha", "2".repeat(64)).query(Long.class).single()).isZero();
+    }
+
+    @Test
+    void galleryUploadCannotTargetACompletedProject() {
+        ProjectEntity completed = projectService.create(
+                "已完成上传目标", "描述", ProjectStatus.ACTIVE, adminUser);
+        projectService.changeStatus(completed.getId(), ProjectStatus.COMPLETED,
+                projectService.get(completed.getId()).getVersion(), adminUser);
+
+        assertThatThrownBy(() -> photoService.createTicket(new PhotoService.CreateTicket(
+                null, completed.getId(), "completed.jpg", "image/jpeg", 1024L,
+                "3".repeat(64), photographerContactId, LocalDateTime.now()), adminUser))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("仅进行中项目");
+    }
+
+    @Test
+    void requestUploadIsRejectedAfterParticipantLosesTheRequestsCampus() {
+        CampusEntity otherCampus = campusService.create("MOVED-UPLOAD", "迁移后校区");
+        jdbc.sql("""
+                INSERT INTO photo_request
+                    (id, project_id, title, campus_id, deadline, status, created_by)
+                VALUES (2903, :projectId, '撤销校区上传需求', :campusId,
+                        DATEADD('DAY', 1, CURRENT_TIMESTAMP), 'ACCEPTED', :adminId)
+                """).param("projectId", testProject.getId()).param("campusId", testCampus.getId())
+                .param("adminId", adminUser.id()).update();
+        jdbc.sql("""
+                INSERT INTO request_participant(request_id, user_id, accepted_at)
+                VALUES (2903, :userId, CURRENT_TIMESTAMP)
+                """).param("userId", managerUser.id()).update();
+        var movedManager = new AuthenticatedUser(managerUser.id(), "test-manager", "测试负责人",
+                UserRole.CAMPUS_MANAGER, otherCampus.getId(), false, -21L,
+                "MOVED_UPLOAD", "已迁移负责人", DataScope.CAMPUS,
+                Set.of(PermissionCode.REQUEST_PHOTO_MANAGE), Set.of(otherCampus.getId()));
+
+        assertThatThrownBy(() -> photoService.createTicket(new PhotoService.CreateTicket(
+                2903L, testProject.getId(), "revoked.jpg", "image/jpeg", 1024L,
+                "4".repeat(64), photographerContactId, LocalDateTime.now()), movedManager))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("无权操作该校区");
+    }
+
+    @Test
+    void campusScopedGalleryUploadRequiresAnAssignedCampus() {
+        var emptyCampus = new AuthenticatedUser(managerUser.id(), "empty-campus", "未分配校区",
+                UserRole.CAMPUS_MANAGER, null, false, -22L, "EMPTY_CAMPUS", "未分配校区",
+                DataScope.CAMPUS, Set.of(PermissionCode.PHOTO_UPLOAD), Set.of());
+
+        assertThatThrownBy(() -> photoService.createTicket(new PhotoService.CreateTicket(
+                null, null, "no-campus.jpg", "image/jpeg", 1024L,
+                "5".repeat(64), photographerContactId, LocalDateTime.now()), emptyCampus))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("尚未分配可用校区");
     }
 
     @Test
@@ -166,6 +236,31 @@ class PhotoServiceTests {
         String status = jdbc.sql("SELECT status FROM photo WHERE id=:id")
                 .param("id", ticket.photoId()).query(String.class).single();
         assertThat(status).isEqualTo("PROCESSING");
+    }
+
+    @Test
+    void galleryTicketCannotBeCompletedWithRequestUploadPermissionAfterPermissionChanges() {
+        var galleryUploader = new AuthenticatedUser(ministerUser.id(), "gallery-uploader", "图库上传者",
+                UserRole.CAMPUS_MANAGER, null, false, -23L, "GALLERY_UPLOADER", "图库上传者",
+                DataScope.GLOBAL, Set.of(PermissionCode.PHOTO_UPLOAD, PermissionCode.PROJECT_ADOPT), Set.of());
+        var ticket = photoService.createTicket(new PhotoService.CreateTicket(
+                null, testProject.getId(), "permission-changed.jpg", "image/jpeg", 1024L,
+                "6".repeat(64), photographerContactId, LocalDateTime.now()), galleryUploader);
+        String originalKey = jdbc.sql("SELECT original_object_key FROM photo WHERE id=:id")
+                .param("id", ticket.photoId()).query(String.class).single();
+        byte[] bytes = "uploaded".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        storage.put(originalKey, new java.io.ByteArrayInputStream(bytes), bytes.length, "image/jpeg");
+        var wrongPermission = new AuthenticatedUser(galleryUploader.id(), galleryUploader.username(),
+                galleryUploader.displayName(), UserRole.CAMPUS_MANAGER, null, false, -23L,
+                "GALLERY_UPLOADER", "图库上传者", DataScope.GLOBAL,
+                Set.of(PermissionCode.REQUEST_PHOTO_MANAGE), Set.of());
+
+        assertThatThrownBy(() -> photoService.complete(ticket.photoId(),
+                new PhotoService.CompleteUpload("标题", "描述", List.of()), wrongPermission))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("无权上传图片");
+        assertThat(jdbc.sql("SELECT status FROM photo WHERE id=:id")
+                .param("id", ticket.photoId()).query(String.class).single()).isEqualTo("UPLOADING");
     }
 
     @Test
@@ -200,6 +295,17 @@ class PhotoServiceTests {
 
     @Test
     void listPhotos_asCampusManager_shouldOnlyShowOwnPhotos() {
+        jdbc.sql("""
+                INSERT INTO photo_request
+                    (id, project_id, title, campus_id, deadline, status, created_by)
+                VALUES (2899, :projectId, '项目可见性需求', :campusId,
+                        DATEADD('DAY', 1, CURRENT_TIMESTAMP), 'ACCEPTED', :adminId)
+                """).param("projectId", testProject.getId()).param("campusId", testCampus.getId())
+                .param("adminId", adminUser.id()).update();
+        jdbc.sql("""
+                INSERT INTO request_participant(request_id, user_id, accepted_at)
+                VALUES (2899, :userId, CURRENT_TIMESTAMP)
+                """).param("userId", managerUser.id()).update();
         // Given: 其他用户上传的照片
         jdbc.sql("""
                 INSERT INTO photo
@@ -606,7 +712,7 @@ class PhotoServiceTests {
 
         // 校区负责人图库上传的校区为其本校区，选用其他校区的拍摄者应被拒绝
         PhotoService.CreateTicket command = new PhotoService.CreateTicket(
-                null, testProject.getId(), "cross.jpg", "image/jpeg", 1024L,
+                null, null, "cross.jpg", "image/jpeg", 1024L,
                 "1".repeat(64), 400L, LocalDateTime.now());
 
         assertThatThrownBy(() -> photoService.createTicket(command, managerUser))

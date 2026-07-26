@@ -196,6 +196,26 @@ class RequestServiceTests {
     }
 
     @Test
+    void acceptedRequestCannotBeSubmittedAfterItsCampusGrantIsRevoked() {
+        var otherCampus = campusService.create("MOVED", "迁移后校区");
+        var request = requestService.create(activeProject.getId(), new RequestService.CreateCommand(
+                "授权撤销测试", "描述", testCampus.getId(), null,
+                LocalDateTime.now().plusDays(1)), ministerUser);
+        requestService.publish(request.getId(), requestService.get(request.getId()).getVersion(), ministerUser);
+        var accepted = requestService.accept(request.getId(), managerUser);
+        var movedManager = new AuthenticatedUser(managerUser.id(), managerUser.username(),
+                managerUser.displayName(), UserRole.CAMPUS_MANAGER, otherCampus.getId(), false,
+                -11L, "MOVED_MANAGER", "已迁移负责人", DataScope.CAMPUS,
+                Set.of(PermissionCode.REQUEST_VIEW), Set.of(otherCampus.getId()));
+
+        assertThatThrownBy(() -> requestService.submit(accepted.getId(),
+                requestService.get(accepted.getId()).getVersion(), movedManager))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("无权操作该校区");
+        assertThat(requestService.get(accepted.getId()).getStatus()).isEqualTo(RequestStatus.ACCEPTED);
+    }
+
+    @Test
     void leaveRequest_shouldRemoveParticipant() {
         // Given: 已接受的需求
         RequestService.CreateCommand create = new RequestService.CreateCommand(
