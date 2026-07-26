@@ -8,10 +8,11 @@ import {
 } from '@ant-design/icons'
 import { useEffect, useState } from 'react'
 import { api, emptyPage } from '../api'
-import type { BrandingSettings, Campus, PageData, ScheduledBrandIcon, User } from '../types'
-import { DataState, PageTitle, roleName } from '../components'
+import type { BrandingSettings, Campus, PageData, PermissionGroup, ScheduledBrandIcon, User } from '../types'
+import { DataState, PageTitle } from '../components'
 import { useLoad } from '../hooks'
 import AuditLogsPanel from '../AuditLogsPanel'
+import PermissionGroupsPanel from '../PermissionGroupsPanel'
 
 interface BrandingFormValues {
   title: string
@@ -66,6 +67,9 @@ export default function AdminPage() {
   )
   const { data: campuses, reload: reloadCampuses } = useLoad(
     () => api<Campus[]>({ url: '/campuses' }), [] as Campus[], [],
+  )
+  const { data: permissionGroups } = useLoad(
+    () => api<PermissionGroup[]>({ url: '/permission-groups' }), [] as PermissionGroup[], [],
   )
   const { data: branding, loading: brandingLoading, error: brandingError, reload: reloadBranding } = useLoad(
     () => api<BrandingSettings>({ url: '/branding' }),
@@ -211,7 +215,9 @@ export default function AdminPage() {
         url: `/users/${editingUser.id}`,
         data: {
           displayName: editingUser.displayName,
-          role: editingUser.role,
+          permissionGroupId: editingUser.permissionGroupId,
+          campusIds: editingUser.campusIds || [],
+          role: null,
           campusId: editingUser.campusId,
           phone: editingUser.phone,
           email: values.email?.trim() || null,
@@ -354,8 +360,9 @@ export default function AdminPage() {
           <DataState loading={loading} error={error} empty={!users.items.length} onRetry={reload}>
             <Table rowKey="id" dataSource={users.items} pagination={{ pageSize: 12 }} scroll={{ x: 1050 }} columns={[
               { title: '成员', render: (_, item) => <div className="table-title"><strong>{item.displayName}</strong><span>@{item.username}</span></div> },
-              { title: '角色', dataIndex: 'role', render: value => <Tag variant="filled">{roleName[value]}</Tag> },
-              { title: '校区', dataIndex: 'campusId', render: value => campuses.find(c => c.id === value)?.name || '-' },
+              { title: '权限组', dataIndex: 'permissionGroupName', render: value => <Tag variant="filled">{value || '待分配'}</Tag> },
+              { title: '授权校区', dataIndex: 'campusIds', render: (values: string[] = []) => values.length
+                ? values.map(value => campuses.find(c => c.id === value)?.name || `#${value}`).join('、') : '-' },
               { title: '联系方式', render: (_, item) => item.email || item.phone || '-' },
               { title: '状态', dataIndex: 'enabled', render: value => <Tag color={value ? 'green' : 'default'} variant="filled">{value ? '正常' : '已停用'}</Tag> },
               { title: '操作', fixed: 'right', render: (_, item) => <Space><Switch size="small" checked={item.enabled} onChange={() => void toggleUser(item)} /><Button type="link" icon={<EditOutlined />} onClick={() => openEmailEditor(item)}>修改邮箱</Button><Button type="link" onClick={async () => {
@@ -364,6 +371,7 @@ export default function AdminPage() {
             ]} />
           </DataState>
         </> },
+        { key: 'permissions', label: <span><SafetyCertificateOutlined /> 权限管理</span>, children: <PermissionGroupsPanel /> },
         { key: 'campuses', label: <span><SafetyCertificateOutlined /> 校区管理</span>, children: <>
           <div className="tab-toolbar"><div><Typography.Title level={4}>校区资源</Typography.Title><Typography.Text type="secondary">校区代码创建后不可修改。</Typography.Text></div>
             <Button type="primary" icon={<PlusOutlined />} onClick={() => setCampusOpen(true)}>新建校区</Button></div>
@@ -380,8 +388,16 @@ export default function AdminPage() {
       <Form form={userForm} layout="vertical" requiredMark={false}>
         <Form.Item label="登录账号" name="username" rules={[{ required: true }, { pattern: /^[A-Za-z0-9_.-]{3,64}$/, message: '3-64 位字母、数字或 ._-' }]}><Input /></Form.Item>
         <Form.Item label="显示姓名" name="displayName" rules={[{ required: true }]}><Input /></Form.Item>
-        <Form.Item label="角色" name="role" rules={[{ required: true }]}><Select options={Object.entries(roleName).map(([value, label]) => ({ value, label }))} /></Form.Item>
-        <Form.Item noStyle shouldUpdate={(prev, next) => prev.role !== next.role}>{({ getFieldValue }) => getFieldValue('role') === 'CAMPUS_MANAGER' && <Form.Item label="所属校区" name="campusId" rules={[{ required: true }]}><Select options={campuses.filter(c => c.enabled).map(c => ({ value: c.id, label: c.name }))} /></Form.Item>}</Form.Item>
+        <Form.Item label="权限组" name="permissionGroupId" rules={[{ required: true }]}>
+          <Select options={permissionGroups.map(group => ({ value: group.id, label: group.name }))} />
+        </Form.Item>
+        <Form.Item noStyle shouldUpdate={(prev, next) => prev.permissionGroupId !== next.permissionGroupId}>
+          {({ getFieldValue }) => permissionGroups.find(group => group.id === getFieldValue('permissionGroupId'))?.dataScope === 'CAMPUS'
+            && <Form.Item label="授权校区" name="campusIds" preserve={false}
+              rules={[{ required: true, message: '请至少选择一个校区' }]}>
+              <Select mode="multiple" options={campuses.filter(c => c.enabled).map(c => ({ value: c.id, label: c.name }))} />
+            </Form.Item>}
+        </Form.Item>
         <Form.Item label="邮箱" name="email" extra="填写后，用户可使用该邮箱登录。" rules={[{ type: 'email' }, { max: 255 }]}><Input /></Form.Item>
         <Form.Item label="手机号" name="phone"><Input /></Form.Item>
       </Form>

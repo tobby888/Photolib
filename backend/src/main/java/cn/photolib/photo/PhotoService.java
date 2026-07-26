@@ -14,7 +14,7 @@ import cn.photolib.request.model.PhotoRequestEntity;
 import cn.photolib.request.model.RequestParticipantEntity;
 import cn.photolib.storage.ObjectStorageService;
 import cn.photolib.storage.StorageProperties;
-import cn.photolib.user.model.UserRole;
+import cn.photolib.permission.PermissionCode;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
@@ -47,6 +47,7 @@ public class PhotoService {
     @Transactional
     public UploadTicket createTicket(CreateTicket command, AuthenticatedUser user) {
         validateFile(command.fileName(), command.contentType(), command.size());
+        requireUploadPermission(command.requestId(), user);
 
         // 检查 SHA256 哈希是否重复
         String sha256Lower = command.sha256().toLowerCase();
@@ -65,7 +66,7 @@ public class PhotoService {
             PhotoRequestEntity request = requestService.get(command.requestId());
             campusId = request.getCampusId();
             projectId = request.getProjectId();
-            if (user.role() == UserRole.CAMPUS_MANAGER && !isParticipant(command.requestId(), user.id())) {
+            if (user.isCampusScoped() && !isParticipant(command.requestId(), user.id())) {
                 throw new BusinessException(ErrorCode.FORBIDDEN, "仅需求参与人可上传图片");
             }
         }
@@ -143,7 +144,11 @@ public class PhotoService {
                                         Long uploadedBy, Long campusId, PhotoStatus status,
                                         boolean includeAllStatuses,
                                         AuthenticatedUser user) {
-        Long effectiveUploader = user.role() == UserRole.CAMPUS_MANAGER ? user.id() : uploadedBy;
+        requireListPermission(projectId, requestId, user);
+        if (requestId != null && user.isCampusScoped()) {
+            requestService.get(requestId, user);
+        }
+        Long effectiveUploader = user.isCampusScoped() && requestId == null ? user.id() : uploadedBy;
         // status explicitly given -> filter by it; otherwise default to AVAILABLE unless the
         // caller opts into every status (used by the project detail gallery to match photoCount).
         PhotoStatus effectiveStatus = status != null ? status
@@ -158,7 +163,9 @@ public class PhotoService {
                 .eq(StringUtils.hasText(studentId), PhotoEntity::getPhotographerStudentId, studentId)
                 .like(StringUtils.hasText(photographerName), PhotoEntity::getPhotographerName, photographerName)
                 .eq(effectiveUploader != null, PhotoEntity::getUploadedBy, effectiveUploader)
-                .eq(campusId != null, PhotoEntity::getCampusId, campusId)
+                .eq(!user.isCampusScoped() && campusId != null, PhotoEntity::getCampusId, campusId)
+                .in(user.isCampusScoped(), PhotoEntity::getCampusId,
+                        user.campusIds().isEmpty() ? List.of(-1L) : user.campusIds())
                 .eq(effectiveStatus != null, PhotoEntity::getStatus, effectiveStatus)
                 .orderByDesc(PhotoEntity::getCreatedAt);
         Page<PhotoEntity> result = mapper.selectPage(Page.of(page, pageSize), query);
@@ -168,16 +175,15 @@ public class PhotoService {
 
     public PhotoView get(Long id, AuthenticatedUser user) {
         PhotoEntity photo = require(id);
-        if (user.role() == UserRole.CAMPUS_MANAGER && !photo.getUploadedBy().equals(user.id())) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "无权查看该图片");
-        }
+        requireVisible(photo, user);
+        requireViewPermission(photo, user);
         return toView(photo);
     }
 
     @Transactional
     public PhotoView update(Long id, Metadata command, AuthenticatedUser user) {
         PhotoEntity photo = require(id);
-        requireUploaderOrPrivileged(photo, user);
+        requireCanManageMetadata(photo, user);
         var photographer = campusMemberService.resolvePhotographer(
                 command.photographerContactId(), photo.getCampusId());
         photo.setTitle(command.title());
@@ -195,7 +201,7 @@ public class PhotoService {
 
     @Transactional
     public PhotoView updateCampus(Long id, Long campusId, int version, AuthenticatedUser user) {
-        if (user.role() != UserRole.ADMIN) {
+        if (!user.isAdministrator()) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "仅管理员可修改图片校区");
         }
         PhotoEntity photo = require(id);
@@ -225,7 +231,7 @@ public class PhotoService {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "图片暂不可下载");
         }
         requireVisible(photo, user);
-        requireUploaderOrPrivileged(photo, user);
+        requireDownloadPermission(photo, user);
         ObjectStorageService.SignedUrl signed = storage.presignGet(
                 photo.getObjectKey(), photo.getStoredFileName(), properties.downloadUrlTtl());
         return new DownloadUrl(signed.url().toString(), signed.expiresAt(), photo.getStoredFileName());
@@ -234,7 +240,13 @@ public class PhotoService {
     @Transactional
     public PhotoView changeArchive(Long id, boolean archive, AuthenticatedUser user) {
         PhotoEntity photo = require(id);
-        requirePrivileged(user);
+        if (!user.hasPermission(PermissionCode.PHOTO_DELETE)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权归档或恢复图片");
+        }
+        requireVisible(photo, user);
+        if (user.isCampusScoped() && !photo.getUploadedBy().equals(user.id())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权归档或恢复其他成员的图库图片");
+        }
         PhotoStatus expected = archive ? PhotoStatus.AVAILABLE : PhotoStatus.ARCHIVED;
         if (photo.getStatus() != expected) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "图片状态不允许该操作");
@@ -247,17 +259,40 @@ public class PhotoService {
     @Transactional
     public void delete(Long id, AuthenticatedUser user) {
         PhotoEntity photo = require(id);
-        requirePrivileged(user);
-        if (user.role() != UserRole.ADMIN) {
-            long adopted = adoptionCount(id);
+        validateDelete(photo, user);
+        performDelete(photo);
+    }
+
+    @Transactional
+    public void batchDelete(List<Long> ids, AuthenticatedUser user) {
+        List<PhotoEntity> photos = ids.stream().distinct().map(this::require).toList();
+        photos.forEach(photo -> validateDelete(photo, user));
+        photos.forEach(this::performDelete);
+    }
+
+    private void validateDelete(PhotoEntity photo, AuthenticatedUser user) {
+        requireVisible(photo, user);
+        boolean requestManage = photo.getRequestId() != null
+                && user.hasPermission(PermissionCode.REQUEST_PHOTO_MANAGE)
+                && (!user.isCampusScoped() || isParticipant(photo.getRequestId(), user.id()));
+        boolean galleryDelete = user.hasPermission(PermissionCode.PHOTO_DELETE)
+                && (!user.isCampusScoped() || photo.getUploadedBy().equals(user.id()));
+        if (!requestManage && !galleryDelete) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权删除该图片");
+        }
+        if (!user.isAdministrator()) {
+            long adopted = adoptionCount(photo.getId());
             if (adopted > 0) {
                 throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "已被采用的图片只能归档");
             }
         }
-        mapper.deleteById(id);
-        deleteObject(id, "成品图", photo.getObjectKey());
-        deleteObject(id, "缩略图", photo.getThumbnailObjectKey());
-        deleteObject(id, "原图", photo.getOriginalObjectKey());
+    }
+
+    private void performDelete(PhotoEntity photo) {
+        mapper.deleteById(photo.getId());
+        deleteObject(photo.getId(), "成品图", photo.getObjectKey());
+        deleteObject(photo.getId(), "缩略图", photo.getThumbnailObjectKey());
+        deleteObject(photo.getId(), "原图", photo.getOriginalObjectKey());
     }
 
     private void deleteObject(Long photoId, String objectType, String objectKey) {
@@ -295,34 +330,81 @@ public class PhotoService {
     }
 
     private void requireUploaderOrAdmin(PhotoEntity photo, AuthenticatedUser user) {
-        if (!photo.getUploadedBy().equals(user.id()) && user.role() != UserRole.ADMIN) {
+        if (!photo.getUploadedBy().equals(user.id()) && !user.isAdministrator()) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权操作该图片");
-        }
-    }
-
-    private void requireUploaderOrPrivileged(PhotoEntity photo, AuthenticatedUser user) {
-        if (!photo.getUploadedBy().equals(user.id())
-                && user.role() != UserRole.ADMIN && user.role() != UserRole.MINISTER) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "无权操作该图片");
-        }
-    }
-
-    private void requirePrivileged(AuthenticatedUser user) {
-        if (user.role() != UserRole.ADMIN && user.role() != UserRole.MINISTER) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "无权执行该操作");
         }
     }
 
     private void requireVisible(PhotoEntity photo, AuthenticatedUser user) {
-        // Admin and Minister can see all photos
-        if (user.role() == UserRole.ADMIN || user.role() == UserRole.MINISTER) {
-            return;
+        if (!user.canAccessCampus(photo.getCampusId())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该图片");
         }
-        // Campus managers can only see photos from their campus
-        if (user.role() == UserRole.CAMPUS_MANAGER) {
-            if (photo.getCampusId() == null || !photo.getCampusId().equals(user.campusId())) {
-                throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该图片");
-            }
+        if (user.isCampusScoped() && photo.getRequestId() != null
+                && !isParticipant(photo.getRequestId(), user.id())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "仅已接受需求的参与人可访问需求图片");
+        }
+    }
+
+    private void requireUploadPermission(Long requestId, AuthenticatedUser user) {
+        PermissionCode required = requestId == null
+                ? PermissionCode.PHOTO_UPLOAD : PermissionCode.REQUEST_PHOTO_MANAGE;
+        if (!user.hasPermission(required)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权上传图片");
+        }
+    }
+
+    private void requireListPermission(Long projectId, Long requestId, AuthenticatedUser user) {
+        boolean allowed = requestId != null
+                ? user.hasAnyPermission(PermissionCode.REQUEST_VIEW, PermissionCode.REQUEST_PHOTO_MANAGE)
+                : projectId != null
+                ? user.hasPermission(PermissionCode.PROJECT_VIEW)
+                : user.hasPermission(PermissionCode.PHOTO_VIEW);
+        if (!allowed) throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问图片列表");
+    }
+
+    private void requireViewPermission(PhotoEntity photo, AuthenticatedUser user) {
+        boolean requestAllowed = photo.getRequestId() != null
+                && user.hasAnyPermission(PermissionCode.REQUEST_VIEW, PermissionCode.REQUEST_PHOTO_MANAGE);
+        boolean projectAllowed = user.hasPermission(PermissionCode.PROJECT_VIEW)
+                && jdbc.sql("SELECT COUNT(*) FROM photo_project WHERE photo_id = :photoId")
+                .param("photoId", photo.getId()).query(Long.class).single() > 0;
+        if (!requestAllowed && !projectAllowed && !user.hasPermission(PermissionCode.PHOTO_VIEW)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权查看该图片");
+        }
+        if (user.isCampusScoped() && !requestAllowed && !photo.getUploadedBy().equals(user.id())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权查看其他成员的图库图片");
+        }
+    }
+
+    private void requireCanManageMetadata(PhotoEntity photo, AuthenticatedUser user) {
+        requireVisible(photo, user);
+        boolean requestManage = photo.getRequestId() != null
+                && user.hasPermission(PermissionCode.REQUEST_PHOTO_MANAGE);
+        boolean galleryManage = user.hasPermission(PermissionCode.PHOTO_UPLOAD)
+                && (!user.isCampusScoped() || photo.getUploadedBy().equals(user.id()));
+        if (!requestManage && !galleryManage && !user.isAdministrator()) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权编辑该图片");
+        }
+    }
+
+    private void requireDownloadPermission(PhotoEntity photo, AuthenticatedUser user) {
+        boolean requestDownload = photo.getRequestId() != null
+                && user.hasPermission(PermissionCode.REQUEST_PHOTO_MANAGE);
+        boolean projectDownload = user.hasPermission(PermissionCode.PROJECT_DOWNLOAD)
+                && jdbc.sql("""
+                        SELECT COUNT(*) FROM photo_project pp
+                        WHERE pp.photo_id=:photoId
+                          AND (:globalScope=TRUE OR EXISTS (
+                              SELECT 1 FROM photo_request r
+                              JOIN request_participant rp ON rp.request_id=r.id
+                              WHERE r.project_id=pp.project_id AND r.deleted=FALSE AND rp.user_id=:userId))
+                        """).param("photoId", photo.getId())
+                .param("globalScope", !user.isCampusScoped()).param("userId", user.id())
+                .query(Long.class).single() > 0;
+        boolean galleryDownload = user.hasPermission(PermissionCode.PHOTO_DOWNLOAD)
+                && (!user.isCampusScoped() || photo.getUploadedBy().equals(user.id()));
+        if (!requestDownload && !projectDownload && !galleryDownload) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权下载该图片");
         }
     }
 

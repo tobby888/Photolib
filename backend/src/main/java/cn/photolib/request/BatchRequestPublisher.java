@@ -10,11 +10,8 @@ import cn.photolib.project.model.ProjectStatus;
 import cn.photolib.request.mapper.PhotoRequestMapper;
 import cn.photolib.request.model.PhotoRequestEntity;
 import cn.photolib.request.model.RequestStatus;
-import cn.photolib.user.mapper.UserMapper;
-import cn.photolib.user.model.UserEntity;
-import cn.photolib.user.model.UserRole;
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.RequiredArgsConstructor;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,7 +22,7 @@ class BatchRequestPublisher {
     private final PhotoRequestMapper mapper;
     private final ProjectService projectService;
     private final CampusService campusService;
-    private final UserMapper userMapper;
+    private final JdbcClient jdbc;
     private final NotificationService notifications;
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -51,11 +48,18 @@ class BatchRequestPublisher {
         request.setCreatedBy(user.id());
         mapper.insert(request);
 
-        userMapper.selectList(Wrappers.<UserEntity>lambdaQuery()
-                .eq(UserEntity::getRole, UserRole.CAMPUS_MANAGER)
-                .eq(UserEntity::getCampusId, campusId)
-                .eq(UserEntity::getEnabled, true))
-                .forEach(member -> notifications.notifyUser(member.getId(), "REQUEST_PUBLISHED",
+        jdbc.sql("""
+                SELECT DISTINCT u.id
+                FROM app_user u
+                JOIN permission_group pg
+                  ON pg.id=COALESCE(u.permission_group_id,
+                      (SELECT legacy_pg.id FROM permission_group legacy_pg WHERE legacy_pg.code=u.role))
+                 AND pg.data_scope='CAMPUS'
+                JOIN permission_group_permission p ON p.group_id=pg.id AND p.permission_code='REQUEST_VIEW'
+                JOIN user_campus_permission ucp ON ucp.user_id=u.id AND ucp.campus_id=:campusId
+                WHERE u.enabled=TRUE AND u.deleted=FALSE AND pg.deleted=FALSE
+                """).param("campusId", campusId).query(Long.class).list()
+                .forEach(userId -> notifications.notifyUser(userId, "REQUEST_PUBLISHED",
                         "新的图片需求", "<p>" + request.getTitle() + "</p>"));
         return request;
     }

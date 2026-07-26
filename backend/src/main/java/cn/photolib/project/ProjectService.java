@@ -10,7 +10,7 @@ import cn.photolib.photo.model.PhotoStatus;
 import cn.photolib.project.mapper.ProjectMapper;
 import cn.photolib.project.model.ProjectEntity;
 import cn.photolib.project.model.ProjectStatus;
-import cn.photolib.user.model.UserRole;
+import cn.photolib.permission.PermissionCode;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -32,6 +32,7 @@ public class ProjectService {
 
     @Transactional
     public ProjectEntity create(String title, String description, ProjectStatus status, AuthenticatedUser user) {
+        requirePermission(user, PermissionCode.PROJECT_CREATE);
         if (status != ProjectStatus.DRAFT && status != ProjectStatus.ACTIVE) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "新项目状态只能是 DRAFT 或 ACTIVE");
         }
@@ -46,13 +47,14 @@ public class ProjectService {
 
     public PageResponse<ProjectEntity> list(int page, int pageSize, String keyword, ProjectStatus status,
                                             AuthenticatedUser user) {
+        requirePermission(user, PermissionCode.PROJECT_VIEW);
         LambdaQueryWrapper<ProjectEntity> query = Wrappers.<ProjectEntity>lambdaQuery()
                 .and(StringUtils.hasText(keyword), q -> q.like(ProjectEntity::getTitle, keyword)
                         .or().like(ProjectEntity::getDescription, keyword))
                 .eq(status != null, ProjectEntity::getStatus, status);
 
         // For campus managers, restrict to projects they participate in
-        if (user.role() == UserRole.CAMPUS_MANAGER) {
+        if (user.isCampusScoped()) {
             List<Long> visibleProjectIds = jdbc.sql(
                 "SELECT DISTINCT r.project_id FROM photo_request r " +
                 "JOIN request_participant rp ON rp.request_id = r.id " +
@@ -82,12 +84,13 @@ public class ProjectService {
     }
 
     public ProjectDetail getDetail(Long id, AuthenticatedUser user) {
+        requirePermission(user, PermissionCode.PROJECT_VIEW);
         ProjectEntity project = get(id);
         requireVisible(project, user);
         // Campus managers only see a slice of the project (their campus's requests, their own
         // photos). Scope the summary counts to that same slice so the header stats match the
         // request table and photo wall instead of exposing project-wide totals.
-        ProjectSummary summary = user.role() == UserRole.CAMPUS_MANAGER
+        ProjectSummary summary = user.isCampusScoped()
                 ? scopedSummary(id, user)
                 : projectSummary(id);
         return new ProjectDetail(project.getId(), project.getTitle(), project.getDescription(),
@@ -116,9 +119,10 @@ public class ProjectService {
         // and PhotoService.list (uploader lock) so the counts equal what the manager can list.
         return jdbc.sql("""
                 SELECT
-                    (SELECT COUNT(*) FROM photo_request
-                        WHERE project_id=:id AND deleted=0
-                          AND (:campusId IS NULL OR campus_id=:campusId)) AS request_count,
+                    (SELECT COUNT(*) FROM photo_request r
+                        WHERE r.project_id=:id AND r.deleted=0
+                          AND EXISTS (SELECT 1 FROM request_participant rp
+                                      WHERE rp.request_id=r.id AND rp.user_id=:userId)) AS request_count,
                     (SELECT COUNT(*) FROM photo p JOIN photo_project pp ON pp.photo_id=p.id
                         WHERE pp.project_id=:id AND p.deleted=0 AND p.uploaded_by=:userId) AS photo_count,
                     (SELECT COUNT(*) FROM adoption a
@@ -128,7 +132,6 @@ public class ProjectService {
                                         AND p.uploaded_by=:userId)) AS adoption_count
                 """)
                 .param("id", id)
-                .param("campusId", user.campusId())
                 .param("userId", user.id())
                 .query((rs, rowNum) -> new ProjectSummary(
                         rs.getLong("request_count"),
@@ -139,6 +142,7 @@ public class ProjectService {
 
     @Transactional
     public ProjectEntity update(Long id, String title, String description, int version, AuthenticatedUser user) {
+        requirePermission(user, PermissionCode.PROJECT_CREATE);
         ProjectEntity project = get(id);
         requireOwnerOrAdmin(project, user);
         if (project.getStatus() == ProjectStatus.COMPLETED || project.getStatus() == ProjectStatus.CANCELLED) {
@@ -153,6 +157,8 @@ public class ProjectService {
 
     @Transactional
     public ProjectEntity changeStatus(Long id, ProjectStatus target, int version, AuthenticatedUser user) {
+        requirePermission(user, target == ProjectStatus.COMPLETED
+                ? PermissionCode.PROJECT_COMPLETE : PermissionCode.PROJECT_CREATE);
         ProjectEntity project = get(id);
         requireOwnerOrAdmin(project, user);
         boolean allowed = switch (project.getStatus()) {
@@ -185,6 +191,7 @@ public class ProjectService {
 
     @Transactional
     public void delete(Long id, AuthenticatedUser user) {
+        requirePermission(user, PermissionCode.PROJECT_CREATE);
         ProjectEntity project = get(id);
         requireOwnerOrAdmin(project, user);
         long related = jdbc.sql("""
@@ -200,7 +207,7 @@ public class ProjectService {
     }
 
     private void requireOwnerOrAdmin(ProjectEntity project, AuthenticatedUser user) {
-        if (!project.getCreatedBy().equals(user.id()) && user.role() != cn.photolib.user.model.UserRole.ADMIN) {
+        if (!project.getCreatedBy().equals(user.id()) && !user.isAdministrator()) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权修改该项目");
         }
     }
@@ -213,6 +220,7 @@ public class ProjectService {
 
     @Transactional
     public void addPhotos(Long projectId, List<Long> photoIds, AuthenticatedUser user) {
+        requirePermission(user, PermissionCode.PROJECT_ADOPT);
         if (photoIds == null || photoIds.isEmpty() || photoIds.size() > 200) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择 1 至 200 张图片");
         }
@@ -225,7 +233,7 @@ public class ProjectService {
             if (photo == null || photo.getStatus() != PhotoStatus.AVAILABLE) {
                 throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "存在不可添加的图片");
             }
-            if (user.role() == UserRole.CAMPUS_MANAGER && !photo.getUploadedBy().equals(user.id())) {
+            if (user.isCampusScoped() && !photo.getUploadedBy().equals(user.id())) {
                 throw new BusinessException(ErrorCode.FORBIDDEN, "无权使用不可见的图库图片");
             }
             // Adding photos to an album is an idempotent membership operation. The gallery
@@ -239,7 +247,7 @@ public class ProjectService {
     }
 
     private void requireVisible(ProjectEntity project, AuthenticatedUser user) {
-        if (user.role() != UserRole.CAMPUS_MANAGER) {
+        if (!user.isCampusScoped()) {
             return;
         }
         long assignments = jdbc.sql("""
@@ -260,6 +268,12 @@ public class ProjectService {
     private void updateChecked(ProjectEntity project) {
         if (mapper.updateById(project) != 1) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "项目已被其他操作修改");
+        }
+    }
+
+    private void requirePermission(AuthenticatedUser user, PermissionCode permission) {
+        if (!user.hasPermission(permission)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权执行该选题操作");
         }
     }
 

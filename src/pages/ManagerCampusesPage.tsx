@@ -1,10 +1,10 @@
 import { App, Button, Card, Input, Select, Space, Table, Tag, Typography } from 'antd'
 import { SaveOutlined, WarningOutlined } from '@ant-design/icons'
 import { useState } from 'react'
-import { api, emptyPage } from '../api'
+import { api } from '../api'
 import { DataState, PageTitle } from '../components'
 import { useLoad } from '../hooks'
-import type { Campus, EntityId, PageData, User } from '../types'
+import type { Campus, CampusAssignmentUser, EntityId } from '../types'
 
 export default function ManagerCampusesPage() {
   const { message } = App.useApp()
@@ -13,12 +13,9 @@ export default function ManagerCampusesPage() {
   const [searchText, setSearchText] = useState('')
   const [keyword, setKeyword] = useState('')
   const { data: users, loading, error, reload } = useLoad(
-    () => api<PageData<User>>({
-      url: '/users',
-      params: { page: 1, pageSize: 100, role: 'CAMPUS_MANAGER', keyword: keyword || undefined },
-    }),
-    emptyPage<User>(),
-    [keyword],
+    () => api<CampusAssignmentUser[]>({ url: '/users/campus-assignable' }),
+    [] as CampusAssignmentUser[],
+    [],
   )
   const { data: campuses, loading: campusesLoading, error: campusesError, reload: reloadCampuses } = useLoad(
     () => api<Campus[]>({ url: '/campuses' }),
@@ -26,12 +23,12 @@ export default function ManagerCampusesPage() {
     [],
   )
 
-  const saveCampus = async (user: User) => {
+  const saveCampus = async (user: CampusAssignmentUser) => {
     const campusId = selectedCampuses[user.id]
     if (!campusId || !user.version) return
     setSavingId(user.id)
     try {
-      await api<User>({
+      await api({
         method: 'PUT',
         url: `/users/${user.id}/campus`,
         data: { campusId, version: user.version },
@@ -51,7 +48,10 @@ export default function ManagerCampusesPage() {
   }
 
   const enabledCampuses = campuses.filter(campus => campus.enabled)
-  const unassignedCount = users.items.filter(user => !user.campusId).length
+  const filteredUsers = users.filter(user => !keyword
+    || user.displayName.toLowerCase().includes(keyword.toLowerCase())
+    || user.permissionGroupName.toLowerCase().includes(keyword.toLowerCase()))
+  const unassignedCount = users.filter(user => !user.campusIds.length).length
 
   return <>
     <PageTitle
@@ -65,7 +65,7 @@ export default function ManagerCampusesPage() {
           <Typography.Title level={4}>校区负责人</Typography.Title>
           <Typography.Text type="secondary">
             {keyword
-              ? `找到 ${users.total} 位匹配的校区负责人。`
+              ? `找到 ${filteredUsers.length} 位匹配的校区范围账号。`
               : unassignedCount > 0
               ? `有 ${unassignedCount} 位历史迁移负责人尚未指定校区，请及时补全。`
               : '所有校区负责人均已指定负责校区。'}
@@ -87,30 +87,25 @@ export default function ManagerCampusesPage() {
         </Space>
       </div>
       <DataState loading={loading || campusesLoading} error={error || campusesError}
-        empty={!users.items.length} onRetry={() => { void reload(); void reloadCampuses() }}>
+        empty={!filteredUsers.length} onRetry={() => { void reload(); void reloadCampuses() }}>
         <Table
           rowKey="id"
-          dataSource={users.items}
+          dataSource={filteredUsers}
           pagination={{ pageSize: 12 }}
           scroll={{ x: 720 }}
           columns={[
             {
               title: '负责人',
               render: (_value, user) => <div className="table-title">
-                <strong>{user.displayName}</strong><span>@{user.username}</span>
+                <strong>{user.displayName}</strong><span>{user.permissionGroupName}</span>
               </div>,
             },
             {
               title: '当前校区',
-              dataIndex: 'campusId',
-              render: campusId => campusId
-                ? campuses.find(campus => campus.id === campusId)?.name || `校区 #${campusId}`
+              dataIndex: 'campusIds',
+              render: (campusIds: EntityId[]) => campusIds.length
+                ? campusIds.map(campusId => campuses.find(campus => campus.id === campusId)?.name || `校区 #${campusId}`).join('、')
                 : <Tag color="warning">未指定</Tag>,
-            },
-            {
-              title: '账号状态',
-              dataIndex: 'enabled',
-              render: enabled => <Tag color={enabled ? 'green' : 'default'}>{enabled ? '正常' : '已停用'}</Tag>,
             },
             {
               title: '指定负责校区',
@@ -120,7 +115,7 @@ export default function ManagerCampusesPage() {
                 return <Space.Compact block>
                   <Select
                     style={{ minWidth: 220, flex: 1 }}
-                    value={selected ?? user.campusId ?? undefined}
+                    value={selected ?? user.campusIds[0] ?? undefined}
                     placeholder="请选择校区"
                     options={enabledCampuses.map(campus => ({ value: campus.id, label: campus.name }))}
                     onChange={campusId => setSelectedCampuses(current => ({ ...current, [user.id]: campusId }))}
@@ -129,7 +124,7 @@ export default function ManagerCampusesPage() {
                     type="primary"
                     icon={<SaveOutlined />}
                     loading={savingId === user.id}
-                    disabled={!selected || selected === user.campusId || savingId !== null}
+                    disabled={!selected || selected === user.campusIds[0] || savingId !== null}
                     onClick={() => void saveCampus(user)}
                   >保存</Button>
                 </Space.Compact>

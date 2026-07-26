@@ -6,7 +6,7 @@ import cn.photolib.campus.model.CampusEntity;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.directory.mapper.CampusMemberMapper;
-import cn.photolib.user.model.UserRole;
+import cn.photolib.permission.PermissionCode;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DuplicateKeyException;
@@ -27,16 +27,26 @@ public class CampusMemberService {
     private final CampusService campusService;
 
     public List<CampusMemberEntity> list(Long campusId, Boolean enabled, AuthenticatedUser user) {
-        Long effectiveCampusId = effectiveCampus(campusId, user);
-        if (Boolean.TRUE.equals(enabled) && effectiveCampusId != null
-                && !Boolean.TRUE.equals(campusService.get(effectiveCampusId).getEnabled())) {
+        if (!user.hasAnyPermission(PermissionCode.DIRECTORY_VIEW, PermissionCode.DIRECTORY_MANAGE,
+                PermissionCode.PHOTO_UPLOAD, PermissionCode.REQUEST_PHOTO_MANAGE,
+                PermissionCode.WORKLOG_SUBMIT)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权查看通讯录");
+        }
+        if (user.isCampusScoped() && campusId != null && !user.canAccessCampus(campusId)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权查看该校区通讯录");
+        }
+        if (Boolean.TRUE.equals(enabled) && campusId != null
+                && !Boolean.TRUE.equals(campusService.get(campusId).getEnabled())) {
             return List.of();
         }
-        return mapper.selectList(Wrappers.<CampusMemberEntity>lambdaQuery()
-                .eq(effectiveCampusId != null, CampusMemberEntity::getCampusId, effectiveCampusId)
+        var query = Wrappers.<CampusMemberEntity>lambdaQuery()
+                .eq(campusId != null, CampusMemberEntity::getCampusId, campusId)
+                .in(user.isCampusScoped() && campusId == null, CampusMemberEntity::getCampusId,
+                        user.campusIds().isEmpty() ? List.of(-1L) : user.campusIds())
                 .eq(enabled != null, CampusMemberEntity::getEnabled, enabled)
                 .orderByAsc(CampusMemberEntity::getName)
-                .orderByAsc(CampusMemberEntity::getStudentId));
+                .orderByAsc(CampusMemberEntity::getStudentId);
+        return mapper.selectList(query);
     }
 
     /**
@@ -45,7 +55,18 @@ public class CampusMemberService {
      * campusNames 汇总该学号出现过的所有校区名。
      */
     public List<DedupedMember> listDeduped() {
+        return listDeduped(null);
+    }
+
+    public List<DedupedMember> listDeduped(AuthenticatedUser user) {
+        if (user != null && !user.hasAnyPermission(PermissionCode.DIRECTORY_VIEW,
+                PermissionCode.DIRECTORY_MANAGE, PermissionCode.PHOTO_UPLOAD,
+                PermissionCode.REQUEST_PHOTO_MANAGE, PermissionCode.WORKLOG_SUBMIT)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权读取拍摄者选项");
+        }
         Map<Long, String> campusNames = campusService.list(true).stream()
+                .filter(campus -> user == null || !user.isCampusScoped()
+                        || user.canAccessCampus(campus.getId()))
                 .collect(Collectors.toMap(CampusEntity::getId, CampusEntity::getName, (a, b) -> a));
         if (campusNames.isEmpty()) return List.of();
         List<CampusMemberEntity> members = mapper.selectList(Wrappers.<CampusMemberEntity>lambdaQuery()
@@ -101,6 +122,7 @@ public class CampusMemberService {
 
     @Transactional
     public CampusMemberEntity create(Long campusId, String studentId, String name, AuthenticatedUser user) {
+        requireManagePermission(user);
         Long effectiveCampusId = requireWritableCampus(campusId, user);
         requireEnabledCampus(effectiveCampusId);
         String normalizedStudentId = studentId.trim();
@@ -129,6 +151,7 @@ public class CampusMemberService {
     @Transactional
     public CampusMemberEntity update(Long id, String studentId, String name, boolean enabled,
                                      int version, AuthenticatedUser user) {
+        requireManagePermission(user);
         CampusMemberEntity member = require(id);
         requireWritableCampus(member.getCampusId(), user);
         requireEnabledCampus(member.getCampusId());
@@ -153,6 +176,7 @@ public class CampusMemberService {
      */
     @Transactional
     public void delete(Long id, AuthenticatedUser user) {
+        requireManagePermission(user);
         CampusMemberEntity member = require(id);
         requireWritableCampus(member.getCampusId(), user);
         requireEnabledCampus(member.getCampusId());
@@ -167,28 +191,26 @@ public class CampusMemberService {
         return member;
     }
 
-    private Long effectiveCampus(Long requestedCampusId, AuthenticatedUser user) {
-        if (user.role() == UserRole.CAMPUS_MANAGER) {
-            if (user.campusId() == null) {
-                throw new BusinessException(ErrorCode.FORBIDDEN, "当前账号未关联校区");
-            }
-            return user.campusId();
-        }
-        return requestedCampusId;
-    }
-
     private Long requireWritableCampus(Long requestedCampusId, AuthenticatedUser user) {
-        if (user.role() == UserRole.ADMIN || user.role() == UserRole.MINISTER) {
+        if (!user.isCampusScoped()) {
             if (requestedCampusId == null) {
                 throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择校区");
             }
             return requestedCampusId;
         }
-        if (user.role() == UserRole.CAMPUS_MANAGER && user.campusId() != null
-                && user.campusId().equals(requestedCampusId == null ? user.campusId() : requestedCampusId)) {
-            return user.campusId();
+        if (requestedCampusId == null && user.campusIds().size() == 1) {
+            return user.campusIds().iterator().next();
+        }
+        if (requestedCampusId != null && user.canAccessCampus(requestedCampusId)) {
+            return requestedCampusId;
         }
         throw new BusinessException(ErrorCode.FORBIDDEN, "只能维护所属校区的通讯录");
+    }
+
+    private void requireManagePermission(AuthenticatedUser user) {
+        if (!user.hasPermission(PermissionCode.DIRECTORY_MANAGE)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权管理通讯录");
+        }
     }
 
     private void requireEnabledCampus(Long campusId) {

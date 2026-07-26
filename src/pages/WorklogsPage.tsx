@@ -11,6 +11,7 @@ import { useAuth } from '../auth'
 import type { CampusMember, EntityId, PageData, PhotoRequest, Worklog } from '../types'
 import { DataState, formatMinutes, PageTitle, StatusTag } from '../components'
 import { useLoad } from '../hooks'
+import { hasPermission } from '../permissions'
 
 interface ExportJobView {
   job: { status: 'PENDING' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED'; errorMessage?: string }
@@ -33,25 +34,27 @@ export default function WorklogsPage() {
   ])
   const [selectedIds, setSelectedIds] = useState<EntityId[]>([])
   const [filters, setFilters] = useState({ page: 1, status: '' })
-  const reviewer = user?.role === 'ADMIN' || user?.role === 'MINISTER'
+  const reviewer = hasPermission(user, 'WORKLOG_CONFIRM')
+  const canExport = hasPermission(user, 'WORKLOG_EXPORT')
+  const canSubmit = hasPermission(user, 'WORKLOG_SUBMIT')
   const { data, loading, error, reload } = useLoad(
     () => api<PageData<Worklog>>({ url: '/worklogs', params: qs({ ...filters, pageSize: 20 }) }),
     emptyPage<Worklog>(), [filters.page, filters.status],
   )
   const { data: requestOptions, loading: requestsLoading } = useLoad(
-    () => user?.role === 'CAMPUS_MANAGER'
+    () => canSubmit && user
       ? api<PageData<PhotoRequest>>({
           url: '/requests',
           params: { page: 1, pageSize: 100, participantId: user.id },
         }).then(result => result.items.filter(item => item.status !== 'CANCELLED'))
       : Promise.resolve([]),
-    [] as PhotoRequest[], [user?.id, user?.role],
+    [] as PhotoRequest[], [user?.id, canSubmit],
   )
   const { data: directory, loading: directoryLoading } = useLoad(
-    () => user?.role === 'CAMPUS_MANAGER'
+    () => canSubmit
       ? api<CampusMember[]>({ url: '/campus-members', params: { enabled: true } })
       : Promise.resolve([]),
-    [] as CampusMember[], [user?.id, user?.role],
+    [] as CampusMember[], [user?.id, canSubmit],
   )
 
   const create = async () => {
@@ -165,14 +168,14 @@ export default function WorklogsPage() {
     <PageTitle
       eyebrow="WORKLOGS"
       title="工时记录"
-      description={user?.role === 'CAMPUS_MANAGER' ? '记录每一次拍摄与修图投入。' : '审核成员工时，让每份投入都有迹可循。'}
+      description={canSubmit && !reviewer ? '记录每一次拍摄与修图投入。' : '审核成员工时，让每份投入都有迹可循。'}
       extra={<Space>
-        {reviewer && (
+        {canExport && (
           <Button size="large" icon={<DownloadOutlined />} loading={exporting} onClick={() => setExportOpen(true)}>
             导出工时
           </Button>
         )}
-        {user?.role === 'CAMPUS_MANAGER' && (
+        {canSubmit && (
           <Button type="primary" size="large" icon={<PlusOutlined />} onClick={() => setOpen(true)}>填报工时</Button>
         )}
       </Space>}
@@ -233,7 +236,7 @@ export default function WorklogsPage() {
             { title: '说明', dataIndex: 'remark', ellipsis: true },
             { title: '状态', dataIndex: 'status', render: value => <StatusTag value={value} /> },
             { title: '操作', fixed: 'right' as const, width: reviewer ? 320 : 120, render: (_, item: Worklog) => <Space>
-              {user?.role === 'CAMPUS_MANAGER' && ['DRAFT', 'REJECTED'].includes(item.status) && (
+              {canSubmit && item.userId === user?.id && ['DRAFT', 'REJECTED'].includes(item.status) && (
                 <Button onClick={() => void runAction(item, 'submit')}>提交</Button>
               )}
               {reviewer && item.status === 'SUBMITTED' && <>
@@ -243,6 +246,8 @@ export default function WorklogsPage() {
               {reviewer && (
                 <Button danger type="text" icon={<DeleteOutlined />} onClick={() => confirmDelete([item])}>删除</Button>
               )}
+              {!reviewer && canSubmit && item.userId === user?.id && ['DRAFT', 'REJECTED'].includes(item.status) &&
+                <Button danger type="text" icon={<DeleteOutlined />} onClick={() => confirmDelete([item])}>删除</Button>}
             </Space> },
           ]}
         />

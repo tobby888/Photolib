@@ -21,13 +21,14 @@ public class WorklogController {
     private final WorklogService service;
 
     @PostMapping("/requests/{requestId}/worklogs")
-    @PreAuthorize("hasAnyRole('ADMIN','CAMPUS_MANAGER')")
+    @PreAuthorize("hasAuthority('WORKLOG_SUBMIT')")
     ApiResponse<WorklogEntity> create(@PathVariable Long requestId, @Valid @RequestBody WorklogRequest request,
                                       @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.create(requestId, request.command(), user));
     }
 
     @GetMapping("/worklogs")
+    @PreAuthorize("hasAnyAuthority('WORKLOG_SUBMIT','WORKLOG_CONFIRM','WORKLOG_EXPORT')")
     ApiResponse<PageResponse<WorklogEntity>> list(
             @RequestParam(defaultValue = "1") @Min(1) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int pageSize,
@@ -41,6 +42,7 @@ public class WorklogController {
     }
 
     @PutMapping("/worklogs/{id}")
+    @PreAuthorize("hasAuthority('WORKLOG_SUBMIT')")
     ApiResponse<WorklogEntity> update(@PathVariable Long id, @Valid @RequestBody WorklogRequest request,
                                       @RequestParam @Min(1) int version,
                                       @AuthenticationPrincipal AuthenticatedUser user) {
@@ -48,27 +50,28 @@ public class WorklogController {
     }
 
     @PostMapping("/worklogs/{id}/submit")
+    @PreAuthorize("hasAuthority('WORKLOG_SUBMIT')")
     ApiResponse<WorklogEntity> submit(@PathVariable Long id, @Valid @RequestBody VersionRequest request,
                                       @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.submit(id, request.version(), user));
     }
 
     @PostMapping("/worklogs/{id}/confirm")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    @PreAuthorize("hasAuthority('WORKLOG_CONFIRM')")
     ApiResponse<WorklogEntity> confirm(@PathVariable Long id, @Valid @RequestBody VersionRequest request,
                                        @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.confirm(id, request.version(), user));
     }
 
     @PostMapping("/worklogs/{id}/reject")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    @PreAuthorize("hasAuthority('WORKLOG_CONFIRM')")
     ApiResponse<WorklogEntity> reject(@PathVariable Long id, @Valid @RequestBody RejectRequest request,
                                       @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.reject(id, request.reason(), request.version(), user));
     }
 
     @DeleteMapping("/worklogs/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER','CAMPUS_MANAGER')")
+    @PreAuthorize("hasAnyAuthority('WORKLOG_SUBMIT','WORKLOG_CONFIRM')")
     ApiResponse<Void> delete(@PathVariable Long id, @AuthenticationPrincipal AuthenticatedUser user) {
         service.delete(id, user);
         return ApiResponse.ok();

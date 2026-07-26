@@ -15,6 +15,7 @@ import { DataState, PageTitle, StatusTag } from '../components'
 import { useLoad } from '../hooks'
 import MarkdownEditor from '../MarkdownEditor'
 import MarkdownRenderer from '../MarkdownRenderer'
+import { hasPermission } from '../permissions'
 
 const statuses = [
   ['DRAFT', '草稿'], ['PUBLISHED', '待接单'], ['ACCEPTED', '执行中'],
@@ -28,6 +29,11 @@ export default function RequestsPage() {
   const [searchParams] = useSearchParams()
   const [form] = Form.useForm()
   const publishMode = Form.useWatch('publishMode', form) || 'publish'
+  const campusScoped = user?.dataScope === 'CAMPUS'
+  const canCreate = hasPermission(user, 'REQUEST_CREATE')
+  const canConfirm = hasPermission(user, 'REQUEST_CONFIRM')
+  const canClose = hasPermission(user, 'REQUEST_CLOSE')
+  const canDelete = hasPermission(user, 'REQUEST_DELETE')
   const [open, setOpen] = useState(false)
   const [detail, setDetail] = useState<PhotoRequest | null>(null)
   const [saving, setSaving] = useState(false)
@@ -42,11 +48,13 @@ export default function RequestsPage() {
   )
   const { data: options } = useLoad(async () => {
     const [projects, campuses] = await Promise.all([
-      api<PageData<Project>>({ url: '/projects', params: { page: 1, pageSize: 100 } }),
-      api<Campus[]>({ url: '/campuses', params: { enabled: true } }),
+      hasPermission(user, 'PROJECT_VIEW')
+        ? api<PageData<Project>>({ url: '/projects', params: { page: 1, pageSize: 100 } })
+        : Promise.resolve(emptyPage<Project>()),
+      canCreate ? api<Campus[]>({ url: '/campuses', params: { enabled: true } }) : Promise.resolve([] as Campus[]),
     ])
     return { projects: projects.items, campuses }
-  }, { projects: [] as Project[], campuses: [] as Campus[] }, [])
+  }, { projects: [] as Project[], campuses: [] as Campus[] }, [canCreate, user?.permissionGroupId])
   useEffect(() => {
     const requestId = searchParams.get('requestId')
     if (requestId) setDetail(data.items.find(item => item.id === requestId) || null)
@@ -146,22 +154,39 @@ export default function RequestsPage() {
       },
     })
   }
+  const closeRequest = (item: PhotoRequest) => {
+    let reason = ''
+    modal.confirm({
+      title: '关闭图片需求',
+      content: <Input.TextArea rows={3} maxLength={500} showCount placeholder="请填写关闭原因"
+        onChange={event => { reason = event.target.value }} />,
+      okText: '确认关闭', okButtonProps: { danger: true }, cancelText: '取消',
+      onOk: async () => {
+        if (!reason.trim()) throw new Error('请填写关闭原因')
+        await api({ method: 'POST', url: `/requests/${item.id}/cancel`,
+          data: { reason: reason.trim(), version: item.version } })
+        setDetail(null); message.success('需求已关闭'); await reload()
+      },
+    })
+  }
   const actions = (item: PhotoRequest) => <Space>
-    <Button type="text" icon={<EyeOutlined />} onClick={() => navigate(`/requests/${item.id}`)}>
-      {user?.role === 'CAMPUS_MANAGER' ? '交付图片' : '详情'}
-    </Button>
-    {user?.role === 'CAMPUS_MANAGER' && item.status === 'PUBLISHED' && <Button type="primary" onClick={() => void action(item, 'accept')}>接受任务</Button>}
-    {user?.role !== 'CAMPUS_MANAGER' && item.status === 'DRAFT' && <Button onClick={() => void action(item, 'publish')}>发布</Button>}
-    {user?.role === 'CAMPUS_MANAGER' && item.status === 'ACCEPTED' && <Button onClick={() => void action(item, 'submit')}>提交</Button>}
-    {user?.role !== 'CAMPUS_MANAGER' && item.status === 'SUBMITTED' &&
+    {(!campusScoped || item.status !== 'PUBLISHED') && <Button type="text" icon={<EyeOutlined />} onClick={() => navigate(`/requests/${item.id}`)}>
+      {campusScoped ? '交付图片' : '详情'}
+    </Button>}
+    {campusScoped && item.status === 'PUBLISHED' && <Button type="primary" onClick={() => void action(item, 'accept')}>接受任务</Button>}
+    {canCreate && item.status === 'DRAFT' && <Button onClick={() => void action(item, 'publish')}>发布</Button>}
+    {campusScoped && item.status === 'ACCEPTED' && <Button onClick={() => void action(item, 'submit')}>提交</Button>}
+    {canConfirm && item.status === 'SUBMITTED' &&
       <Button icon={<RollbackOutlined />} onClick={() => returnForRevision(item)}>打回</Button>}
-    {user?.role !== 'CAMPUS_MANAGER' && item.status === 'SUBMITTED' &&
+    {canConfirm && item.status === 'SUBMITTED' &&
       <Button type="primary" onClick={() => void action(item, 'complete')}>确认完成</Button>}
-    {user?.role === 'ADMIN' && <Button type="text" danger icon={<DeleteOutlined />} onClick={() => deleteRequest(item)}>删除</Button>}
+    {canClose && !['COMPLETED', 'CANCELLED'].includes(item.status) &&
+      <Button type="text" danger onClick={() => closeRequest(item)}>关闭</Button>}
+    {canDelete && <Button type="text" danger icon={<DeleteOutlined />} onClick={() => deleteRequest(item)}>删除</Button>}
   </Space>
   return <>
-    <PageTitle eyebrow="REQUESTS" title="图片需求" description={user?.role === 'CAMPUS_MANAGER' ? '查看所在校区的拍摄任务，并跟进拍摄交付。' : '把选题拆成清晰、可执行的拍摄任务。'}
-      extra={user?.role !== 'CAMPUS_MANAGER' && <Button type="primary" size="large" icon={<PlusOutlined />} onClick={() => setOpen(true)}>新建需求</Button>} />
+    <PageTitle eyebrow="REQUESTS" title="图片需求" description={campusScoped ? '查看授权校区的拍摄任务；接受后才能进入需求并管理交付图片。' : '把选题拆成清晰、可执行的拍摄任务。'}
+      extra={canCreate && <Button type="primary" size="large" icon={<PlusOutlined />} onClick={() => setOpen(true)}>新建需求</Button>} />
     <Card className="filter-card">
       <Space wrap>
         <Select allowClear placeholder="全部项目" showSearch optionFilterProp="label" style={{ width: 220 }}

@@ -41,7 +41,7 @@ class ManagementMessageControllerTests {
     }
 
     @Test
-    @WithMockUser(roles = "ADMIN")
+    @WithMockUser(authorities = "MESSAGE_SEND")
     void admin_shouldSendDirectMessageToAnyEnabledMember() {
         var sender = principal(ADMIN_ID, UserRole.ADMIN);
         var request = new UserNotificationController.SendMessageRequest(
@@ -59,7 +59,7 @@ class ManagementMessageControllerTests {
     }
 
     @Test
-    @WithMockUser(roles = "MINISTER")
+    @WithMockUser(authorities = "MESSAGE_SEND")
     void minister_shouldBroadcastToAllEnabledMembers() {
         var sender = principal(MINISTER_ID, UserRole.MINISTER);
         var request = new UserNotificationController.SendMessageRequest(

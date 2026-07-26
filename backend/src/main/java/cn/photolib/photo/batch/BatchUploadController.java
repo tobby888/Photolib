@@ -7,6 +7,7 @@ import jakarta.validation.constraints.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.security.access.prepost.PreAuthorize;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -18,6 +19,7 @@ public class BatchUploadController {
     private final BatchUploadService service;
 
     @PostMapping("/batch-upload-tickets")
+    @PreAuthorize("hasAnyAuthority('PHOTO_UPLOAD','REQUEST_PHOTO_MANAGE')")
     ApiResponse<BatchUploadService.BatchTicket> create(@Valid @RequestBody CreateRequest request,
                                                        @AuthenticationPrincipal AuthenticatedUser user) {
         List<BatchUploadService.FileSpec> files = request.files() == null ? null : request.files().stream()
@@ -29,18 +31,21 @@ public class BatchUploadController {
     }
 
     @PostMapping("/batches/{id}/complete-upload")
+    @PreAuthorize("hasAnyAuthority('PHOTO_UPLOAD','REQUEST_PHOTO_MANAGE')")
     ApiResponse<BatchUploadService.BatchView> complete(@PathVariable String id,
                                                        @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.complete(id, user));
     }
 
     @GetMapping("/batches/{id}")
+    @PreAuthorize("hasAnyAuthority('PHOTO_UPLOAD','REQUEST_PHOTO_MANAGE')")
     ApiResponse<BatchUploadService.BatchView> get(@PathVariable String id,
                                                   @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.get(id, user));
     }
 
     @PutMapping("/batches/{batchId}/items/{itemId}/metadata")
+    @PreAuthorize("hasAnyAuthority('PHOTO_UPLOAD','REQUEST_PHOTO_MANAGE')")
     ApiResponse<BatchUploadService.BatchView> metadata(
             @PathVariable String batchId, @PathVariable Long itemId,
             @Valid @RequestBody MetadataRequest request,
@@ -52,6 +57,7 @@ public class BatchUploadController {
     }
 
     @PutMapping("/batches/{batchId}/metadata")
+    @PreAuthorize("hasAnyAuthority('PHOTO_UPLOAD','REQUEST_PHOTO_MANAGE')")
     ApiResponse<BatchUploadService.BatchView> batchMetadata(
             @PathVariable String batchId,
             @Valid @RequestBody BatchMetadataRequest request,

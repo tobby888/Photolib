@@ -1,11 +1,25 @@
 export type Role = 'ADMIN' | 'MINISTER' | 'CAMPUS_MANAGER'
 export type EntityId = string
+export type DataScope = 'NONE' | 'CAMPUS' | 'GLOBAL'
+export type PermissionCode =
+  | 'PROJECT_VIEW' | 'PROJECT_ADOPT' | 'PROJECT_CREATE' | 'PROJECT_COMPLETE' | 'PROJECT_DOWNLOAD'
+  | 'REQUEST_VIEW' | 'REQUEST_CREATE' | 'REQUEST_DELETE' | 'REQUEST_CLOSE' | 'REQUEST_CONFIRM' | 'REQUEST_PHOTO_MANAGE'
+  | 'PHOTO_VIEW' | 'PHOTO_DELETE' | 'PHOTO_UPLOAD' | 'PHOTO_DOWNLOAD'
+  | 'WORKLOG_SUBMIT' | 'WORKLOG_CONFIRM' | 'WORKLOG_EXPORT'
+  | 'DIRECTORY_VIEW' | 'DIRECTORY_MANAGE' | 'MESSAGE_SEND'
+  | 'STATISTICS_DOWNLOAD' | 'MANAGER_CAMPUS_ASSIGN'
 
 export interface User {
   id: EntityId
   username: string
   displayName: string
   role: Role
+  permissionGroupId?: EntityId
+  permissionGroupCode?: string
+  permissionGroupName?: string
+  dataScope?: DataScope
+  permissions?: PermissionCode[]
+  campusIds?: EntityId[]
   campusId?: EntityId | null
   campus?: string | null
   phone?: string
@@ -13,6 +27,44 @@ export interface User {
   enabled?: boolean
   mustChangePassword?: boolean
   version?: number
+}
+
+export interface PermissionDefinition {
+  code: PermissionCode
+  label: string
+}
+
+export interface PermissionCategoryDefinition {
+  code: string
+  label: string
+  permissions: PermissionDefinition[]
+}
+
+export interface PermissionGroup {
+  id: EntityId
+  code: string
+  name: string
+  description?: string | null
+  dataScope: DataScope
+  builtIn: boolean
+  lowest: boolean
+  permissions: PermissionCode[]
+  memberCount: number
+  version: number
+}
+
+export interface MessageRecipient {
+  id: EntityId
+  displayName: string
+  permissionGroupName: string
+}
+
+export interface CampusAssignmentUser {
+  id: EntityId
+  displayName: string
+  permissionGroupName: string
+  campusIds: EntityId[]
+  version: number
 }
 
 export interface PageData<T> {

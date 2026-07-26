@@ -97,7 +97,7 @@ class UserServiceTests {
                 null, null, null);
         assertThatThrownBy(() -> userService.create(command))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("校区负责人必须指定校区");
+                .hasMessageContaining("校区范围权限组必须至少指定一个校区");
     }
 
     @Test

@@ -13,9 +13,7 @@ import cn.photolib.request.mapper.RequestParticipantMapper;
 import cn.photolib.request.model.PhotoRequestEntity;
 import cn.photolib.request.model.RequestParticipantEntity;
 import cn.photolib.request.model.RequestStatus;
-import cn.photolib.user.model.UserRole;
-import cn.photolib.user.mapper.UserMapper;
-import cn.photolib.user.model.UserEntity;
+import cn.photolib.permission.PermissionCode;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
@@ -39,12 +37,15 @@ public class RequestService {
     private final RequestParticipantMapper participantMapper;
     private final ProjectService projectService;
     private final BatchRequestPublisher batchPublisher;
-    private final UserMapper userMapper;
     private final NotificationService notifications;
     private final JdbcClient jdbc;
 
     @Transactional
     public PhotoRequestEntity create(Long projectId, CreateCommand command, AuthenticatedUser user) {
+        requirePermission(user, PermissionCode.REQUEST_CREATE);
+        if (!user.canAccessCampus(command.campusId())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权在该校区创建需求");
+        }
         ProjectEntity project = projectService.get(projectId);
         if (project.getStatus() == ProjectStatus.COMPLETED || project.getStatus() == ProjectStatus.CANCELLED) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "已结束项目不能创建需求");
@@ -67,6 +68,7 @@ public class RequestService {
 
     public List<BatchPublishResult> batchPublish(Long projectId, BatchPublishCommand command,
                                                  AuthenticatedUser user) {
+        requirePermission(user, PermissionCode.REQUEST_CREATE);
         ProjectEntity project = projectService.get(projectId);
         if (project.getStatus() != ProjectStatus.ACTIVE) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "仅进行中的项目可以发布需求");
@@ -77,6 +79,9 @@ public class RequestService {
 
         Set<Long> seenCampuses = new HashSet<>();
         return command.campusIds().stream().map(campusId -> {
+            if (!user.canAccessCampus(campusId)) {
+                return BatchPublishResult.failure(campusId, ErrorCode.FORBIDDEN, "无权在该校区发布需求");
+            }
             if (!seenCampuses.add(campusId)) {
                 return BatchPublishResult.failure(campusId, ErrorCode.VALIDATION_ERROR,
                         "不能重复选择同一校区");
@@ -98,20 +103,32 @@ public class RequestService {
                                                  RequestStatus status, Long campusId,
                                                  Long participantId,
                                                  AuthenticatedUser user) {
-        Long effectiveCampus = user.role() == UserRole.CAMPUS_MANAGER ? user.campusId() : campusId;
+        requirePermission(user, PermissionCode.REQUEST_VIEW);
+        Long effectiveCampus = user.isCampusScoped() ? null : campusId;
         Long effectiveParticipant = participantId == null ? null
-                : user.role() == UserRole.CAMPUS_MANAGER ? user.id() : participantId;
+                : user.isCampusScoped() ? user.id() : participantId;
         List<Long> participatedRequestIds = effectiveParticipant == null ? null
                 : participantMapper.selectList(Wrappers.<RequestParticipantEntity>lambdaQuery()
                         .eq(RequestParticipantEntity::getUserId, effectiveParticipant))
                         .stream().map(RequestParticipantEntity::getRequestId).toList();
+        List<Long> scopedParticipatedIds = user.isCampusScoped()
+                ? participantMapper.selectList(Wrappers.<RequestParticipantEntity>lambdaQuery()
+                        .eq(RequestParticipantEntity::getUserId, user.id()))
+                        .stream().map(RequestParticipantEntity::getRequestId).toList()
+                : List.of();
         Page<PhotoRequestEntity> result = mapper.selectPage(Page.of(page, pageSize),
                 Wrappers.<PhotoRequestEntity>lambdaQuery()
                         .eq(projectId != null, PhotoRequestEntity::getProjectId, projectId)
                         .eq(status != null, PhotoRequestEntity::getStatus, status)
-                        .ne(user.role() == UserRole.CAMPUS_MANAGER,
+                        .ne(user.isCampusScoped(),
                                 PhotoRequestEntity::getStatus, RequestStatus.DRAFT)
                         .eq(effectiveCampus != null, PhotoRequestEntity::getCampusId, effectiveCampus)
+                        .in(user.isCampusScoped(), PhotoRequestEntity::getCampusId,
+                                user.campusIds().isEmpty() ? List.of(-1L) : user.campusIds())
+                        .and(user.isCampusScoped(), q -> q
+                                .eq(PhotoRequestEntity::getStatus, RequestStatus.PUBLISHED)
+                                .or().in(PhotoRequestEntity::getId,
+                                        scopedParticipatedIds.isEmpty() ? List.of(-1L) : scopedParticipatedIds))
                         .in(effectiveParticipant != null, PhotoRequestEntity::getId,
                                 participatedRequestIds == null || participatedRequestIds.isEmpty()
                                         ? List.of(-1L) : participatedRequestIds)
@@ -128,6 +145,7 @@ public class RequestService {
     }
 
     public PhotoRequestEntity get(Long id, AuthenticatedUser user) {
+        requirePermission(user, PermissionCode.REQUEST_VIEW);
         PhotoRequestEntity request = get(id);
         requireVisible(request, user);
         return request;
@@ -135,6 +153,7 @@ public class RequestService {
 
     @Transactional
     public PhotoRequestEntity publish(Long id, int version, AuthenticatedUser user) {
+        requirePermission(user, PermissionCode.REQUEST_CREATE);
         PhotoRequestEntity request = get(id);
         requireCreatorOrAdmin(request, user);
         ProjectEntity project = projectService.get(request.getProjectId());
@@ -150,6 +169,10 @@ public class RequestService {
 
     @Transactional
     public PhotoRequestEntity update(Long id, CreateCommand command, int version, AuthenticatedUser user) {
+        requirePermission(user, PermissionCode.REQUEST_CREATE);
+        if (!user.canAccessCampus(command.campusId())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权把需求调整到该校区");
+        }
         PhotoRequestEntity request = get(id);
         requireCreatorOrAdmin(request, user);
         if (request.getStatus() != RequestStatus.DRAFT) {
@@ -167,9 +190,9 @@ public class RequestService {
 
     @Transactional
     public PhotoRequestEntity accept(Long id, AuthenticatedUser user) {
+        requirePermission(user, PermissionCode.REQUEST_VIEW);
         PhotoRequestEntity request = get(id);
-        if (user.role() != UserRole.ADMIN && (user.role() != UserRole.CAMPUS_MANAGER
-                || !request.getCampusId().equals(user.campusId()))) {
+        if (!user.canAccessCampus(request.getCampusId())) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "只能接受所属校区的需求");
         }
         if (request.getStatus() != RequestStatus.PUBLISHED && request.getStatus() != RequestStatus.ACCEPTED) {
@@ -236,6 +259,7 @@ public class RequestService {
 
     @Transactional
     public PhotoRequestEntity submit(Long id, int version, AuthenticatedUser user) {
+        requirePermission(user, PermissionCode.REQUEST_VIEW);
         PhotoRequestEntity request = get(id);
         requireParticipantOrAdmin(id, user);
         if (request.getStatus() != RequestStatus.ACCEPTED) {
@@ -252,8 +276,10 @@ public class RequestService {
     }
 
     @Transactional
-    public PhotoRequestEntity complete(Long id, int version) {
+    public PhotoRequestEntity complete(Long id, int version, AuthenticatedUser reviewer) {
+        requirePermission(reviewer, PermissionCode.REQUEST_CONFIRM);
         PhotoRequestEntity request = get(id);
+        requireCampusAccess(request, reviewer);
         if (request.getStatus() != RequestStatus.SUBMITTED) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "仅已提交需求可完成");
         }
@@ -268,10 +294,11 @@ public class RequestService {
 
     @Transactional
     public PhotoRequestEntity returnForRevision(Long id, String reason, int version, AuthenticatedUser reviewer) {
-        if (reviewer.role() != UserRole.ADMIN && reviewer.role() != UserRole.MINISTER) {
+        if (!reviewer.hasPermission(PermissionCode.REQUEST_CONFIRM)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "仅管理员或部长可打回需求");
         }
         PhotoRequestEntity request = get(id);
+        requireCampusAccess(request, reviewer);
         if (request.getStatus() != RequestStatus.SUBMITTED) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "仅待确认需求可打回");
         }
@@ -300,6 +327,7 @@ public class RequestService {
 
     @Transactional
     public PhotoRequestEntity cancel(Long id, String reason, int version, AuthenticatedUser user) {
+        requirePermission(user, PermissionCode.REQUEST_CLOSE);
         PhotoRequestEntity request = get(id);
         requireCreatorOrAdmin(request, user);
         if (request.getStatus() == RequestStatus.COMPLETED || request.getStatus() == RequestStatus.CANCELLED) {
@@ -314,15 +342,14 @@ public class RequestService {
 
     @Transactional
     public void delete(Long id, AuthenticatedUser user) {
-        if (user.role() != UserRole.ADMIN) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "仅管理员可删除需求");
-        }
+        requirePermission(user, PermissionCode.REQUEST_DELETE);
         PhotoRequestEntity request = get(id);
+        requireCampusAccess(request, user);
         mapper.deleteById(request);
     }
 
     private void requireParticipantOrAdmin(Long requestId, AuthenticatedUser user) {
-        if (user.role() == UserRole.ADMIN) {
+        if (user.isAdministrator()) {
             return;
         }
         if (participantMapper.selectCount(Wrappers.<RequestParticipantEntity>lambdaQuery()
@@ -333,17 +360,16 @@ public class RequestService {
     }
 
     private void requireCreatorOrAdmin(PhotoRequestEntity request, AuthenticatedUser user) {
-        if (!request.getCreatedBy().equals(user.id()) && user.role() != UserRole.ADMIN) {
+        if (!request.getCreatedBy().equals(user.id()) && !user.isAdministrator()) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权操作该需求");
         }
     }
 
     private void requireVisible(PhotoRequestEntity request, AuthenticatedUser user) {
-        if (user.role() == UserRole.ADMIN || user.role() == UserRole.MINISTER) {
+        if (!user.isCampusScoped()) {
             return;
         }
-        if (user.role() != UserRole.CAMPUS_MANAGER
-                || !request.getCampusId().equals(user.campusId())
+        if (!user.canAccessCampus(request.getCampusId())
                 || request.getStatus() == RequestStatus.DRAFT
                 || participantMapper.selectCount(Wrappers.<RequestParticipantEntity>lambdaQuery()
                         .eq(RequestParticipantEntity::getRequestId, request.getId())
@@ -373,12 +399,31 @@ public class RequestService {
     }
 
     private void notifyCampusManagers(PhotoRequestEntity request) {
-        userMapper.selectList(Wrappers.<UserEntity>lambdaQuery()
-                .eq(UserEntity::getRole, UserRole.CAMPUS_MANAGER)
-                .eq(UserEntity::getCampusId, request.getCampusId())
-                .eq(UserEntity::getEnabled, true))
-                .forEach(member -> notifications.notifyUser(member.getId(), "REQUEST_PUBLISHED",
+        jdbc.sql("""
+                SELECT DISTINCT u.id
+                FROM app_user u
+                JOIN permission_group pg
+                  ON pg.id=COALESCE(u.permission_group_id,
+                      (SELECT legacy_pg.id FROM permission_group legacy_pg WHERE legacy_pg.code=u.role))
+                 AND pg.data_scope='CAMPUS'
+                JOIN permission_group_permission p ON p.group_id=pg.id AND p.permission_code='REQUEST_VIEW'
+                JOIN user_campus_permission ucp ON ucp.user_id=u.id AND ucp.campus_id=:campusId
+                WHERE u.enabled=TRUE AND u.deleted=FALSE AND pg.deleted=FALSE
+                """).param("campusId", request.getCampusId()).query(Long.class).list()
+                .forEach(userId -> notifications.notifyUser(userId, "REQUEST_PUBLISHED",
                         "新的图片需求", "<p>" + request.getTitle() + "</p>"));
+    }
+
+    private void requireCampusAccess(PhotoRequestEntity request, AuthenticatedUser user) {
+        if (!user.canAccessCampus(request.getCampusId())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权操作该校区的图片需求");
+        }
+    }
+
+    private void requirePermission(AuthenticatedUser user, PermissionCode permission) {
+        if (!user.hasPermission(permission)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权执行该需求操作");
+        }
     }
 
     public record CreateCommand(String title, String description, Long campusId,

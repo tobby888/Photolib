@@ -3,6 +3,7 @@ package cn.photolib.user;
 import cn.photolib.user.mapper.UserMapper;
 import cn.photolib.user.model.UserEntity;
 import cn.photolib.user.model.UserRole;
+import cn.photolib.permission.PermissionGroupService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
@@ -20,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class AdminBootstrap implements ApplicationRunner {
     private final UserMapper userMapper;
     private final PasswordEncoder passwordEncoder;
+    private final PermissionGroupService permissionGroups;
 
     @Value("${photolib.bootstrap.admin-username}")
     private String username;
@@ -39,6 +41,7 @@ public class AdminBootstrap implements ApplicationRunner {
         admin.setPasswordHash(passwordEncoder.encode(password));
         admin.setDisplayName(displayName);
         admin.setRole(UserRole.ADMIN);
+        admin.setPermissionGroupId(permissionGroups.requireByCode("ADMIN").getId());
         admin.setEnabled(true);
         admin.setMustChangePassword(true);
         userMapper.insert(admin);

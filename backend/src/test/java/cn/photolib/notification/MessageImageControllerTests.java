@@ -21,7 +21,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest
 @Transactional
-@WithMockUser(roles = "MINISTER")
+@WithMockUser(authorities = "MESSAGE_SEND")
 class MessageImageControllerTests {
     @Autowired
     private MessageImageController controller;
@@ -73,9 +73,9 @@ class MessageImageControllerTests {
     }
 
     @Test
-    void imageReadRequiresAnApplicationRoleInsteadOfIsAuthenticated() throws Exception {
+    void imageReadRequiresAuthentication() throws Exception {
         PreAuthorize authorization = MessageImageController.class
                 .getDeclaredMethod("get", String.class).getAnnotation(PreAuthorize.class);
-        assertThat(authorization.value()).contains("hasAnyRole").doesNotContain("isAuthenticated()");
+        assertThat(authorization.value()).isEqualTo("isAuthenticated()");
     }
 }

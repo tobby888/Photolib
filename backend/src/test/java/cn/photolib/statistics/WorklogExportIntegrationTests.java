@@ -1,6 +1,10 @@
 package cn.photolib.statistics;
 
+import cn.photolib.auth.AuthenticatedUser;
+import cn.photolib.permission.DataScope;
+import cn.photolib.permission.PermissionCode;
 import cn.photolib.storage.ObjectStorageService;
+import cn.photolib.user.model.UserRole;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellType;
 import org.apache.poi.ss.usermodel.Row;
@@ -16,6 +20,7 @@ import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
@@ -28,6 +33,8 @@ class WorklogExportIntegrationTests {
     ObjectStorageService storage;
     @Autowired
     ExportService exports;
+    @Autowired
+    StatisticsService statistics;
 
     @Test
     void exportsWorklogsAndCountsAdoptedPhotosByProjectCompletionRange() throws Exception {
@@ -192,6 +199,75 @@ class WorklogExportIntegrationTests {
 
         String message = waitForUnmatchedAdoptionAlert(jobId);
         assertThat(message).contains("20259999").contains("1 张").contains("核对工时申报和审核状态");
+    }
+
+    @Test
+    void campusScopedStatisticsAndWorklogExportsOnlyIncludeAuthorizedCampuses() {
+        long base = System.nanoTime() & Long.MAX_VALUE;
+        long userId = base;
+        long campusA = base + 1;
+        long campusB = base + 2;
+        long projectA = base + 3;
+        long projectB = base + 4;
+        long requestA = base + 5;
+        long requestB = base + 6;
+        LocalDate from = LocalDate.of(2024, 2, 1);
+        LocalDate to = LocalDate.of(2024, 2, 29);
+
+        jdbc.sql("INSERT INTO campus(id, code, name) VALUES (:id, :code, '授权校区')")
+                .param("id", campusA).param("code", "scope-a-" + base).update();
+        jdbc.sql("INSERT INTO campus(id, code, name) VALUES (:id, :code, '未授权校区')")
+                .param("id", campusB).param("code", "scope-b-" + base).update();
+        jdbc.sql("""
+                INSERT INTO app_user(id, username, password_hash, display_name, role, enabled, must_change_password)
+                VALUES (:id, :username, 'hash', '范围测试账号', 'ADMIN', TRUE, FALSE)
+                """).param("id", userId).param("username", "scope-stats-" + base).update();
+        insertProject(projectA, userId, "授权校区项目", LocalDateTime.of(2024, 2, 20, 12, 0));
+        insertProject(projectB, userId, "未授权校区项目", LocalDateTime.of(2024, 2, 20, 12, 0));
+        jdbc.sql("""
+                INSERT INTO photo_request(id, project_id, title, campus_id, deadline, status, created_by)
+                VALUES
+                    (:requestA, :projectA, '授权需求', :campusA, :deadline, 'COMPLETED', :userId),
+                    (:requestB, :projectB, '未授权需求', :campusB, :deadline, 'COMPLETED', :userId)
+                """).param("requestA", requestA).param("projectA", projectA).param("campusA", campusA)
+                .param("requestB", requestB).param("projectB", projectB).param("campusB", campusB)
+                .param("deadline", LocalDateTime.of(2024, 2, 25, 12, 0)).param("userId", userId).update();
+        insertWorklog(base + 10, requestA, userId, from, "授权成员", "A-2024", 60, 0);
+        insertWorklog(base + 11, requestB, userId, from, "未授权成员", "B-2024", 60, 0);
+        long photoA = insertPhoto(base + 20, projectA, requestA, campusA, userId,
+                "A-2024", "授权成员", "scope-a-" + base + ".jpg");
+        long photoB = insertPhoto(base + 21, projectB, requestB, campusB, userId,
+                "B-2024", "未授权成员", "scope-b-" + base + ".jpg");
+        insertAdoption(base + 30, projectA, photoA, userId, "A-2024", "授权成员");
+        insertAdoption(base + 31, projectB, photoB, userId, "B-2024", "未授权成员");
+        var principal = new AuthenticatedUser(userId, "scope", "范围账号", UserRole.CAMPUS_MANAGER,
+                campusA, false, 99L, "SCOPED_STATS", "校区统计组", DataScope.CAMPUS,
+                Set.of(PermissionCode.STATISTICS_DOWNLOAD, PermissionCode.WORKLOG_EXPORT), Set.of(campusA));
+
+        assertThat(statistics.members(from, to, null, null, null, principal))
+                .extracting(StatisticsService.MemberStatistics::studentId)
+                .containsExactly("A-2024");
+        assertThat(statistics.worklogs(from, to, Set.of(campusA)))
+                .extracting(StatisticsService.WorklogExportRow::studentId)
+                .containsExactly("A-2024");
+        assertThat(statistics.overview(from, to, null, principal))
+                .containsEntry("projects", 1L).containsEntry("requests", 1L)
+                .containsEntry("photos", 1L).containsEntry("adoptions", 1L);
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                () -> statistics.members(from, to, null, campusB, null, principal))
+                .hasMessageContaining("无权查看该校区");
+
+        // 数据范围为校区、但一个授权校区都没有的账号（例如权限组的数据范围刚被从 GLOBAL
+        // 改成 CAMPUS，成员还没补授权校区）必须命中零行，而不能被当成全局范围放行全量数据。
+        var withoutCampuses = new AuthenticatedUser(userId, "scope-none", "无授权校区账号",
+                UserRole.CAMPUS_MANAGER, null, false, 98L, "PENDING_CAMPUS", "待补校区组",
+                DataScope.CAMPUS,
+                Set.of(PermissionCode.STATISTICS_DOWNLOAD, PermissionCode.WORKLOG_EXPORT), Set.of());
+
+        assertThat(statistics.members(from, to, null, null, null, withoutCampuses)).isEmpty();
+        assertThat(statistics.overview(from, to, null, withoutCampuses))
+                .containsEntry("projects", 0L).containsEntry("requests", 0L)
+                .containsEntry("photos", 0L).containsEntry("adoptions", 0L);
     }
 
     private void insertProject(long id, long userId, String title, LocalDateTime completedAt) {

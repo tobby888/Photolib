@@ -66,13 +66,14 @@ public class LegacyMigrationService {
             } else {
                 target.update("""
                         INSERT INTO app_user
-                        (username, password_hash, display_name, role, email, enabled, must_change_password,
+                        (username, password_hash, display_name, role, permission_group_id, email, enabled, must_change_password,
                          version, deleted, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, FALSE, 1, FALSE, ?, ?)
+                        VALUES (?, ?, ?, ?, (SELECT id FROM permission_group WHERE code = ?), ?, ?, FALSE, 1, FALSE, ?, ?)
                         """,
                         username,
                         text(row.get("hashed_password"), "!legacy-account-without-password!"),
                         limit(text(row.get("real_name"), username), 100),
+                        legacyRole(row.get("role")),
                         legacyRole(row.get("role")),
                         row.get("email"),
                         !Boolean.TRUE.equals(row.get("is_frozen")),

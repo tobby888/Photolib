@@ -23,26 +23,28 @@ public class StatisticsController {
     private final ExportService exports;
 
     @GetMapping("/statistics/members")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    @PreAuthorize("hasAuthority('STATISTICS_DOWNLOAD')")
     ApiResponse<List<StatisticsService.MemberStatistics>> members(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
             @RequestParam(required = false) Long projectId, @RequestParam(required = false) Long campusId,
-            @RequestParam(required = false) Long userId) {
-        return ApiResponse.ok(statistics.members(from, to, projectId, campusId, userId));
+            @RequestParam(required = false) Long userId,
+            @AuthenticationPrincipal AuthenticatedUser principal) {
+        return ApiResponse.ok(statistics.members(from, to, projectId, campusId, userId, principal));
     }
 
     @GetMapping("/statistics/overview")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    @PreAuthorize("hasAuthority('STATISTICS_DOWNLOAD')")
     ApiResponse<Map<String, Long>> overview(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
-            @RequestParam(required = false) Long projectId) {
-        return ApiResponse.ok(statistics.overview(from, to, projectId));
+            @RequestParam(required = false) Long projectId,
+            @AuthenticationPrincipal AuthenticatedUser principal) {
+        return ApiResponse.ok(statistics.overview(from, to, projectId, principal));
     }
 
     @PostMapping("/statistics/members/export")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    @PreAuthorize("hasAuthority('STATISTICS_DOWNLOAD')")
     ApiResponse<ExportJobEntity> export(@Valid @RequestBody ExportRequest request,
                                         @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(exports.createStatistics(request.from(), request.to(),
@@ -50,13 +52,14 @@ public class StatisticsController {
     }
 
     @PostMapping("/worklogs/export")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    @PreAuthorize("hasAuthority('WORKLOG_EXPORT')")
     ApiResponse<ExportJobEntity> exportWorklogs(@Valid @RequestBody WorklogExportRequest request,
                                                 @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(exports.createWorklogs(request.from(), request.to(), user));
     }
 
     @PostMapping("/photos/batch-download")
+    @PreAuthorize("hasAnyAuthority('PHOTO_DOWNLOAD','PROJECT_DOWNLOAD','REQUEST_PHOTO_MANAGE')")
     ApiResponse<ExportJobEntity> photoZip(@Valid @RequestBody PhotoZipRequest request,
                                           @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(exports.createPhotoZip(request.photoIds(), user));

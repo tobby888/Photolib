@@ -17,12 +17,16 @@ import { useLoad } from '../hooks'
 import { useAuth } from '../auth'
 import { preparePhotoBatchDownload } from '../photoBatchDownload'
 import { photoTitleFromFileName } from '../photoTitle'
+import { hasPermission } from '../permissions'
 
 export default function PhotosPage() {
   const navigate = useNavigate()
   const { message, modal } = App.useApp()
   const { user } = useAuth()
-  const canManageProjects = user?.role === 'ADMIN' || user?.role === 'MINISTER'
+  const canAddToProject = hasPermission(user, 'PROJECT_ADOPT')
+  const canDelete = hasPermission(user, 'PHOTO_DELETE')
+  const canUpload = hasPermission(user, 'PHOTO_UPLOAD')
+  const canDownload = hasPermission(user, 'PHOTO_DOWNLOAD')
   const [uploadForm] = Form.useForm()
   const [uploadOpen, setUploadOpen] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -49,12 +53,12 @@ export default function PhotosPage() {
     return () => window.removeEventListener('preview-generation-succeeded', onPreviewRegenerated)
   }, [reload])
   const { data: photographers, loading: photographersLoading } = useLoad(
-    async () => user?.role === 'CAMPUS_MANAGER'
+    async () => !canUpload ? [] : user?.dataScope === 'CAMPUS'
       ? (await api<CampusMember[]>({ url: '/campus-members', params: { enabled: true } }))
           .map(m => ({ value: m.id, label: `${m.name} · ${m.studentId}` }))
       : (await api<DedupedMember[]>({ url: '/campus-members/deduped' }))
           .map(m => ({ value: m.id, label: `${m.name} · ${m.studentId}` })),
-    [] as { value: EntityId; label: string }[], [user?.role],
+    [] as { value: EntityId; label: string }[], [user?.dataScope, canUpload],
   )
   const {
     data: activeProjects,
@@ -144,6 +148,18 @@ export default function PhotosPage() {
     } finally {
       setBatchDownloading(false)
     }
+  }
+  const batchRemove = () => {
+    if (!selectedIds.length) return
+    modal.confirm({
+      title: `批量删除 ${selectedIds.length} 张图片`,
+      content: '删除后图片记录和存储对象将被清理；已被引图片不能直接删除。',
+      okText: '确认删除', okButtonProps: { danger: true }, cancelText: '取消',
+      onOk: async () => {
+        await api({ method: 'POST', url: '/photos/batch-delete', data: { photoIds: selectedIds } })
+        setSelectedPhotos([]); setSelected(null); message.success('所选图片已删除'); await reload()
+      },
+    })
   }
   const remove = (photo: Photo) => {
     modal.confirm({
@@ -241,17 +257,19 @@ export default function PhotosPage() {
   return <>
     <PageTitle eyebrow="LIBRARY" title="图片库" description="检索、查看并下载团队沉淀的每一帧。"
       extra={<Space wrap>
-        <Button size="large" icon={<FolderAddOutlined />} disabled={!selectedIds.length}
+        {canAddToProject && <Button size="large" icon={<FolderAddOutlined />} disabled={!selectedIds.length}
           onClick={() => openProjectPicker(selectedPhotos, 'batch')}>
           添加到项目{selectedIds.length ? `（${selectedIds.length}）` : ''}
-        </Button>
-        <Button size="large" icon={<DownloadOutlined />} loading={batchDownloading}
+        </Button>}
+        {canDownload && <Button size="large" icon={<DownloadOutlined />} loading={batchDownloading}
           disabled={!selectedIds.length} onClick={() => void batchDownload()}>
           打包下载{selectedIds.length ? `（${selectedIds.length}）` : ''}
-        </Button>
+        </Button>}
+        {canDelete && <Button danger size="large" icon={<DeleteOutlined />} disabled={!selectedIds.length}
+          onClick={batchRemove}>批量删除{selectedIds.length ? `（${selectedIds.length}）` : ''}</Button>}
         {!!selectedIds.length && <Button size="large" onClick={() => setSelectedPhotos([])}>清空选择</Button>}
-        <Button size="large" icon={<InboxOutlined />} onClick={() => navigate('/photos/batch-upload')}>ZIP 批量上传</Button>
-        <Button type="primary" size="large" icon={<CloudUploadOutlined />} onClick={() => setUploadOpen(true)}>上传图片</Button>
+        {canUpload && <Button size="large" icon={<InboxOutlined />} onClick={() => navigate('/photos/batch-upload')}>ZIP 批量上传</Button>}
+        {canUpload && <Button type="primary" size="large" icon={<CloudUploadOutlined />} onClick={() => setUploadOpen(true)}>上传图片</Button>}
       </Space>} />
     <Card className="filter-card">
       <Space wrap>
@@ -269,16 +287,16 @@ export default function PhotosPage() {
           <Card className={`photo-card${selectedIds.includes(photo.id) ? ' photo-card-selected' : ''}`} hoverable cover={<div className="photo-cover" onClick={() => setSelected(photo)}>
             {photo.thumbnailUrl ? <Image preview={false} src={photo.thumbnailUrl} alt={photo.title} /> : <div className="image-placeholder"><span>{photo.title?.slice(0, 1) || '图'}</span></div>}
             <div className="photo-overlay">
-              {(photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED') && <Checkbox
+              {(canAddToProject || canDownload || canDelete) && (photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED') && <Checkbox
                 className="photo-select-checkbox"
                 checked={selectedIds.includes(photo.id)}
                 disabled={selectedIds.length >= 200 && !selectedIds.includes(photo.id)}
                 onClick={event => event.stopPropagation()}
                 onChange={event => toggleSelected(photo, event.target.checked)}
                 aria-label={`选择图片 ${photo.title || photo.id}`} />}
-              <Button className="photo-download-button" shape="circle" icon={<DownloadOutlined />}
+              {canDownload && <Button className="photo-download-button" shape="circle" icon={<DownloadOutlined />}
                 aria-label={`下载图片 ${photo.title || photo.id}`}
-                onClick={e => { e.stopPropagation(); void download(photo) }} />
+                onClick={e => { e.stopPropagation(); void download(photo) }} />}
             </div>
             <div className="photo-badges"><Space size={4}><StatusTag value={photo.status} />
               {!!photo.adoptionCount && <Tag color="gold">已采用 × {photo.adoptionCount}</Tag>}
@@ -333,11 +351,11 @@ export default function PhotosPage() {
     </Modal>
     <Drawer title="图片详情" width={520} open={!!selected} onClose={() => setSelected(null)}
       extra={selected && <Space>
-        {canManageProjects && <Button icon={<FolderAddOutlined />} disabled={selected.status !== 'AVAILABLE'}
+        {canAddToProject && <Button icon={<FolderAddOutlined />} disabled={selected.status !== 'AVAILABLE'}
           title={selected.status === 'AVAILABLE' ? undefined : '仅可用图片可以添加到项目'}
           onClick={() => openProjectPicker([selected], 'detail')}>添加到项目</Button>}
-        {canManageProjects && <Button danger icon={<DeleteOutlined />} onClick={() => remove(selected)}>删除图片</Button>}
-        <Button type="primary" icon={<DownloadOutlined />} onClick={() => void download(selected)}>下载原图</Button>
+        {canDelete && <Button danger icon={<DeleteOutlined />} onClick={() => remove(selected)}>删除图片</Button>}
+        {canDownload && <Button type="primary" icon={<DownloadOutlined />} onClick={() => void download(selected)}>下载原图</Button>}
       </Space>}>
       {selected && <>
         <div className="detail-image">{selected.thumbnailUrl ? <Image src={selected.thumbnailUrl} /> : <div className="image-placeholder"><span>{selected.title.slice(0, 1)}</span></div>}</div>

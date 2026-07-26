@@ -4,6 +4,8 @@ import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.campus.CampusService;
 import cn.photolib.campus.model.CampusEntity;
 import cn.photolib.common.error.BusinessException;
+import cn.photolib.permission.DataScope;
+import cn.photolib.permission.PermissionCode;
 import cn.photolib.project.ProjectService;
 import cn.photolib.project.model.ProjectEntity;
 import cn.photolib.project.model.ProjectStatus;
@@ -16,6 +18,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -294,6 +297,17 @@ class AdoptionServiceTests {
         assertThat(topPhotographer.photographerStudentId()).isEqualTo("20230001");
         assertThat(topPhotographer.photographerName()).isEqualTo("张三");
         assertThat(topPhotographer.adoptedCount()).isEqualTo(2);
+
+        var otherCampus = campusService.create("RANK-OTHER", "排名权限外校区");
+        var scopedStatisticsUser = new AuthenticatedUser(
+                -88L, "scoped-statistics", "校区统计员", UserRole.CAMPUS_MANAGER,
+                otherCampus.getId(), false, -88L, "SCOPED_STATISTICS", "校区统计员",
+                DataScope.CAMPUS, Set.of(PermissionCode.STATISTICS_DOWNLOAD), Set.of(otherCampus.getId()));
+        assertThat(adoptionService.ranking(null, null, activeProject.getId(), null, scopedStatisticsUser))
+                .isEmpty();
+        assertThatThrownBy(() -> adoptionService.ranking(
+                null, null, activeProject.getId(), testCampus.getId(), scopedStatisticsUser))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("无权查看该校区");
     }
 
     @Test
@@ -307,6 +321,58 @@ class AdoptionServiceTests {
                 targetProject.getId(), List.of(2001L), "尝试直接引用", adminUser))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("尚未加入项目相册");
+    }
+
+    @Test
+    void adoptionListAndCancel_shouldExcludeRecordsOutsideCampusScope() {
+        // Given: 校区负责人参与了本选题的一个需求（因此选题对其可见），
+        // 但选题里还有其他校区/其他人上传图片产生的被引记录。
+        var otherCampus = campusService.create("ADOPT-OTHER", "被引范围外校区");
+        projectService.addPhotos(activeProject.getId(), List.of(2001L, 2002L), adminUser);
+        var foreignAdoptions = adoptionService.adopt(
+                activeProject.getId(), List.of(2001L, 2002L), "他人上传的图片", adminUser);
+        jdbc.sql("""
+                INSERT INTO photo_request (id, project_id, title, campus_id, deadline, status, created_by)
+                VALUES (7100, :projectId, '参与需求', :campusId, NOW(), 'ACCEPTED', 300)
+                """).param("projectId", activeProject.getId())
+                .param("campusId", otherCampus.getId()).update();
+        jdbc.sql("""
+                INSERT INTO app_user
+                    (id, username, password_hash, display_name, role, campus_id, enabled, must_change_password)
+                VALUES (302, 'adopt-scoped', 'hash', '范围内负责人', 'CAMPUS_MANAGER', :campusId, true, false)
+                """).param("campusId", otherCampus.getId()).update();
+        jdbc.sql("""
+                INSERT INTO request_participant (request_id, user_id, accepted_at)
+                VALUES (7100, 302, NOW())
+                """).update();
+        var scoped = new AuthenticatedUser(302L, "adopt-scoped", "范围内负责人",
+                UserRole.CAMPUS_MANAGER, otherCampus.getId(), false, -70L, "SCOPED_ADOPT",
+                "校区被引组", DataScope.CAMPUS,
+                Set.of(PermissionCode.PROJECT_VIEW, PermissionCode.PROJECT_ADOPT),
+                Set.of(otherCampus.getId()));
+
+        // Then: 选题可见不等于能读到/取消其他校区图片的被引记录
+        assertThat(adoptionService.list(activeProject.getId(), 1, 50, null, scoped).items())
+                .isEmpty();
+        assertThatThrownBy(() -> adoptionService.cancel(
+                activeProject.getId(), foreignAdoptions.get(0).getId(), scoped))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("无权取消该图片的被引标记");
+    }
+
+    @Test
+    void adoptionRanking_shouldStayEmptyForCampusScopedAccountWithoutAuthorizedCampus() {
+        // Given: 数据范围为校区但尚未补授权校区的账号（例如权限组刚从 GLOBAL 改成 CAMPUS）
+        projectService.addPhotos(activeProject.getId(), List.of(2001L), adminUser);
+        adoptionService.adopt(activeProject.getId(), List.of(2001L), "张三的照片", adminUser);
+        var unscoped = new AuthenticatedUser(303L, "adopt-unscoped", "未授权校区账号",
+                UserRole.CAMPUS_MANAGER, null, false, -71L, "PENDING_CAMPUS",
+                "待补校区组", DataScope.CAMPUS,
+                Set.of(PermissionCode.STATISTICS_DOWNLOAD), Set.of());
+
+        // Then: 空授权集合不能被当成"全局范围"而放行全量统计
+        assertThat(adoptionService.ranking(null, null, activeProject.getId(), null, unscoped))
+                .isEmpty();
     }
 
     @Test

@@ -3,18 +3,19 @@ import { NotificationOutlined, SendOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, emptyPage } from '../api'
-import { DataState, PageTitle, roleName } from '../components'
+import { api } from '../api'
+import { DataState, PageTitle } from '../components'
 import { useAuth } from '../auth'
 import { useLoad } from '../hooks'
-import type { Notification, PageData, User } from '../types'
+import type { MessageRecipient, Notification } from '../types'
 import RichTextEditor from '../RichTextEditor'
+import { hasPermission } from '../permissions'
 
 export default function NotificationsPage() {
   const { user } = useAuth()
   const { message } = App.useApp()
   const navigate = useNavigate()
-  const canSend = user?.role === 'ADMIN' || user?.role === 'MINISTER'
+  const canSend = hasPermission(user, 'MESSAGE_SEND')
   const [open, setOpen] = useState(false)
   const [sending, setSending] = useState(false)
   const [broadcast, setBroadcast] = useState(true)
@@ -25,9 +26,9 @@ export default function NotificationsPage() {
   )
   const { data: members } = useLoad(
     () => canSend
-      ? api<PageData<User>>({ url: '/users', params: { page: 1, pageSize: 100, enabled: true } })
-      : Promise.resolve(emptyPage<User>()),
-    emptyPage<User>(), [canSend],
+      ? api<MessageRecipient[]>({ url: '/users/message-recipients' })
+      : Promise.resolve([] as MessageRecipient[]),
+    [] as MessageRecipient[], [canSend],
   )
   const send = async () => {
     try {
@@ -81,8 +82,8 @@ export default function NotificationsPage() {
         </Form.Item>
         {!broadcast && <Form.Item name="targetUserId" label="接收成员" rules={[{ required: true, message: '请选择接收成员' }]}>
           <Select showSearch optionFilterProp="label" placeholder="搜索并选择成员"
-            options={members.items.map((member) => ({
-              value: member.id, label: `${member.displayName} · ${roleName[member.role]}`,
+            options={members.map((member) => ({
+              value: member.id, label: `${member.displayName} · ${member.permissionGroupName}`,
             }))} />
         </Form.Item>}
         <Form.Item name="title" label="消息标题" rules={[{ required: true }, { max: 100 }]}>

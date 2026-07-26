@@ -20,6 +20,7 @@ public class AdoptionController {
     private final AdoptionService service;
 
     @PostMapping("/projects/{projectId}/adoptions")
+    @PreAuthorize("hasAuthority('PROJECT_ADOPT')")
     ApiResponse<List<AdoptionEntity>> adopt(@PathVariable Long projectId,
                                             @Valid @RequestBody AdoptRequest request,
                                             @AuthenticationPrincipal AuthenticatedUser user) {
@@ -27,29 +28,32 @@ public class AdoptionController {
     }
 
     @GetMapping("/projects/{projectId}/adoptions")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    @PreAuthorize("hasAuthority('PROJECT_VIEW')")
     ApiResponse<PageResponse<AdoptionEntity>> list(@PathVariable Long projectId,
                                                    @RequestParam(defaultValue = "1") @Min(1) int page,
                                                    @RequestParam(defaultValue = "50") @Min(1) @Max(100) int pageSize,
-                                                   @RequestParam(required = false) String photographerStudentId) {
-        return ApiResponse.ok(service.list(projectId, page, pageSize, photographerStudentId));
+                                                   @RequestParam(required = false) String photographerStudentId,
+                                                   @AuthenticationPrincipal AuthenticatedUser user) {
+        return ApiResponse.ok(service.list(projectId, page, pageSize, photographerStudentId, user));
     }
 
     @DeleteMapping("/projects/{projectId}/adoptions/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
-    ApiResponse<Void> cancel(@PathVariable Long projectId, @PathVariable Long id) {
-        service.cancel(projectId, id);
+    @PreAuthorize("hasAuthority('PROJECT_ADOPT')")
+    ApiResponse<Void> cancel(@PathVariable Long projectId, @PathVariable Long id,
+                             @AuthenticationPrincipal AuthenticatedUser user) {
+        service.cancel(projectId, id, user);
         return ApiResponse.ok();
     }
 
     @GetMapping("/statistics/adoptions/ranking")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    @PreAuthorize("hasAuthority('STATISTICS_DOWNLOAD')")
     ApiResponse<List<AdoptionService.Ranking>> ranking(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
             @RequestParam(required = false) Long projectId,
-            @RequestParam(required = false) Long campusId) {
-        return ApiResponse.ok(service.ranking(from, to, projectId, campusId));
+            @RequestParam(required = false) Long campusId,
+            @AuthenticationPrincipal AuthenticatedUser user) {
+        return ApiResponse.ok(service.ranking(from, to, projectId, campusId, user));
     }
 
     record AdoptRequest(@NotEmpty @Size(max = 200) List<@NotNull Long> photoIds,

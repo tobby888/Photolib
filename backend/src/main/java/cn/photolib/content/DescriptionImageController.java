@@ -36,7 +36,7 @@ public class DescriptionImageController {
     private final DescriptionImageAuthorizationService authorization;
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    @PreAuthorize("hasAnyAuthority('PROJECT_CREATE','REQUEST_CREATE')")
     ApiResponse<UploadResult> upload(@RequestPart("file") MultipartFile file,
                                      @AuthenticationPrincipal AuthenticatedUser user) throws IOException {
         if (file.isEmpty()) {
@@ -80,7 +80,7 @@ public class DescriptionImageController {
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER','CAMPUS_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     ResponseEntity<InputStreamResource> get(@PathVariable String id,
                                             @AuthenticationPrincipal AuthenticatedUser user) {
         DescriptionImageEntity image = mapper.selectById(id);

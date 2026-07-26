@@ -14,7 +14,7 @@ class CampusMemberControllerSecurityTests {
         PreAuthorize authorization = CampusMemberController.class.getDeclaredMethod(
                 "list", Long.class, Boolean.class, AuthenticatedUser.class)
                 .getAnnotation(PreAuthorize.class);
-        assertThat(authorization.value()).contains("ADMIN", "MINISTER", "CAMPUS_MANAGER");
+        assertThat(authorization.value()).contains("DIRECTORY_VIEW", "DIRECTORY_MANAGE");
     }
 
     @Test
@@ -22,6 +22,6 @@ class CampusMemberControllerSecurityTests {
         Arrays.stream(CampusMemberController.class.getDeclaredMethods())
                 .filter(method -> Arrays.asList("create", "update", "delete").contains(method.getName()))
                 .map(method -> method.getAnnotation(PreAuthorize.class).value())
-                .forEach(authorization -> assertThat(authorization).contains("ADMIN", "MINISTER", "CAMPUS_MANAGER"));
+                .forEach(authorization -> assertThat(authorization).contains("DIRECTORY_MANAGE"));
     }
 }

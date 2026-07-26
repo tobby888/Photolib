@@ -22,7 +22,7 @@ public class RequestController {
     private final RequestService service;
 
     @PostMapping("/projects/{projectId}/requests")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    @PreAuthorize("hasAuthority('REQUEST_CREATE')")
     ApiResponse<PhotoRequestEntity> create(@PathVariable Long projectId,
                                            @Valid @RequestBody CreateRequest request,
                                            @AuthenticationPrincipal AuthenticatedUser user) {
@@ -32,7 +32,7 @@ public class RequestController {
     }
 
     @PostMapping("/projects/{projectId}/requests/batch-publish")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    @PreAuthorize("hasAuthority('REQUEST_CREATE')")
     ApiResponse<List<RequestService.BatchPublishResult>> batchPublish(
             @PathVariable Long projectId,
             @Valid @RequestBody BatchPublishRequest request,
@@ -43,6 +43,7 @@ public class RequestController {
     }
 
     @GetMapping("/requests")
+    @PreAuthorize("hasAuthority('REQUEST_VIEW')")
     ApiResponse<PageResponse<PhotoRequestEntity>> list(
             @RequestParam(defaultValue = "1") @Min(1) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int pageSize,
@@ -55,13 +56,14 @@ public class RequestController {
     }
 
     @GetMapping("/requests/{id}")
+    @PreAuthorize("hasAuthority('REQUEST_VIEW')")
     ApiResponse<PhotoRequestEntity> get(@PathVariable Long id,
                                         @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.get(id, user));
     }
 
     @PutMapping("/requests/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    @PreAuthorize("hasAuthority('REQUEST_CREATE')")
     ApiResponse<PhotoRequestEntity> update(@PathVariable Long id, @Valid @RequestBody UpdateRequest request,
                                            @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.update(id, new RequestService.CreateCommand(
@@ -70,47 +72,49 @@ public class RequestController {
     }
 
     @PostMapping("/requests/{id}/publish")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    @PreAuthorize("hasAuthority('REQUEST_CREATE')")
     ApiResponse<PhotoRequestEntity> publish(@PathVariable Long id, @Valid @RequestBody VersionRequest request,
                                             @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.publish(id, request.version(), user));
     }
 
     @PostMapping("/requests/{id}/accept")
-    @PreAuthorize("hasAnyRole('ADMIN','CAMPUS_MANAGER')")
+    @PreAuthorize("hasAuthority('REQUEST_VIEW')")
     ApiResponse<PhotoRequestEntity> accept(@PathVariable Long id,
                                            @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.accept(id, user));
     }
 
     @GetMapping("/requests/{id}/participants")
+    @PreAuthorize("hasAuthority('REQUEST_VIEW')")
     ApiResponse<List<RequestParticipantEntity>> participants(
             @PathVariable Long id, @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.participants(id, user));
     }
 
     @DeleteMapping("/requests/{id}/participants/me")
-    @PreAuthorize("hasRole('CAMPUS_MANAGER')")
+    @PreAuthorize("hasAuthority('REQUEST_VIEW')")
     ApiResponse<Void> leave(@PathVariable Long id, @AuthenticationPrincipal AuthenticatedUser user) {
         service.leave(id, user);
         return ApiResponse.ok();
     }
 
     @PostMapping("/requests/{id}/submit")
-    @PreAuthorize("hasAnyRole('ADMIN','CAMPUS_MANAGER')")
+    @PreAuthorize("hasAuthority('REQUEST_VIEW')")
     ApiResponse<PhotoRequestEntity> submit(@PathVariable Long id, @Valid @RequestBody VersionRequest request,
                                            @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.submit(id, request.version(), user));
     }
 
     @PostMapping("/requests/{id}/complete")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
-    ApiResponse<PhotoRequestEntity> complete(@PathVariable Long id, @Valid @RequestBody VersionRequest request) {
-        return ApiResponse.ok(service.complete(id, request.version()));
+    @PreAuthorize("hasAuthority('REQUEST_CONFIRM')")
+    ApiResponse<PhotoRequestEntity> complete(@PathVariable Long id, @Valid @RequestBody VersionRequest request,
+                                             @AuthenticationPrincipal AuthenticatedUser user) {
+        return ApiResponse.ok(service.complete(id, request.version(), user));
     }
 
     @PostMapping("/requests/{id}/return")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    @PreAuthorize("hasAuthority('REQUEST_CONFIRM')")
     ApiResponse<PhotoRequestEntity> returnForRevision(
             @PathVariable Long id,
             @Valid @RequestBody ReturnRequest request,
@@ -119,14 +123,14 @@ public class RequestController {
     }
 
     @PostMapping("/requests/{id}/cancel")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    @PreAuthorize("hasAuthority('REQUEST_CLOSE')")
     ApiResponse<PhotoRequestEntity> cancel(@PathVariable Long id, @Valid @RequestBody CancelRequest request,
                                            @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.cancel(id, request.reason(), request.version(), user));
     }
 
     @DeleteMapping("/requests/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAuthority('REQUEST_DELETE')")
     ApiResponse<Void> delete(@PathVariable Long id,
                              @AuthenticationPrincipal AuthenticatedUser user) {
         service.delete(id, user);

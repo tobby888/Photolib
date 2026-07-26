@@ -4,6 +4,8 @@ import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.campus.CampusService;
 import cn.photolib.campus.model.CampusEntity;
 import cn.photolib.common.error.BusinessException;
+import cn.photolib.permission.DataScope;
+import cn.photolib.permission.PermissionCode;
 import cn.photolib.photo.model.PhotoStatus;
 import cn.photolib.project.ProjectService;
 import cn.photolib.project.model.ProjectEntity;
@@ -18,6 +20,8 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -467,19 +471,83 @@ class PhotoServiceTests {
         jdbc.sql("""
                 INSERT INTO photo
                     (id, project_id, title, photographer_student_id, photographer_name,
-                     uploaded_by, taken_at, size, content_type, object_key, sha256, status)
+                     uploaded_by, campus_id, taken_at, size, content_type, object_key, sha256, status)
                 VALUES
                     (1004, :projectId, 'manager photo', '20230001', 'photographer',
-                     :userId, NOW(), 1000, 'image/jpeg', 'photos/manager.jpg', :sha256, 'AVAILABLE')
+                     :userId, :campusId, NOW(), 1000, 'image/jpeg', 'photos/manager.jpg', :sha256, 'AVAILABLE')
                 """)
                 .param("projectId", testProject.getId())
                 .param("userId", managerUser.id())
+                .param("campusId", testCampus.getId())
                 .param("sha256", "m".repeat(64))
                 .update();
 
         assertThatThrownBy(() -> photoService.delete(1004L, managerUser))
                 .isInstanceOf(BusinessException.class);
         assertThat(photoService.get(1004L, managerUser).id()).isEqualTo(1004L);
+    }
+
+    @Test
+    void campusScopedCustomPermissionsCannotBypassGalleryOwnershipOrProjectParticipation() {
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, project_id, title, photographer_student_id, photographer_name,
+                     uploaded_by, campus_id, taken_at, size, content_type, object_key, sha256, status)
+                VALUES
+                    (1005, :projectId, 'other member photo', '20230001', 'photographer',
+                     :adminId, :campusId, NOW(), 1000, 'image/jpeg', 'photos/other-member.jpg',
+                     :sha256, 'AVAILABLE')
+                """)
+                .param("projectId", testProject.getId())
+                .param("adminId", adminUser.id())
+                .param("campusId", testCampus.getId())
+                .param("sha256", "o".repeat(64))
+                .update();
+        jdbc.sql("INSERT INTO photo_project(photo_id, project_id) VALUES (1005, :projectId)")
+                .param("projectId", testProject.getId()).update();
+        var custom = new AuthenticatedUser(managerUser.id(), "custom", "自定义校区账号",
+                UserRole.CAMPUS_MANAGER, testCampus.getId(), false, 99L, "CUSTOM_SCOPED",
+                "自定义校区组", DataScope.CAMPUS,
+                Set.of(PermissionCode.PHOTO_DELETE, PermissionCode.PROJECT_DOWNLOAD),
+                Set.of(testCampus.getId()));
+
+        assertThatThrownBy(() -> photoService.delete(1005L, custom))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("无权删除");
+        assertThatThrownBy(() -> photoService.download(1005L, custom))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("无权下载");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM photo WHERE id=1005 AND deleted=FALSE")
+                .query(Long.class).single()).isEqualTo(1);
+    }
+
+    @Test
+    void requestParticipantCanBatchDeleteMultipleRequestPhotosAtomically() {
+        jdbc.sql("""
+                INSERT INTO photo_request(id, project_id, title, campus_id, deadline, status, created_by)
+                VALUES (2902, :projectId, '批量图片需求', :campusId,
+                        DATEADD('DAY', 1, CURRENT_TIMESTAMP), 'ACCEPTED', :adminId)
+                """).param("projectId", testProject.getId()).param("campusId", testCampus.getId())
+                .param("adminId", adminUser.id()).update();
+        jdbc.sql("""
+                INSERT INTO request_participant(request_id, user_id, accepted_at)
+                VALUES (2902, :userId, CURRENT_TIMESTAMP)
+                """).param("userId", managerUser.id()).update();
+        jdbc.sql("""
+                INSERT INTO photo(id, request_id, project_id, title, photographer_student_id,
+                                  photographer_name, uploaded_by, campus_id, taken_at, size,
+                                  content_type, object_key, sha256, status)
+                VALUES
+                    (1006, 2902, :projectId, '需求图一', '20230001', '张三', :adminId,
+                     :campusId, NOW(), 100, 'image/jpeg', 'photos/request-one.jpg', :sha1, 'AVAILABLE'),
+                    (1007, 2902, :projectId, '需求图二', '20230002', '李四', :userId,
+                     :campusId, NOW(), 100, 'image/jpeg', 'photos/request-two.jpg', :sha2, 'AVAILABLE')
+                """).param("projectId", testProject.getId()).param("adminId", adminUser.id())
+                .param("userId", managerUser.id()).param("campusId", testCampus.getId())
+                .param("sha1", "p".repeat(64)).param("sha2", "q".repeat(64)).update();
+
+        photoService.batchDelete(List.of(1006L, 1007L), managerUser);
+
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM photo WHERE id IN (1006,1007) AND deleted=FALSE")
+                .query(Long.class).single()).isZero();
     }
 
     @Test

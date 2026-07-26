@@ -21,12 +21,14 @@ public class PhotoController {
     private final PhotoService service;
 
     @PostMapping("/upload-tickets")
+    @PreAuthorize("hasAnyAuthority('PHOTO_UPLOAD','REQUEST_PHOTO_MANAGE')")
     ApiResponse<PhotoService.UploadTicket> ticket(@Valid @RequestBody TicketRequest request,
                                                    @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.createTicket(request.command(), user));
     }
 
     @PostMapping("/{id}/complete-upload")
+    @PreAuthorize("hasAnyAuthority('PHOTO_UPLOAD','REQUEST_PHOTO_MANAGE')")
     ApiResponse<PhotoService.PhotoView> complete(@PathVariable Long id,
                                                  @Valid @RequestBody CompleteRequest request,
                                                  @AuthenticationPrincipal AuthenticatedUser user) {
@@ -35,6 +37,7 @@ public class PhotoController {
     }
 
     @GetMapping
+    @PreAuthorize("hasAnyAuthority('PHOTO_VIEW','PROJECT_VIEW','REQUEST_VIEW','REQUEST_PHOTO_MANAGE')")
     ApiResponse<PageResponse<PhotoService.PhotoView>> list(
             @RequestParam(defaultValue = "1") @Min(1) int page,
             @RequestParam(defaultValue = "30") @Min(1) @Max(100) int pageSize,
@@ -54,12 +57,14 @@ public class PhotoController {
     }
 
     @GetMapping("/{id}")
+    @PreAuthorize("hasAnyAuthority('PHOTO_VIEW','PROJECT_VIEW','REQUEST_VIEW','REQUEST_PHOTO_MANAGE')")
     ApiResponse<PhotoService.PhotoView> get(@PathVariable Long id,
                                             @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.get(id, user));
     }
 
     @PutMapping("/{id}")
+    @PreAuthorize("hasAnyAuthority('PHOTO_UPLOAD','REQUEST_PHOTO_MANAGE')")
     ApiResponse<PhotoService.PhotoView> update(@PathVariable Long id, @Valid @RequestBody MetadataRequest request,
                                                @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.update(id, request.command(), user));
@@ -74,29 +79,38 @@ public class PhotoController {
     }
 
     @PostMapping("/{id}/download-url")
+    @PreAuthorize("hasAnyAuthority('PHOTO_DOWNLOAD','PROJECT_DOWNLOAD','REQUEST_PHOTO_MANAGE')")
     ApiResponse<PhotoService.DownloadUrl> download(@PathVariable Long id,
                                                    @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.download(id, user));
     }
 
     @PostMapping("/{id}/archive")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    @PreAuthorize("hasAuthority('PHOTO_DELETE')")
     ApiResponse<PhotoService.PhotoView> archive(@PathVariable Long id,
                                                 @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.changeArchive(id, true, user));
     }
 
     @PostMapping("/{id}/restore")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    @PreAuthorize("hasAuthority('PHOTO_DELETE')")
     ApiResponse<PhotoService.PhotoView> restore(@PathVariable Long id,
                                                 @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.changeArchive(id, false, user));
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','MINISTER')")
+    @PreAuthorize("hasAnyAuthority('PHOTO_DELETE','REQUEST_PHOTO_MANAGE')")
     ApiResponse<Void> delete(@PathVariable Long id, @AuthenticationPrincipal AuthenticatedUser user) {
         service.delete(id, user);
+        return ApiResponse.ok();
+    }
+
+    @PostMapping("/batch-delete")
+    @PreAuthorize("hasAnyAuthority('PHOTO_DELETE','REQUEST_PHOTO_MANAGE')")
+    ApiResponse<Void> batchDelete(@Valid @RequestBody BatchDeleteRequest request,
+                                  @AuthenticationPrincipal AuthenticatedUser user) {
+        service.batchDelete(request.photoIds(), user);
         return ApiResponse.ok();
     }
 
@@ -130,4 +144,5 @@ public class PhotoController {
     }
 
     record CampusRequest(Long campusId, @Min(1) int version) {}
+    record BatchDeleteRequest(@NotEmpty @Size(max = 200) List<@NotNull Long> photoIds) {}
 }
