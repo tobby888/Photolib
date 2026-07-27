@@ -1,7 +1,7 @@
 # PhotoLib API 接口文档
 
 > 本文依据当前后端控制器、Service、实体、安全配置以及现有 Web 客户端逐项核对，描述的是**已经实现的接口契约**，不是规划稿。
-> 核对日期：2026-07-24
+> 核对日期：2026-07-27
 > API 版本：v1
 > Base URL：`/api/v1`
 
@@ -242,11 +242,12 @@ http.interceptors.response.use(undefined, async error => {
 - 审计日志 CSV：`GET /audit-logs/export`
 - 品牌图标：`GET /branding/icon`
 - 定时品牌图标：`GET /branding/scheduled-icons/{id}/icon`
+- 用户头像：`GET /users/me/avatar`、`GET /users/{id}/avatar`
 - 说明图片：`GET /description-images/{id}`
 - 消息图片：`GET /notifications/images/{id}`
 - 对象存储签名 URL 的 `GET`/`PUT`
 
-说明图片和消息图片读取接口需要 Bearer token。若内容要显示在 Markdown 或富文本中，推荐先用带认证的 HTTP 客户端读取为 Blob，再创建 `URL.createObjectURL(blob)`；组件销毁时调用 `URL.revokeObjectURL`。
+用户头像、说明图片和消息图片读取接口需要 Bearer token。若内容要显示在头像、Markdown 或富文本中，应先用带认证的 HTTP 客户端读取为 Blob，再创建 `URL.createObjectURL(blob)`；不要把这些受鉴权路径直接作为普通 `<img src>`。组件销毁或图片更新时调用 `URL.revokeObjectURL`。
 
 ## 3. 角色、枚举和权限缩写
 
@@ -290,13 +291,16 @@ type BatchItemStatus = 'UPLOADING' | 'WAITING_METADATA' | 'PROCESSING' | 'SUCCEE
   "email": "zhangsan@example.edu.cn",
   "enabled": true,
   "mustChangePassword": false,
+  "avatarUrl": "/api/v1/users/2012345678901234567/avatar?v=3",
   "createdAt": "2026-07-24T10:00:00",
   "updatedAt": "2026-07-24T10:00:00",
-  "version": 1
+  "version": 3
 }
 ```
 
-`/auth/me` 返回的是更精简的 `AuthenticatedUser`：只有 `id`、`username`、`displayName`、`role`、`campusId`、`mustChangePassword`。
+`avatarUrl` 可空。非空值指向受鉴权的头像读取接口，并带有用于缓存更新的 `v` revision 查询参数；它不会暴露对象存储 key。值为 `null` 时表示用户没有自定义头像，现有 Web 客户端使用 Ant Design 的 `UserOutlined` 作为默认头像。
+
+`/auth/me` 返回的是面向当前会话的 `AuthenticatedUser`：包含 `id`、`username`、`displayName`、`role`、`campusId`、`mustChangePassword`、权限组字段（`permissionGroupId`、`permissionGroupCode`、`permissionGroupName`）、`dataScope`、`permissions`、`campusIds` 和 `avatarUrl`，不包含联系方式及实体审计字段。
 
 ### 4.2 基础实体字段
 
@@ -490,7 +494,8 @@ function parseTags(value?: string | null): string[] {
       "displayName": "系统管理员",
       "role": "ADMIN",
       "campusId": null,
-      "mustChangePassword": true
+      "mustChangePassword": true,
+      "avatarUrl": null
     }
   }
 }
@@ -565,6 +570,10 @@ function parseTags(value?: string | null): string[] {
 | `POST /users/{id}/enable` | A | 无请求体 | `UserView` |
 | `POST /users/{id}/disable` | A | 无请求体 | `UserView`，并撤销其全部会话 |
 | `DELETE /users/{id}` | A | 无请求体 | `data: null`，软删除并释放用户名 |
+| `PUT /users/me/avatar` | 所有登录用户 | `multipart/form-data`，字段 `file` | `{ "avatarUrl": "..." }` |
+| `DELETE /users/me/avatar` | 所有登录用户 | 无请求体 | `{ "avatarUrl": null }`，恢复默认头像 |
+| `GET /users/me/avatar` | 所有登录用户 | — | 当前用户头像二进制，不使用统一信封 |
+| `GET /users/{id}/avatar` | 所有登录用户 | — | 指定用户头像二进制，不使用统一信封 |
 
 创建请求：
 
@@ -615,6 +624,28 @@ function parseTags(value?: string | null): string[] {
 ```
 
 更新、停用、重置密码、修改密码和删除账号会按相应规则撤销会话。不能删除当前登录账号，也不能停用或删除唯一仍启用的管理员。删除账号会保留历史业务引用，但释放原用户名和邮箱，以后可重新创建同名账号。
+
+#### 用户头像
+
+上传头像使用 `PUT /users/me/avatar`，请求为 `multipart/form-data`，文件字段名是 `file`。只支持 JPEG、PNG，文件不得超过 1 MiB，宽、高分别不得超过 1024 像素。服务端会校验声明的 MIME、文件魔数、真实解码格式和实际尺寸，并在规范化后再次检查大小；不能只依赖客户端校验或文件扩展名。
+
+成功响应仍使用统一信封：
+
+```json
+{
+  "code": "OK",
+  "message": "success",
+  "data": {
+    "avatarUrl": "/api/v1/users/2012345678901234567/avatar?v=3"
+  }
+}
+```
+
+头像经统一的 `ObjectStorageService` 保存，生产环境存入私有 OSS。`avatarUrl` 是稳定的业务读取路径，revision 查询参数用于替换头像后的缓存失效；客户端不得推导、保存或依赖底层对象 key。
+
+`DELETE /users/me/avatar` 删除当前自定义头像并恢复默认头像，返回 `data.avatarUrl: null`；用户本来没有自定义头像时也可重复调用。
+
+`GET /users/me/avatar` 和 `GET /users/{id}/avatar` 仅登录用户可读，直接返回 `image/jpeg` 或 `image/png` 二进制以及私有、需重新验证的缓存头，不使用 `ApiEnvelope`。目标用户或头像不存在时返回 `404 RESOURCE_NOT_FOUND`。浏览器客户端必须使用带 Bearer token 的 HTTP 客户端读取 Blob，再把临时 Blob URL 交给头像组件；不能把 `avatarUrl` 直接放进不会附带 Authorization header 的 `<img src>`。
 
 ### 6.2 校区接口
 

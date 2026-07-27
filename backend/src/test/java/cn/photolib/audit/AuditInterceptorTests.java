@@ -53,4 +53,26 @@ class AuditInterceptorTests {
 
         verifyNoInteractions(mapper);
     }
+
+    @Test
+    void resolvesCurrentUserAvatarWritesToPrincipalId() {
+        AuditLogMapper mapper = mock(AuditLogMapper.class);
+        AuditInterceptor interceptor = new AuditInterceptor(mapper);
+        AuthenticatedUser user = new AuthenticatedUser(
+                27L, "avatar-user", "头像用户", UserRole.MINISTER, null, false);
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(user, null, List.of()));
+        MockHttpServletRequest request = new MockHttpServletRequest(
+                "PUT", "/api/v1/users/me/avatar");
+        request.setRequestURI("/api/v1/users/me/avatar");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        interceptor.preHandle(request, response, new Object());
+        interceptor.afterCompletion(request, response, new Object(), null);
+
+        ArgumentCaptor<AuditLogEntity> captor = ArgumentCaptor.forClass(AuditLogEntity.class);
+        verify(mapper).insert(captor.capture());
+        assertThat(captor.getValue().getResourceType()).isEqualTo("USERS");
+        assertThat(captor.getValue().getResourceId()).isEqualTo("27");
+    }
 }

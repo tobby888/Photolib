@@ -6,6 +6,7 @@ import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.user.mapper.UserMapper;
 import cn.photolib.user.model.UserEntity;
+import cn.photolib.user.UserAvatarService;
 import cn.photolib.permission.PermissionGroupService;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -179,7 +180,8 @@ public class AuthService {
     private AuthenticatedUser toPrincipal(UserEntity user) {
         return permissionGroups == null
                 ? new AuthenticatedUser(user.getId(), user.getUsername(), user.getDisplayName(),
-                user.getRole(), user.getCampusId(), Boolean.TRUE.equals(user.getMustChangePassword()))
+                user.getRole(), user.getCampusId(), Boolean.TRUE.equals(user.getMustChangePassword()),
+                UserAvatarService.avatarUrl(user))
                 : permissionGroups.toPrincipal(user);
     }
 

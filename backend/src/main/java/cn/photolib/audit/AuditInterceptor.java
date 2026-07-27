@@ -45,8 +45,13 @@ public class AuditInterceptor implements HandlerInterceptor {
         log.setAction(request.getMethod());
         String[] segments = request.getRequestURI().split("/");
         log.setResourceType(segments.length > 3 ? segments[3].toUpperCase() : "UNKNOWN");
-        log.setResourceId(segments.length > 4 && RESOURCE_ID.matcher(segments[4]).matches()
-                ? segments[4] : null);
+        String resourceId = segments.length > 4 && RESOURCE_ID.matcher(segments[4]).matches()
+                ? segments[4] : null;
+        if (resourceId == null && segments.length > 4 && "users".equals(segments[3])
+                && "me".equals(segments[4]) && userId != null) {
+            resourceId = userId.toString();
+        }
+        log.setResourceId(resourceId);
         log.setRequestId(String.valueOf(request.getAttribute("requestId")));
         try {
             String detailJson = objectMapper.writeValueAsString(

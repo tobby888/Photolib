@@ -98,6 +98,40 @@ button, input, textarea, select { font-family: inherit; }
 .user-menu div { display: flex; flex-direction: column; line-height: 1.3; }
 .user-menu strong { font-size: 13px; }
 .user-menu span { font-size: 11px; color: #8a928f; }
+.avatar-settings { display: flex; align-items: center; gap: 28px; padding: 12px 4px 8px; }
+.avatar-settings-preview {
+  flex: none;
+  color: #28594f;
+  background: #edf3f0;
+  border: 4px solid #fff;
+  box-shadow: 0 0 0 1px #dedbd3, 0 10px 28px rgba(29, 56, 49, .14);
+}
+.avatar-settings-copy { flex: 1; min-width: 0; }
+.avatar-settings-copy h4.ant-typography { margin: 0 0 2px; }
+.avatar-settings-copy p.ant-typography { margin: 14px 0 18px; font-size: 12px; }
+.avatar-crop-help { margin-bottom: 14px !important; }
+.avatar-crop-stage {
+  position: relative;
+  width: 100%;
+  height: min(56vh, 380px);
+  min-height: 280px;
+  overflow: hidden;
+  border-radius: 14px;
+  background: #17211f;
+  touch-action: none;
+}
+.avatar-crop-stage .reactEasyCrop_CropArea {
+  color: rgba(0, 0, 0, .58);
+  box-shadow: 0 0 0 9999em;
+}
+.avatar-zoom-control {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+.avatar-zoom-control .ant-slider { margin-inline: 6px; }
 .content { padding: 32px; width: 100%; max-width: 1720px; margin: 0 auto; }
 .route-loading { min-height: 45vh; display: grid; place-items: center; color: #78827f; font-size: 13px; letter-spacing: .08em; }
 .preview-generation-alert { margin-bottom: 18px; }
@@ -2141,6 +2175,9 @@ body {
   .contact-sheet { grid-template-columns: repeat(2, 1fr); grid-auto-rows: 150px; }
   .queue-item { grid-template-columns: 34px minmax(0, 1fr); }
   .queue-item .ant-progress { grid-column: 2; }
+  .avatar-settings { align-items: flex-start; flex-direction: column; gap: 20px; }
+  .avatar-settings-copy { width: 100%; }
+  .avatar-crop-stage { height: min(52vh, 340px); min-height: 240px; }
   .login-card .ant-card-body { padding: 28px 22px; }
 }
 

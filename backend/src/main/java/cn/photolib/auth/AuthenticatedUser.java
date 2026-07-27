@@ -18,14 +18,29 @@ public record AuthenticatedUser(
         String permissionGroupName,
         DataScope dataScope,
         Set<PermissionCode> permissions,
-        Set<Long> campusIds
+        Set<Long> campusIds,
+        String avatarUrl
 ) {
     public AuthenticatedUser(Long id, String username, String displayName, UserRole role,
                              Long campusId, boolean mustChangePassword) {
+        this(id, username, displayName, role, campusId, mustChangePassword, null);
+    }
+
+    public AuthenticatedUser(Long id, String username, String displayName, UserRole role,
+                             Long campusId, boolean mustChangePassword, String avatarUrl) {
         this(id, username, displayName, role, campusId, mustChangePassword,
                 -1L, role.name(), role.name(),
                 role == UserRole.CAMPUS_MANAGER ? DataScope.CAMPUS : DataScope.GLOBAL,
-                legacyPermissions(role), campusId == null ? Set.of() : Set.of(campusId));
+                legacyPermissions(role), campusId == null ? Set.of() : Set.of(campusId), avatarUrl);
+    }
+
+    public AuthenticatedUser(Long id, String username, String displayName, UserRole role,
+                             Long campusId, boolean mustChangePassword, Long permissionGroupId,
+                             String permissionGroupCode, String permissionGroupName,
+                             DataScope dataScope, Set<PermissionCode> permissions,
+                             Set<Long> campusIds) {
+        this(id, username, displayName, role, campusId, mustChangePassword, permissionGroupId,
+                permissionGroupCode, permissionGroupName, dataScope, permissions, campusIds, null);
     }
 
     private static Set<PermissionCode> legacyPermissions(UserRole role) {
