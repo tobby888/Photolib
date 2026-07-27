@@ -9,6 +9,7 @@ import cn.photolib.permission.mapper.PermissionGroupMapper;
 import cn.photolib.user.mapper.UserMapper;
 import cn.photolib.user.model.UserEntity;
 import cn.photolib.user.model.UserRole;
+import cn.photolib.user.UserAvatarService;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DuplicateKeyException;
@@ -195,7 +196,7 @@ public class PermissionGroupService {
         return new AuthenticatedUser(user.getId(), user.getUsername(), user.getDisplayName(),
                 compatibleRole, primaryCampusId, Boolean.TRUE.equals(user.getMustChangePassword()),
                 group.getId(), group.getCode(), group.getName(), group.getDataScope(),
-                permissions, campusIds);
+                permissions, campusIds, UserAvatarService.avatarUrl(user));
     }
 
     public Set<Long> campusIds(Long userId) {

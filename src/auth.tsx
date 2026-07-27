@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type PropsWithChildren } from 'react'
+import { createContext, useCallback, useContext, useEffect, useState, type PropsWithChildren } from 'react'
 import { api, SESSION_EXPIRED_EVENT, type LoginResult } from './api'
 import type { User } from './types'
 
@@ -6,6 +6,7 @@ interface AuthContextValue {
   user: User | null
   login: (identifier: string, password: string) => Promise<LoginResult>
   updateSession: (result: LoginResult) => void
+  updateUser: (updates: Partial<User>) => void
   logout: () => Promise<void>
 }
 
@@ -22,6 +23,10 @@ function readUser(): User | null {
 
 export function AuthProvider({ children }: PropsWithChildren) {
   const [user, setUser] = useState<User | null>(readUser)
+  const storeUser = useCallback((current: User) => {
+    localStorage.setItem('photolib_user', JSON.stringify(current))
+    setUser(current)
+  }, [])
   useEffect(() => {
     // A failed token refresh (interceptor) means the session is unrecoverable.
     // Clear React state so route guards send the user to /login and keep them there
@@ -33,14 +38,20 @@ export function AuthProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     if (!localStorage.getItem('photolib_access_token')) return
     void api<User>({ url: '/auth/me' }).then(current => {
-      localStorage.setItem('photolib_user', JSON.stringify(current))
-      setUser(current)
+      storeUser(current)
     }).catch(() => undefined)
-  }, [])
+  }, [storeUser])
   const updateSession = (result: LoginResult) => {
     localStorage.setItem('photolib_access_token', result.accessToken)
-    localStorage.setItem('photolib_user', JSON.stringify(result.user))
-    setUser(result.user)
+    storeUser(result.user)
+  }
+  const updateUser = (updates: Partial<User>) => {
+    setUser(current => {
+      if (!current) return current
+      const next = { ...current, ...updates }
+      localStorage.setItem('photolib_user', JSON.stringify(next))
+      return next
+    })
   }
   const login = async (identifier: string, password: string) => {
     const result = await api<LoginResult>({ method: 'POST', url: '/auth/login', data: { username: identifier, password } })
@@ -54,7 +65,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       setUser(null)
     }
   }
-  return <AuthContext.Provider value={{ user, login, updateSession, logout }}>{children}</AuthContext.Provider>
+  return <AuthContext.Provider value={{ user, login, updateSession, updateUser, logout }}>{children}</AuthContext.Provider>
 }
 
 export function useAuth() {

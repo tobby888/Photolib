@@ -40,6 +40,7 @@ public class UserService {
     private final AuthService authService;
     private final NotificationService notifications;
     private final PermissionGroupService permissionGroups;
+    private final UserAvatarService avatars;
     private final SecureRandom random = new SecureRandom();
 
     @Transactional
@@ -234,9 +235,13 @@ public class UserService {
         user.setUsername(freed.length() > 64 ? freed.substring(0, 64) : freed);
         user.setEmail(null);
         user.setEnabled(false);
-        userMapper.updateById(user);
+        if (userMapper.updateById(user) != 1) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
+                    "用户已被其他操作修改，请重试删除");
+        }
         userMapper.deleteById(id);
         authService.revokeAll(id);
+        avatars.cleanupAfterCommit(user.getAvatarObjectKey());
     }
 
     @Transactional
@@ -331,7 +336,8 @@ public class UserService {
         return new UserView(user.getId(), user.getUsername(), user.getDisplayName(), user.getRole(),
                 user.getCampusId(), user.getPhone(), user.getEmail(), user.getEnabled(),
                 user.getMustChangePassword(), user.getCreatedAt(), user.getUpdatedAt(), user.getVersion(),
-                group.id(), group.code(), group.name(), group.dataScope(), campusIds);
+                group.id(), group.code(), group.name(), group.dataScope(), campusIds,
+                UserAvatarService.avatarUrl(user));
     }
 
     public record CreateUser(String username, String displayName, UserRole role, Long campusId,
@@ -358,7 +364,8 @@ public class UserService {
                            String phone, String email, Boolean enabled, Boolean mustChangePassword,
                            java.time.LocalDateTime createdAt, java.time.LocalDateTime updatedAt,
                            Integer version, Long permissionGroupId, String permissionGroupCode,
-                           String permissionGroupName, DataScope dataScope, Set<Long> campusIds) {
+                           String permissionGroupName, DataScope dataScope, Set<Long> campusIds,
+                           String avatarUrl) {
     }
 
     public record RecipientView(Long id, String displayName, String permissionGroupName) {}

@@ -17,6 +17,7 @@ public class EndpointUploadLimitFilter extends OncePerRequestFilter {
     private static final long MULTIPART_OVERHEAD = 64 * 1024;
     private static final long SCHEDULED_ICON_MULTIPART_OVERHEAD = 1024 * 1024;
     private static final long BRAND_ICON_MAX_BYTES = 512L * 1024;
+    private static final long AVATAR_MAX_BYTES = 1024L * 1024;
     private static final int SCHEDULED_ICON_MAX_COUNT = 20;
 
     @Override
@@ -54,6 +55,9 @@ public class EndpointUploadLimitFilter extends OncePerRequestFilter {
         if ("PUT".equals(request.getMethod()) && path.endsWith("/branding/scheduled-icons")) {
             return SCHEDULED_ICON_MAX_COUNT * BRAND_ICON_MAX_BYTES
                     + SCHEDULED_ICON_MULTIPART_OVERHEAD;
+        }
+        if ("PUT".equals(request.getMethod()) && path.endsWith("/users/me/avatar")) {
+            return AVATAR_MAX_BYTES + MULTIPART_OVERHEAD;
         }
         if ("POST".equals(request.getMethod())
                 && (path.endsWith("/description-images") || path.endsWith("/notifications/images"))) {

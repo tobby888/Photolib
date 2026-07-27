@@ -13,6 +13,7 @@ import { DataState, PageTitle } from '../components'
 import { useLoad } from '../hooks'
 import AuditLogsPanel from '../AuditLogsPanel'
 import PermissionGroupsPanel from '../PermissionGroupsPanel'
+import UserAvatar from '../UserAvatar'
 
 interface BrandingFormValues {
   title: string
@@ -359,7 +360,11 @@ export default function AdminPage() {
             </Space></div>
           <DataState loading={loading} error={error} empty={!users.items.length} onRetry={reload}>
             <Table rowKey="id" dataSource={users.items} pagination={{ pageSize: 12 }} scroll={{ x: 1050 }} columns={[
-              { title: '成员', render: (_, item) => <div className="table-title"><strong>{item.displayName}</strong><span>@{item.username}</span></div> },
+              { title: '成员', render: (_, item) => <Space>
+                <UserAvatar size={38} avatarUrl={item.avatarUrl} label={item.displayName}
+                  style={{ background: '#edf3f0', color: '#28594f' }} />
+                <div className="table-title"><strong>{item.displayName}</strong><span>@{item.username}</span></div>
+              </Space> },
               { title: '权限组', dataIndex: 'permissionGroupName', render: value => <Tag variant="filled">{value || '待分配'}</Tag> },
               { title: '授权校区', dataIndex: 'campusIds', render: (values: string[] = []) => values.length
                 ? values.map(value => campuses.find(c => c.id === value)?.name || `#${value}`).join('、') : '-' },

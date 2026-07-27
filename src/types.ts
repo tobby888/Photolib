@@ -13,6 +13,7 @@ export interface User {
   id: EntityId
   username: string
   displayName: string
+  avatarUrl?: string | null
   role: Role
   permissionGroupId?: EntityId
   permissionGroupCode?: string

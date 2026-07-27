@@ -1,5 +1,5 @@
 import {
-  Alert, App as AntApp, Avatar, Badge, Button, Divider, Dropdown, Empty, Grid, Layout, List, Menu, Popover, Progress, Result, Space, Typography,
+  Alert, App as AntApp, Badge, Button, Divider, Dropdown, Empty, Grid, Layout, List, Menu, Popover, Progress, Result, Space, Typography,
 } from 'antd'
 import {
   AimOutlined, BarChartOutlined, BellOutlined, BookOutlined, BulbOutlined, CameraOutlined, ContactsOutlined,
@@ -14,6 +14,7 @@ import { api } from './api'
 import type { BrandingSettings, Notification, PreviewGenerationStatus } from './types'
 import { hasAnyPermission, hasPermission, hasSystemAccess } from './permissions'
 import dayjs from 'dayjs'
+import UserAvatar from './UserAvatar'
 
 const LoginPage = lazy(() => import('./pages/LoginPage'))
 const InitialPasswordPage = lazy(() => import('./pages/InitialPasswordPage'))
@@ -31,6 +32,7 @@ const ManagerCampusesPage = lazy(() => import('./pages/ManagerCampusesPage'))
 const AdminPage = lazy(() => import('./pages/AdminPage'))
 const NotificationsPage = lazy(() => import('./pages/NotificationsPage'))
 const NotificationDetailPage = lazy(() => import('./pages/NotificationDetailPage'))
+const AvatarSettingsModal = lazy(() => import('./AvatarSettingsModal'))
 
 const { Header, Sider, Content } = Layout
 const defaultBranding: BrandingSettings = {
@@ -91,6 +93,7 @@ function Shell() {
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
   const [notificationOpen, setNotificationOpen] = useState(false)
+  const [avatarSettingsOpen, setAvatarSettingsOpen] = useState(false)
   const [previewStatus, setPreviewStatus] = useState<PreviewGenerationStatus | null>(null)
   const previousPreviewState = useRef<PreviewGenerationStatus['status'] | undefined>(undefined)
   const mobile = !screens.md
@@ -282,13 +285,14 @@ function Shell() {
             </Badge>
           </Popover>
           <Dropdown menu={{ items: [
-            { key: 'profile', icon: <UserOutlined />, label: user.displayName },
+            { key: 'profile', icon: <UserOutlined />, label: '个人头像', onClick: () => setAvatarSettingsOpen(true) },
             { type: 'divider' },
             { key: 'logout', icon: <LogoutOutlined />, label: '退出登录', danger: true,
               onClick: async () => { await logout(); message.success('已安全退出'); navigate('/login') } },
-          ] }}>
+            ] }}>
             <Space className="user-menu">
-              <Avatar style={{ background: '#E0FFFF', color: '#4682B4' }}>{user.displayName.slice(0, 1)}</Avatar>
+              <UserAvatar avatarUrl={user.avatarUrl} label={user.displayName}
+                style={{ background: '#edf3f0', color: '#28594f' }} />
               {!mobile && <div><strong>{user.displayName}</strong><span>{user.permissionGroupName || user.role}</span></div>}
             </Space>
           </Dropdown>
@@ -328,6 +332,9 @@ function Shell() {
         </div>
       </Content>
     </Layout>
+    {avatarSettingsOpen && <Suspense fallback={null}>
+      <AvatarSettingsModal open onClose={() => setAvatarSettingsOpen(false)} />
+    </Suspense>}
   </Layout>
 }
 

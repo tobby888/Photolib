@@ -1,6 +1,8 @@
 package cn.photolib.user.model;
 
 import cn.photolib.common.model.BaseEntity;
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Getter;
 import lombok.Setter;
@@ -17,6 +19,12 @@ public class UserEntity extends BaseEntity {
     private Long campusId;
     private String phone;
     private String email;
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String avatarObjectKey;
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String avatarContentType;
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private Long avatarSize;
     private Boolean enabled;
     private Boolean mustChangePassword;
 }

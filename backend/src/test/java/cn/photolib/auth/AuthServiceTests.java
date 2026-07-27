@@ -92,6 +92,20 @@ class AuthServiceTests {
     }
 
     @Test
+    void loginShouldIncludeRevisionedAvatarUrlInPrincipalSnapshot() {
+        testUser = userMapper.selectById(testUser.getId());
+        testUser.setAvatarObjectKey("avatars/" + testUser.getId() + "/snapshot.jpg");
+        testUser.setAvatarContentType("image/jpeg");
+        testUser.setAvatarSize(128L);
+        userMapper.updateById(testUser);
+
+        AuthService.TokenPair tokens = authService.login("testuser", "password123");
+
+        assertThat(tokens.user().avatarUrl()).isEqualTo(
+                "/api/v1/users/" + testUser.getId() + "/avatar?v=2");
+    }
+
+    @Test
     void loginWithInvalidPassword_shouldThrowException() {
         // When & Then: 使用错误的密码登录应该抛出异常
         assertThatThrownBy(() -> authService.login("testuser", "wrongpassword"))
