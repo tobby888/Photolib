@@ -1,10 +1,10 @@
 import {
-  App, Button, Card, Col, Descriptions, Image, Input, Modal, Row, Space, Table, Tag, Typography,
+  Alert, App, Button, Card, Col, Descriptions, Image, Input, Modal, Row, Skeleton, Space, Table, Tag, Typography,
 } from 'antd'
 import {
   ArrowLeftOutlined, DeleteOutlined, DownloadOutlined, FolderAddOutlined,
 } from '@ant-design/icons'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { api, emptyPage, qs } from '../api'
@@ -13,6 +13,7 @@ import { useAuth } from '../auth'
 import { useLoad } from '../hooks'
 import { hasPermission } from '../permissions'
 import PhotoHistogram from '../PhotoHistogram'
+import { useLocalImageUrl } from '../useLocalImageUrl'
 import type { EntityId, PageData, Photo, Project } from '../types'
 
 function isLinkedToProject(photo: Photo, projectId: EntityId) {
@@ -52,6 +53,12 @@ export default function PhotoDetailPage() {
     null as Photo | null,
     [photoId],
   )
+  const localImage = useLocalImageUrl(photo?.thumbnailUrl)
+  useEffect(() => {
+    const onPreviewRegenerated = () => void reload()
+    window.addEventListener('preview-generation-succeeded', onPreviewRegenerated)
+    return () => window.removeEventListener('preview-generation-succeeded', onPreviewRegenerated)
+  }, [reload])
   const {
     data: activeProjects,
     loading: projectsLoading,
@@ -156,13 +163,21 @@ export default function PhotoDetailPage() {
           <Space direction="vertical" size="large" style={{ width: '100%' }}>
             <Card className="photo-detail-preview-card">
               <div className="photo-detail-image">
-                {photo.thumbnailUrl
-                  ? <Image src={photo.thumbnailUrl} alt={photo.title || `图片 ${photo.id}`} />
-                  : <div className="image-placeholder"><span>{photo.title?.slice(0, 1) || '图'}</span></div>}
+                {localImage.status === 'ready'
+                  ? <Image src={localImage.url} alt={photo.title || `图片 ${photo.id}`} />
+                  : localImage.status === 'loading'
+                    ? <Skeleton.Image active />
+                    : <div className="image-placeholder"><span>{photo.title?.slice(0, 1) || '图'}</span></div>}
               </div>
             </Card>
             <Card title="曝光直方图" extra={<Typography.Text type="secondary">浏览器本地生成</Typography.Text>}>
-              <PhotoHistogram imageUrl={photo.thumbnailUrl} alt={photo.title || `图片 ${photo.id}`} />
+              {localImage.status === 'ready'
+                ? <PhotoHistogram imageUrl={localImage.url} alt={photo.title || `图片 ${photo.id}`} />
+                : localImage.status === 'loading'
+                  ? <Skeleton active paragraph={{ rows: 3 }} title={false} />
+                  : localImage.status === 'error'
+                    ? <Alert type="info" showIcon message={`${localImage.message}，无法生成曝光直方图。`} />
+                    : <Alert type="info" showIcon message="预览图生成后即可分析曝光分布。" />}
             </Card>
           </Space>
         </Col>

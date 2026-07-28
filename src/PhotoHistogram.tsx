@@ -36,7 +36,6 @@ export default function PhotoHistogram({ imageUrl, alt }: { imageUrl?: string; a
 
     setState({ status: 'loading' })
     const image = new window.Image()
-    image.crossOrigin = 'anonymous'
     image.decoding = 'async'
     image.onload = () => {
       if (!active) return
