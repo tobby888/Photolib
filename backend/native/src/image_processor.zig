@@ -326,6 +326,8 @@ fn decodeJpeg(source: []const u8, requested: ?Dimensions) NativeError!Pixels {
     const original_width = c.tj3Get(handle, c.TJPARAM_JPEGWIDTH);
     const original_height = c.tj3Get(handle, c.TJPARAM_JPEGHEIGHT);
     _ = try checkedPixelCount(original_width, original_height);
+    const colorspace = c.tj3Get(handle, c.TJPARAM_COLORSPACE);
+    const is_cmyk = colorspace == c.TJCS_CMYK or colorspace == c.TJCS_YCCK;
 
     var width = original_width;
     var height = original_height;
@@ -355,6 +357,8 @@ fn decodeJpeg(source: []const u8, requested: ?Dimensions) NativeError!Pixels {
     }
 
     const pixel_count = try checkedPixelCount(width, height);
+    if (is_cmyk) return decodeCmykJpeg(handle, source, pixel_count, width, height);
+
     const length = std.math.mul(usize, pixel_count, 3) catch return NativeError.InvalidDimensions;
     const memory = c.malloc(length) orelse return NativeError.OutOfMemory;
     const pixels: [*]u8 = @ptrCast(memory);
@@ -362,6 +366,41 @@ fn decodeJpeg(source: []const u8, requested: ?Dimensions) NativeError!Pixels {
     if (c.tj3Decompress8(handle, source.ptr, source.len, pixels, 0, c.TJPF_RGB) != 0)
         return NativeError.DecodeFailed;
     return .{ .data = pixels, .width = width, .height = height, .channels = 3 };
+}
+
+// The legacy path (small, upright images that never reach libvips) uses
+// turbojpeg directly. turbojpeg can only decompress a CMYK/YCCK-colorspace
+// JPEG into CMYK packed pixels (requesting TJPF_RGB fails outright), so
+// Adobe/CMYK exports from this photography department's intake need a
+// manual CMYK->RGB pass. The multiply-by-K formula matches libjpeg-turbo's
+// own reference cmyk_to_rgb() (src/cmyk.h), which assumes the near-universal
+// Adobe convention of storing inverted CMYK samples.
+fn decodeCmykJpeg(handle: c.tjhandle, source: []const u8, pixel_count: usize,
+                  width: i32, height: i32) NativeError!Pixels {
+    const cmyk_length = std.math.mul(usize, pixel_count, 4) catch return NativeError.InvalidDimensions;
+    const cmyk_memory = c.malloc(cmyk_length) orelse return NativeError.OutOfMemory;
+    const cmyk_pixels: [*]u8 = @ptrCast(cmyk_memory);
+    defer c.free(cmyk_memory);
+    if (c.tj3Decompress8(handle, source.ptr, source.len, cmyk_pixels, 0, c.TJPF_CMYK) != 0)
+        return NativeError.DecodeFailed;
+
+    const rgb_length = std.math.mul(usize, pixel_count, 3) catch return NativeError.InvalidDimensions;
+    const rgb_memory = c.malloc(rgb_length) orelse return NativeError.OutOfMemory;
+    const rgb_pixels: [*]u8 = @ptrCast(rgb_memory);
+    errdefer c.free(rgb_memory);
+    var index: usize = 0;
+    while (index < pixel_count) : (index += 1) {
+        const black = cmyk_pixels[index * 4 + 3];
+        rgb_pixels[index * 3 + 0] = cmykChannelToRgb(cmyk_pixels[index * 4 + 0], black);
+        rgb_pixels[index * 3 + 1] = cmykChannelToRgb(cmyk_pixels[index * 4 + 1], black);
+        rgb_pixels[index * 3 + 2] = cmykChannelToRgb(cmyk_pixels[index * 4 + 2], black);
+    }
+    return .{ .data = rgb_pixels, .width = width, .height = height, .channels = 3 };
+}
+
+fn cmykChannelToRgb(channel: u8, black: u8) u8 {
+    const scaled = @as(f64, @floatFromInt(channel)) * @as(f64, @floatFromInt(black)) / 255.0 + 0.5;
+    return @intFromFloat(@min(255.0, @max(0.0, scaled)));
 }
 
 fn decodePng(source: []const u8) NativeError!Pixels {

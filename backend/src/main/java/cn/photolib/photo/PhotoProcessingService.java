@@ -104,7 +104,7 @@ public class PhotoProcessingService {
             ImageCompressor.FileResult thumbnail = compressor.thumbnail(
                     result.path(), thumbnailPath, result.contentType(), 480,
                     previewProfile.compressionRatio().doubleValue());
-            String thumbnailKey = "thumbnails/" + photo.getId()
+            String thumbnailKey = "thumbnails/generations/uploads/" + photo.getId()
                     + (photo.getContentType().equals("image/png") ? ".png" : ".jpg");
             String thumbnailSha256 = sha256(thumbnail.path());
             upload(thumbnailKey, thumbnail.path(), thumbnail.size(), thumbnail.contentType(),

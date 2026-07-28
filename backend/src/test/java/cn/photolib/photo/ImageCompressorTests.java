@@ -323,6 +323,40 @@ class ImageCompressorTests {
     }
 
     @Test
+    void decodesCmykJpegSourcesFromAdobeStyleExports() throws Exception {
+        // Small, upright JPEGs stay on the legacy turbojpeg path (see
+        // requiresVips in image_processor.zig) rather than libvips. turbojpeg
+        // can only decompress a CMYK/YCCK-colorspace JPEG into CMYK packed
+        // pixels, never straight into RGB; a naive TJPF_RGB request fails
+        // outright. Adobe-exported CMYK JPEGs are common in a photography
+        // department's intake, so the legacy path must detect the colorspace
+        // and convert manually. Fixture is a real 64x64 CMYK JPEG
+        // (colorspace=CMYK, 4:4:4) encoded with libjpeg-turbo from flat
+        // C=200,M=150,Y=100,K=220 samples.
+        byte[] cmykJpeg = java.util.Base64.getDecoder().decode(
+                "/9j/7gAOQWRvYmUAZAAAAAAA/9sAQwACAQEBAQECAQEBAgICAgIEAwICAgIFBAQDBAYFBgYGBQYGBgcJCAYHCQcGBggLCAkKCgoKCgYICwwLCgwJCgoK"
+                + "/8AAFAgAQABABEMRAE0RAFkRAEsRAP/EAB8AAAEFAQEBAQEBAAAAAAAAAAABAgMEBQYHCAkKC//EALUQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUS"
+                + "ITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SF"
+                + "hoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+v/aAA4EQwBNAFkASwAA"
+                + "PwD9IK9Yrw+v1woooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo"
+                + "oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo"
+                + "oooooooooooooooooooooooooooooooooooooooooooooooooooooooor/2Q==");
+        Path source = writeSource(cmykJpeg, ".jpg");
+
+        ImageCompressor.FileResult compressed = compress(source, "image/jpeg", 10_000_000);
+        ImageCompressor.FileResult preview = thumbnail(compressed.path(), "image/jpeg", 480, 0.85);
+
+        assertThat(compressed.width()).isEqualTo(64);
+        assertThat(compressed.height()).isEqualTo(64);
+        BufferedImage decoded = ImageIO.read(preview.path().toFile());
+        assertThat(decoded).isNotNull();
+        // Expected via libjpeg-turbo's own cmyk_to_rgb reference formula:
+        // R=C*K/255≈173, G=M*K/255≈129, B=Y*K/255≈86.
+        assertColorNear(decoded, decoded.getWidth() / 2, decoded.getHeight() / 2,
+                new Color(173, 129, 86));
+    }
+
+    @Test
     void processesImagesThroughUnicodeFilePaths() throws Exception {
         Path source = temporaryDirectory.resolve("输入图片-活动现场.jpg");
         Path compressed = temporaryDirectory.resolve("成品图片.jpg");
