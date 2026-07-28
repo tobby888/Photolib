@@ -31,8 +31,10 @@ public class StorageConfig {
             public SignedUrl presignPut(String key, String type, Duration ttl) { throw unavailable(); }
             public SignedUrl presignGet(String key, String name, Duration ttl) { throw unavailable(); }
             public ObjectInfo stat(String key) { throw unavailable(); }
+            public java.util.Optional<ObjectInfo> find(String key) { throw unavailable(); }
             public InputStream open(String key) { throw unavailable(); }
-            public void put(String key, InputStream input, long size, String type) { throw unavailable(); }
+            public void put(String key, InputStream input, long size, String type,
+                            java.util.Map<String, String> userMetadata) { throw unavailable(); }
             public void delete(String key) { throw unavailable(); }
         };
     }

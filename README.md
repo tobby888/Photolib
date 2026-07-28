@@ -46,23 +46,25 @@
 | 后端 | Java 21、Spring Boot 4、Spring Security、MyBatis-Plus |
 | 数据 | MySQL 8、Flyway |
 | 文件与通知 | 阿里云 OSS、本地磁盘存储、阿里云 DirectMail |
-| 图片处理 | Zig、libjpeg-turbo、stb、JNA |
+| 图片处理 | Zig、libjpeg-turbo、stb、libvips、JNA |
 | 导出与任务 | Apache POI、异步导出、异步 ZIP 处理 |
 
 所有 REST API 使用 `/api/v1` 前缀。前端采用 Hash Router，既可由 Vite 独立运行，也可打包进 Spring Boot Fat JAR 后从服务根路径访问。
 
 ### 原生图片处理
 
-成品图压缩、缩略图生成和后台预览图重建统一进入受控线程池，再调用 `backend/native/` 中的 Zig 原生组件：JPEG 使用 libjpeg-turbo，PNG 使用固定版本的 stb，并保留透明通道。ZIP 条目会流式解压到临时目录，避免完整进入 Java 堆。
+成品图压缩、缩略图生成和后台预览图重建都在受控的串行/有界执行器中调用 `backend/native/` 的 Zig 原生组件：新上传走 `photoProcessingExecutor`，全库预览维护走独立的 `previewRegenerationExecutor`，避免互相占用队列。常规 JPEG 使用 libjpeg-turbo、PNG 使用固定版本的 stb 并保留透明通道；需要重新编码时，达到 100 MP、任一边达到 30,000 像素、按实际解码通道数估算的像素缓冲超过 128 MiB，或 EXIF Orientation 不为 1 的图片会改走 libvips 8.18.3 的文件式、顺序读取管线，所有缩略图也会按同一规则正确应用方向。小于成品图目标体积的文件仍只读头部并原样复制、保留 EXIF，不做完整像素解码；记录到数据库的宽高会按 EXIF 方向换算。libvips 的大图/方向分支使用 down-only、自动方向校正；JPEG 使用倍率换算质量、4:2:0、优化编码并去除元数据，PNG 使用无损 compression 9 并去除非像素元数据。原生层仍限制输入 100 MiB、输出 256 MiB、10 亿像素及单边 100,000 像素，并把 libvips 并发设为 1、关闭缓存；超阈值的渐进式 JPEG 和隔行 PNG 会被拒绝，因为这两类文件不能保证顺序解码的有界内存。ZIP 条目会流式解压到临时目录，避免完整进入 Java 堆。
 
 构建阶段会生成并打包以下 x86-64 组件：
 
 ```text
 native/windows-x86_64/photolib-image.dll
+native/windows-x86_64/libvips-42.dll
 native/linux-x86_64/libphotolib-image.so
+native/linux-x86_64/libvips-cpp.so.8.18.3
 ```
 
-应用启动后按系统和架构加载对应组件。当前仅支持 Windows x86-64 和 Linux x86-64；Linux 组件以 glibc 2.17 为最低兼容基线。
+应用启动后按系统和架构加载对应组件。当前仅支持 Windows x86-64 和 Linux x86-64；Linux 运行环境需要 glibc 2.28+、`libstdc++.so.6`（至少提供 `GLIBCXX_3.4.22`）与 `libgcc_s.so.1`。首次原生构建需要联网下载并校验锁定版本的 libjpeg-turbo、stb 与 libvips 依赖包及许可文本，后续可复用本地缓存。Windows/Linux 发布流水线应分别在目标系统实际加载组件并运行图片处理测试，不能只检查另一平台资源是否存在。
 
 `PHOTO_PROCESSING_THREADS` 的取值范围是 1～32，默认 1。每个线程都可能持有一张高像素图片的原生像素缓冲，提高线程数前应先评估内存峰值并使用真实相机图片压测。
 
@@ -143,7 +145,7 @@ Linux 使用 `./mvnw clean package`。Maven 会自动安装隔离的 Node.js/npm
 backend/target/photolib-backend-0.1.0-SNAPSHOT.jar
 ```
 
-该 JAR 已包含后端、前端和两套原生图片组件。部署服务器只需 Java 21，不需要 Node.js、Maven、Zig 或单独的前端服务。
+该 JAR 已包含后端、前端和两套原生图片组件。部署服务器不需要 Node.js、Maven、Zig 或单独的前端服务，但除 Java 21 外，Linux 仍须提供上文列出的 glibc、`libstdc++` 与 `libgcc_s` 运行库。
 
 ### Linux systemd 示例
 
@@ -194,6 +196,7 @@ curl --fail http://127.0.0.1:8080/api/v1/actuator/health
 | `OSS_ACCESS_KEY_ID`、`OSS_ACCESS_KEY_SECRET` | 最小权限 RAM 用户凭据 |
 | `OSS_CORS_ALLOWED_ORIGINS` | 允许浏览器直传的站点来源；生产环境应显式配置 |
 | `PREVIEW_COMPRESSION_RATIO` | JPEG 预览图质量，取值 `(0, 1]`，默认 `0.6` |
+| `PREVIEW_BOOTSTRAP_RETRY_DELAY` | 启动三方 profile 核对失败后的后台重试间隔，默认 `30s` |
 | `PHOTO_PROCESSING_THREADS` | 原生图片处理线程数，取值 1～32，默认 1 |
 | `PHOTO_PROCESSING_TEMPORARY_DIRECTORY` | ZIP 解压与图片处理临时目录 |
 | `DIRECTMAIL_*` | DirectMail 地域、发信地址和访问凭据 |
@@ -201,13 +204,15 @@ curl --fail http://127.0.0.1:8080/api/v1/actuator/health
 ### 阿里云 OSS 检查清单
 
 - 使用私有 Bucket 和专用 RAM 用户，不使用主账号 AccessKey。
-- RAM 用户至少需要目标 Bucket 对象的 `PutObject`、`GetObject` 和 `DeleteObject` 权限。
+- RAM 用户需要目标 Bucket 对象的 `PutObject`、`GetObject`、`DeleteObject` 权限；当前巡检按数据库中的精确 key 执行 HEAD，不需要 `ListObjects`。HEAD/GetObjectMeta 读取对象元数据使用 `oss:GetObject`（指定版本时才是 `oss:GetObjectVersion`）。若允许应用自动检查/补充 Bucket 与 CORS，还需相应的 Bucket/CORS 读取或写入权限。生产也可由基础设施预先配置 Bucket/CORS，并让应用只做对象操作。
 - `OSS_ENDPOINT` 可使用后端同地域内网 Endpoint；`OSS_PUBLIC_ENDPOINT` 必须是浏览器可访问的公网 Endpoint。
 - Endpoint 只填写地域地址，不包含 Bucket 名称，并确保 Bucket 与 Endpoint 属于同一地域。
 - CORS 至少允许站点来源发起 `PUT`、`GET`、`HEAD`，并允许上传所需请求头。
 - 浏览器上传的 `Content-Type` 必须与后端生成预签名 URL 时返回的值完全一致。
 
-应用会在启动时核对预览图压缩配置和预览对象状态。需要重建时，会先生成完整的新代际，再通过数据库事务统一切换；失败时继续保留旧预览图。调整压缩比率前，应确认对象存储权限、磁盘空间和服务器资源充足。
+预览维护采用环境、数据库、对象存储三方 profile。应用刚启动处于 `BOOTSTRAPPING`：规范化为四位小数的 `PREVIEW_COMPRESSION_RATIO` 与当前生成器指纹是标准；数据库缺失或不同则先完整生成新代际，再原子切换照片引用和数据库 profile。数据库相同时仍会对每张预览执行精确 HEAD，核对数据库 size、实际 MIME，以及 OSS user metadata 中的四位倍率、JPEG 有效质量（`round(ratio * 100)`，PNG 为 `lossless`）、生成器指纹和 SHA-256；缺失、非法或不匹配的对象会定向重编码。无论全量还是定向生成，新 PUT 的对象都必须再次通过 HEAD、完整 profile metadata 与实际流式 SHA-256 复验后才能切换引用。全部成功后进入 `RUNNING`；启动核对失败不会阻塞应用启动，并按 `PREVIEW_BOOTSTRAP_RETRY_DELAY` 在独立执行器中自动重试。此后的新上传、定时巡检和定向修复每次都重新读取数据库 profile，绝不回退到 `.env`；数据库 profile 缺失或非法时运行期调用会失败、巡检会写管理员告警，并发变化则由 CAS 拒绝，均不清空既有引用。
+
+运行期巡检不会因为对象大小碰巧一致而跳过 HEAD。明确确认对象缺失或 profile 不匹配时，才会在照片 version/key/size 与数据库 profile 都未变化的前提下 CAS 清空引用并提交修复；权限、网络或服务端 HEAD 异常会记录错误、写入管理员告警并保留旧引用。CAS 清空后的旧预览对象不承诺自动删除，需要由独立的孤儿对象维护流程处理。启动重建、巡检和定向修复共用进程内互斥维护锁；跨实例的新上传由 profile 行 CAS 保护，滚动切换还会核对 eligible 照片集合。V23 会把无法确定历史编码器的已有数据标为 `legacy/unknown`，因此升级后的首次后台核对会执行一次安全重建；V24 会逐图持久化暂存检查点，所有检查点（包括本轮刚生成的对象）在切换前都必须验证 MIME、大小、SHA-256 和完整 profile 元数据；V25 为清理增加可恢复 claim，并在原子切换中用行锁核对未被其他实例认领的精确检查点，防止复验后的对象被另一实例删除。调整压缩倍率或部署 V23～V25 前，应确认对象存储权限、磁盘空间和服务器资源充足。
 
 ## 旧系统数据迁移
 
@@ -259,7 +264,7 @@ cd backend
 PhotoLib/
 ├── src/                       # React 前端
 ├── backend/
-│   ├── native/                # Zig + libjpeg-turbo 双平台图片组件
+│   ├── native/                # Zig + libjpeg-turbo/stb/libvips 双平台图片组件
 │   └── src/
 │       ├── main/java/         # Spring Boot 业务代码
 │       ├── main/resources/    # 配置与 Flyway 迁移

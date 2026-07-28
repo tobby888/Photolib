@@ -12,6 +12,7 @@ import cn.photolib.user.model.UserEntity;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
@@ -24,6 +25,7 @@ import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.HexFormat;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 @Service
@@ -38,6 +40,8 @@ public class PhotoProcessingService {
     private final PhotoProcessingWorkspace workspace;
     private final PhotoUploadItemMapper batchItemMapper;
     private final PhotoUploadBatchMapper batchMapper;
+    private final PreviewProfilePolicy previewProfiles;
+    private final TransactionTemplate transactions;
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onRequested(PhotoProcessRequested event) {
@@ -94,27 +98,27 @@ public class PhotoProcessingService {
 
             Path thumbnailPath = workspace.taskFile(taskDirectory,
                     "thumbnail" + extension(photo.getContentType()));
+            PreviewProfilePolicy.CommitPermit previewPermit =
+                    previewProfiles.permitForNewPreview();
+            PreviewProfile previewProfile = previewPermit.profile();
             ImageCompressor.FileResult thumbnail = compressor.thumbnail(
                     result.path(), thumbnailPath, result.contentType(), 480,
-                    properties.previewCompressionRatio());
+                    previewProfile.compressionRatio().doubleValue());
             String thumbnailKey = "thumbnails/" + photo.getId()
                     + (photo.getContentType().equals("image/png") ? ".png" : ".jpg");
-            upload(thumbnailKey, thumbnail.path(), thumbnail.size(), thumbnail.contentType());
+            String thumbnailSha256 = sha256(thumbnail.path());
+            upload(thumbnailKey, thumbnail.path(), thumbnail.size(), thumbnail.contentType(),
+                    previewProfile.objectMetadata(thumbnail.contentType(), thumbnailSha256));
             UserEntity uploader = userMapper.selectById(photo.getUploadedBy());
             String extension = photo.getContentType().equals("image/png") ? "png" : "jpg";
-            photo.setStoredFileName(fileName(uploader.getDisplayName(), photo.getPhotographerName(),
-                    photo.getTakenAt(), extension));
-            photo.setSize(result.size());
-            photo.setWidth(result.width());
-            photo.setHeight(result.height());
-            photo.setThumbnailObjectKey(thumbnailKey);
-            photo.setThumbnailSize(thumbnail.size());
-            photo.setOriginalDeleteAfter(LocalDateTime.now().plus(properties.originalRetention()));
-            photo.setStatus(PhotoStatus.AVAILABLE);
-            photo.setFailureReason(null);
+            LocalDateTime originalDeleteAfter =
+                    LocalDateTime.now().plus(properties.originalRetention());
+            String storedFileName = fileName(uploader.getDisplayName(),
+                    photo.getPhotographerName(), photo.getTakenAt(), extension);
+            completeProcessing(photo, result, thumbnail, thumbnailKey, storedFileName,
+                    originalDeleteAfter, previewPermit);
         } catch (Exception ex) {
-            photo.setStatus(PhotoStatus.UPLOADING);
-            photo.setFailureReason(ex.getMessage());
+            photo = markProcessingFailed(photo, ex);
         } finally {
             if (batchSource != null && batchItem != null && cleanupBatchSource(batchSource)) {
                 batchItem.setTempLocalPath(null);
@@ -122,8 +126,59 @@ public class PhotoProcessingService {
             }
             cleanupTaskDirectory(taskDirectory);
         }
-        photoMapper.updateById(photo);
         updateBatch(photo, batchItem);
+    }
+
+    void completeProcessing(PhotoEntity photo,
+                            ImageCompressor.FileResult result,
+                            ImageCompressor.FileResult thumbnail,
+                            String thumbnailKey,
+                            String storedFileName,
+                            LocalDateTime originalDeleteAfter,
+                            PreviewProfilePolicy.CommitPermit permit) {
+        PreviewProfile target = permit.profile();
+        Integer updated = transactions.execute(status -> {
+            if (!previewProfiles.lockAndValidateForCommit(permit)) return 0;
+            return photoMapper.completeProcessingWithProfileGuard(
+                    photo.getId(), photo.getVersion(), storedFileName,
+                    result.size(), result.width(), result.height(),
+                    thumbnailKey, thumbnail.size(), originalDeleteAfter,
+                    target.compressionRatio(), target.generatorFingerprint(),
+                    permit.bootstrappingFlag(), permit.observedDatabaseProfileFlag(),
+                    permit.observedCompressionRatioOrTarget(),
+                    permit.observedGeneratorFingerprintOrTarget(), LocalDateTime.now());
+        });
+        if (updated == null || updated != 1) {
+            throw new IllegalStateException(
+                    "预览图 profile 或图片状态在处理期间已变化，请重新上传后重试");
+        }
+
+        photo.setVersion(photo.getVersion() + 1);
+        photo.setStoredFileName(storedFileName);
+        photo.setSize(result.size());
+        photo.setWidth(result.width());
+        photo.setHeight(result.height());
+        photo.setThumbnailObjectKey(thumbnailKey);
+        photo.setThumbnailSize(thumbnail.size());
+        photo.setOriginalDeleteAfter(originalDeleteAfter);
+        photo.setStatus(PhotoStatus.AVAILABLE);
+        photo.setFailureReason(null);
+    }
+
+    PhotoEntity markProcessingFailed(PhotoEntity photo, Exception exception) {
+        String failureReason = exception.getMessage();
+        int failed = photoMapper.failProcessing(photo.getId(), photo.getVersion(),
+                failureReason, LocalDateTime.now());
+        if (failed == 1) {
+            photo.setVersion(photo.getVersion() + 1);
+            photo.setStatus(PhotoStatus.UPLOADING);
+            photo.setFailureReason(failureReason);
+            return photo;
+        }
+
+        PhotoEntity current = photoMapper.selectById(photo.getId());
+        log.warn("图片处理失败后状态已并发变化，未覆盖当前记录: photoId={}", photo.getId());
+        return current == null ? photo : current;
     }
 
     private PhotoUploadItemEntity findBatchItem(Long photoId) {
@@ -184,8 +239,13 @@ public class PhotoProcessingService {
     }
 
     private void upload(String objectKey, Path source, long size, String contentType) throws Exception {
+        upload(objectKey, source, size, contentType, Map.of());
+    }
+
+    private void upload(String objectKey, Path source, long size, String contentType,
+                        Map<String, String> userMetadata) throws Exception {
         try (InputStream input = Files.newInputStream(source)) {
-            storage.put(objectKey, input, size, contentType);
+            storage.put(objectKey, input, size, contentType, userMetadata);
         }
     }
 

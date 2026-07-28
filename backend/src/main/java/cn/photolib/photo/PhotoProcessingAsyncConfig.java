@@ -42,8 +42,8 @@ public class PhotoProcessingAsyncConfig {
     /**
      * Preview regeneration can take a long time for a large library. Run it on
      * its own serial coordinator after the application is ready so it does not
-     * delay login. Individual native operations are still submitted to the
-     * shared photoProcessingExecutor and therefore obey the same memory budget.
+     * delay login or occupy the new-upload queue. It remains single-threaded;
+     * operators must budget for one preview decode alongside upload processing.
      */
     @Bean(name = "previewRegenerationExecutor")
     ThreadPoolTaskExecutor previewRegenerationExecutor() {

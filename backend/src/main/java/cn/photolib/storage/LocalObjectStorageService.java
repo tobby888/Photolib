@@ -11,16 +11,28 @@ import java.net.MalformedURLException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Properties;
 import java.util.stream.Stream;
 
 public class LocalObjectStorageService implements ObjectStorageService {
+    private static final String METADATA_SUFFIX = ".metadata";
+    private static final String LEGACY_CONTENT_TYPE_SUFFIX = ".content-type";
+    private static final String CONTENT_TYPE_PROPERTY = "content-type";
+    private static final String USER_METADATA_PREFIX = "user.";
+
     private final Path root;
     private final String publicBaseUrl;
     private final byte[] signingSecret;
@@ -48,21 +60,33 @@ public class LocalObjectStorageService implements ObjectStorageService {
     @Override
     public List<StoredObject> list(String prefix) {
         String effectivePrefix = prefix == null ? "" : prefix;
-        try (Stream<Path> paths = Files.walk(root)) {
-            return paths.filter(Files::isRegularFile)
-                    .filter(path -> !path.getFileName().toString().endsWith(".content-type"))
-                    .map(path -> {
-                        String key = root.relativize(path).toString().replace('\\', '/');
+        Path walkRoot = listRoot(effectivePrefix);
+        if (Files.notExists(walkRoot)) {
+            return List.of();
+        }
+        try (Stream<Path> paths = Files.walk(walkRoot)) {
+            return paths.filter(path -> !Files.isSymbolicLink(path))
+                    .filter(Files::isRegularFile)
+                    .filter(path -> !isMetadataSidecar(path))
+                    .filter(path -> {
+                        String name = path.getFileName().toString();
+                        return !name.startsWith(".upload-") || !name.endsWith(".tmp");
+                    })
+                    .map(path -> new LocalObjectPath(path, objectKey(path)))
+                    .filter(object -> object.objectKey().startsWith(effectivePrefix))
+                    .map(object -> {
                         try {
-                            return new StoredObject(key, Files.size(path));
+                            return new StoredObject(object.objectKey(), Files.size(object.path()));
+                        } catch (NoSuchFileException ex) {
+                            return null;
                         } catch (IOException ex) {
-                            throw new IllegalStateException("无法读取本地对象大小: " + key, ex);
+                            throw new IllegalStateException("无法读取本地对象大小: " + object.objectKey(), ex);
                         }
                     })
-                    .filter(object -> object.objectKey().startsWith(effectivePrefix))
+                    .filter(Objects::nonNull)
                     .toList();
         } catch (IOException ex) {
-            throw new IllegalStateException("无法枚举本地对象存储: " + root, ex);
+            throw new IllegalStateException("无法枚举本地对象存储: " + walkRoot, ex);
         }
     }
 
@@ -81,13 +105,39 @@ public class LocalObjectStorageService implements ObjectStorageService {
         Path path = resolve(objectKey);
         try {
             if (!Files.isRegularFile(path)) throw new IllegalArgumentException("本地对象不存在: " + objectKey);
-            Path metadata = metadata(path);
-            String contentType = Files.isRegularFile(metadata)
-                    ? Files.readString(metadata, StandardCharsets.UTF_8)
-                    : "application/octet-stream";
-            return new ObjectInfo(Files.size(path), contentType);
+            StoredMetadata storedMetadata = readMetadata(path);
+            String contentType = detectedImageContentType(path);
+            if (contentType == null) {
+                contentType = storedMetadata.contentType();
+                if (contentType.isBlank()) contentType = "application/octet-stream";
+            }
+            return new ObjectInfo(Files.size(path), contentType, storedMetadata.userMetadata());
         } catch (IOException ex) {
             throw new IllegalStateException("读取本地对象失败: " + objectKey, ex);
+        }
+    }
+
+    @Override
+    public Optional<ObjectInfo> find(String objectKey) {
+        Path path = resolve(objectKey);
+        try {
+            BasicFileAttributes attributes = Files.readAttributes(path, BasicFileAttributes.class);
+            if (!attributes.isRegularFile()) {
+                throw new IllegalArgumentException("本地对象不是普通文件: " + objectKey);
+            }
+            return Optional.of(stat(objectKey));
+        } catch (NoSuchFileException exception) {
+            return Optional.empty();
+        } catch (IOException exception) {
+            throw new IllegalStateException("读取本地对象属性失败: " + objectKey, exception);
+        } catch (IllegalArgumentException exception) {
+            if (Files.notExists(path)) return Optional.empty();
+            throw exception;
+        } catch (IllegalStateException exception) {
+            if (Files.notExists(path) || exception.getCause() instanceof NoSuchFileException) {
+                return Optional.empty();
+            }
+            throw exception;
         }
     }
 
@@ -101,8 +151,10 @@ public class LocalObjectStorageService implements ObjectStorageService {
     }
 
     @Override
-    public void put(String objectKey, InputStream input, long size, String contentType) {
+    public void put(String objectKey, InputStream input, long size, String contentType,
+                    Map<String, String> userMetadata) {
         Path destination = resolve(objectKey);
+        ObjectInfo objectInfo = new ObjectInfo(size, contentType, userMetadata);
         try {
             Files.createDirectories(destination.getParent());
             Path temporary = Files.createTempFile(destination.getParent(), ".upload-", ".tmp");
@@ -111,11 +163,13 @@ public class LocalObjectStorageService implements ObjectStorageService {
                 if (size >= 0 && copied != size) {
                     throw new IllegalArgumentException("对象大小不匹配，期望 " + size + " 字节，实际 " + copied + " 字节");
                 }
+                Files.deleteIfExists(metadata(destination));
+                Files.deleteIfExists(legacyContentTypeMetadata(destination));
                 Files.move(temporary, destination, StandardCopyOption.REPLACE_EXISTING,
                         StandardCopyOption.ATOMIC_MOVE);
-                Files.writeString(metadata(destination),
+                writeMetadata(destination,
                         contentType == null ? "application/octet-stream" : contentType,
-                        StandardCharsets.UTF_8);
+                        objectInfo.userMetadata());
             } finally {
                 Files.deleteIfExists(temporary);
             }
@@ -133,6 +187,7 @@ public class LocalObjectStorageService implements ObjectStorageService {
         try {
             Files.deleteIfExists(path);
             Files.deleteIfExists(metadata(path));
+            Files.deleteIfExists(legacyContentTypeMetadata(path));
         } catch (IOException ex) {
             throw new IllegalStateException("删除本地对象失败: " + objectKey, ex);
         }
@@ -187,8 +242,118 @@ public class LocalObjectStorageService implements ObjectStorageService {
         return resolved;
     }
 
+    private Path listRoot(String prefix) {
+        if (prefix.contains("\0") || prefix.contains("..") || prefix.contains("\\")
+                || prefix.startsWith("/") || prefix.startsWith("\\")) {
+            throw new IllegalArgumentException("非法对象路径前缀");
+        }
+        int separator = prefix.lastIndexOf('/');
+        if (separator < 0) {
+            return root;
+        }
+        String directoryPrefix = prefix.substring(0, separator);
+        if (directoryPrefix.isBlank()) {
+            return root;
+        }
+        Path resolved = root.resolve(directoryPrefix).normalize();
+        if (!resolved.startsWith(root)) {
+            throw new IllegalArgumentException("非法对象路径前缀");
+        }
+        return resolved;
+    }
+
+    private String objectKey(Path path) {
+        Path normalized = path.toAbsolutePath().normalize();
+        if (!normalized.startsWith(root)) {
+            throw new IllegalArgumentException("非法本地对象路径");
+        }
+        return root.relativize(normalized).toString().replace('\\', '/');
+    }
+
     private Path metadata(Path object) {
-        return object.resolveSibling(object.getFileName() + ".content-type");
+        return object.resolveSibling(object.getFileName() + METADATA_SUFFIX);
+    }
+
+    private Path legacyContentTypeMetadata(Path object) {
+        return object.resolveSibling(object.getFileName() + LEGACY_CONTENT_TYPE_SUFFIX);
+    }
+
+    private boolean isMetadataSidecar(Path path) {
+        String name = path.getFileName().toString();
+        return name.endsWith(METADATA_SUFFIX)
+                || name.endsWith(LEGACY_CONTENT_TYPE_SUFFIX)
+                || (name.startsWith(".metadata-") && name.endsWith(".tmp"));
+    }
+
+    private void writeMetadata(Path object, String contentType,
+                               Map<String, String> userMetadata) throws IOException {
+        Properties properties = new Properties();
+        properties.setProperty(CONTENT_TYPE_PROPERTY, contentType);
+        userMetadata.forEach((key, value) ->
+                properties.setProperty(USER_METADATA_PREFIX + key, value));
+
+        Path sidecar = metadata(object);
+        Path temporary = Files.createTempFile(object.getParent(), ".metadata-", ".tmp");
+        try {
+            try (var writer = Files.newBufferedWriter(temporary, StandardCharsets.UTF_8)) {
+                properties.store(writer, null);
+            }
+            Files.move(temporary, sidecar, StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.ATOMIC_MOVE);
+        } finally {
+            Files.deleteIfExists(temporary);
+        }
+    }
+
+    private StoredMetadata readMetadata(Path object) throws IOException {
+        Path sidecar = metadata(object);
+        Map<String, String> userMetadata = new LinkedHashMap<>();
+        String contentType = null;
+        if (Files.isRegularFile(sidecar)) {
+            Properties properties = new Properties();
+            try (var reader = Files.newBufferedReader(sidecar, StandardCharsets.UTF_8)) {
+                properties.load(reader);
+            }
+            contentType = properties.getProperty(CONTENT_TYPE_PROPERTY);
+            for (String name : properties.stringPropertyNames()) {
+                if (name.startsWith(USER_METADATA_PREFIX)) {
+                    userMetadata.put(name.substring(USER_METADATA_PREFIX.length()),
+                            properties.getProperty(name));
+                }
+            }
+        }
+        if (contentType == null || contentType.isBlank()) {
+            Path legacy = legacyContentTypeMetadata(object);
+            contentType = Files.isRegularFile(legacy)
+                    ? Files.readString(legacy, StandardCharsets.UTF_8).trim()
+                    : "application/octet-stream";
+        }
+        return new StoredMetadata(contentType, userMetadata);
+    }
+
+    private String detectedImageContentType(Path object) throws IOException {
+        byte[] signature = new byte[12];
+        int length;
+        try (InputStream input = Files.newInputStream(object)) {
+            length = input.read(signature);
+        }
+        if (length >= 3 && (signature[0] & 0xff) == 0xff
+                && (signature[1] & 0xff) == 0xd8 && (signature[2] & 0xff) == 0xff) {
+            return "image/jpeg";
+        }
+        if (length >= 8 && (signature[0] & 0xff) == 0x89
+                && signature[1] == 0x50 && signature[2] == 0x4e && signature[3] == 0x47
+                && signature[4] == 0x0d && signature[5] == 0x0a
+                && signature[6] == 0x1a && signature[7] == 0x0a) {
+            return "image/png";
+        }
+        if (length >= 12 && signature[0] == 0x52 && signature[1] == 0x49
+                && signature[2] == 0x46 && signature[3] == 0x46
+                && signature[8] == 0x57 && signature[9] == 0x45
+                && signature[10] == 0x42 && signature[11] == 0x50) {
+            return "image/webp";
+        }
+        return null;
     }
 
     private String sign(String payload) {
@@ -211,5 +376,11 @@ public class LocalObjectStorageService implements ObjectStorageService {
     }
 
     public record Token(String objectKey, String downloadName, String contentType, Instant expiresAt) {
+    }
+
+    private record LocalObjectPath(Path path, String objectKey) {
+    }
+
+    private record StoredMetadata(String contentType, Map<String, String> userMetadata) {
     }
 }

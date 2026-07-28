@@ -98,18 +98,30 @@ final class NativeImageProcessor {
 
     private static NativeLibrary loadLibrary() {
         PlatformResource platform = PlatformResource.detect();
-        try (InputStream input = NativeImageProcessor.class.getResourceAsStream(platform.resourcePath())) {
-            if (input == null) {
-                throw new IllegalStateException("Fat JAR 中缺少原生图片组件: " + platform.resourcePath());
-            }
+        try {
             Path directory = Files.createTempDirectory("photolib-image-");
-            Path libraryPath = directory.resolve(platform.fileName());
-            Files.copy(input, libraryPath, StandardCopyOption.REPLACE_EXISTING);
             directory.toFile().deleteOnExit();
-            libraryPath.toFile().deleteOnExit();
-            return Native.load(libraryPath.toAbsolutePath().toString(), NativeLibrary.class);
+            Path vipsPath = extractResource(directory, platform.vipsResourcePath(),
+                    platform.vipsFileName());
+            System.load(vipsPath.toAbsolutePath().toString());
+            Path wrapperPath = extractResource(directory, platform.wrapperResourcePath(),
+                    platform.wrapperFileName());
+            return Native.load(wrapperPath.toAbsolutePath().toString(), NativeLibrary.class);
         } catch (IOException | UnsatisfiedLinkError ex) {
             throw new IllegalStateException("无法加载当前平台的原生图片组件", ex);
+        }
+    }
+
+    private static Path extractResource(Path directory, String resourcePath,
+                                        String fileName) throws IOException {
+        try (InputStream input = NativeImageProcessor.class.getResourceAsStream(resourcePath)) {
+            if (input == null) {
+                throw new IllegalStateException("Fat JAR 中缺少原生图片组件: " + resourcePath);
+            }
+            Path extracted = directory.resolve(fileName);
+            Files.copy(input, extracted, StandardCopyOption.REPLACE_EXISTING);
+            extracted.toFile().deleteOnExit();
+            return extracted;
         }
     }
 
@@ -143,7 +155,8 @@ final class NativeImageProcessor {
                                   NativeFileResult output);
     }
 
-    private record PlatformResource(String resourcePath, String fileName) {
+    private record PlatformResource(String wrapperResourcePath, String wrapperFileName,
+                                    String vipsResourcePath, String vipsFileName) {
         private static PlatformResource detect() {
             String architecture = System.getProperty("os.arch", "").toLowerCase(Locale.ROOT);
             if (!architecture.equals("amd64") && !architecture.equals("x86_64")) {
@@ -152,11 +165,14 @@ final class NativeImageProcessor {
             String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
             if (os.contains("win")) {
                 return new PlatformResource(
-                        "/native/windows-x86_64/photolib-image.dll", "photolib-image.dll");
+                        "/native/windows-x86_64/photolib-image.dll", "photolib-image.dll",
+                        "/native/windows-x86_64/libvips-42.dll", "libvips-42.dll");
             }
             if (os.contains("linux")) {
                 return new PlatformResource(
-                        "/native/linux-x86_64/libphotolib-image.so", "libphotolib-image.so");
+                        "/native/linux-x86_64/libphotolib-image.so", "libphotolib-image.so",
+                        "/native/linux-x86_64/libvips-cpp.so.8.18.3",
+                        "libvips-cpp.so.8.18.3");
             }
             throw new IllegalStateException("原生图片组件不支持当前操作系统: " + os);
         }

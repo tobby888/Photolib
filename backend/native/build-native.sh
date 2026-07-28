@@ -56,11 +56,86 @@ if [ ! -f "$STB_SOURCE/stb_image.h" ]; then
     tar -xzf "$STB_ARCHIVE" -C "$DEPENDENCY_SOURCE_DIRECTORY"
 fi
 
+GPL_LICENSE="$ARCHIVE_DIRECTORY/GPL-3.0.txt"
+LGPL_LICENSE="$ARCHIVE_DIRECTORY/LGPL-3.0.txt"
+MPL_LICENSE="$ARCHIVE_DIRECTORY/MPL-2.0.txt"
+get_verified_archive \
+    https://www.gnu.org/licenses/gpl-3.0.txt \
+    "$GPL_LICENSE" \
+    3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986
+get_verified_archive \
+    https://www.gnu.org/licenses/lgpl-3.0.txt \
+    "$LGPL_LICENSE" \
+    e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118
+get_verified_archive \
+    https://www.mozilla.org/media/MPL/2.0/index.815ca599c9df.txt \
+    "$MPL_LICENSE" \
+    fab3dd6bdab226f1c08630b1dd917e11fcb4ec5e1e020e2c16f83a0a13863e85
+
+VIPS_VERSION=1.3.2
+VIPS_WINDOWS_ARCHIVE="$ARCHIVE_DIRECTORY/sharp-libvips-win32-x64-$VIPS_VERSION.tgz"
+VIPS_WINDOWS_SOURCE="$DEPENDENCY_SOURCE_DIRECTORY/sharp-libvips-win32-x64-$VIPS_VERSION"
+get_verified_archive \
+    "https://registry.npmjs.org/@img/sharp-libvips-win32-x64/-/sharp-libvips-win32-x64-$VIPS_VERSION.tgz" \
+    "$VIPS_WINDOWS_ARCHIVE" \
+    bcae355919358e0406c1674d0beaf841e9b11f321f8a54b927cddf4935c27668
+if [ ! -f "$VIPS_WINDOWS_SOURCE/package/lib/libvips-42.dll" ]; then
+    mkdir -p "$VIPS_WINDOWS_SOURCE"
+    tar -xzf "$VIPS_WINDOWS_ARCHIVE" -C "$VIPS_WINDOWS_SOURCE"
+fi
+
+VIPS_LINUX_ARCHIVE="$ARCHIVE_DIRECTORY/sharp-libvips-linux-x64-$VIPS_VERSION.tgz"
+VIPS_LINUX_SOURCE="$DEPENDENCY_SOURCE_DIRECTORY/sharp-libvips-linux-x64-$VIPS_VERSION"
+get_verified_archive \
+    "https://registry.npmjs.org/@img/sharp-libvips-linux-x64/-/sharp-libvips-linux-x64-$VIPS_VERSION.tgz" \
+    "$VIPS_LINUX_ARCHIVE" \
+    8cf0eafeaca832b68942fe1a770fb5f3b490504d3a9f2e3f56ee8784c9d65c45
+if [ ! -f "$VIPS_LINUX_SOURCE/package/lib/libvips-cpp.so.8.18.3" ]; then
+    mkdir -p "$VIPS_LINUX_SOURCE"
+    tar -xzf "$VIPS_LINUX_ARCHIVE" -C "$VIPS_LINUX_SOURCE"
+fi
+
+VIPS_WINDOWS_DLL="$VIPS_WINDOWS_SOURCE/package/lib/libvips-42.dll"
+VIPS_WINDOWS_IMPORT="$VIPS_WINDOWS_SOURCE/package/lib/libvips.lib"
+VIPS_LINUX_LIBRARY="$VIPS_LINUX_SOURCE/package/lib/libvips-cpp.so.8.18.3"
+mkdir -p \
+    "$OUTPUT_DIRECTORY/native/windows-x86_64" \
+    "$OUTPUT_DIRECTORY/native/linux-x86_64" \
+    "$OUTPUT_DIRECTORY/native/licenses/sharp-libvips/windows-x64" \
+    "$OUTPUT_DIRECTORY/native/licenses/sharp-libvips/linux-x64" \
+    "$OUTPUT_DIRECTORY/native/licenses/libjpeg-turbo" \
+    "$OUTPUT_DIRECTORY/native/licenses/stb" \
+    "$OUTPUT_DIRECTORY/native/licenses/common"
+cp -f "$VIPS_WINDOWS_DLL" \
+    "$OUTPUT_DIRECTORY/native/windows-x86_64/libvips-42.dll"
+cp -f "$VIPS_LINUX_LIBRARY" \
+    "$OUTPUT_DIRECTORY/native/linux-x86_64/libvips-cpp.so.8.18.3"
+for manifest in README.md package.json versions.json; do
+    cp -f "$VIPS_WINDOWS_SOURCE/package/$manifest" \
+        "$OUTPUT_DIRECTORY/native/licenses/sharp-libvips/windows-x64/$manifest"
+    cp -f "$VIPS_LINUX_SOURCE/package/$manifest" \
+        "$OUTPUT_DIRECTORY/native/licenses/sharp-libvips/linux-x64/$manifest"
+done
+cp -f "$LIBJPEG_SOURCE/LICENSE.md" \
+    "$OUTPUT_DIRECTORY/native/licenses/libjpeg-turbo/LICENSE.md"
+cp -f "$LIBJPEG_SOURCE/README.ijg" \
+    "$OUTPUT_DIRECTORY/native/licenses/libjpeg-turbo/README.ijg"
+cp -f "$STB_SOURCE/LICENSE" \
+    "$OUTPUT_DIRECTORY/native/licenses/stb/LICENSE"
+cp -f "$GPL_LICENSE" \
+    "$OUTPUT_DIRECTORY/native/licenses/common/GPL-3.0.txt"
+cp -f "$LGPL_LICENSE" \
+    "$OUTPUT_DIRECTORY/native/licenses/common/LGPL-3.0.txt"
+cp -f "$MPL_LICENSE" \
+    "$OUTPUT_DIRECTORY/native/licenses/common/MPL-2.0.txt"
+
 build_target() {
     name=$1
     system_name=$2
     zig_target=$3
     relative_output=$4
+    vips_link_library=$5
+    run_host_tests=$6
     target_build_directory="$BUILD_DIRECTORY/$name"
     libjpeg_build_directory="$target_build_directory/libjpeg-turbo"
     wrapper_build_directory="$target_build_directory/wrapper"
@@ -94,6 +169,8 @@ build_target() {
         -DPL_LIBJPEG_SOURCE="$LIBJPEG_SOURCE" \
         -DPL_LIBJPEG_BUILD="$libjpeg_build_directory" \
         -DPL_STB_SOURCE="$STB_SOURCE" \
+        -DPL_VIPS_LINK_LIBRARY="$vips_link_library" \
+        -DPL_BUILD_HOST_TESTS="$run_host_tests" \
         -DPL_ZIG_TARGET="$zig_target" \
         -DPL_NATIVE_OUTPUT="$native_output"
     cmake --build "$wrapper_build_directory" --target photolib-native
@@ -103,10 +180,14 @@ build_target \
     windows-x86_64 \
     Windows \
     x86_64-windows-gnu \
-    native/windows-x86_64/photolib-image.dll
+    native/windows-x86_64/photolib-image.dll \
+    "$VIPS_WINDOWS_IMPORT" \
+    OFF
 
 build_target \
     linux-x86_64 \
     Linux \
-    x86_64-linux-gnu.2.17 \
-    native/linux-x86_64/libphotolib-image.so
+    x86_64-linux-gnu.2.28 \
+    native/linux-x86_64/libphotolib-image.so \
+    "$VIPS_LINUX_LIBRARY" \
+    ON

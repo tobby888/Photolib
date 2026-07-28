@@ -9,8 +9,9 @@ import java.nio.file.StandardCopyOption;
 
 @Component
 public class ImageCompressor {
-    static final long MAX_PIXELS = 100_000_000L;
-    static final int MAX_DIMENSION = 30_000;
+    static final long MAX_PIXELS = 1_000_000_000L;
+    static final int MAX_DIMENSION = 100_000;
+    static final long MAX_INPUT_BYTES = 100L * 1024 * 1024;
 
     private final NativeImageProcessor nativeProcessor;
 
@@ -28,8 +29,9 @@ public class ImageCompressor {
             throw new IllegalArgumentException("目标图片大小必须大于 0");
         }
         requireDistinctPaths(source, destination);
+        long sourceSize = requireSafeInputSize(source);
         NativeImageProcessor.Dimensions dimensions = nativeProcessor.dimensions(source, contentType);
-        if (Files.size(source) <= targetBytes) {
+        if (sourceSize <= targetBytes) {
             Files.copy(source, destination, StandardCopyOption.REPLACE_EXISTING);
             return new FileResult(destination, Files.size(destination), dimensions.width(),
                     dimensions.height(), contentType);
@@ -50,6 +52,7 @@ public class ImageCompressor {
             throw new IllegalArgumentException("预览图最大边长必须大于 0");
         }
         requireDistinctPaths(source, destination);
+        requireSafeInputSize(source);
         NativeImageProcessor.ProcessedFile processed = nativeProcessor.thumbnail(
                 source, destination, contentType, maxDimension, compressionRatio);
         validateOutput(processed);
@@ -68,6 +71,14 @@ public class ImageCompressor {
             throw new IllegalArgumentException("输出图片路径缺少父目录");
         }
         Files.createDirectories(parent);
+    }
+
+    private long requireSafeInputSize(Path source) throws IOException {
+        long size = Files.size(source);
+        if (size <= 0 || size > MAX_INPUT_BYTES) {
+            throw new IOException("图片为空或超过 100 MiB 安全上限");
+        }
+        return size;
     }
 
     private void validateOutput(NativeImageProcessor.ProcessedFile processed) throws IOException {

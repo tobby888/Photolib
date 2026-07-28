@@ -24,26 +24,37 @@ typedef struct {
     unsigned char *data;
     size_t length;
     size_t capacity;
+    size_t maximum_length;
     int failed;
+    int too_large;
 } output_buffer;
 
 static void append_output(void *context, void *data, int size) {
     output_buffer *buffer = (output_buffer *)context;
     if (buffer->failed || size < 0) return;
 
-    size_t requested = buffer->length + (size_t)size;
-    if (requested < buffer->length) {
+    size_t addition = (size_t)size;
+    if (addition > buffer->maximum_length - buffer->length) {
         buffer->failed = 1;
+        buffer->too_large = 1;
         return;
     }
+    size_t requested = buffer->length + addition;
     if (requested > buffer->capacity) {
         size_t capacity = buffer->capacity == 0 ? 4096 : buffer->capacity;
         while (capacity < requested) {
-            if (capacity > SIZE_MAX / 2) {
-                capacity = requested;
+            if (capacity > buffer->maximum_length / 2) {
+                capacity = buffer->maximum_length;
                 break;
             }
             capacity *= 2;
+        }
+        if (capacity > buffer->maximum_length)
+            capacity = buffer->maximum_length;
+        if (capacity < requested) {
+            buffer->failed = 1;
+            buffer->too_large = 1;
+            return;
         }
         unsigned char *grown = (unsigned char *)realloc(buffer->data, capacity);
         if (grown == NULL) {
@@ -79,16 +90,27 @@ int pl_resize(const unsigned char *input, int input_width, int input_height,
 }
 
 unsigned char *pl_png_encode(const unsigned char *pixels, int width, int height,
-                             int channels, size_t *output_length) {
+                             int channels, size_t maximum_output_length,
+                             size_t *output_length, int *output_too_large) {
     output_buffer buffer = {0};
+    buffer.maximum_length = maximum_output_length;
+    if (output_length == NULL || output_too_large == NULL ||
+        maximum_output_length == 0) return NULL;
+    *output_length = 0;
+    *output_too_large = 0;
     int stride = width * channels;
     if (!stbi_write_png_to_func(append_output, &buffer, width, height, channels,
                                 pixels, stride) || buffer.failed) {
         free(buffer.data);
+        *output_too_large = buffer.too_large;
         return NULL;
     }
     *output_length = buffer.length;
     return buffer.data;
+}
+
+int pl_output_length_allowed(size_t length, size_t maximum_length) {
+    return length > 0 && length <= maximum_length;
 }
 
 void pl_stb_free(void *pointer) {
@@ -163,4 +185,25 @@ int pl_file_write_utf8(const char *path, const unsigned char *data, size_t lengt
     size_t written = fwrite(data, 1, length, file);
     int close_result = fclose(file);
     return written == length && close_result == 0;
+}
+
+int pl_file_matches_format_utf8(const char *path, int format) {
+    if (path == NULL) return 0;
+    FILE *file = open_utf8(path, "rb");
+    if (file == NULL) return 0;
+    unsigned char signature[8] = {0};
+    size_t length = fread(signature, 1, sizeof(signature), file);
+    fclose(file);
+    if (format == 1) {
+        return length >= 3 && signature[0] == 0xff &&
+               signature[1] == 0xd8 && signature[2] == 0xff;
+    }
+    if (format == 2) {
+        static const unsigned char png_signature[8] = {
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a
+        };
+        return length == sizeof(signature) &&
+               memcmp(signature, png_signature, sizeof(signature)) == 0;
+    }
+    return 0;
 }

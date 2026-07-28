@@ -13,6 +13,8 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
 
@@ -20,6 +22,42 @@ import static org.junit.jupiter.api.Assertions.*;
 
 @EnabledIf("hasConfiguredDotEnv")
 class AliyunObjectStorageServiceIntegrationTests {
+
+    @Test
+    void storageServiceRoundTripsUserMetadataWithoutHeaderPrefix() throws Exception {
+        Properties dotEnv = loadDotEnv();
+        String objectKey = "photolib-integration-test/" + UUID.randomUUID() + ".txt";
+        byte[] expected = "PhotoLib OSS metadata test".getBytes(StandardCharsets.UTF_8);
+        StorageProperties properties = new StorageProperties(
+                "aliyun",
+                dotEnv.getProperty("OSS_BUCKET"),
+                dotEnv.getProperty("OSS_ENDPOINT"),
+                null,
+                dotEnv.getProperty("OSS_ACCESS_KEY_ID"),
+                dotEnv.getProperty("OSS_ACCESS_KEY_SECRET"),
+                null, null, "unused", java.util.List.of("*"),
+                Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofDays(30),
+                10_485_760, 104_857_600, 0.6);
+        AliyunObjectStorageService storage = new AliyunObjectStorageService(properties);
+        try {
+            storage.put(objectKey, new ByteArrayInputStream(expected), expected.length,
+                    "text/plain; charset=utf-8", Map.of("Preview-Ratio", "0.6"));
+
+            ObjectStorageService.ObjectInfo info = storage.stat(objectKey);
+            assertEquals(expected.length, info.size());
+            assertEquals("0.6", info.userMetadata().get("preview-ratio"));
+            assertFalse(info.userMetadata().containsKey("x-oss-meta-preview-ratio"));
+            try (InputStream input = storage.open(objectKey)) {
+                assertArrayEquals(expected, input.readAllBytes());
+            }
+        } finally {
+            try {
+                storage.delete(objectKey);
+            } finally {
+                storage.close();
+            }
+        }
+    }
 
     @Test
     void configuredCredentialsCanReadWriteAndDeleteObjects() throws Exception {

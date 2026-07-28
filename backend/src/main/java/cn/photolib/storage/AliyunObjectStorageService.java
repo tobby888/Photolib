@@ -25,6 +25,8 @@ import java.time.Instant;
 import java.util.Date;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 public class AliyunObjectStorageService implements ObjectStorageService {
     private static final Logger log = LoggerFactory.getLogger(AliyunObjectStorageService.class);
@@ -69,7 +71,14 @@ public class AliyunObjectStorageService implements ObjectStorageService {
         }
         List<String> requiredOrigins = origins;
 
-        List<SetBucketCORSRequest.CORSRule> rules = currentCorsRules();
+        List<SetBucketCORSRequest.CORSRule> rules;
+        try {
+            rules = currentCorsRules();
+        } catch (RuntimeException exception) {
+            log.warn("读取 OSS Bucket {} 的 CORS 配置失败，跳过本次自动补全；对象存储本身继续可用",
+                    properties.bucket(), exception);
+            return;
+        }
         if (rules.stream().anyMatch(rule -> supportsDirectUpload(rule, requiredOrigins))) {
             return;
         }
@@ -112,7 +121,8 @@ public class AliyunObjectStorageService implements ObjectStorageService {
             return false;
         }
         boolean originsMatch = allowedOrigins.contains("*") || requiredOrigins.stream().allMatch(allowedOrigins::contains);
-        boolean methodsMatch = allowedMethods.contains("PUT") && allowedMethods.contains("GET");
+        boolean methodsMatch = allowedMethods.contains("PUT") && allowedMethods.contains("GET")
+                && allowedMethods.contains("HEAD");
         boolean headersMatch = allowedHeaders.contains("*") || allowedHeaders.stream()
                 .anyMatch(header -> "content-type".equalsIgnoreCase(header));
         return originsMatch && methodsMatch && headersMatch;
@@ -164,7 +174,21 @@ public class AliyunObjectStorageService implements ObjectStorageService {
     @Override
     public ObjectInfo stat(String objectKey) {
         ObjectMetadata metadata = client.getObjectMetadata(properties.bucket(), objectKey);
-        return new ObjectInfo(metadata.getContentLength(), metadata.getContentType());
+        return new ObjectInfo(metadata.getContentLength(), metadata.getContentType(),
+                metadata.getUserMetadata());
+    }
+
+    @Override
+    public Optional<ObjectInfo> find(String objectKey) {
+        try {
+            return Optional.of(stat(objectKey));
+        } catch (OSSException exception) {
+            if ("NoSuchKey".equals(exception.getErrorCode())
+                    || "NoSuchObject".equals(exception.getErrorCode())) {
+                return Optional.empty();
+            }
+            throw exception;
+        }
     }
 
     @Override
@@ -174,10 +198,13 @@ public class AliyunObjectStorageService implements ObjectStorageService {
     }
 
     @Override
-    public void put(String objectKey, InputStream input, long size, String contentType) {
+    public void put(String objectKey, InputStream input, long size, String contentType,
+                    Map<String, String> userMetadata) {
+        ObjectInfo objectInfo = new ObjectInfo(size, contentType, userMetadata);
         ObjectMetadata metadata = new ObjectMetadata();
         metadata.setContentLength(size);
         metadata.setContentType(contentType);
+        metadata.setUserMetadata(objectInfo.userMetadata());
         client.putObject(new PutObjectRequest(properties.bucket(), objectKey, input, metadata));
     }
 

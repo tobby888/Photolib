@@ -5,15 +5,20 @@ const c = @cImport({
     @cInclude("string.h");
     @cInclude("turbojpeg.h");
     @cInclude("stb_bridge.h");
+    @cInclude("vips_bridge.h");
 });
 
 const FORMAT_JPEG: i32 = 1;
 const FORMAT_PNG: i32 = 2;
 const OP_COMPRESS: i32 = 1;
 const OP_THUMBNAIL: i32 = 2;
-const MAX_DIMENSION: i32 = 30_000;
-const MAX_PIXELS: u64 = 100_000_000;
+const LEGACY_MAX_DIMENSION: i32 = 30_000;
+const LEGACY_MAX_PIXELS: u64 = 100_000_000;
+const LEGACY_MAX_DECODED_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_DIMENSION: i32 = 100_000;
+const MAX_PIXELS: u64 = 1_000_000_000;
 const MAX_INPUT_BYTES: usize = 100 * 1024 * 1024;
+const MAX_OUTPUT_BYTES: u64 = 256 * 1024 * 1024;
 const MIN_DIMENSION: i32 = 320;
 const JPEG_MIN_QUALITY: i32 = 82;
 const JPEG_MAX_QUALITY: i32 = 97;
@@ -89,16 +94,17 @@ export fn photolib_dimensions_file(input_path: ?[*:0]const u8, format: i32, outp
     const out = output orelse return 1;
     out.* = std.mem.zeroes(PlDimensions);
     const path = input_path orelse return fail(&out.error_message, NativeError.InvalidInput);
-    const source = readFile(path) catch |err|
-        return fail(&out.error_message, err);
-    defer source.deinit();
-
-    const dimensions = readDimensions(source.data, source.length, format) catch |err|
-        return fail(&out.error_message, err);
-    out.width = dimensions.width;
-    out.height = dimensions.height;
-    out.channels = dimensions.channels;
-    return 0;
+    if (!supportedFormat(format)) return fail(&out.error_message, NativeError.UnsupportedFormat);
+    if (c.pl_file_matches_format_utf8(path, format) == 0)
+        return fail(&out.error_message, NativeError.DecodeFailed);
+    var orientation: i32 = 1;
+    const status = vipsDimensions(path, format, out, &orientation);
+    if (status == 0 and orientation >= 5 and orientation <= 8) {
+        const width = out.width;
+        out.width = out.height;
+        out.height = width;
+    }
+    return status;
 }
 
 export fn photolib_process_file(input_path: ?[*:0]const u8, output_path: ?[*:0]const u8, format: i32, operation: i32, target_bytes: u64, max_dimension: i32, quality: f64, output: ?*PlFileResult) callconv(.c) i32 {
@@ -106,6 +112,32 @@ export fn photolib_process_file(input_path: ?[*:0]const u8, output_path: ?[*:0]c
     out.* = std.mem.zeroes(PlFileResult);
     const source_path = input_path orelse return fail(&out.error_message, NativeError.InvalidInput);
     const destination_path = output_path orelse return fail(&out.error_message, NativeError.InvalidInput);
+    if (!supportedFormat(format)) return fail(&out.error_message, NativeError.UnsupportedFormat);
+    if (operation != OP_COMPRESS and operation != OP_THUMBNAIL)
+        return fail(&out.error_message, NativeError.InvalidInput);
+    if (operation == OP_COMPRESS and target_bytes == 0)
+        return fail(&out.error_message, NativeError.InvalidInput);
+    if (operation == OP_THUMBNAIL and
+        (max_dimension <= 0 or quality <= 0 or quality > 1))
+        return fail(&out.error_message, NativeError.InvalidInput);
+    if (c.pl_file_matches_format_utf8(source_path, format) == 0)
+        return fail(&out.error_message, NativeError.DecodeFailed);
+
+    var dimensions_result = std.mem.zeroes(PlDimensions);
+    var orientation: i32 = 1;
+    if (vipsDimensions(source_path, format, &dimensions_result, &orientation) != 0) {
+        out.error_message = dimensions_result.error_message;
+        return 1;
+    }
+    const dimensions = Dimensions{
+        .width = dimensions_result.width,
+        .height = dimensions_result.height,
+        .channels = dimensions_result.channels,
+    };
+    if (requiresVips(dimensions, format, orientation)) {
+        return vipsProcess(source_path, destination_path, format, operation, target_bytes, max_dimension, quality, out);
+    }
+
     const source = readFile(source_path) catch |err|
         return fail(&out.error_message, err);
     defer source.deinit();
@@ -118,6 +150,70 @@ export fn photolib_process_file(input_path: ?[*:0]const u8, output_path: ?[*:0]c
     out.length = processed.encoded.length;
     out.width = processed.width;
     out.height = processed.height;
+    return 0;
+}
+
+fn supportedFormat(format: i32) bool {
+    return format == FORMAT_JPEG or format == FORMAT_PNG;
+}
+
+fn requiresVips(dimensions: Dimensions, format: i32, orientation: i32) bool {
+    const pixels = @as(u64, @intCast(dimensions.width)) *
+        @as(u64, @intCast(dimensions.height));
+    const decoded_channels: u64 = if (format == FORMAT_JPEG)
+        3
+    else if (dimensions.channels == 2 or dimensions.channels == 4)
+        4
+    else
+        3;
+    const decoded_bytes = pixels * decoded_channels;
+    return dimensions.width >= LEGACY_MAX_DIMENSION or
+        dimensions.height >= LEGACY_MAX_DIMENSION or
+        pixels >= LEGACY_MAX_PIXELS or
+        decoded_bytes > LEGACY_MAX_DECODED_BYTES or
+        orientation != 1;
+}
+
+fn vipsDimensions(path: [*:0]const u8, format: i32, out: *PlDimensions, orientation: *i32) i32 {
+    if (c.pl_vips_dimensions_file(
+        path,
+        format,
+        MAX_DIMENSION,
+        MAX_PIXELS,
+        LEGACY_MAX_DIMENSION,
+        LEGACY_MAX_PIXELS,
+        LEGACY_MAX_DECODED_BYTES,
+        &out.width,
+        &out.height,
+        &out.channels,
+        orientation,
+        &out.error_message[0],
+        out.error_message.len,
+    ) == 0) return 1;
+    return 0;
+}
+
+fn vipsProcess(input_path: [*:0]const u8, output_path: [*:0]const u8, format: i32, operation: i32, target_bytes: u64, max_dimension: i32, quality: f64, out: *PlFileResult) i32 {
+    if (c.pl_vips_process_file(
+        input_path,
+        output_path,
+        format,
+        operation,
+        target_bytes,
+        max_dimension,
+        quality,
+        MAX_DIMENSION,
+        MAX_PIXELS,
+        LEGACY_MAX_DIMENSION,
+        LEGACY_MAX_PIXELS,
+        LEGACY_MAX_DECODED_BYTES,
+        MAX_OUTPUT_BYTES,
+        &out.length,
+        &out.width,
+        &out.height,
+        &out.error_message[0],
+        out.error_message.len,
+    ) == 0) return 1;
     return 0;
 }
 
@@ -381,6 +477,8 @@ fn encodeJpeg(pixels: Pixels, quality: i32) NativeError!Encoded {
     var jpeg_length: usize = 0;
     if (c.tj3Compress8(handle, pixels.data, pixels.width, 0, pixels.height, c.TJPF_RGB, &jpeg_buffer, &jpeg_length) != 0) return NativeError.EncodeFailed;
     defer c.tj3Free(jpeg_buffer);
+    if (c.pl_output_length_allowed(jpeg_length, MAX_OUTPUT_BYTES) == 0)
+        return NativeError.OutputTooLarge;
     const memory = c.malloc(jpeg_length) orelse return NativeError.OutOfMemory;
     const output: [*]u8 = @ptrCast(memory);
     @memcpy(output[0..jpeg_length], jpeg_buffer[0..jpeg_length]);
@@ -389,7 +487,19 @@ fn encodeJpeg(pixels: Pixels, quality: i32) NativeError!Encoded {
 
 fn encodePng(pixels: Pixels) NativeError!Encoded {
     var output_length: usize = 0;
-    const output = c.pl_png_encode(pixels.data, pixels.width, pixels.height, pixels.channels, &output_length) orelse return NativeError.EncodeFailed;
+    var output_too_large: c_int = 0;
+    const output = c.pl_png_encode(
+        pixels.data,
+        pixels.width,
+        pixels.height,
+        pixels.channels,
+        MAX_OUTPUT_BYTES,
+        &output_length,
+        &output_too_large,
+    ) orelse return if (output_too_large != 0)
+        NativeError.OutputTooLarge
+    else
+        NativeError.EncodeFailed;
     return .{ .data = output, .length = output_length };
 }
 
@@ -405,10 +515,10 @@ fn resizePixels(source: Pixels, width: i32, height: i32) NativeError!Pixels {
 }
 
 fn checkedPixelCount(width: i32, height: i32) NativeError!usize {
-    if (width <= 0 or height <= 0 or width > MAX_DIMENSION or height > MAX_DIMENSION)
+    if (width <= 0 or height <= 0 or width > LEGACY_MAX_DIMENSION or height > LEGACY_MAX_DIMENSION)
         return NativeError.InvalidDimensions;
     const pixels = @as(u64, @intCast(width)) * @as(u64, @intCast(height));
-    if (pixels > MAX_PIXELS) return NativeError.InvalidDimensions;
+    if (pixels > LEGACY_MAX_PIXELS) return NativeError.InvalidDimensions;
     return std.math.cast(usize, pixels) orelse NativeError.InvalidDimensions;
 }
 
