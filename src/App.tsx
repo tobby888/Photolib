@@ -24,6 +24,7 @@ const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage'))
 const RequestsPage = lazy(() => import('./pages/RequestsPage'))
 const RequestDeliveryPage = lazy(() => import('./pages/RequestDeliveryPage'))
 const PhotosPage = lazy(() => import('./pages/PhotosPage'))
+const PhotoDetailPage = lazy(() => import('./pages/PhotoDetailPage'))
 const BatchUploadPage = lazy(() => import('./pages/BatchUploadPage'))
 const WorklogsPage = lazy(() => import('./pages/WorklogsPage'))
 const DirectoryPage = lazy(() => import('./pages/DirectoryPage'))
@@ -320,6 +321,7 @@ function Shell() {
             <Route path="/requests/:requestId" element={hasPermission(user, 'REQUEST_VIEW') ? <RequestDeliveryPage /> : <Navigate to="/" />} />
             <Route path="/photos" element={hasPermission(user, 'PHOTO_VIEW') ? <PhotosPage /> : <Navigate to="/" />} />
             <Route path="/photos/batch-upload" element={hasAnyPermission(user, 'PHOTO_UPLOAD', 'REQUEST_PHOTO_MANAGE') ? <BatchUploadPage /> : <Navigate to="/" />} />
+            <Route path="/photos/:photoId" element={hasPermission(user, 'PHOTO_VIEW') ? <PhotoDetailPage /> : <Navigate to="/" />} />
             <Route path="/worklogs" element={hasAnyPermission(user, 'WORKLOG_SUBMIT', 'WORKLOG_CONFIRM', 'WORKLOG_EXPORT') ? <WorklogsPage /> : <Navigate to="/" />} />
             <Route path="/directory" element={hasAnyPermission(user, 'DIRECTORY_VIEW', 'DIRECTORY_MANAGE') ? <DirectoryPage /> : <Navigate to="/" />} />
             <Route path="/notifications" element={<NotificationsPage />} />

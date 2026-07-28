@@ -1,5 +1,5 @@
 import {
-  App, Button, Card, Checkbox, Col, DatePicker, Descriptions, Drawer, Form, Image, Input, Modal,
+  App, Button, Card, Checkbox, Col, DatePicker, Form, Image, Input, Modal,
   Pagination, Progress, Row, Select, Space, Table, Tag, Typography, Upload,
 } from 'antd'
 import {
@@ -12,7 +12,7 @@ import { api, emptyPage, qs } from '../api'
 import { readTakenAt } from '../exif'
 import { uploadToObjectStorage } from '../storageUpload'
 import type { CampusMember, DedupedMember, EntityId, PageData, Photo, Project } from '../types'
-import { DataState, formatBytes, PageTitle, StatusTag } from '../components'
+import { DataState, PageTitle, StatusTag } from '../components'
 import { useLoad } from '../hooks'
 import { useAuth } from '../auth'
 import { preparePhotoBatchDownload } from '../photoBatchDownload'
@@ -32,7 +32,6 @@ export default function PhotosPage() {
   const [uploading, setUploading] = useState(false)
   const [uploadPhase, setUploadPhase] = useState<'uploading' | 'processing' | null>(null)
   const [uploadPercent, setUploadPercent] = useState(0)
-  const [selected, setSelected] = useState<Photo | null>(null)
   const [selectedPhotos, setSelectedPhotos] = useState<Photo[]>([])
   const [batchDownloading, setBatchDownloading] = useState(false)
   const [projectPickerOpen, setProjectPickerOpen] = useState(false)
@@ -40,7 +39,6 @@ export default function PhotosPage() {
   const [selectedProjectId, setSelectedProjectId] = useState<EntityId | null>(null)
   const [projectFilters, setProjectFilters] = useState({ page: 1, keyword: '' })
   const [projectPickerPhotos, setProjectPickerPhotos] = useState<Photo[]>([])
-  const [projectPickerSource, setProjectPickerSource] = useState<'batch' | 'detail' | null>(null)
   const [filters, setFilters] = useState({ page: 1, keyword: '', status: 'AVAILABLE' })
   const selectedIds = selectedPhotos.map(photo => photo.id)
   const { data, loading, error, reload } = useLoad(
@@ -157,27 +155,7 @@ export default function PhotosPage() {
       okText: '确认删除', okButtonProps: { danger: true }, cancelText: '取消',
       onOk: async () => {
         await api({ method: 'POST', url: '/photos/batch-delete', data: { photoIds: selectedIds } })
-        setSelectedPhotos([]); setSelected(null); message.success('所选图片已删除'); await reload()
-      },
-    })
-  }
-  const remove = (photo: Photo) => {
-    modal.confirm({
-      title: '确认删除图片？',
-      content: '图片记录及 OSS 中的成品图、缩略图和保留原图都将被永久删除，此操作无法撤销。',
-      okText: '确认删除',
-      okButtonProps: { danger: true },
-      cancelText: '取消',
-      async onOk() {
-        try {
-          await api({ method: 'DELETE', url: `/photos/${photo.id}` })
-          setSelected(null)
-          message.success('图片已删除')
-          await reload()
-        } catch (e) {
-          message.error((e as Error).message)
-          throw e
-        }
+        setSelectedPhotos([]); message.success('所选图片已删除'); await reload()
       },
     })
   }
@@ -185,31 +163,18 @@ export default function PhotosPage() {
     photo.relatedProjects?.some(project => String(project.id) === String(projectId))
     || photo.relatedProjectIds?.some(id => String(id) === String(projectId))
     || false
-  const withProjectLink = (photo: Photo, project: Project): Photo => {
-    if (isLinkedToProject(photo, project.id)) return photo
-    const onlyHasLegacyProjectIds = !photo.relatedProjects?.length && !!photo.relatedProjectIds?.length
-    return {
-      ...photo,
-      relatedProjectIds: [...new Set([...(photo.relatedProjectIds || []), project.id])],
-      relatedProjects: onlyHasLegacyProjectIds
-        ? photo.relatedProjects
-        : [...(photo.relatedProjects || []), { id: project.id, title: project.title }],
-    }
-  }
   const closeProjectPicker = () => {
     setProjectPickerOpen(false)
     setSelectedProjectId(null)
     setProjectPickerPhotos([])
-    setProjectPickerSource(null)
   }
-  const openProjectPicker = (photos: Photo[], source: 'batch' | 'detail') => {
+  const openProjectPicker = (photos: Photo[]) => {
     if (!photos.length) return
     if (photos.some(photo => photo.status !== 'AVAILABLE')) {
       message.warning('项目相册仅接收可用图片，请取消选择已归档图片后重试')
       return
     }
     setProjectPickerPhotos(photos)
-    setProjectPickerSource(source)
     setProjectFilters({ page: 1, keyword: '' })
     setSelectedProjectId(null)
     setProjectPickerOpen(true)
@@ -226,7 +191,6 @@ export default function PhotosPage() {
       return
     }
     const photos = projectPickerPhotos
-    const source = projectPickerSource
     const photoIds = photos.map(photo => photo.id)
     setProjectSaving(true)
     try {
@@ -235,16 +199,7 @@ export default function PhotosPage() {
         url: `/projects/${project.id}/photos`,
         data: { photoIds },
       })
-      setSelected(current => {
-        if (!current || !photoIds.includes(current.id)) return current
-        return withProjectLink(current, project)
-      })
-      if (source === 'batch') {
-        setSelectedPhotos([])
-      } else {
-        setSelectedPhotos(current => current.map(photo =>
-          photoIds.includes(photo.id) ? withProjectLink(photo, project) : photo))
-      }
+      setSelectedPhotos([])
       closeProjectPicker()
       message.success(`已将 ${photoIds.length} 张图片添加到选题项目“${project.title}”`)
       await reload()
@@ -258,7 +213,7 @@ export default function PhotosPage() {
     <PageTitle eyebrow="LIBRARY" title="图片库" description="检索、查看并下载团队沉淀的每一帧。"
       extra={<Space wrap>
         {canAddToProject && <Button size="large" icon={<FolderAddOutlined />} disabled={!selectedIds.length}
-          onClick={() => openProjectPicker(selectedPhotos, 'batch')}>
+          onClick={() => openProjectPicker(selectedPhotos)}>
           添加到项目{selectedIds.length ? `（${selectedIds.length}）` : ''}
         </Button>}
         {canDownload && <Button size="large" icon={<DownloadOutlined />} loading={batchDownloading}
@@ -284,7 +239,13 @@ export default function PhotosPage() {
     <DataState loading={loading} error={error} empty={!data.items.length} onRetry={reload}>
       <Row gutter={[16, 20]} className="photo-grid">
         {data.items.map(photo => <Col xs={24} sm={12} lg={8} xxl={6} key={photo.id}>
-          <Card className={`photo-card${selectedIds.includes(photo.id) ? ' photo-card-selected' : ''}`} hoverable cover={<div className="photo-cover" onClick={() => setSelected(photo)}>
+          <Card className={`photo-card${selectedIds.includes(photo.id) ? ' photo-card-selected' : ''}`} hoverable cover={<div
+            className="photo-cover" role="link" tabIndex={0}
+            aria-label={`查看图片详情：${photo.title || photo.id}`}
+            onClick={() => navigate(`/photos/${photo.id}`)}
+            onKeyDown={event => {
+              if (event.key === 'Enter') navigate(`/photos/${photo.id}`)
+            }}>
             {photo.thumbnailUrl ? <Image preview={false} src={photo.thumbnailUrl} alt={photo.title} /> : <div className="image-placeholder"><span>{photo.title?.slice(0, 1) || '图'}</span></div>}
             <div className="photo-overlay">
               {(canAddToProject || canDownload || canDelete) && (photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED') && <Checkbox
@@ -349,34 +310,6 @@ export default function PhotosPage() {
         </Typography.Text>
       </div>}
     </Modal>
-    <Drawer title="图片详情" width={520} open={!!selected} onClose={() => setSelected(null)}
-      extra={selected && <Space>
-        {canAddToProject && <Button icon={<FolderAddOutlined />} disabled={selected.status !== 'AVAILABLE'}
-          title={selected.status === 'AVAILABLE' ? undefined : '仅可用图片可以添加到项目'}
-          onClick={() => openProjectPicker([selected], 'detail')}>添加到项目</Button>}
-        {canDelete && <Button danger icon={<DeleteOutlined />} onClick={() => remove(selected)}>删除图片</Button>}
-        {canDownload && <Button type="primary" icon={<DownloadOutlined />} onClick={() => void download(selected)}>下载原图</Button>}
-      </Space>}>
-      {selected && <>
-        <div className="detail-image">{selected.thumbnailUrl ? <Image src={selected.thumbnailUrl} /> : <div className="image-placeholder"><span>{selected.title.slice(0, 1)}</span></div>}</div>
-        <Typography.Title level={3}>{selected.title}</Typography.Title>
-        <Typography.Paragraph type="secondary">{selected.description || '暂无图片说明'}</Typography.Paragraph>
-        <Descriptions column={1} size="small" items={[
-          { key: 'status', label: '状态', children: <StatusTag value={selected.status} /> },
-          { key: 'adoption', label: '采用状态', children: selected.adoptionCount ? <Tag color="gold">已采用 × {selected.adoptionCount}</Tag> : '未采用' },
-          { key: 'projects', label: '关联项目', children: selected.relatedProjects?.length
-            ? <Space size={4} wrap>{selected.relatedProjects.map(project => <Tag key={project.id} color="blue">{project.title}</Tag>)}</Space>
-            : selected.relatedProjectIds?.length
-              ? <Space size={4} wrap>{selected.relatedProjectIds.map(pid => <Tag key={pid} color="blue">项目 #{pid}</Tag>)}</Space>
-            : '无关联项目' },
-          { key: 'photographer', label: '拍摄者', children: `${selected.photographerName} · ${selected.photographerStudentId}` },
-          { key: 'taken', label: '拍摄时间', children: dayjs(selected.takenAt).format('YYYY-MM-DD HH:mm') },
-          { key: 'size', label: '文件信息', children: `${selected.width || '-'} × ${selected.height || '-'} · ${formatBytes(selected.size)}` },
-          { key: 'previewSize', label: '预览图体积', children: selected.thumbnailSize == null ? '-' : formatBytes(selected.thumbnailSize) },
-          { key: 'file', label: '归档文件名', children: selected.storedFileName },
-        ]} />
-      </>}
-    </Drawer>
     <Modal title={projectPickerPhotos.length > 1 ? '批量添加图片到选题项目' : '添加图片到选题项目'}
       width={760} open={projectPickerOpen}
       onCancel={() => { if (!projectSaving) closeProjectPicker() }}
