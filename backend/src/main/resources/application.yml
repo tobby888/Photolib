@@ -38,6 +38,7 @@ management:
         include: health,info
 
 photolib:
+  preview-bootstrap-retry-delay: ${PREVIEW_BOOTSTRAP_RETRY_DELAY:30s}
   photo-processing:
     threads: ${PHOTO_PROCESSING_THREADS:1}
     temporary-directory: ${PHOTO_PROCESSING_TEMPORARY_DIRECTORY:./data/photo-processing}

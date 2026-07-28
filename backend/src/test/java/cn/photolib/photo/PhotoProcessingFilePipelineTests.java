@@ -59,7 +59,15 @@ class PhotoProcessingFilePipelineTests {
             assertThat((long) photo[1]).isEqualTo(storage.stat(PHOTO_KEY).size());
             assertThat((int) photo[2]).isEqualTo(1200);
             assertThat((int) photo[3]).isEqualTo(800);
-            assertThat((long) photo[4]).isEqualTo(storage.stat(THUMBNAIL_KEY).size());
+            ObjectStorageService.ObjectInfo thumbnail = storage.stat(THUMBNAIL_KEY);
+            assertThat((long) photo[4]).isEqualTo(thumbnail.size());
+            assertThat(thumbnail.userMetadata())
+                    .containsEntry(PreviewProfile.METADATA_RATIO, "0.6000")
+                    .containsEntry(PreviewProfile.METADATA_EFFECTIVE_QUALITY, "60")
+                    .containsEntry(PreviewProfile.METADATA_GENERATOR,
+                            PreviewProfile.CURRENT_GENERATOR_FINGERPRINT);
+            assertThat(thumbnail.userMetadata().get(PreviewProfile.METADATA_SHA256))
+                    .matches("[0-9a-f]{64}");
             assertThat(photo[5]).isNotNull();
             assertThat(storage.stat(ORIGINAL_KEY).size()).isEqualTo(sourceSize);
             assertJpeg(PHOTO_KEY);

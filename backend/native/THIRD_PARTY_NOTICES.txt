@@ -3,12 +3,39 @@ PhotoLib native image component third-party notices
 
 libjpeg-turbo 3.1.4.1
 Project: https://github.com/libjpeg-turbo/libjpeg-turbo
-License: BSD-style licenses; see https://github.com/libjpeg-turbo/libjpeg-turbo/blob/3.1.4.1/LICENSE.md
+License and required IJG attribution are included in the JAR at:
+native/licenses/libjpeg-turbo/LICENSE.md
+native/licenses/libjpeg-turbo/README.ijg
 
 stb (commit 31c1ad37456438565541f4919958214b6e762fb4)
 Project: https://github.com/nothings/stb
-License: Public Domain or MIT; see https://github.com/nothings/stb/blob/31c1ad37456438565541f4919958214b6e762fb4/LICENSE
+License: Public Domain or MIT; the exact upstream text is included at:
+native/licenses/stb/LICENSE
 
-The build downloads the pinned source archives, verifies their SHA-256
-digests, and statically links the required code into the Windows and Linux
-PhotoLib native image libraries.
+@img/sharp-libvips-win32-x64 1.3.2 and @img/sharp-libvips-linux-x64 1.3.2
+Project: https://github.com/lovell/sharp-libvips
+Runtime: libvips 8.18.3 and its statically bundled dependencies
+License: LGPL-3.0-or-later; the exact package metadata, component versions and
+upstream per-dependency license table are included in the JAR at:
+native/licenses/sharp-libvips/windows-x64/{README.md,package.json,versions.json}
+native/licenses/sharp-libvips/linux-x64/{README.md,package.json,versions.json}
+
+The complete GPLv3, LGPLv3 and MPL 2.0 license texts referenced by those
+manifests are included at:
+native/licenses/common/GPL-3.0.txt
+native/licenses/common/LGPL-3.0.txt
+native/licenses/common/MPL-2.0.txt
+
+The corresponding source and build recipes are available from
+https://github.com/lovell/sharp-libvips/tree/v1.3.2 and
+https://github.com/libvips/libvips/tree/v8.18.3.
+
+The libvips shared libraries are kept as separate JAR resources rather than
+linked into the PhotoLib wrapper. They can be replaced by rebuilding with an
+ABI-compatible package after updating the pinned version, filenames and both
+archive checksums in native/build-native.ps1 and native/build-native.sh.
+
+The build downloads pinned archives and verifies their SHA-256 digests.
+libjpeg-turbo and stb are statically linked into the PhotoLib wrapper. The
+platform-specific libvips shared library is packaged beside that wrapper in
+the JAR and is extracted and preloaded by the Java runtime.
