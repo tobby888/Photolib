@@ -25,7 +25,7 @@ class PhotoProcessingFilePipelineTests {
     private static final String BATCH_ID = "batch-file-pipeline";
     private static final String ORIGINAL_KEY = "temporary/batches/batch-file-pipeline/original.jpg";
     private static final String PHOTO_KEY = "photos/2026/file-pipeline.jpg";
-    private static final String THUMBNAIL_KEY = "thumbnails/93902.jpg";
+    private static final String THUMBNAIL_KEY = "thumbnails/generations/uploads/93902.jpg";
 
     @Autowired
     private PhotoProcessingService processing;
