@@ -121,6 +121,42 @@ class PhotoProcessingProfileGuardTests {
         }
     }
 
+    @Test
+    void publishesAvailableWithNullPreviewColumnsWhenEncodingFailed() {
+        Optional<PreviewProfileRepository.StoredProfile> original = profileRepository.findStored();
+        cleanupRows();
+        try {
+            setProfile("0.6000");
+            insertPhoto();
+            PreviewProfilePolicy.CommitPermit permit = profiles.permitForNewPreview();
+            PhotoEntity photo = photoMapper.selectById(PHOTO_ID);
+
+            processing.completeProcessing(
+                    photo,
+                    new ImageCompressor.FileResult(
+                            Path.of("processed.jpg"), 500L, 1200, 800, "image/jpeg"),
+                    null, null, "stored.jpg",
+                    LocalDateTime.now().plusDays(30), permit);
+
+            var published = jdbc.sql("""
+                    SELECT status, failure_reason, thumbnail_object_key, thumbnail_size, version
+                    FROM photo WHERE id=:id
+                    """).param("id", PHOTO_ID)
+                    .query((rs, rowNum) -> new Object[]{
+                            rs.getString("status"), rs.getString("failure_reason"),
+                            rs.getString("thumbnail_object_key"),
+                            rs.getObject("thumbnail_size", Long.class),
+                            rs.getInt("version")})
+                    .single();
+            assertThat(published).containsExactly("AVAILABLE", null, null, null, 2);
+            assertThat(photo.getThumbnailObjectKey()).isNull();
+            assertThat(photo.getThumbnailSize()).isNull();
+        } finally {
+            cleanupRows();
+            restoreProfile(original);
+        }
+    }
+
     private void insertPhoto() {
         jdbc.sql("""
                 INSERT INTO app_user

@@ -14,12 +14,17 @@ public interface PhotoMapper extends BaseMapper<PhotoEntity> {
      * predicate is evaluated by the database in the same statement as the
      * PROCESSING -> AVAILABLE transition, closing the gap between encoding and
      * a profile switch committed by another application instance.
+     *
+     * <p>{@code thumbnailObjectKey} and {@code thumbnailSize} are both null when
+     * preview encoding failed for this source. The photo still becomes
+     * AVAILABLE; the gallery falls back to the finished object and the preview
+     * repair pipeline regenerates the missing preview later.</p>
      */
     @Update("""
             UPDATE photo
             SET stored_file_name=#{storedFileName}, size=#{size}, width=#{width},
-                height=#{height}, thumbnail_object_key=#{thumbnailObjectKey},
-                thumbnail_size=#{thumbnailSize}, original_delete_after=#{originalDeleteAfter},
+                height=#{height}, thumbnail_object_key=#{thumbnailObjectKey,jdbcType=VARCHAR},
+                thumbnail_size=#{thumbnailSize,jdbcType=BIGINT}, original_delete_after=#{originalDeleteAfter},
                 status='AVAILABLE', failure_reason=NULL,
                 version=version+1, updated_at=#{now}
             WHERE id=#{id} AND deleted=0 AND status='PROCESSING' AND version=#{version}
@@ -58,7 +63,7 @@ public interface PhotoMapper extends BaseMapper<PhotoEntity> {
             @Param("width") int width,
             @Param("height") int height,
             @Param("thumbnailObjectKey") String thumbnailObjectKey,
-            @Param("thumbnailSize") long thumbnailSize,
+            @Param("thumbnailSize") Long thumbnailSize,
             @Param("originalDeleteAfter") LocalDateTime originalDeleteAfter,
             @Param("targetRatio") BigDecimal targetRatio,
             @Param("targetGenerator") String targetGenerator,

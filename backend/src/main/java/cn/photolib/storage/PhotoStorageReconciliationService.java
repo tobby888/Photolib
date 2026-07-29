@@ -123,7 +123,8 @@ public class PhotoStorageReconciliationService {
                     && photo.thumbnailSize() != null
                     && thumbnail.get().size() == photo.thumbnailSize()
                     && thumbnail.get().size() <= MAX_PREVIEW_BYTES
-                    && expected.matches(thumbnail.get(), expectedContentType(photo));
+                    && supportedPreviewContentType(thumbnail.get().contentType())
+                    && expected.matches(thumbnail.get(), thumbnail.get().contentType());
             if (healthy) {
                 continue;
             }
@@ -260,8 +261,16 @@ public class PhotoStorageReconciliationService {
         return statement.update() == 1;
     }
 
-    private String expectedContentType(PhotoObject photo) {
-        return "image/png".equals(photo.contentType()) ? "image/png" : "image/jpeg";
+    /**
+     * The preview format follows the finished object's real bytes, so a preview is
+     * judged by its own MIME rather than by {@code photo.content_type}. That column
+     * describes the source and is not trustworthy — legacy migration copies the old
+     * system's {@code mime_type} verbatim and falls back to
+     * {@code application/octet-stream} — so deriving the expectation from it would
+     * clear a perfectly good preview reference on every hourly pass.
+     */
+    private boolean supportedPreviewContentType(String contentType) {
+        return "image/jpeg".equals(contentType) || "image/png".equals(contentType);
     }
 
     private void synchronizePreviewProfileAlert(String error) {

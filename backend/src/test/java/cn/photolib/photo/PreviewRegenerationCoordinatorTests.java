@@ -35,7 +35,7 @@ class PreviewRegenerationCoordinatorTests {
             listener.started(4);
             listener.progressed(2, 4);
             listener.progressed(4, 4);
-            return new PreviewRegenerationService.Result(true, 3, 4);
+            return new PreviewRegenerationService.Result(true, 3, 4, 0);
         });
         PreviewRegenerationCoordinator coordinator = coordinator();
 
@@ -72,9 +72,9 @@ class PreviewRegenerationCoordinatorTests {
     void rerunsAfterStorageReconciliationRequestsARepair() {
         when(regeneration.repairPreviews(
                 any(PreviewRepairRequestedEvent.class), any()))
-                .thenReturn(new PreviewRegenerationService.Result(true, 0, 1));
+                .thenReturn(new PreviewRegenerationService.Result(true, 0, 1, 0));
         when(regeneration.synchronizeCompressionRatio(any()))
-                .thenReturn(new PreviewRegenerationService.Result(false, 0, 0));
+                .thenReturn(new PreviewRegenerationService.Result(false, 0, 0, 0));
         PreviewRegenerationCoordinator coordinator = coordinator();
 
         PreviewRepairRequestedEvent event = new PreviewRepairRequestedEvent(
@@ -94,7 +94,7 @@ class PreviewRegenerationCoordinatorTests {
     void retriesFailedBootstrapWithoutBlockingSchedulerOrFloodingExecutorQueue() {
         when(regeneration.synchronizeCompressionRatio(any()))
                 .thenThrow(new IllegalStateException("OSS unavailable"))
-                .thenReturn(new PreviewRegenerationService.Result(false, 0, 0));
+                .thenReturn(new PreviewRegenerationService.Result(false, 0, 0, 0));
         PreviewRegenerationCoordinator coordinator = coordinator();
 
         coordinator.regenerateAfterApplicationReady();
@@ -116,6 +116,25 @@ class PreviewRegenerationCoordinatorTests {
         assertThat(coordinator.status().status())
                 .isEqualTo(PreviewRegenerationCoordinator.State.SUCCEEDED);
         verify(regeneration, times(2)).synchronizeCompressionRatio(any());
+    }
+
+    @Test
+    void reportsSucceededWithFallbackCountSoGalleriesStillRefresh() {
+        when(regeneration.synchronizeCompressionRatio(any())).thenAnswer(invocation -> {
+            PreviewRegenerationService.ProgressListener listener = invocation.getArgument(0);
+            listener.started(3);
+            listener.progressed(3, 3);
+            return new PreviewRegenerationService.Result(true, 1, 2, 1);
+        });
+        PreviewRegenerationCoordinator coordinator = coordinator();
+
+        coordinator.regenerateAfterApplicationReady();
+        runNext();
+
+        assertThat(coordinator.status().status())
+                .isEqualTo(PreviewRegenerationCoordinator.State.SUCCEEDED);
+        assertThat(coordinator.status().message()).contains("1 张暂时回退为原图");
+        assertThat(coordinator.status().errorMessage()).isNull();
     }
 
     private PreviewRegenerationCoordinator coordinator() {

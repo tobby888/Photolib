@@ -101,14 +101,27 @@ public class PhotoProcessingService {
             PreviewProfilePolicy.CommitPermit previewPermit =
                     previewProfiles.permitForNewPreview();
             PreviewProfile previewProfile = previewPermit.profile();
-            ImageCompressor.FileResult thumbnail = compressor.thumbnail(
-                    result.path(), thumbnailPath, result.contentType(), 480,
-                    previewProfile.compressionRatio().doubleValue());
-            String thumbnailKey = "thumbnails/generations/uploads/" + photo.getId()
-                    + (photo.getContentType().equals("image/png") ? ".png" : ".jpg");
-            String thumbnailSha256 = sha256(thumbnail.path());
-            upload(thumbnailKey, thumbnail.path(), thumbnail.size(), thumbnail.contentType(),
-                    previewProfile.objectMetadata(thumbnail.contentType(), thumbnailSha256));
+            String thumbnailKey = null;
+            ImageCompressor.FileResult thumbnail = null;
+            try {
+                thumbnail = compressor.thumbnail(
+                        result.path(), thumbnailPath, result.contentType(), 480,
+                        previewProfile.compressionRatio().doubleValue());
+                String candidateKey = "thumbnails/generations/uploads/" + photo.getId()
+                        + (photo.getContentType().equals("image/png") ? ".png" : ".jpg");
+                String thumbnailSha256 = sha256(thumbnail.path());
+                upload(candidateKey, thumbnail.path(), thumbnail.size(), thumbnail.contentType(),
+                        previewProfile.objectMetadata(thumbnail.contentType(), thumbnailSha256));
+                thumbnailKey = candidateKey;
+            } catch (Exception previewFailure) {
+                // The finished object is already uploaded, so the photo is
+                // usable. Publish it without a preview reference: the gallery
+                // falls back to the finished object and the reconciliation job
+                // requests a targeted repair on its next pass.
+                thumbnail = null;
+                log.error("预览图生成失败，该照片将回退为直接使用成品图展示: photoId={}",
+                        photo.getId(), previewFailure);
+            }
             UserEntity uploader = userMapper.selectById(photo.getUploadedBy());
             String extension = photo.getContentType().equals("image/png") ? "png" : "jpg";
             LocalDateTime originalDeleteAfter =
@@ -137,12 +150,16 @@ public class PhotoProcessingService {
                             LocalDateTime originalDeleteAfter,
                             PreviewProfilePolicy.CommitPermit permit) {
         PreviewProfile target = permit.profile();
+        // A null pair means preview encoding failed for this source. The photo
+        // still publishes; the gallery renders the finished object instead.
+        String previewKey = thumbnail == null ? null : thumbnailKey;
+        Long previewSize = thumbnail == null ? null : thumbnail.size();
         Integer updated = transactions.execute(status -> {
             if (!previewProfiles.lockAndValidateForCommit(permit)) return 0;
             return photoMapper.completeProcessingWithProfileGuard(
                     photo.getId(), photo.getVersion(), storedFileName,
                     result.size(), result.width(), result.height(),
-                    thumbnailKey, thumbnail.size(), originalDeleteAfter,
+                    previewKey, previewSize, originalDeleteAfter,
                     target.compressionRatio(), target.generatorFingerprint(),
                     permit.bootstrappingFlag(), permit.observedDatabaseProfileFlag(),
                     permit.observedCompressionRatioOrTarget(),
@@ -158,8 +175,8 @@ public class PhotoProcessingService {
         photo.setSize(result.size());
         photo.setWidth(result.width());
         photo.setHeight(result.height());
-        photo.setThumbnailObjectKey(thumbnailKey);
-        photo.setThumbnailSize(thumbnail.size());
+        photo.setThumbnailObjectKey(previewKey);
+        photo.setThumbnailSize(previewSize);
         photo.setOriginalDeleteAfter(originalDeleteAfter);
         photo.setStatus(PhotoStatus.AVAILABLE);
         photo.setFailureReason(null);
