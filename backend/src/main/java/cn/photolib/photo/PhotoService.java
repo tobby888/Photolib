@@ -445,10 +445,12 @@ public class PhotoService {
 
     private PhotoView toView(PhotoEntity p) {
         String thumbnailUrl = null;
-        if (p.getThumbnailObjectKey() != null
-                && (p.getStatus() == PhotoStatus.AVAILABLE || p.getStatus() == PhotoStatus.ARCHIVED)) {
-            thumbnailUrl = storage.presignGet(p.getThumbnailObjectKey(), null,
-                    properties.downloadUrlTtl()).url().toString();
+        if (p.getStatus() == PhotoStatus.AVAILABLE || p.getStatus() == PhotoStatus.ARCHIVED) {
+            String previewKey = renderableObjectKey(p);
+            if (previewKey != null) {
+                thumbnailUrl = storage.presignGet(previewKey, null,
+                        properties.downloadUrlTtl()).url().toString();
+            }
         }
         // 获取图片关联的所有项目
         List<ProjectLink> projects = jdbc.sql("""
@@ -468,6 +470,25 @@ public class PhotoService {
                 p.getTakenAt(), p.getTagsJson(), p.getWidth(), p.getHeight(), p.getSize(), p.getContentType(),
                 p.getStoredFileName(), thumbnailUrl, p.getThumbnailSize(), p.getStatus(), p.getFailureReason(),
                 p.getCreatedAt(), p.getVersion(), adoptionCount(p.getId()), projectIds, projects);
+    }
+
+    /**
+     * Picks the object the gallery should render. A missing preview reference is
+     * a normal, self-healing state: encoding can fail for one source, and the
+     * reconciliation job clears references whose object is confirmed gone. In
+     * both cases the finished photo itself is intact, so fall back to it instead
+     * of leaving the caller with a blank tile. Falling back costs bandwidth
+     * (the finished object is capped at {@code imageTargetBytes}, not thumbnail
+     * sized), so the background repair pipeline still regenerates the preview.
+     *
+     * <p>Never falls back to {@code original_object_key}: {@code
+     * OriginalCleanupJob} deletes it once the retention window passes.</p>
+     */
+    private String renderableObjectKey(PhotoEntity p) {
+        boolean previewUsable = StringUtils.hasText(p.getThumbnailObjectKey())
+                && p.getThumbnailSize() != null && p.getThumbnailSize() > 0;
+        if (previewUsable) return p.getThumbnailObjectKey();
+        return StringUtils.hasText(p.getObjectKey()) ? p.getObjectKey() : null;
     }
 
     private long adoptionCount(Long photoId) {

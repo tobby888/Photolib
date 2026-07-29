@@ -523,6 +523,44 @@ class PhotoServiceTests {
     }
 
     @Test
+    void thumbnailUrl_shouldFallBackToTheFinishedObjectWhenNoPreviewExists() {
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, project_id, title, photographer_student_id, photographer_name,
+                     uploaded_by, campus_id, taken_at, size, content_type, object_key,
+                     thumbnail_object_key, thumbnail_size, sha256, status)
+                VALUES
+                    (1013, :projectId, 'no preview', '20230001', 'photographer',
+                     :userId, :campusId, NOW(), 1000, 'image/jpeg', 'photos/no-preview.jpg',
+                     NULL, NULL, :sha256, 'AVAILABLE'),
+                    (1014, :projectId, 'with preview', '20230001', 'photographer',
+                     :userId, :campusId, NOW(), 1000, 'image/jpeg', 'photos/with-preview.jpg',
+                     'thumbnails/generations/uploads/1014.jpg', 200, :otherSha256, 'AVAILABLE')
+                """)
+                .param("projectId", testProject.getId())
+                .param("userId", adminUser.id())
+                .param("campusId", testCampus.getId())
+                .param("sha256", "m".repeat(64))
+                .param("otherSha256", "n".repeat(64))
+                .update();
+
+        // A missing preview must not leave the gallery with a blank tile.
+        assertThat(signedObjectKey(photoService.get(1013L, adminUser).thumbnailUrl()))
+                .isEqualTo("photos/no-preview.jpg");
+        assertThat(signedObjectKey(photoService.get(1014L, adminUser).thumbnailUrl()))
+                .isEqualTo("thumbnails/generations/uploads/1014.jpg");
+    }
+
+    /** Reads the object key back out of a local-profile signed URL token. */
+    private String signedObjectKey(String signedUrl) {
+        assertThat(signedUrl).isNotNull();
+        String token = signedUrl.substring(signedUrl.lastIndexOf('/') + 1);
+        String payload = new String(java.util.Base64.getUrlDecoder().decode(token),
+                java.nio.charset.StandardCharsets.UTF_8);
+        return payload.split("\n")[2];
+    }
+
+    @Test
     void archivePhoto_asMinister_shouldChangeStatus() {
         // Given: 可用的照片
         jdbc.sql("""

@@ -144,9 +144,15 @@ public class PreviewRegenerationCoordinator {
                         }
                     });
             StatusView current = status.get();
-            status.set(StatusView.succeeded(current.total(), startedAt, Instant.now()));
-            log.info("后台预览图任务完成：原因={}，是否重建={}，生成={}，清理旧对象={}",
-                    reason, result.regenerated(), result.regeneratedCount(), result.deletedCount());
+            status.set(StatusView.succeeded(current.total(), result.fallbackCount(),
+                    startedAt, Instant.now()));
+            if (result.fallbackCount() > 0) {
+                log.warn("后台预览图任务完成，但有 {} 张暂时回退为成品图展示；后续对账会继续重试",
+                        result.fallbackCount());
+            }
+            log.info("后台预览图任务完成：原因={}，是否重建={}，生成={}，回退成品图={}，清理旧对象={}",
+                    reason, result.regenerated(), result.regeneratedCount(),
+                    result.fallbackCount(), result.deletedCount());
             return true;
         } catch (Exception exception) {
             status.set(StatusView.failed(status.get(), startedAt, Instant.now()));
@@ -183,9 +189,19 @@ public class PreviewRegenerationCoordinator {
                     null, startedAt, null);
         }
 
-        private static StatusView succeeded(int total, Instant startedAt, Instant completedAt) {
+        /**
+         * Photos that fell back to the finished object still count as a
+         * successful run: the rest of the library switched, and the frontend
+         * must keep receiving SUCCEEDED so galleries refresh. The count is
+         * surfaced in the message rather than as a separate state.
+         */
+        private static StatusView succeeded(int total, int fallbackCount,
+                                            Instant startedAt, Instant completedAt) {
+            String message = fallbackCount > 0
+                    ? "预览图已准备完成（" + fallbackCount + " 张暂时回退为原图，后台会继续重试）"
+                    : "预览图已准备完成";
             return new StatusView(State.SUCCEEDED, total, total, 100,
-                    "预览图已准备完成", null, startedAt, completedAt);
+                    message, null, startedAt, completedAt);
         }
 
         private static StatusView failed(StatusView current, Instant startedAt, Instant completedAt) {

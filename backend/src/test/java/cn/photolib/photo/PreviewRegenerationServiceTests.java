@@ -205,14 +205,13 @@ class PreviewRegenerationServiceTests {
                 jdbc, tamperedStorage, properties, compressor, workspace, transactions,
                 repository, policy, new PreviewMaintenanceLock());
 
-        assertThatThrownBy(isolated::synchronizeCompressionRatio)
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("部分预览图定向修复失败")
-                .rootCause()
-                .hasMessageContaining("复验失败")
-                .hasMessageContaining("拒绝切换");
+        PreviewRegenerationService.Result result = isolated.synchronizeCompressionRatio();
 
-        assertThat(policy.phase()).isEqualTo(PreviewProfilePolicy.Phase.BOOTSTRAPPING);
+        // The tampered object must never become the active reference, but one bad
+        // object may no longer pin the profile policy in BOOTSTRAPPING either.
+        assertThat(result.regeneratedCount()).isZero();
+        assertThat(result.fallbackCount()).isZero();
+        assertThat(policy.phase()).isEqualTo(PreviewProfilePolicy.Phase.RUNNING);
         assertThat(jdbc.sql("SELECT thumbnail_object_key FROM photo WHERE id=:id")
                 .param("id", photoId).query(String.class).single()).isEqualTo(oldPreviewKey);
         assertThat(storage.find(generatedKey.get())).isEmpty();
@@ -257,14 +256,11 @@ class PreviewRegenerationServiceTests {
                 jdbc, tamperedStorage, properties, compressor, workspace, transactions,
                 repository, policy, new PreviewMaintenanceLock());
 
-        assertThatThrownBy(isolated::synchronizeCompressionRatio)
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("部分预览图定向修复失败")
-                .rootCause()
-                .hasMessageContaining("复验失败")
-                .hasMessageContaining("拒绝切换");
+        PreviewRegenerationService.Result result = isolated.synchronizeCompressionRatio();
 
-        assertThat(policy.phase()).isEqualTo(PreviewProfilePolicy.Phase.BOOTSTRAPPING);
+        assertThat(result.regeneratedCount()).isZero();
+        assertThat(result.fallbackCount()).isZero();
+        assertThat(policy.phase()).isEqualTo(PreviewProfilePolicy.Phase.RUNNING);
         assertThat(jdbc.sql("SELECT thumbnail_object_key FROM photo WHERE id=:id")
                 .param("id", photoId).query(String.class).single()).isEqualTo(oldPreviewKey);
         assertThat(storage.find(generatedKey.get())).isEmpty();
@@ -530,11 +526,11 @@ class PreviewRegenerationServiceTests {
     }
 
     @Test
-    void keepsOldPreviewAndDatabaseKeyWhenStagingFails() {
+    void fallsBackToTheFinishedObjectWhenOneSourceCannotBeEncoded() {
         long userId = 93821L;
         long photoId = 93822L;
         String objectKey = "photos/preview-regeneration/invalid-source.jpg";
-        String oldPreviewKey = "legacy-previews/still-active.jpg";
+        String oldPreviewKey = "thumbnails/preview-regeneration/still-active.jpg";
         byte[] invalidImage = "not-an-image".getBytes(java.nio.charset.StandardCharsets.UTF_8);
         byte[] oldPreview = new byte[]{1, 2, 3, 4};
         storage.put(objectKey, new ByteArrayInputStream(invalidImage), invalidImage.length, "image/jpeg");
@@ -543,29 +539,63 @@ class PreviewRegenerationServiceTests {
                 oldPreviewKey, (long) oldPreview.length, "preview-failure-user");
         setStoredRatio("0.7000");
 
-        assertThatThrownBy(() -> previews.synchronizeCompressionRatio())
-                .isInstanceOf(IllegalStateException.class);
+        PreviewRegenerationService.Result result = previews.synchronizeCompressionRatio();
 
+        assertThat(result.fallbackCount()).isOne();
+        assertThat(result.regeneratedCount()).isZero();
         var row = jdbc.sql("""
                 SELECT thumbnail_object_key, thumbnail_size
                 FROM photo WHERE id=:id
                 """).param("id", photoId)
                 .query((rs, rowNum) -> new Object[]{
                         rs.getString("thumbnail_object_key"),
-                        rs.getLong("thumbnail_size")})
+                        rs.getObject("thumbnail_size", Long.class)})
                 .single();
-        assertThat(row[0]).isEqualTo(oldPreviewKey);
-        assertThat(row[1]).isEqualTo((long) oldPreview.length);
-        assertThat(storage.open(oldPreviewKey)).hasBinaryContent(oldPreview);
+        assertThat(row[0]).isNull();
+        assertThat(row[1]).isNull();
+        // The profile must still switch: otherwise one undecodable source keeps
+        // the whole library rebuilding on every startup, forever.
         assertThat(jdbc.sql("SELECT compression_ratio FROM preview_setting WHERE id=1")
-                .query(BigDecimal.class).single()).isEqualByComparingTo("0.7000");
+                .query(BigDecimal.class).single()).isEqualByComparingTo("0.6000");
+        assertThat(storage.find(oldPreviewKey)).isEmpty();
 
         storage.delete(objectKey);
-        storage.delete(oldPreviewKey);
     }
 
     @Test
-    void resumesFullGenerationFromPersistentCheckpointsAfterOneSourceFails() throws Exception {
+    void neverClearsPreviewReferencesWhenTheObjectStoreIsUnavailable() throws Exception {
+        long userId = 93827L;
+        long photoId = 93828L;
+        String objectKey = "photos/preview-regeneration/storage-outage.jpg";
+        String oldPreviewKey = "thumbnails/preview-regeneration/storage-outage-old.jpg";
+        byte[] image = jpegImage();
+        byte[] oldPreview = new byte[]{9, 8, 7};
+        storage.put(objectKey, new ByteArrayInputStream(image), image.length, "image/jpeg");
+        storage.put(oldPreviewKey, new ByteArrayInputStream(oldPreview), oldPreview.length, "image/jpeg");
+        insertUserAndPhoto(userId, photoId, objectKey, image.length,
+                oldPreviewKey, (long) oldPreview.length, "preview-outage-user");
+        setStoredRatio("0.7000");
+
+        ObjectStorageService failingStorage = spy(storage);
+        doThrow(new IllegalStateException("OSS unavailable"))
+                .when(failingStorage).put(anyString(), any(InputStream.class), anyLong(),
+                        anyString(), anyMap());
+        PreviewRegenerationService isolated = new PreviewRegenerationService(
+                jdbc, failingStorage, properties, compressor, workspace, transactions);
+
+        assertThatThrownBy(isolated::synchronizeCompressionRatio)
+                .isInstanceOf(IllegalStateException.class);
+
+        // A transport failure is not a source problem, so the round must abort
+        // rather than downgrade every photo to the finished object.
+        assertThat(jdbc.sql("SELECT thumbnail_object_key FROM photo WHERE id=:id")
+                .param("id", photoId).query(String.class).single()).isEqualTo(oldPreviewKey);
+        assertThat(jdbc.sql("SELECT compression_ratio FROM preview_setting WHERE id=1")
+                .query(BigDecimal.class).single()).isEqualByComparingTo("0.7000");
+    }
+
+    @Test
+    void resumesFullGenerationFromPersistentCheckpointsAfterOneStorageFailure() throws Exception {
         long badUserId = 93823L;
         long badPhotoId = 93824L;
         long goodUserId = 93825L;
@@ -575,17 +605,24 @@ class PreviewRegenerationServiceTests {
         String badOldPreview = "thumbnails/preview-regeneration/checkpoint-bad-old.jpg";
         String goodOldPreview = "thumbnails/preview-regeneration/checkpoint-good-old.jpg";
         byte[] image = jpegImage();
-        byte[] invalid = "not-an-image".getBytes(java.nio.charset.StandardCharsets.UTF_8);
         try {
-            storage.put(badSourceKey, new ByteArrayInputStream(invalid), invalid.length, "image/jpeg");
+            storage.put(badSourceKey, new ByteArrayInputStream(image), image.length, "image/jpeg");
             storage.put(goodSourceKey, new ByteArrayInputStream(image), image.length, "image/jpeg");
-            insertUserAndPhoto(badUserId, badPhotoId, badSourceKey, invalid.length,
+            insertUserAndPhoto(badUserId, badPhotoId, badSourceKey, image.length,
                     badOldPreview, 111L, "preview-checkpoint-bad-user");
             insertUserAndPhoto(goodUserId, goodPhotoId, goodSourceKey, image.length,
                     goodOldPreview, 222L, "preview-checkpoint-good-user");
             setStoredRatio("0.7000");
 
             ObjectStorageService observedStorage = spy(storage);
+            AtomicInteger badOpenFailures = new AtomicInteger(1);
+            doAnswer(invocation -> {
+                String key = invocation.getArgument(0);
+                if (badSourceKey.equals(key) && badOpenFailures.getAndDecrement() > 0) {
+                    throw new IllegalStateException("temporary transport failure");
+                }
+                return storage.open(key);
+            }).when(observedStorage).open(anyString());
             PreviewRegenerationService firstProcess = new PreviewRegenerationService(
                     jdbc, observedStorage, properties, compressor, workspace, transactions);
 
@@ -606,7 +643,6 @@ class PreviewRegenerationServiceTests {
                     .param("id", goodPhotoId).query(String.class).single())
                     .isEqualTo(goodOldPreview);
 
-            storage.put(badSourceKey, new ByteArrayInputStream(image), image.length, "image/jpeg");
             clearInvocations(observedStorage);
             PreviewRegenerationService restartedProcess = new PreviewRegenerationService(
                     jdbc, observedStorage, properties, compressor, workspace, transactions);
@@ -614,6 +650,7 @@ class PreviewRegenerationServiceTests {
             PreviewRegenerationService.Result result = restartedProcess.synchronizeCompressionRatio();
 
             assertThat(result.regeneratedCount()).isEqualTo(2);
+            assertThat(result.fallbackCount()).isZero();
             verify(observedStorage, never()).stat(goodSourceKey);
             verify(observedStorage, never()).open(goodSourceKey);
             verify(observedStorage).find(goodStagedKey);
@@ -1212,8 +1249,121 @@ class PreviewRegenerationServiceTests {
         assertThat(storage.find(cleanupStage)).isPresent();
     }
 
+    @Test
+    void targetedRepairFallsBackInsteadOfBlockingBootstrapWhenTheSourceIsUnusable() {
+        long userId = 93831L;
+        long photoId = 93832L;
+        String objectKey = "photos/preview-regeneration/repair-unusable.jpg";
+        String missingPreviewKey = "thumbnails/preview-regeneration/repair-gone.jpg";
+        byte[] invalidImage = "not-an-image".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        storage.put(objectKey, new ByteArrayInputStream(invalidImage), invalidImage.length,
+                "image/jpeg");
+        insertUserAndPhoto(userId, photoId, objectKey, invalidImage.length,
+                missingPreviewKey, 123L, "preview-repair-unusable-user");
+        setStoredRatio("0.6000");
+
+        // A throw here used to skip completeBootstrap(), pinning the profile
+        // policy in BOOTSTRAPPING for the rest of the process lifetime.
+        PreviewRegenerationService.Result result = previews.synchronizeCompressionRatio();
+
+        assertThat(result.fallbackCount()).isOne();
+        var row = jdbc.sql("""
+                SELECT thumbnail_object_key, thumbnail_size
+                FROM photo WHERE id=:id
+                """).param("id", photoId)
+                .query((rs, rowNum) -> new Object[]{
+                        rs.getString("thumbnail_object_key"),
+                        rs.getObject("thumbnail_size", Long.class)})
+                .single();
+        assertThat(row[0]).isNull();
+        assertThat(row[1]).isNull();
+
+        storage.delete(objectKey);
+    }
+
+    @Test
+    void targetedRepairKeepsAStalePreviewWhoseObjectStillExists() throws Exception {
+        long userId = 93833L;
+        long photoId = 93834L;
+        String objectKey = "photos/preview-regeneration/repair-stale.jpg";
+        String stalePreviewKey = "thumbnails/preview-regeneration/repair-stale-preview.jpg";
+        byte[] invalidImage = "not-an-image".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] stalePreview = jpegImage();
+        storage.put(objectKey, new ByteArrayInputStream(invalidImage), invalidImage.length,
+                "image/jpeg");
+        // Present, but encoded by an older ratio, so the audit reports it
+        // unhealthy and asks for a targeted repair.
+        storage.put(stalePreviewKey, new ByteArrayInputStream(stalePreview), stalePreview.length,
+                "image/jpeg", new PreviewProfile(new BigDecimal("0.9000"),
+                        PreviewProfile.CURRENT_GENERATOR_FINGERPRINT)
+                        .objectMetadata("image/jpeg", sha256(stalePreview)));
+        insertUserAndPhoto(userId, photoId, objectKey, invalidImage.length,
+                stalePreviewKey, (long) stalePreview.length, "preview-repair-stale-user");
+        setStoredRatio("0.6000");
+
+        PreviewRegenerationService.Result result = previews.synchronizeCompressionRatio();
+
+        // Re-encoding is impossible, but a slightly off-ratio thumbnail still
+        // beats making every gallery tile download the finished object.
+        assertThat(result.fallbackCount()).isZero();
+        assertThat(jdbc.sql("SELECT thumbnail_object_key FROM photo WHERE id=:id")
+                .param("id", photoId).query(String.class).single()).isEqualTo(stalePreviewKey);
+        assertThat(storage.find(stalePreviewKey)).isPresent();
+
+        storage.delete(objectKey);
+    }
+
+    @Test
+    void rebuildsLegacyPhotoWhoseDeclaredContentTypeDisagreesWithItsRealBytes() throws Exception {
+        long userId = 93835L;
+        long photoId = 93836L;
+        String objectKey = "photos/preview-regeneration/legacy-mislabelled.png";
+        byte[] png = pngImage();
+        storage.put(objectKey, new ByteArrayInputStream(png), png.length, "image/png");
+        // Legacy migration copies the old system's mime_type verbatim and falls
+        // back to application/octet-stream, so a real PNG can carry a declared
+        // type that is anything but image/png. Deriving the expected preview MIME
+        // from that column used to reject the generated preview forever: the
+        // rebuild failed identically on every 30s retry and blocked the whole
+        // library's generation switch.
+        insertUserAndPhotoWithContentType(userId, photoId, objectKey, png.length,
+                null, null, "preview-legacy-mime-user", "application/octet-stream");
+        setStoredRatio("0.7000");
+
+        PreviewRegenerationService.Result result = previews.synchronizeCompressionRatio();
+
+        assertThat(result.fallbackCount()).isZero();
+        assertThat(result.regeneratedCount()).isOne();
+        var row = jdbc.sql("""
+                SELECT thumbnail_object_key, thumbnail_size FROM photo WHERE id=:id
+                """).param("id", photoId)
+                .query((rs, rowNum) -> new Object[]{
+                        rs.getString("thumbnail_object_key"),
+                        rs.getObject("thumbnail_size", Long.class)})
+                .single();
+        assertThat((String) row[0]).startsWith("thumbnails/generations/").endsWith(".png");
+        assertThat((Long) row[1]).isPositive();
+        assertThat(jdbc.sql("SELECT compression_ratio FROM preview_setting WHERE id=1")
+                .query(BigDecimal.class).single()).isEqualByComparingTo("0.6000");
+        // The follow-up audit must accept it too, otherwise every startup would
+        // re-encode and re-upload the same preview.
+        assertThat(previews.repairPreviews(List.of(photoId),
+                PreviewRegenerationService.ProgressListener.NONE).regeneratedCount()).isZero();
+
+        storage.delete(objectKey);
+        storage.delete((String) row[0]);
+    }
+
     private void insertUserAndPhoto(long userId, long photoId, String objectKey, long sourceSize,
                                     String previewKey, Long previewSize, String username) {
+        insertUserAndPhotoWithContentType(userId, photoId, objectKey, sourceSize,
+                previewKey, previewSize, username, "image/jpeg");
+    }
+
+    private void insertUserAndPhotoWithContentType(long userId, long photoId, String objectKey,
+                                                   long sourceSize, String previewKey,
+                                                   Long previewSize, String username,
+                                                   String contentType) {
         jdbc.sql("""
                 INSERT INTO app_user
                     (id, username, password_hash, display_name, role, enabled, must_change_password)
@@ -1227,12 +1377,13 @@ class PreviewRegenerationServiceTests {
                      thumbnail_size, sha256, status, version, deleted)
                 VALUES
                     (:id, 'preview test', 'test', 'test', :userId, CURRENT_TIMESTAMP,
-                     :size, 'image/jpeg', :objectKey, :previewKey, :previewSize, :sha256,
+                     :size, :contentType, :objectKey, :previewKey, :previewSize, :sha256,
                      'AVAILABLE', 1, false)
                 """)
                 .param("id", photoId)
                 .param("userId", userId)
                 .param("size", sourceSize)
+                .param("contentType", contentType)
                 .param("objectKey", objectKey)
                 .param("previewKey", previewKey)
                 .param("previewSize", previewSize)
@@ -1314,6 +1465,20 @@ class PreviewRegenerationServiceTests {
         }
         try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             ImageIO.write(image, "jpg", output);
+            return output.toByteArray();
+        }
+    }
+
+    private byte[] pngImage() throws Exception {
+        BufferedImage image = new BufferedImage(800, 600, BufferedImage.TYPE_INT_ARGB);
+        for (int x = 0; x < image.getWidth(); x++) {
+            for (int y = 0; y < image.getHeight(); y++) {
+                image.setRGB(x, y, new Color((x * 5 + y) & 255,
+                        (x + y * 3) & 255, (x ^ y) & 255, 255).getRGB());
+            }
+        }
+        try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            ImageIO.write(image, "png", output);
             return output.toByteArray();
         }
     }

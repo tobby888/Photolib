@@ -1,10 +1,18 @@
 package cn.photolib.photo;
 
+import cn.photolib.photo.batch.PhotoUploadBatchMapper;
+import cn.photolib.photo.batch.PhotoUploadItemMapper;
+import cn.photolib.photo.mapper.PhotoMapper;
 import cn.photolib.storage.ObjectStorageService;
+import cn.photolib.storage.StorageProperties;
+import cn.photolib.user.mapper.UserMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.imageio.ImageIO;
 import java.awt.Color;
@@ -17,6 +25,12 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyDouble;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.spy;
 
 @SpringBootTest
 class PhotoProcessingFilePipelineTests {
@@ -35,6 +49,25 @@ class PhotoProcessingFilePipelineTests {
     private ObjectStorageService storage;
     @Autowired
     private JdbcClient jdbc;
+    @Autowired
+    private ImageCompressor compressor;
+    @Autowired
+    private PhotoMapper photoMapper;
+    @Autowired
+    private UserMapper userMapper;
+    @Autowired
+    private StorageProperties properties;
+    @Autowired
+    private PhotoUploadItemMapper batchItemMapper;
+    @Autowired
+    private PhotoUploadBatchMapper batchMapper;
+    @Autowired
+    private PreviewProfilePolicy previewProfiles;
+    @Autowired
+    private TransactionTemplate transactions;
+    @Autowired
+    @Qualifier("photoProcessingExecutor")
+    private ThreadPoolTaskExecutor processingExecutor;
 
     @Test
     void processesZipLocalFileUploadsAllObjectsAndDeletesAuxiliaryFiles() throws Exception {
@@ -88,6 +121,59 @@ class PhotoProcessingFilePipelineTests {
             try (Stream<Path> files = Files.walk(workspace.root().resolve("tasks"))) {
                 assertThat(files.filter(Files::isRegularFile).toList()).isEmpty();
             }
+        } finally {
+            deleteObject(THUMBNAIL_KEY);
+            deleteObject(PHOTO_KEY);
+            deleteObject(ORIGINAL_KEY);
+            jdbc.sql("DELETE FROM photo_upload_item WHERE batch_id=:id").param("id", BATCH_ID).update();
+            jdbc.sql("DELETE FROM photo_upload_batch WHERE id=:id").param("id", BATCH_ID).update();
+            jdbc.sql("DELETE FROM photo WHERE id=:id").param("id", PHOTO_ID).update();
+            jdbc.sql("DELETE FROM app_user WHERE id=:id").param("id", USER_ID).update();
+            if (Files.exists(source)) workspace.deleteBatchFile(source);
+        }
+    }
+
+    @Test
+    void publishesThePhotoWithoutAPreviewWhenThumbnailEncodingFails() throws Exception {
+        Path source = workspace.createBatchFile(BATCH_ID, ".jpg");
+        writeJpeg(source);
+        long sourceSize = Files.size(source);
+        insertRows(source, sourceSize);
+
+        ImageCompressor failingThumbnails = spy(compressor);
+        doThrow(new java.io.IOException("原生图片处理失败: synthetic"))
+                .when(failingThumbnails).thumbnail(any(Path.class), any(Path.class),
+                        anyString(), anyInt(), anyDouble());
+        PhotoProcessingService isolated = new PhotoProcessingService(
+                photoMapper, userMapper, storage, properties,
+                new NativeImageTaskPool(processingExecutor, failingThumbnails),
+                workspace, batchItemMapper, batchMapper, previewProfiles, transactions);
+
+        try {
+            isolated.submit(PHOTO_ID).get(30, TimeUnit.SECONDS);
+
+            var photo = jdbc.sql("""
+                    SELECT status, failure_reason, thumbnail_object_key, thumbnail_size
+                    FROM photo WHERE id=:id
+                    """).param("id", PHOTO_ID)
+                    .query((rs, rowNum) -> new Object[]{
+                            rs.getString("status"), rs.getString("failure_reason"),
+                            rs.getString("thumbnail_object_key"),
+                            rs.getObject("thumbnail_size", Long.class)})
+                    .single();
+            // The finished object uploaded fine, so the upload itself succeeded.
+            // Only the preview is missing, and the gallery falls back to the
+            // finished object until a repair pass regenerates it.
+            assertThat(photo[0]).isEqualTo("AVAILABLE");
+            assertThat(photo[1]).isNull();
+            assertThat(photo[2]).isNull();
+            assertThat(photo[3]).isNull();
+            assertThat(storage.find(THUMBNAIL_KEY)).isEmpty();
+            assertThat(storage.stat(PHOTO_KEY).size()).isPositive();
+            assertThat(jdbc.sql("""
+                    SELECT status FROM photo_upload_item WHERE batch_id=:batchId
+                    """).param("batchId", BATCH_ID).query(String.class).single())
+                    .isEqualTo("SUCCEEDED");
         } finally {
             deleteObject(THUMBNAIL_KEY);
             deleteObject(PHOTO_KEY);

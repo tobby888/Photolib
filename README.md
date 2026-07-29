@@ -197,6 +197,9 @@ curl --fail http://127.0.0.1:8080/api/v1/actuator/health
 | `OSS_CORS_ALLOWED_ORIGINS` | 允许浏览器直传的站点来源；生产环境应显式配置 |
 | `PREVIEW_COMPRESSION_RATIO` | JPEG 预览图质量，取值 `(0, 1]`，默认 `0.6` |
 | `PREVIEW_BOOTSTRAP_RETRY_DELAY` | 启动三方 profile 核对失败后的后台重试间隔，默认 `30s` |
+| `STARTUP_MISSING_OBJECT_CLEANUP_ENABLED` | 每次启动是否清理"成品图已在对象存储中丢失"的图片记录，默认 `true`；设为 `false` 完全关闭 |
+| `STARTUP_MISSING_OBJECT_CLEANUP_MAX_RATIO` | 上述清理的缺失占比熔断阈值，默认 `0.2` |
+| `STARTUP_MISSING_OBJECT_CLEANUP_MIN_ABSOLUTE` | 低于该绝对张数时不按占比熔断，默认 `20` |
 | `PHOTO_PROCESSING_THREADS` | 原生图片处理线程数，取值 1～32，默认 1 |
 | `PHOTO_PROCESSING_TEMPORARY_DIRECTORY` | ZIP 解压与图片处理临时目录 |
 | `DIRECTMAIL_*` | DirectMail 地域、发信地址和访问凭据 |
@@ -233,6 +236,8 @@ curl --fail http://127.0.0.1:8080/api/v1/actuator/health
 - 项目相册归属由 `photo_project` 维护；加入相册、标记采用和取消采用是相互独立的操作。
 - 只有进行中的项目可发布需求或新增采用记录；项目完成后会锁定相关状态。
 - 统计只计入已确认工时和有效采用记录，系统不计算薪资或酬劳。
+- 预览图生成失败只影响这一张照片：照片仍然可用，图库改为直接展示成品图，后台会继续重试生成预览。
+- 每次启动会核对一遍成品图是否仍在对象存储中；仅当精确 HEAD 确认对象不存在时，才把该记录软删除（`deleted=1`，可改回 `0` 恢复）并写入审计。已被项目采用的照片只告警不删除；若缺失比例超过阈值（判定为存储配置异常），则一张都不删并写管理员告警。
 
 ## 验证与文档
 

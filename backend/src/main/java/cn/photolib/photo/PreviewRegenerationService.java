@@ -33,6 +33,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
+import java.util.stream.Stream;
 
 @Slf4j
 @Service
@@ -88,10 +89,12 @@ public class PreviewRegenerationService {
             List<PreviewPhoto> unhealthy = auditPreviewObjects(photos, configured, listener);
             Result repaired = repairUnhealthyPreviews(configured, unhealthy, ProgressListener.NONE);
             profilePolicy.completeBootstrap(configured);
-            log.info("启动三方核对完成：环境、数据库及 {} 个 OSS 预览对象使用 profile {}，修复 {} 张",
-                    photos.size(), configured.fingerprint(), repaired.regeneratedCount());
+            log.info("启动三方核对完成：环境、数据库及 {} 个 OSS 预览对象使用 profile {}，"
+                            + "修复 {} 张，回退成品图 {} 张",
+                    photos.size(), configured.fingerprint(), repaired.regeneratedCount(),
+                    repaired.fallbackCount());
             return new Result(repaired.regenerated(), abandonedDeleted + repaired.deletedCount(),
-                    repaired.regeneratedCount());
+                    repaired.regeneratedCount(), repaired.fallbackCount());
         }
 
         Result result = regenerateChangedProfile(configured, stored, loadPhotos(), listener);
@@ -107,6 +110,7 @@ public class PreviewRegenerationService {
         String generation = generationId(configured);
         StageReconciliation reconciliation = reconcileStages(profile, photos);
         List<GeneratedPreview> staged = new ArrayList<>(photos.size());
+        List<PreviewPhoto> unusable = new ArrayList<>();
         RuntimeException firstFailure = null;
 
         for (int index = 0; index < photos.size(); index++) {
@@ -119,6 +123,14 @@ public class PreviewRegenerationService {
                     staged.add(generateAndPersist(photo, generation,
                             configured, profile));
                 }
+            } catch (PreviewSourceUnusableException unusableSource) {
+                // One undecodable source must not block the whole library. The
+                // switch below clears this photo's preview reference in the same
+                // transaction so it renders the finished object, and the
+                // scheduled reconciliation retries it later.
+                unusable.add(photo);
+                log.warn("原图无法生成新一代预览图，该照片将回退为直接使用成品图展示：photoId={}",
+                        photo.id(), unusableSource);
             } catch (RuntimeException exception) {
                 if (firstFailure == null) firstFailure = exception;
                 log.error("暂存新一代预览图失败，继续保存其他照片的检查点：photoId={}",
@@ -135,19 +147,24 @@ public class PreviewRegenerationService {
         // Every checkpoint, including objects uploaded by this invocation, is
         // HEAD-checked and streamed for an exact digest before it can
         // participate in the database switch.
-        staged = validateStagedPreviews(configured, generation, staged);
+        staged = validateStagedPreviews(configured, generation, staged, unusable);
 
         List<GeneratedPreview> ready = List.copyOf(staged);
+        List<PreviewPhoto> cleared = List.copyOf(unusable);
         List<GeneratedPreview> activated = executeAtomic(
-                status -> switchGeneration(configured, stored, profile, ready));
+                status -> switchGeneration(configured, stored, profile, ready, cleared));
         if (activated == null) {
             throw new IllegalStateException("预览图数据库切换未返回结果；暂存检查点已保留");
         }
 
-        int deleted = reconciliation.deletedCount() + cleanupReplacedPreviews(activated);
-        log.info("预览图已原子切换到新版本 {}：压缩比率 {}，激活 {} 张，清理对象 {} 个",
-                generation, configured.ratioText(), activated.size(), deleted);
-        return new Result(true, deleted, activated.size());
+        List<PreviewPhoto> replaced = new ArrayList<>(cleared);
+        activated.forEach(preview -> replaced.add(preview.photo()));
+        int deleted = reconciliation.deletedCount() + cleanupReplacedPreviews(replaced,
+                activated.stream().map(GeneratedPreview::objectKey)
+                        .collect(java.util.stream.Collectors.toSet()));
+        log.info("预览图已原子切换到新版本 {}：压缩比率 {}，激活 {} 张，回退成品图 {} 张，清理对象 {} 个",
+                generation, configured.ratioText(), activated.size(), cleared.size(), deleted);
+        return new Result(true, deleted, activated.size(), cleared.size());
     }
 
     public Result repairPreviews(PreviewRepairRequestedEvent event, ProgressListener listener) {
@@ -175,7 +192,7 @@ public class PreviewRegenerationService {
         if (photoIds.isEmpty()) {
             listener.started(0);
             listener.progressed(0, 0);
-            return new Result(false, 0, 0);
+            return new Result(false, 0, 0, 0);
         }
         List<PreviewPhoto> unhealthy = new ArrayList<>();
         for (PreviewPhoto photo : loadPhotosByIds(photoIds)) {
@@ -186,7 +203,7 @@ public class PreviewRegenerationService {
         if (unhealthy.isEmpty()) {
             listener.started(0);
             listener.progressed(0, 0);
-            return new Result(false, 0, 0);
+            return new Result(false, 0, 0, 0);
         }
         return repairUnhealthyPreviews(current, unhealthy, listener);
     }
@@ -217,9 +234,16 @@ public class PreviewRegenerationService {
         if (!hasCompletePreviewMetadata(photo)) return false;
         Optional<ObjectStorageService.ObjectInfo> object = storage.find(photo.thumbnailObjectKey());
         if (object.isEmpty()) return false;
+        // Judge the object by its own MIME, not by photo.content_type. That column
+        // describes the source and can be wrong — legacy migration copies the old
+        // system's mime_type verbatim and falls back to application/octet-stream —
+        // while the preview format follows the finished object's real bytes. Using
+        // the column would mark a perfectly good preview unhealthy on every pass.
+        String objectContentType = object.get().contentType();
+        if (!supportedPreviewContentType(objectContentType)) return false;
         return object.get().size() == photo.thumbnailSize()
                 && object.get().size() <= MAX_STAGED_PREVIEW_BYTES
-                && expected.matches(object.get(), expectedPreviewContentType(photo));
+                && expected.matches(object.get(), objectContentType);
     }
 
     private Result repairUnhealthyPreviews(PreviewProfile expected, List<PreviewPhoto> unhealthy,
@@ -227,12 +251,13 @@ public class PreviewRegenerationService {
         listener.started(unhealthy.size());
         if (unhealthy.isEmpty()) {
             listener.progressed(0, 0);
-            return new Result(false, 0, 0);
+            return new Result(false, 0, 0, 0);
         }
         String generation = generationId(expected);
         List<GeneratedPreview> activated = new ArrayList<>();
         int stagedDeleted = 0;
-        RuntimeException firstFailure = null;
+        int fallbackCount = 0;
+        int failureCount = 0;
         for (int index = 0; index < unhealthy.size(); index++) {
             PreviewPhoto photo = unhealthy.get(index);
             GeneratedPreview generated = null;
@@ -259,20 +284,65 @@ public class PreviewRegenerationService {
                 if (generated != null) {
                     stagedDeleted += cleanupGenerated(List.of(generated));
                 }
-                if (firstFailure == null) firstFailure = exception;
-                log.error("定向修复预览图失败，继续处理其余照片：photoId={}", photo.id(), exception);
+                // A single failure must not abort the round. Aborting used to
+                // leave the startup audit without completeBootstrap(), pinning
+                // the profile policy in BOOTSTRAPPING for the whole process.
+                failureCount++;
+                if (dropReferenceToDeadPreview(photo, expected)) fallbackCount++;
+                log.error("定向修复预览图失败，该照片按现状展示并等待后续重试：photoId={}",
+                        photo.id(), exception);
             } finally {
                 listener.progressed(index + 1, unhealthy.size());
             }
         }
 
-        int oldDeleted = cleanupReplacedPreviews(activated);
-        if (firstFailure != null) {
-            throw new IllegalStateException("部分预览图定向修复失败；已成功修复的照片不会回滚", firstFailure);
+        int oldDeleted = cleanupReplacedPreviews(
+                activated.stream().map(GeneratedPreview::photo).toList(),
+                activated.stream().map(GeneratedPreview::objectKey)
+                        .collect(java.util.stream.Collectors.toSet()));
+        if (failureCount > 0) {
+            log.warn("预览图定向修复有 {} 张失败（其中 {} 张已改为回退成品图展示）；"
+                            + "成功修复的照片不会回滚，失败的会在后续对账中重试",
+                    failureCount, fallbackCount);
         }
-        log.info("预览图元数据定向修复完成：目标 {} 张，激活 {} 张，清理对象 {} 个",
-                unhealthy.size(), activated.size(), stagedDeleted + oldDeleted);
-        return new Result(true, stagedDeleted + oldDeleted, activated.size());
+        log.info("预览图元数据定向修复完成：目标 {} 张，激活 {} 张，回退成品图 {} 张，清理对象 {} 个",
+                unhealthy.size(), activated.size(), fallbackCount, stagedDeleted + oldDeleted);
+        return new Result(!activated.isEmpty(), stagedDeleted + oldDeleted, activated.size(),
+                fallbackCount);
+    }
+
+    /**
+     * Clears a preview reference whose object is <em>confirmed</em> absent so the
+     * gallery falls back to the finished object instead of rendering a broken
+     * image. A reference whose object still exists is kept even when its profile
+     * metadata is stale: a slightly off-ratio thumbnail beats downloading the
+     * full finished object on every gallery tile. An ambiguous HEAD keeps the
+     * reference too — only a definite not-found justifies the downgrade.
+     */
+    private boolean dropReferenceToDeadPreview(PreviewPhoto photo, PreviewProfile expected) {
+        try {
+            if (StringUtils.hasText(photo.thumbnailObjectKey())
+                    && storage.find(photo.thumbnailObjectKey()).isPresent()) {
+                return false;
+            }
+        } catch (RuntimeException headFailure) {
+            log.warn("无法确认预览对象是否存在，保留原引用等待下次对账：photoId={}, objectKey={}",
+                    photo.id(), photo.thumbnailObjectKey(), headFailure);
+            return false;
+        }
+        if (!StringUtils.hasText(photo.thumbnailObjectKey()) && photo.thumbnailSize() == null) {
+            // Already the fallback state; nothing to clear.
+            return true;
+        }
+        boolean cleared = Boolean.TRUE.equals(executeAtomic(status -> {
+            if (!profiles.matches(expected)) return false;
+            return clearPreview(photo);
+        }));
+        if (!cleared) {
+            log.warn("清空失效预览引用未命中（并发变化或 profile 已切换），保留现状：photoId={}",
+                    photo.id());
+        }
+        return cleared;
     }
 
     private StageReconciliation reconcileStages(String profile, List<PreviewPhoto> photos) {
@@ -328,7 +398,7 @@ public class PreviewRegenerationService {
 
     private List<GeneratedPreview> validateStagedPreviews(
             PreviewProfile expected, String generation,
-            List<GeneratedPreview> staged) {
+            List<GeneratedPreview> staged, List<PreviewPhoto> unusable) {
         List<GeneratedPreview> ready = new ArrayList<>(staged.size());
         for (GeneratedPreview preview : staged) {
             if (stagedObjectValid(expected, preview)) {
@@ -342,14 +412,27 @@ public class PreviewRegenerationService {
                 discardStage(checkpoint);
                 replacement = generateAndPersist(preview.photo(), generation,
                         expected, expected.fingerprint());
+            } catch (PreviewSourceUnusableException sourceFailure) {
+                // The checkpoint object is gone and the source has since become
+                // undecodable. Without this branch every later round would abort
+                // on the same photo forever.
+                unusable.add(preview.photo());
+                log.warn("暂存预览对象缺失且原图已无法重新编码，该照片将回退为直接使用成品图展示："
+                        + "photoId={}", preview.photo().id(), sourceFailure);
+                continue;
             } catch (RuntimeException exception) {
                 throw new IllegalStateException(
                         "暂存预览对象明确缺失或校验异常，安全重建失败；数据库尚未切换，photoId="
                                 + preview.photo().id(), exception);
             }
             if (!stagedObjectValid(expected, replacement)) {
-                // Keep the replacement checkpoint. The next startup can retry
-                // it without ever activating an object that failed validation.
+                // Do NOT fall back here. Now that the preview MIME is judged by
+                // the object's own bytes, a freshly generated object can only
+                // fail this check for storage-side reasons (metadata dropped,
+                // bytes corrupted, object missing right after PUT) — which affect
+                // every photo, not this one. Keep the checkpoint and abort so a
+                // storage misconfiguration cannot silently clear the whole
+                // library's preview references. The reason is in the log above.
                 throw new IllegalStateException(
                         "重建后的暂存预览对象再次校验失败；检查点已保留且数据库尚未切换，photoId="
                                 + preview.photo().id());
@@ -359,14 +442,41 @@ public class PreviewRegenerationService {
         return ready;
     }
 
+    /**
+     * Definitive verdict on one staged preview object. Returns {@code false} only
+     * when the object is provably unacceptable; every ambiguous outcome (HEAD or
+     * read failure) throws instead, so callers may safely treat {@code false} as
+     * "this object will never become valid on its own".
+     *
+     * <p>Each rejection is logged with its reason — a silent boolean here once
+     * cost a production log hunt to explain a permanently stalled rebuild.</p>
+     */
     private boolean stagedObjectValid(PreviewProfile expected, GeneratedPreview preview) {
         StagedPreview checkpoint = toCheckpoint(expected, preview);
+        long photoId = preview.photo().id();
         if (!StringUtils.hasText(checkpoint.stagedObjectKey())
-                || !checkpoint.stagedObjectKey().startsWith("thumbnails/generations/")
-                || checkpoint.stagedSize() <= 0
-                || checkpoint.stagedSize() > MAX_STAGED_PREVIEW_BYTES
-                || !Objects.equals(checkpoint.stagedContentType(),
-                expectedPreviewContentType(preview.photo()))) {
+                || !checkpoint.stagedObjectKey().startsWith("thumbnails/generations/")) {
+            log.warn("暂存预览对象 key 不在预览代际命名空间内：photoId={}, key={}",
+                    photoId, checkpoint.stagedObjectKey());
+            return false;
+        }
+        if (checkpoint.stagedSize() <= 0
+                || checkpoint.stagedSize() > MAX_STAGED_PREVIEW_BYTES) {
+            log.warn("暂存预览对象大小超出安全范围：photoId={}, size={}",
+                    photoId, checkpoint.stagedSize());
+            return false;
+        }
+        // Only require a supported preview MIME. Comparing against a MIME derived
+        // from photo.content_type used to be the check here, and it deadlocked the
+        // whole rebuild: that column describes the source and is not trustworthy
+        // (legacy migration copies the old system's mime_type verbatim, falling
+        // back to application/octet-stream), while the preview format is decided
+        // by the finished object's real bytes. A legacy PNG whose column said
+        // anything other than exactly image/png could never pass, and regenerating
+        // produced the same MIME, so every retry failed identically forever.
+        if (!supportedPreviewContentType(checkpoint.stagedContentType())) {
+            log.warn("暂存预览对象 MIME 不是受支持的预览类型：photoId={}, contentType={}",
+                    photoId, checkpoint.stagedContentType());
             return false;
         }
 
@@ -376,27 +486,49 @@ public class PreviewRegenerationService {
         } catch (RuntimeException exception) {
             throw new IllegalStateException(
                     "HEAD 暂存预览对象失败；检查点已保留且数据库尚未切换，photoId="
-                            + preview.photo().id(), exception);
+                            + photoId, exception);
         }
-        if (object.isEmpty()
-                || object.get().size() != checkpoint.stagedSize()
+        if (object.isEmpty()) {
+            log.warn("暂存预览对象不存在：photoId={}, key={}", photoId,
+                    checkpoint.stagedObjectKey());
+            return false;
+        }
+        if (object.get().size() != checkpoint.stagedSize()
                 || object.get().size() <= 0
                 || object.get().size() > MAX_STAGED_PREVIEW_BYTES) {
+            log.warn("暂存预览对象实际大小与检查点不一致：photoId={}, actual={}, checkpoint={}",
+                    photoId, object.get().size(), checkpoint.stagedSize());
             return false;
         }
         try {
             if (!expected.matches(object.get(), checkpoint.stagedContentType(),
                     checkpoint.stagedSha256())) {
+                log.warn("暂存预览对象的 MIME 或 profile 元数据与本轮 profile 不一致："
+                                + "photoId={}, objectContentType={}, stagedContentType={}, "
+                                + "expectedRatio={}",
+                        photoId, object.get().contentType(),
+                        checkpoint.stagedContentType(), expected.ratioText());
                 return false;
             }
         } catch (RuntimeException malformedCheckpoint) {
+            log.warn("暂存预览对象 profile 元数据格式非法：photoId={}", photoId, malformedCheckpoint);
             return false;
         }
 
         // An open/read failure is ambiguous (transport failure or an object
         // changing after HEAD). Preserve the checkpoint and stop instead of
         // deleting a potentially valid object or switching the database.
-        return checkpoint.stagedSha256().equalsIgnoreCase(sha256(checkpoint));
+        if (!checkpoint.stagedSha256().equalsIgnoreCase(sha256(checkpoint))) {
+            log.warn("暂存预览对象内容摘要与检查点不一致：photoId={}, key={}",
+                    photoId, checkpoint.stagedObjectKey());
+            return false;
+        }
+        return true;
+    }
+
+    /** The only two formats the preview encoder can emit. */
+    private boolean supportedPreviewContentType(String contentType) {
+        return "image/jpeg".equals(contentType) || "image/png".equals(contentType);
     }
 
     private StagedPreview toCheckpoint(PreviewProfile expected, GeneratedPreview preview) {
@@ -413,6 +545,8 @@ public class PreviewRegenerationService {
             // uploaded object whose cleanup key was lost from the database.
             return generateDirectly(photo, generation, expected,
                     generated -> persistStage(profile, generated));
+        } catch (PreviewSourceUnusableException unusable) {
+            throw unusable;
         } catch (Exception exception) {
             throw new IllegalStateException("重新生成预览图失败，photoId=" + photo.id(), exception);
         }
@@ -651,6 +785,8 @@ public class PreviewRegenerationService {
                                       PreviewProfile expected) {
         try {
             return generateDirectly(photo, generation, expected, null);
+        } catch (PreviewSourceUnusableException unusable) {
+            throw unusable;
         } catch (Exception exception) {
             throw new IllegalStateException("重新生成预览图失败，photoId=" + photo.id(), exception);
         }
@@ -670,15 +806,26 @@ public class PreviewRegenerationService {
                  OutputStream output = Files.newOutputStream(source)) {
                 copyLimited(input, output, properties.imageMaxBytes());
             }
-            String contentType = normalizedContentType(source, photo.contentType());
-            Path output = workspace.taskFile(taskDirectory,
-                    "preview" + ("image/png".equals(contentType) ? ".png" : ".jpg"));
-            ImageCompressor.FileResult preview = compressor.thumbnail(
-                    source, output, contentType, MAX_DIMENSION,
-                    expected.compressionRatio().doubleValue());
-            if (preview.size() <= 0 || preview.size() > MAX_STAGED_PREVIEW_BYTES) {
-                throw new IllegalArgumentException("生成的预览图超过 20 MiB 安全上限");
+
+            // Only decoding and encoding this one source is allowed to degrade a
+            // single photo to "no preview". Everything outside this block talks
+            // to the object store, and a storage outage must abort the whole
+            // round instead of clearing preview references library-wide.
+            String contentType;
+            ImageCompressor.FileResult preview;
+            try {
+                contentType = normalizedContentType(source, photo.contentType());
+                Path output = workspace.taskFile(taskDirectory,
+                        "preview" + ("image/png".equals(contentType) ? ".png" : ".jpg"));
+                preview = compressor.thumbnail(source, output, contentType, MAX_DIMENSION,
+                        expected.compressionRatio().doubleValue());
+                if (preview.size() <= 0 || preview.size() > MAX_STAGED_PREVIEW_BYTES) {
+                    throw new IllegalArgumentException("生成的预览图超过 20 MiB 安全上限");
+                }
+            } catch (Exception encodingFailure) {
+                throw new PreviewSourceUnusableException(photo.id(), encodingFailure);
             }
+
             String previewSha256 = sha256(preview.path());
             String previewKey = previewKey(generation, photo.id(), contentType);
             GeneratedPreview generated = new GeneratedPreview(photo, previewKey, preview.size(),
@@ -710,7 +857,8 @@ public class PreviewRegenerationService {
     private List<GeneratedPreview> switchGeneration(PreviewProfile configured,
                                                     PreviewProfileRepository.StoredProfile stored,
                                                     String profile,
-                                                    List<GeneratedPreview> generated) {
+                                                    List<GeneratedPreview> generated,
+                                                    List<PreviewPhoto> cleared) {
         // Lock/CAS the singleton profile row before inspecting the live photo
         // set. A RUNNING instance that still holds the old profile must now
         // wait and its upload-completion guard will fail after this transaction
@@ -718,13 +866,19 @@ public class PreviewRegenerationService {
         // check below detects the newly eligible photo and rolls this switch
         // back so the next checkpointed retry includes it.
         profiles.save(configured, stored);
-        requireSameEligiblePhotoSet(generated);
+        requireSameEligiblePhotoSet(generated, cleared);
         lockAndValidateSwitchStages(configured, profile, generated);
 
         List<GeneratedPreview> activated = new ArrayList<>();
         for (GeneratedPreview preview : generated) {
             activated.add(switchOneWithVersionRetry(preview, false, null)
                     .orElseThrow(() -> concurrentSwitchFailure(preview.photo().id())));
+        }
+        // Undecodable sources join the same atomic switch with a null preview so
+        // the library never mixes generations: they render the finished object
+        // until a later repair pass succeeds.
+        for (PreviewPhoto photo : cleared) {
+            clearPreviewWithVersionRetry(photo);
         }
         for (GeneratedPreview preview : generated) {
             int deleted = jdbc.sql("""
@@ -745,9 +899,11 @@ public class PreviewRegenerationService {
         return List.copyOf(activated);
     }
 
-    private void requireSameEligiblePhotoSet(List<GeneratedPreview> generated) {
-        List<Long> stagedPhotoIds = generated.stream()
-                .map(preview -> preview.photo().id())
+    private void requireSameEligiblePhotoSet(List<GeneratedPreview> generated,
+                                             List<PreviewPhoto> cleared) {
+        List<Long> accountedPhotoIds = Stream.concat(
+                        generated.stream().map(preview -> preview.photo().id()),
+                        cleared.stream().map(PreviewPhoto::id))
                 .sorted()
                 .toList();
         List<Long> livePhotoIds = jdbc.sql("""
@@ -758,7 +914,7 @@ public class PreviewRegenerationService {
                   AND object_key IS NOT NULL
                 ORDER BY id
                 """).query(Long.class).list();
-        if (!livePhotoIds.equals(stagedPhotoIds)) {
+        if (!livePhotoIds.equals(accountedPhotoIds)) {
             throw new IllegalStateException(
                     "预览图生成快照后可用照片集合发生变化，数据库切换已回滚并将在后台重试");
         }
@@ -846,6 +1002,47 @@ public class PreviewRegenerationService {
         return statement.update() == 1;
     }
 
+    /**
+     * Drops a photo's preview reference under the same CAS discipline as {@link
+     * #switchOne}. The gallery then renders the finished object until a later
+     * repair pass produces a real preview.
+     */
+    private boolean clearPreview(PreviewPhoto photo) {
+        return jdbc.sql("""
+                UPDATE photo
+                SET thumbnail_object_key=NULL, thumbnail_size=NULL,
+                    version=version+1, updated_at=CURRENT_TIMESTAMP
+                WHERE id=:id AND deleted=0 AND version=:version
+                  AND object_key=:objectKey AND status=:status
+                """)
+                .param("id", photo.id())
+                .param("version", photo.version())
+                .param("objectKey", photo.objectKey())
+                .param("status", photo.status().name())
+                .update() == 1;
+    }
+
+    private void clearPreviewWithVersionRetry(PreviewPhoto photo) {
+        PreviewPhoto candidate = photo;
+        for (int attempt = 0; attempt < 3; attempt++) {
+            if (clearPreview(candidate)) return;
+
+            PreviewPhoto current = loadPhoto(photo.id());
+            if (current == null
+                    || !Objects.equals(photo.objectKey(), current.objectKey())) {
+                throw concurrentSwitchFailure(photo.id());
+            }
+            if (!StringUtils.hasText(current.thumbnailObjectKey())
+                    && current.thumbnailSize() == null) {
+                // Another instance already cleared it; the intended end state
+                // holds, so the switch may continue.
+                return;
+            }
+            candidate = current;
+        }
+        throw concurrentSwitchFailure(photo.id());
+    }
+
     private Optional<GeneratedPreview> switchOneWithVersionRetry(
             GeneratedPreview original, boolean resolveWhenHealthyOrIneligible,
             PreviewProfile requiredDatabaseProfile) {
@@ -890,10 +1087,17 @@ public class PreviewRegenerationService {
         return cleanupKeys(generated.stream().map(GeneratedPreview::objectKey).toList());
     }
 
-    private int cleanupReplacedPreviews(List<GeneratedPreview> activated) {
+    /**
+     * Deletes the previews that {@code replaced} photos referenced before the
+     * switch. Callers pass every photo whose reference changed — both photos
+     * that received a new preview and photos whose reference was cleared.
+     *
+     * @param activeKeys keys just activated by this switch; never deleted
+     */
+    private int cleanupReplacedPreviews(List<PreviewPhoto> replaced, Set<String> activeKeys) {
         Set<String> oldKeys = new LinkedHashSet<>();
-        for (GeneratedPreview preview : activated) {
-            String oldKey = preview.photo().thumbnailObjectKey();
+        for (PreviewPhoto photo : replaced) {
+            String oldKey = photo.thumbnailObjectKey();
             if (!StringUtils.hasText(oldKey)) continue;
             if (!oldKey.startsWith("thumbnails/")) {
                 log.warn("跳过清理非 thumbnails/ 命名空间的旧预览对象：{}", oldKey);
@@ -903,9 +1107,6 @@ public class PreviewRegenerationService {
         }
         if (oldKeys.isEmpty()) return 0;
 
-        Set<String> activeKeys = activated.stream()
-                .map(GeneratedPreview::objectKey)
-                .collect(java.util.stream.Collectors.toSet());
         Set<String> referencedKeys = new LinkedHashSet<>(jdbc.sql("""
                 SELECT object_key AS referenced_key
                 FROM photo
@@ -1008,13 +1209,22 @@ public class PreviewRegenerationService {
                 + UUID.randomUUID().toString().substring(0, 8);
     }
 
-    private String expectedPreviewContentType(PreviewPhoto photo) {
-        return "image/png".equals(photo.contentType()) ? "image/png" : "image/jpeg";
-    }
-
     private String previewKey(String generation, long photoId, String contentType) {
         return "thumbnails/generations/" + generation + "/" + photoId
                 + ("image/png".equals(contentType) ? ".png" : ".jpg");
+    }
+
+    /**
+     * Raised when this one source cannot be decoded or re-encoded. It is the
+     * only failure that may degrade a single photo to "no preview"; the gallery
+     * then falls back to the finished object. Storage failures must never be
+     * reported as this type — they abort the whole round and keep checkpoints.
+     */
+    static final class PreviewSourceUnusableException extends RuntimeException {
+        private PreviewSourceUnusableException(long photoId, Throwable cause) {
+            super("预览图来源无法解码或编码，该照片将回退为直接使用成品图展示，photoId=" + photoId,
+                    cause);
+        }
     }
 
     private record PreviewPhoto(Long id, String objectKey, String contentType,
@@ -1040,7 +1250,13 @@ public class PreviewRegenerationService {
                                     String contentType, String sha256) {
     }
 
-    public record Result(boolean regenerated, int deletedCount, int regeneratedCount) {
+    /**
+     * @param fallbackCount photos left without a preview because their source
+     *                      could not be encoded. They render the finished object
+     *                      until a later repair pass succeeds.
+     */
+    public record Result(boolean regenerated, int deletedCount, int regeneratedCount,
+                         int fallbackCount) {
     }
 
     public interface ProgressListener {

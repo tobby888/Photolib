@@ -39,6 +39,10 @@ management:
 
 photolib:
   preview-bootstrap-retry-delay: ${PREVIEW_BOOTSTRAP_RETRY_DELAY:30s}
+  startup-missing-object-cleanup:
+    enabled: ${STARTUP_MISSING_OBJECT_CLEANUP_ENABLED:true}
+    max-ratio: ${STARTUP_MISSING_OBJECT_CLEANUP_MAX_RATIO:0.2}
+    min-absolute: ${STARTUP_MISSING_OBJECT_CLEANUP_MIN_ABSOLUTE:20}
   photo-processing:
     threads: ${PHOTO_PROCESSING_THREADS:1}
     temporary-directory: ${PHOTO_PROCESSING_TEMPORARY_DIRECTORY:./data/photo-processing}
