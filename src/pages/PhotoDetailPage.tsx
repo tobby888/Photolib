@@ -5,7 +5,7 @@ import {
   ArrowLeftOutlined, DeleteOutlined, DownloadOutlined, FolderAddOutlined,
 } from '@ant-design/icons'
 import { useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { api, emptyPage, qs } from '../api'
 import { DataState, formatBytes, PageTitle, StatusTag } from '../components'
@@ -16,6 +16,7 @@ import { hasPermission } from '../permissions'
 import PhotoHistogram from '../PhotoHistogram'
 import { useLocalImageUrl } from '../useLocalImageUrl'
 import type { EntityId, PageData, Photo, Project } from '../types'
+import { withPhotoLibrarySearch } from '../photoLibrarySearch'
 
 function isLinkedToProject(photo: Photo, projectId: EntityId) {
   return photo.relatedProjects?.some(project => String(project.id) === String(projectId))
@@ -38,6 +39,7 @@ function withProjectLink(photo: Photo, project: Project): Photo {
 export default function PhotoDetailPage() {
   const { photoId } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
   const { message, modal } = App.useApp()
   const { user } = useAuth()
   const canAddToProject = hasPermission(user, 'PROJECT_ADOPT')
@@ -99,7 +101,7 @@ export default function PhotoDetailPage() {
       async onOk() {
         await api({ method: 'DELETE', url: `/photos/${photo.id}` })
         message.success('图片已删除')
-        navigate('/photos', { replace: true })
+        navigate(withPhotoLibrarySearch('/photos', location.search), { replace: true })
       },
     })
   }
@@ -148,7 +150,8 @@ export default function PhotoDetailPage() {
     <PageTitle eyebrow="PHOTO DETAIL" title={photo?.title || '图片详情'}
       description={photo ? `图片 #${photo.id} · ${photo.photographerName}` : '正在读取图片信息…'}
       extra={<>
-        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/photos')}>返回图片库</Button>
+        <Button icon={<ArrowLeftOutlined />}
+          onClick={() => navigate(withPhotoLibrarySearch('/photos', location.search))}>返回图片库</Button>
         {photo && canAddToProject && <Button icon={<FolderAddOutlined />}
           disabled={photo.status !== 'AVAILABLE'}
           title={photo.status === 'AVAILABLE' ? undefined : '仅可用图片可以添加到项目'}

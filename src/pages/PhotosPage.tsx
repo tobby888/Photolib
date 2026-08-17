@@ -6,7 +6,7 @@ import {
   CloudUploadOutlined, DeleteOutlined, DownloadOutlined, FolderAddOutlined, InboxOutlined, SearchOutlined,
 } from '@ant-design/icons'
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { api, emptyPage, qs } from '../api'
 import { readTakenAt } from '../exif'
@@ -19,9 +19,15 @@ import { useAuth } from '../auth'
 import { preparePhotoBatchDownload } from '../photoBatchDownload'
 import { photoTitleFromFileName } from '../photoTitle'
 import { hasPermission } from '../permissions'
+import {
+  readPhotoLibraryFilters, writePhotoLibraryFilters, withPhotoLibrarySearch,
+} from '../photoLibrarySearch'
+import type { PhotoLibraryFilters, PhotoLibraryStatus } from '../photoLibrarySearch'
 
 export default function PhotosPage() {
   const navigate = useNavigate()
+  const location = useLocation()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { message, modal } = App.useApp()
   const { user } = useAuth()
   const canAddToProject = hasPermission(user, 'PROJECT_ADOPT')
@@ -40,12 +46,19 @@ export default function PhotosPage() {
   const [selectedProjectId, setSelectedProjectId] = useState<EntityId | null>(null)
   const [projectFilters, setProjectFilters] = useState({ page: 1, keyword: '' })
   const [projectPickerPhotos, setProjectPickerPhotos] = useState<Photo[]>([])
-  const [filters, setFilters] = useState({ page: 1, keyword: '', status: 'AVAILABLE' })
+  const filters = readPhotoLibraryFilters(searchParams)
+  const [searchText, setSearchText] = useState(filters.keyword)
+  const setFilters = (nextFilters: PhotoLibraryFilters) => {
+    setSearchParams(writePhotoLibraryFilters(nextFilters), { replace: true })
+  }
   const selectedIds = selectedPhotos.map(photo => photo.id)
   const { data, loading, error, reload } = useLoad(
     () => api<PageData<Photo>>({ url: '/photos', params: qs({ ...filters, pageSize: 24 }) }),
     emptyPage<Photo>(), [filters.page, filters.keyword, filters.status],
   )
+  useEffect(() => {
+    setSearchText(filters.keyword)
+  }, [filters.keyword])
   useEffect(() => {
     const onPreviewRegenerated = () => void reload()
     window.addEventListener('preview-generation-succeeded', onPreviewRegenerated)
@@ -230,10 +243,11 @@ export default function PhotosPage() {
     <Card className="filter-card">
       <Space wrap>
         <Input.Search allowClear placeholder="搜索标题、描述或标签" enterButton={<SearchOutlined />} style={{ width: 320 }}
+          value={searchText} onChange={event => setSearchText(event.target.value)}
           onSearch={keyword => setFilters({ ...filters, page: 1, keyword })} />
         <Select value={filters.status} style={{ width: 150 }} options={[
           { value: 'AVAILABLE', label: '可用图片' }, { value: 'PROCESSING', label: '处理中' }, { value: 'ARCHIVED', label: '已归档' },
-        ]} onChange={status => setFilters({ ...filters, page: 1, status })} />
+        ]} onChange={(status: PhotoLibraryStatus) => setFilters({ ...filters, page: 1, status })} />
       </Space>
       <Typography.Text type="secondary">共 {data.total} 张图片</Typography.Text>
     </Card>
@@ -243,9 +257,9 @@ export default function PhotosPage() {
           <Card className={`photo-card${selectedIds.includes(photo.id) ? ' photo-card-selected' : ''}`} hoverable cover={<div
             className="photo-cover" role="link" tabIndex={0}
             aria-label={`查看图片详情：${photo.title || photo.id}`}
-            onClick={() => navigate(`/photos/${photo.id}`)}
+            onClick={() => navigate(withPhotoLibrarySearch(`/photos/${photo.id}`, location.search))}
             onKeyDown={event => {
-              if (event.key === 'Enter') navigate(`/photos/${photo.id}`)
+              if (event.key === 'Enter') navigate(withPhotoLibrarySearch(`/photos/${photo.id}`, location.search))
             }}>
             {photo.thumbnailUrl ? <Image preview={false} src={photo.thumbnailUrl} alt={photo.title} /> : <div className="image-placeholder"><span>{photo.title?.slice(0, 1) || '图'}</span></div>}
             <div className="photo-overlay">
