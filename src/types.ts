@@ -137,6 +137,7 @@ export interface Photo extends BaseEntity {
   status: 'UPLOADING' | 'PROCESSING' | 'AVAILABLE' | 'ARCHIVED' | 'DELETED'
   failureReason?: string
   adoptionCount?: number
+  favorited: boolean
   relatedProjectIds?: EntityId[]
   relatedProjects?: { id: EntityId; title: string }[]
 }

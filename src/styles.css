@@ -237,13 +237,17 @@ button, input, textarea, select { font-family: inherit; }
   border-color: rgba(34, 54, 48, .72);
   background: rgba(255, 255, 255, .96);
 }
-.photo-download-button { border-color: rgba(255, 255, 255, .82); background: rgba(255, 255, 255, .94); box-shadow: 0 2px 8px rgba(15, 31, 27, .2); }
+.photo-card-actions { flex: 0 0 auto; margin-left: auto; }
+.photo-download-button,
+.photo-favorite-button { border-color: rgba(255, 255, 255, .82); background: rgba(255, 255, 255, .94); box-shadow: 0 2px 8px rgba(15, 31, 27, .2); }
+.photo-favorite-button.is-favorited { color: #a86600; border-color: #ffd591; background: #fff7e6; }
+.photo-favorite-button:focus-visible { outline: 3px solid rgba(24, 144, 255, .55); outline-offset: 2px; }
 .photo-card h5 { margin: 0 0 8px; }
 .photo-cover { height: 230px; position: relative; overflow: hidden; background: #e8e5de; }
 .photo-cover .ant-image { display: block; width: 100%; height: 100%; }
 .photo-cover .ant-image-img, .photo-cover img { width: 100%; height: 100%; object-fit: cover; object-position: center center; transition: transform .45s ease; }
 .photo-card:hover .photo-cover .ant-image-img, .photo-card:hover .photo-cover img { transform: scale(1.035); }
-.photo-overlay { position: absolute; z-index: 2; top: 12px; left: 12px; right: 12px; display: flex; align-items: flex-start; justify-content: space-between; pointer-events: none; }
+.photo-overlay { position: absolute; z-index: 2; top: 12px; left: 12px; right: 12px; display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; pointer-events: none; }
 .photo-overlay > * { pointer-events: auto; }
 .photo-overlay > .photo-download-button:only-child { margin-left: auto; }
 .photo-badges { position: absolute; z-index: 2; left: 12px; bottom: 12px; }
@@ -1396,7 +1400,9 @@ body {
 .photo-card { background: rgba(10, 23, 38, .84); }
 .photo-card-selected { box-shadow: 0 0 0 1px var(--studio-cyan), 0 0 34px rgba(0, 242, 254, .18); }
 .photo-cover { background: #07101c; }
-.photo-download-button { border-color: rgba(0, 242, 254, .3); background: rgba(7, 18, 31, .8); box-shadow: 0 5px 18px rgba(0, 0, 0, .34); }
+.photo-download-button,
+.photo-favorite-button { border-color: rgba(0, 242, 254, .3); background: rgba(7, 18, 31, .8); box-shadow: 0 5px 18px rgba(0, 0, 0, .34); }
+.photo-favorite-button.is-favorited { color: #ffd666; border-color: rgba(255, 214, 102, .62); background: rgba(69, 49, 8, .9); }
 .detail-image { background: #07101c; }
 
 .state-guide.state-draft { border-left-color: #667b8c; }
@@ -2006,7 +2012,9 @@ body {
 .photo-card-selected { box-shadow: 0 0 0 2px var(--porcelain-blue) !important; }
 .photo-cover,
 .detail-image { background: linear-gradient(135deg, var(--sky-mist), var(--sky-powder)); }
-.photo-download-button { border-color: #fff; background: rgba(255, 255, 255, .94); box-shadow: 0 4px 12px rgba(20, 28, 42, .12); }
+.photo-download-button,
+.photo-favorite-button { border-color: #fff; background: rgba(255, 255, 255, .94); box-shadow: 0 4px 12px rgba(20, 28, 42, .12); }
+.photo-favorite-button.is-favorited { color: #a86600; border-color: #ffd591; background: #fff7e6; }
 
 .state-guide.state-draft { border-left-color: #9aa1ad; }
 .state-guide.state-active { border-left-color: var(--porcelain-blue); background: var(--sky-mist) !important; }

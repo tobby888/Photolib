@@ -189,7 +189,8 @@ function Shell() {
     if (hasPermission(user, 'REQUEST_VIEW')) common.push(
       { key: '/requests', icon: <UnorderedListOutlined />, label: '图片需求' })
     if (hasPermission(user, 'PHOTO_VIEW')) common.push(
-      { key: '/photos', icon: <CameraOutlined />, label: '图片库' })
+      { key: '/photos', icon: <CameraOutlined />, label: '图片库' },
+      { key: '/favorites', icon: <StarOutlined />, label: '收藏图片' })
     if (hasAnyPermission(user, 'WORKLOG_SUBMIT', 'WORKLOG_CONFIRM', 'WORKLOG_EXPORT')) common.push(
       { key: '/worklogs', icon: <BookOutlined />, label: '工时记录' })
     if (hasAnyPermission(user, 'DIRECTORY_VIEW', 'DIRECTORY_MANAGE')) common.push(
@@ -322,6 +323,8 @@ function Shell() {
             <Route path="/photos" element={hasPermission(user, 'PHOTO_VIEW') ? <PhotosPage /> : <Navigate to="/" />} />
             <Route path="/photos/batch-upload" element={hasAnyPermission(user, 'PHOTO_UPLOAD', 'REQUEST_PHOTO_MANAGE') ? <BatchUploadPage /> : <Navigate to="/" />} />
             <Route path="/photos/:photoId" element={hasPermission(user, 'PHOTO_VIEW') ? <PhotoDetailPage /> : <Navigate to="/" />} />
+            <Route path="/favorites" element={hasPermission(user, 'PHOTO_VIEW') ? <PhotosPage favoritesOnly /> : <Navigate to="/" />} />
+            <Route path="/favorites/:photoId" element={hasPermission(user, 'PHOTO_VIEW') ? <PhotoDetailPage favoritesOnly /> : <Navigate to="/" />} />
             <Route path="/worklogs" element={hasAnyPermission(user, 'WORKLOG_SUBMIT', 'WORKLOG_CONFIRM', 'WORKLOG_EXPORT') ? <WorklogsPage /> : <Navigate to="/" />} />
             <Route path="/directory" element={hasAnyPermission(user, 'DIRECTORY_VIEW', 'DIRECTORY_MANAGE') ? <DirectoryPage /> : <Navigate to="/" />} />
             <Route path="/notifications" element={<NotificationsPage />} />

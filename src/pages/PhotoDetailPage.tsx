@@ -2,7 +2,7 @@ import {
   Alert, App, Button, Card, Col, Descriptions, Image, Input, Modal, Row, Skeleton, Space, Tag, Typography,
 } from 'antd'
 import {
-  ArrowLeftOutlined, DeleteOutlined, DownloadOutlined, FolderAddOutlined,
+  ArrowLeftOutlined, DeleteOutlined, DownloadOutlined, FolderAddOutlined, StarFilled, StarOutlined,
 } from '@ant-design/icons'
 import { useEffect, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
@@ -36,15 +36,17 @@ function withProjectLink(photo: Photo, project: Project): Photo {
   }
 }
 
-export default function PhotoDetailPage() {
+export default function PhotoDetailPage({ favoritesOnly = false }: { favoritesOnly?: boolean }) {
   const { photoId } = useParams()
   const navigate = useNavigate()
   const location = useLocation()
+  const libraryRoot = favoritesOnly ? '/favorites' : '/photos'
   const { message, modal } = App.useApp()
   const { user } = useAuth()
   const canAddToProject = hasPermission(user, 'PROJECT_ADOPT')
   const canDelete = hasPermission(user, 'PHOTO_DELETE')
   const canDownload = hasPermission(user, 'PHOTO_DOWNLOAD')
+  const [favoriteSaving, setFavoriteSaving] = useState(false)
   const [projectPickerOpen, setProjectPickerOpen] = useState(false)
   const [projectSaving, setProjectSaving] = useState(false)
   const [selectedProjectId, setSelectedProjectId] = useState<EntityId | null>(null)
@@ -90,6 +92,25 @@ export default function PhotoDetailPage() {
     }
   }
 
+  const toggleFavorite = async () => {
+    if (!photo || favoriteSaving) return
+    const nextFavorited = !photo.favorited
+    setFavoriteSaving(true)
+    setPhoto(current => current ? { ...current, favorited: nextFavorited } : current)
+    try {
+      await api<void>({
+        method: nextFavorited ? 'PUT' : 'DELETE',
+        url: `/photos/${photo.id}/favorite`,
+      })
+      message.success(nextFavorited ? '已收藏图片' : '已取消收藏')
+    } catch (reason) {
+      setPhoto(current => current?.id === photo.id ? { ...current, favorited: photo.favorited } : current)
+      message.error(`${nextFavorited ? '收藏' : '取消收藏'}失败：${(reason as Error).message}`)
+    } finally {
+      setFavoriteSaving(false)
+    }
+  }
+
   const remove = () => {
     if (!photo) return
     modal.confirm({
@@ -101,7 +122,7 @@ export default function PhotoDetailPage() {
       async onOk() {
         await api({ method: 'DELETE', url: `/photos/${photo.id}` })
         message.success('图片已删除')
-        navigate(withPhotoLibrarySearch('/photos', location.search), { replace: true })
+        navigate(withPhotoLibrarySearch(libraryRoot, location.search), { replace: true })
       },
     })
   }
@@ -151,7 +172,16 @@ export default function PhotoDetailPage() {
       description={photo ? `图片 #${photo.id} · ${photo.photographerName}` : '正在读取图片信息…'}
       extra={<>
         <Button icon={<ArrowLeftOutlined />}
-          onClick={() => navigate(withPhotoLibrarySearch('/photos', location.search))}>返回图片库</Button>
+          onClick={() => navigate(withPhotoLibrarySearch(libraryRoot, location.search))}>
+          {favoritesOnly ? '返回收藏图片' : '返回图片库'}
+        </Button>
+        {photo && <Button icon={photo.favorited ? <StarFilled /> : <StarOutlined />}
+          loading={favoriteSaving} aria-pressed={photo.favorited}
+          aria-label={photo.favorited ? '取消收藏当前图片' : '收藏当前图片'}
+          title={photo.favorited ? '取消收藏当前图片' : '收藏当前图片'}
+          onClick={event => { event.stopPropagation(); void toggleFavorite() }}>
+          {photo.favorited ? '取消收藏' : '收藏图片'}
+        </Button>}
         {photo && canAddToProject && <Button icon={<FolderAddOutlined />}
           disabled={photo.status !== 'AVAILABLE'}
           title={photo.status === 'AVAILABLE' ? undefined : '仅可用图片可以添加到项目'}
