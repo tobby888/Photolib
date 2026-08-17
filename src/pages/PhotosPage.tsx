@@ -1,6 +1,6 @@
 import {
   App, Button, Card, Checkbox, Col, DatePicker, Form, Image, Input, Modal,
-  Pagination, Progress, Row, Select, Space, Table, Tag, Typography, Upload,
+  Pagination, Progress, Row, Select, Space, Tag, Typography, Upload,
 } from 'antd'
 import {
   CloudUploadOutlined, DeleteOutlined, DownloadOutlined, FolderAddOutlined, InboxOutlined, SearchOutlined,
@@ -13,6 +13,7 @@ import { readTakenAt } from '../exif'
 import { uploadToObjectStorage } from '../storageUpload'
 import type { CampusMember, DedupedMember, EntityId, PageData, Photo, Project } from '../types'
 import { DataState, PageTitle, StatusTag } from '../components'
+import { ContentFitTable } from '../ContentFitTable'
 import { useLoad } from '../hooks'
 import { useAuth } from '../auth'
 import { preparePhotoBatchDownload } from '../photoBatchDownload'
@@ -328,7 +329,7 @@ export default function PhotosPage() {
             setProjectFilters({ page: 1, keyword })
           }} />
         {projectsError && <Typography.Text type="danger">项目加载失败：{projectsError}</Typography.Text>}
-        <Table<Project> rowKey="id" size="small" loading={projectsLoading}
+        <ContentFitTable<Project> rowKey="id" size="small" loading={projectsLoading}
           dataSource={activeProjects.items}
           rowSelection={{
             type: 'radio',

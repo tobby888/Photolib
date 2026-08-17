@@ -1,12 +1,14 @@
-import { App, Button, Card, Empty, Form, Input, Modal, Select, Space, Table, Tag } from 'antd'
+import { App, Button, Card, Empty, Form, Input, Modal, Select, Space, Tag } from 'antd'
 import { EditOutlined, PlusOutlined, StopOutlined, CheckCircleOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useState } from 'react'
 import { api, qs } from '../api'
 import { useAuth } from '../auth'
 import type { Campus, CampusMember, EntityId } from '../types'
 import { DataState, PageTitle } from '../components'
+import { ContentFitTable } from '../ContentFitTable'
 import { useLoad } from '../hooks'
 import { hasPermission } from '../permissions'
+import { DIRECTORY_ACTION_MIN_WIDTH } from '../tableActionWidths'
 
 export default function DirectoryPage() {
   const { user } = useAuth()
@@ -146,11 +148,10 @@ export default function DirectoryPage() {
         {showCampusPicker && !selectedCampus
           ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="请先选择要查看的校区" />
           : <DataState loading={loading} error={error} empty={!members.length} onRetry={reload}>
-              <Table
+              <ContentFitTable
                 rowKey="id"
                 dataSource={members}
                 pagination={{ pageSize: 12, hideOnSinglePage: true }}
-                scroll={{ x: 'max-content' }}
                 columns={[
                   { title: '姓名', dataIndex: 'name' },
                   { title: '学号', dataIndex: 'studentId' },
@@ -158,7 +159,7 @@ export default function DirectoryPage() {
                     render: (enabled: boolean) => enabled
                       ? <Tag color="green">启用</Tag>
                       : <Tag>停用</Tag> },
-                  ...(canManage ? [{ title: '操作', width: 280, render: (_: unknown, member: CampusMember) => <Space>
+                  ...(canManage ? [{ title: '操作', minWidth: DIRECTORY_ACTION_MIN_WIDTH, className: 'table-action-cell', render: (_: unknown, member: CampusMember) => <Space>
                     <Button type="text" icon={<EditOutlined />} onClick={() => openEdit(member)}>编辑</Button>
                     {member.enabled
                       ? <Button type="text" danger icon={<StopOutlined />} onClick={() => confirmToggle(member)}>停用</Button>

@@ -1,6 +1,6 @@
 import {
   App, Button, Card, DatePicker, Descriptions, Drawer, Form, Input, Modal,
-  Pagination, Radio, Select, Space, Table, Tag, Typography,
+  Pagination, Radio, Select, Space, Tag, Typography,
 } from 'antd'
 import {
   CheckOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, RollbackOutlined, SearchOutlined,
@@ -12,10 +12,12 @@ import { api, emptyPage, qs } from '../api'
 import { useAuth } from '../auth'
 import type { BatchPublishResult, Campus, PageData, PhotoRequest, Project } from '../types'
 import { DataState, PageTitle, StatusTag } from '../components'
+import { ContentFitTable } from '../ContentFitTable'
 import { useLoad } from '../hooks'
 import MarkdownEditor from '../MarkdownEditor'
 import MarkdownRenderer from '../MarkdownRenderer'
 import { hasPermission } from '../permissions'
+import { REQUEST_ACTION_MIN_WIDTH } from '../tableActionWidths'
 
 const statuses = [
   ['DRAFT', '草稿'], ['PUBLISHED', '待接单'], ['ACCEPTED', '执行中'],
@@ -200,12 +202,13 @@ export default function RequestsPage() {
     </Card>
     <Card>
       <DataState loading={loading} error={error} empty={!data.items.length} onRetry={reload}>
-        <Table rowKey="id" dataSource={data.items} pagination={false} scroll={{ x: 900 }} columns={[
+        <ContentFitTable rowKey="id" dataSource={data.items} pagination={false} columns={[
           { title: '需求', dataIndex: 'title', render: (value, item) => <div className="table-title"><strong>{value}</strong><span>项目 #{item.projectId}</span></div> },
           { title: '校区', dataIndex: 'campusId', render: value => options.campuses.find(c => c.id === value)?.name || `校区 #${value}` },
           { title: '截止时间', dataIndex: 'deadline', render: value => <span className={dayjs(value).isBefore(dayjs()) ? 'danger-text' : ''}>{dayjs(value).format('MM-DD HH:mm')}</span> },
           { title: '状态', dataIndex: 'status', render: value => <StatusTag value={value} /> },
-          { title: '操作', key: 'action', fixed: 'right', render: (_, item) => actions(item) },
+          { title: '操作', key: 'action', fixed: 'right', minWidth: REQUEST_ACTION_MIN_WIDTH,
+            className: 'table-action-cell', render: (_, item) => actions(item) },
         ]} />
         <Pagination current={filters.page} total={data.total} pageSize={20} hideOnSinglePage onChange={page => setFilters({ ...filters, page })} />
       </DataState>

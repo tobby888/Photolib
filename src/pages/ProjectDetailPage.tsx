@@ -1,6 +1,6 @@
 import {
   App, Breadcrumb, Button, Card, Checkbox, Col, DatePicker, Form, Image, Input,
-  Modal, Radio, Row, Select, Space, Statistic, Table, Tag, Typography,
+  Modal, Radio, Row, Select, Space, Statistic, Tag, Typography,
 } from 'antd'
 import {
   ArrowLeftOutlined, CameraOutlined, CheckCircleOutlined, DownloadOutlined, EditOutlined, FileImageOutlined,
@@ -13,6 +13,7 @@ import { useAuth } from '../auth'
 import { api, emptyPage } from '../api'
 import type { Adoption, BatchPublishResult, Campus, PageData, Photo, PhotoRequest, Project } from '../types'
 import { DataState, StatusTag } from '../components'
+import { ContentFitTable } from '../ContentFitTable'
 import { useLoad } from '../hooks'
 import MarkdownEditor from '../MarkdownEditor'
 import MarkdownRenderer, { markdownExcerpt } from '../MarkdownRenderer'
@@ -377,9 +378,16 @@ export default function ProjectDetailPage() {
 
       <Card title="项目图片需求" extra={canCreateRequest && ['DRAFT', 'ACTIVE'].includes(project.status) &&
         <Button type="link" icon={<PlusOutlined />} onClick={() => setRequestOpen(true)}>新建需求</Button>}>
-        <Table rowKey="id" dataSource={data.requests} pagination={false} locale={{ emptyText: '这个项目还没有图片需求' }}
+        <ContentFitTable rowKey="id" dataSource={data.requests} pagination={false} locale={{ emptyText: '这个项目还没有图片需求' }}
           columns={[
-            { title: '需求', dataIndex: 'title', render: (value, item) => <div className="table-title"><strong>{value}</strong><span>{markdownExcerpt(item.description) || '暂无拍摄说明'}</span></div> },
+            { title: '需求', dataIndex: 'title', render: (value, item) => {
+              const title = String(value || '未命名需求')
+              const description = markdownExcerpt(item.description) || '暂无拍摄说明'
+              return <div className="table-title">
+                <strong className="table-ellipsis-text" style={{ maxWidth: 360 }} title={title}>{title}</strong>
+                <span className="table-ellipsis-text" style={{ maxWidth: 360 }} title={description}>{description}</span>
+              </div>
+            } },
             { title: '校区', dataIndex: 'campusId', render: value => data.campuses.find(c => c.id === value)?.name || `校区 #${value}` },
             { title: '截止时间', dataIndex: 'deadline', render: value => dayjs(value).format('YYYY-MM-DD HH:mm') },
             { title: '状态', dataIndex: 'status', render: value => <StatusTag value={value} /> },
@@ -512,7 +520,7 @@ export default function ProjectDetailPage() {
           </Typography.Paragraph>
           <Input.Search allowClear placeholder="搜索图片标题、描述或标签"
             onSearch={setGalleryKeyword} style={{ maxWidth: 420 }} />
-          <Table<Photo> rowKey="id" size="small" loading={galleryLoading}
+          <ContentFitTable<Photo> rowKey="id" size="small" loading={galleryLoading}
             dataSource={addableGalleryPhotos} pagination={{ pageSize: 8 }}
             rowSelection={{
               selectedRowKeys: selectedPhotoIds,

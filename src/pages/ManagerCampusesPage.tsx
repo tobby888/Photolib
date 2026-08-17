@@ -1,8 +1,9 @@
-import { App, Button, Card, Input, Select, Space, Table, Tag, Typography } from 'antd'
+import { App, Button, Card, Input, Select, Space, Tag, Typography } from 'antd'
 import { SaveOutlined, WarningOutlined } from '@ant-design/icons'
 import { useState } from 'react'
 import { api } from '../api'
 import { DataState, PageTitle } from '../components'
+import { ContentFitTable } from '../ContentFitTable'
 import { useLoad } from '../hooks'
 import type { Campus, CampusAssignmentUser, EntityId } from '../types'
 
@@ -88,11 +89,10 @@ export default function ManagerCampusesPage() {
       </div>
       <DataState loading={loading || campusesLoading} error={error || campusesError}
         empty={!filteredUsers.length} onRetry={() => { void reload(); void reloadCampuses() }}>
-        <Table
+        <ContentFitTable
           rowKey="id"
           dataSource={filteredUsers}
           pagination={{ pageSize: 12 }}
-          scroll={{ x: 720 }}
           columns={[
             {
               title: '负责人',
