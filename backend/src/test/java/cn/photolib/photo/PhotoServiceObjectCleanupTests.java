@@ -2,6 +2,7 @@ package cn.photolib.photo;
 
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.campus.CampusService;
+import cn.photolib.photo.mapper.PhotoFavoriteMapper;
 import cn.photolib.photo.mapper.PhotoMapper;
 import cn.photolib.photo.model.PhotoEntity;
 import cn.photolib.project.ProjectService;
@@ -27,6 +28,7 @@ class PhotoServiceObjectCleanupTests {
         ObjectStorageService storage = mock(ObjectStorageService.class);
         PhotoService service = new PhotoService(
                 mapper,
+                mock(PhotoFavoriteMapper.class),
                 mock(RequestService.class),
                 mock(ProjectService.class),
                 mock(RequestParticipantMapper.class),

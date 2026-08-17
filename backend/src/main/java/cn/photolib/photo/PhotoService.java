@@ -5,6 +5,7 @@ import cn.photolib.campus.CampusService;
 import cn.photolib.common.api.PageResponse;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
+import cn.photolib.photo.mapper.PhotoFavoriteMapper;
 import cn.photolib.photo.mapper.PhotoMapper;
 import cn.photolib.photo.model.PhotoEntity;
 import cn.photolib.photo.model.PhotoStatus;
@@ -30,6 +31,7 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -37,6 +39,7 @@ import java.util.UUID;
 public class PhotoService {
     private static final Logger log = LoggerFactory.getLogger(PhotoService.class);
     private final PhotoMapper mapper;
+    private final PhotoFavoriteMapper favoriteMapper;
     private final RequestService requestService;
     private final ProjectService projectService;
     private final RequestParticipantMapper participantMapper;
@@ -140,18 +143,19 @@ public class PhotoService {
         }
 
         events.publishEvent(new PhotoProcessingService.PhotoProcessRequested(photo.getId()));
-        return toView(photo);
+        return toView(photo, user);
     }
 
     public PageResponse<PhotoView> list(int page, int pageSize, String keyword, Long projectId,
                                         Long requestId, String studentId, String photographerName,
                                         Long uploadedBy, Long campusId, PhotoStatus status,
-                                        boolean includeAllStatuses,
+                                        boolean includeAllStatuses, boolean favoritesOnly,
                                         AuthenticatedUser user) {
-        requireListPermission(projectId, requestId, user);
+        requireListPermission(projectId, requestId, favoritesOnly, user);
         if (requestId != null && user.isCampusScoped()) requestService.requireParticipantAccess(requestId, user);
         if (projectId != null) projectService.getVisible(projectId, user);
-        Long effectiveUploader = user.isCampusScoped() && requestId == null ? user.id() : uploadedBy;
+        Long effectiveUploader = user.isCampusScoped() && (requestId == null || favoritesOnly)
+                ? user.id() : uploadedBy;
         // status explicitly given -> filter by it; otherwise default to AVAILABLE unless the
         // caller opts into every status (used by the project detail gallery to match photoCount).
         PhotoStatus effectiveStatus = status != null ? status
@@ -169,10 +173,17 @@ public class PhotoService {
                 .eq(!user.isCampusScoped() && campusId != null, PhotoEntity::getCampusId, campusId)
                 .in(user.isCampusScoped(), PhotoEntity::getCampusId,
                         user.campusIds().isEmpty() ? List.of(-1L) : user.campusIds())
+                .inSql(favoritesOnly, PhotoEntity::getId,
+                        "SELECT photo_id FROM photo_favorite WHERE user_id = " + user.id())
                 .eq(effectiveStatus != null, PhotoEntity::getStatus, effectiveStatus)
                 .orderByDesc(PhotoEntity::getCreatedAt);
         Page<PhotoEntity> result = mapper.selectPage(Page.of(page, pageSize), query);
-        return new PageResponse<>(result.getRecords().stream().map(this::toView).toList(),
+        List<Long> pagePhotoIds = result.getRecords().stream().map(PhotoEntity::getId).toList();
+        Set<Long> favoriteIds = pagePhotoIds.isEmpty() ? Set.of()
+                : Set.copyOf(favoriteMapper.findFavoritePhotoIds(user.id(), pagePhotoIds));
+        return new PageResponse<>(result.getRecords().stream()
+                .map(photo -> toView(photo, favoriteIds.contains(photo.getId())))
+                .toList(),
                 result.getCurrent(), result.getSize(), result.getTotal(), result.getPages());
     }
 
@@ -180,7 +191,19 @@ public class PhotoService {
         PhotoEntity photo = require(id);
         requireVisible(photo, user);
         requireViewPermission(photo, user);
-        return toView(photo);
+        return toView(photo, user);
+    }
+
+    @Transactional
+    public void favorite(Long id, AuthenticatedUser user) {
+        PhotoEntity photo = requireFavoriteAccess(id, user);
+        favoriteMapper.add(user.id(), photo.getId());
+    }
+
+    @Transactional
+    public void unfavorite(Long id, AuthenticatedUser user) {
+        PhotoEntity photo = requireFavoriteAccess(id, user);
+        favoriteMapper.remove(user.id(), photo.getId());
     }
 
     @Transactional
@@ -199,7 +222,7 @@ public class PhotoService {
         if (mapper.updateById(photo) != 1) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "图片已被其他操作修改");
         }
-        return toView(require(id));
+        return toView(require(id), user);
     }
 
     @Transactional
@@ -225,7 +248,7 @@ public class PhotoService {
         }
         photo.setCampusId(campusId);
         photo.setVersion(version + 1);
-        return toView(photo);
+        return toView(photo, user);
     }
 
     public DownloadUrl download(Long id, AuthenticatedUser user) {
@@ -256,7 +279,7 @@ public class PhotoService {
         }
         photo.setStatus(archive ? PhotoStatus.ARCHIVED : PhotoStatus.AVAILABLE);
         mapper.updateById(photo);
-        return toView(photo);
+        return toView(photo, user);
     }
 
     @Transactional
@@ -382,13 +405,36 @@ public class PhotoService {
         }
     }
 
-    private void requireListPermission(Long projectId, Long requestId, AuthenticatedUser user) {
+    private void requireListPermission(Long projectId, Long requestId, boolean favoritesOnly,
+                                       AuthenticatedUser user) {
+        // The favorites sidebar is a gallery capability, not a way for users with
+        // only project/request access to construct a cross-context photo feed.
+        if (favoritesOnly && !user.hasPermission(PermissionCode.PHOTO_VIEW)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问收藏图片列表");
+        }
         boolean allowed = requestId != null
                 ? user.hasAnyPermission(PermissionCode.REQUEST_VIEW, PermissionCode.REQUEST_PHOTO_MANAGE)
                 : projectId != null
                 ? user.hasPermission(PermissionCode.PROJECT_VIEW)
                 : user.hasPermission(PermissionCode.PHOTO_VIEW);
         if (!allowed) throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问图片列表");
+    }
+
+    private PhotoEntity requireFavoriteAccess(Long id, AuthenticatedUser user) {
+        if (!user.hasPermission(PermissionCode.PHOTO_VIEW)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权收藏图库图片");
+        }
+        PhotoEntity photo = require(id);
+        // Match GET /photos without a project/request context exactly. In
+        // particular, participating in a request does not make another
+        // uploader's photo part of a campus-scoped user's personal gallery.
+        if (!user.canAccessCampus(photo.getCampusId())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该图片");
+        }
+        if (user.isCampusScoped() && !photo.getUploadedBy().equals(user.id())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权收藏其他成员的图库图片");
+        }
+        return photo;
     }
 
     private void requireViewPermission(PhotoEntity photo, AuthenticatedUser user) {
@@ -443,7 +489,11 @@ public class PhotoService {
                 .collect(java.util.stream.Collectors.joining(",", "[", "]"));
     }
 
-    private PhotoView toView(PhotoEntity p) {
+    private PhotoView toView(PhotoEntity p, AuthenticatedUser user) {
+        return toView(p, favoriteMapper.count(user.id(), p.getId()) > 0);
+    }
+
+    private PhotoView toView(PhotoEntity p, boolean favorited) {
         String thumbnailUrl = null;
         if (p.getStatus() == PhotoStatus.AVAILABLE || p.getStatus() == PhotoStatus.ARCHIVED) {
             String previewKey = renderableObjectKey(p);
@@ -469,7 +519,7 @@ public class PhotoService {
                 p.getPhotographerStudentId(), p.getPhotographerName(), p.getUploadedBy(), p.getCampusId(),
                 p.getTakenAt(), p.getTagsJson(), p.getWidth(), p.getHeight(), p.getSize(), p.getContentType(),
                 p.getStoredFileName(), thumbnailUrl, p.getThumbnailSize(), p.getStatus(), p.getFailureReason(),
-                p.getCreatedAt(), p.getVersion(), adoptionCount(p.getId()), projectIds, projects);
+                p.getCreatedAt(), p.getVersion(), adoptionCount(p.getId()), favorited, projectIds, projects);
     }
 
     /**
@@ -512,7 +562,7 @@ public class PhotoService {
                             Long campusId, LocalDateTime takenAt, String tagsJson, Integer width,
                             Integer height, Long size, String contentType, String storedFileName,
                             String thumbnailUrl, Long thumbnailSize, PhotoStatus status, String failureReason,
-                            LocalDateTime uploadedAt, Integer version, long adoptionCount,
+                            LocalDateTime uploadedAt, Integer version, long adoptionCount, boolean favorited,
                             List<Long> relatedProjectIds, List<ProjectLink> relatedProjects) {}
     public record ProjectLink(Long id, String title) {}
 }

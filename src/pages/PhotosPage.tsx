@@ -4,8 +4,9 @@ import {
 } from 'antd'
 import {
   CloudUploadOutlined, DeleteOutlined, DownloadOutlined, FolderAddOutlined, InboxOutlined, SearchOutlined,
+  StarFilled, StarOutlined,
 } from '@ant-design/icons'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { api, emptyPage, qs } from '../api'
@@ -23,13 +24,18 @@ import {
   readPhotoLibraryFilters, writePhotoLibraryFilters, withPhotoLibrarySearch,
 } from '../photoLibrarySearch'
 import type { PhotoLibraryFilters, PhotoLibraryStatus } from '../photoLibrarySearch'
+import { updateFavoritePage } from '../photoFavorites'
 
-export default function PhotosPage() {
+export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: boolean }) {
   const navigate = useNavigate()
   const location = useLocation()
+  const libraryRoot = favoritesOnly ? '/favorites' : '/photos'
   const [searchParams, setSearchParams] = useSearchParams()
   const { message, modal } = App.useApp()
   const { user } = useAuth()
+  const currentViewKey = `${favoritesOnly}:${location.search}`
+  const currentViewKeyRef = useRef(currentViewKey)
+  currentViewKeyRef.current = currentViewKey
   const canAddToProject = hasPermission(user, 'PROJECT_ADOPT')
   const canDelete = hasPermission(user, 'PHOTO_DELETE')
   const canUpload = hasPermission(user, 'PHOTO_UPLOAD')
@@ -46,15 +52,19 @@ export default function PhotosPage() {
   const [selectedProjectId, setSelectedProjectId] = useState<EntityId | null>(null)
   const [projectFilters, setProjectFilters] = useState({ page: 1, keyword: '' })
   const [projectPickerPhotos, setProjectPickerPhotos] = useState<Photo[]>([])
+  const [favoriteUpdatingIds, setFavoriteUpdatingIds] = useState<Set<EntityId>>(() => new Set())
   const filters = readPhotoLibraryFilters(searchParams)
   const [searchText, setSearchText] = useState(filters.keyword)
   const setFilters = (nextFilters: PhotoLibraryFilters) => {
     setSearchParams(writePhotoLibraryFilters(nextFilters), { replace: true })
   }
   const selectedIds = selectedPhotos.map(photo => photo.id)
-  const { data, loading, error, reload } = useLoad(
-    () => api<PageData<Photo>>({ url: '/photos', params: qs({ ...filters, pageSize: 24 }) }),
-    emptyPage<Photo>(), [filters.page, filters.keyword, filters.status],
+  const { data, setData, loading, error, reload } = useLoad(
+    () => api<PageData<Photo>>({
+      url: '/photos',
+      params: qs({ ...filters, pageSize: 24, favoritesOnly: favoritesOnly || undefined }),
+    }),
+    emptyPage<Photo>(), [filters.page, filters.keyword, filters.status, favoritesOnly],
   )
   useEffect(() => {
     setSearchText(filters.keyword)
@@ -137,6 +147,42 @@ export default function PhotosPage() {
       const result = await api<{ downloadUrl: string }>({ method: 'POST', url: `/photos/${photo.id}/download-url` })
       window.open(result.downloadUrl, '_blank', 'noopener')
     } catch (e) { message.error((e as Error).message) }
+  }
+  const toggleFavorite = async (photo: Photo) => {
+    if (favoriteUpdatingIds.has(photo.id)) return
+    const operationViewKey = currentViewKeyRef.current
+    const nextFavorited = !photo.favorited
+    setFavoriteUpdatingIds(current => new Set(current).add(photo.id))
+    if (favoritesOnly && !nextFavorited) {
+      setSelectedPhotos(current => current.filter(item => item.id !== photo.id))
+    }
+    setData(current => updateFavoritePage(current, photo.id, nextFavorited, favoritesOnly))
+    try {
+      await api<void>({
+        method: nextFavorited ? 'PUT' : 'DELETE',
+        url: `/photos/${photo.id}/favorite`,
+      })
+      message.success(nextFavorited ? '已收藏图片' : '已取消收藏')
+      if (favoritesOnly && !nextFavorited && currentViewKeyRef.current === operationViewKey) {
+        if (data.items.length === 1 && filters.page > 1) {
+          setFilters({ ...filters, page: filters.page - 1 })
+        } else {
+          // Refill the current page from the next server page and reconcile the
+          // optimistic total. Without this, removing a full first page could
+          // show an empty gallery while later favorites still exist.
+          await reload()
+        }
+      }
+    } catch (reason) {
+      message.error(`${nextFavorited ? '收藏' : '取消收藏'}失败：${(reason as Error).message}`)
+      await reload()
+    } finally {
+      setFavoriteUpdatingIds(current => {
+        const next = new Set(current)
+        next.delete(photo.id)
+        return next
+      })
+    }
   }
   const toggleSelected = (photo: Photo, checked: boolean) => {
     setSelectedPhotos(current => checked
@@ -224,7 +270,9 @@ export default function PhotosPage() {
     }
   }
   return <>
-    <PageTitle eyebrow="LIBRARY" title="图片库" description="检索、查看并下载团队沉淀的每一帧。"
+    <PageTitle eyebrow={favoritesOnly ? 'FAVORITES' : 'LIBRARY'}
+      title={favoritesOnly ? '收藏图片' : '图片库'}
+      description={favoritesOnly ? '集中查看并管理你收藏的图片。' : '检索、查看并下载团队沉淀的每一帧。'}
       extra={<Space wrap>
         {canAddToProject && <Button size="large" icon={<FolderAddOutlined />} disabled={!selectedIds.length}
           onClick={() => openProjectPicker(selectedPhotos)}>
@@ -237,8 +285,8 @@ export default function PhotosPage() {
         {canDelete && <Button danger size="large" icon={<DeleteOutlined />} disabled={!selectedIds.length}
           onClick={batchRemove}>批量删除{selectedIds.length ? `（${selectedIds.length}）` : ''}</Button>}
         {!!selectedIds.length && <Button size="large" onClick={() => setSelectedPhotos([])}>清空选择</Button>}
-        {canUpload && <Button size="large" icon={<InboxOutlined />} onClick={() => navigate('/photos/batch-upload')}>ZIP 批量上传</Button>}
-        {canUpload && <Button type="primary" size="large" icon={<CloudUploadOutlined />} onClick={() => setUploadOpen(true)}>上传图片</Button>}
+        {!favoritesOnly && canUpload && <Button size="large" icon={<InboxOutlined />} onClick={() => navigate('/photos/batch-upload')}>ZIP 批量上传</Button>}
+        {!favoritesOnly && canUpload && <Button type="primary" size="large" icon={<CloudUploadOutlined />} onClick={() => setUploadOpen(true)}>上传图片</Button>}
       </Space>} />
     <Card className="filter-card">
       <Space wrap>
@@ -257,12 +305,15 @@ export default function PhotosPage() {
           <Card className={`photo-card${selectedIds.includes(photo.id) ? ' photo-card-selected' : ''}`} hoverable cover={<div
             className="photo-cover" role="link" tabIndex={0}
             aria-label={`查看图片详情：${photo.title || photo.id}`}
-            onClick={() => navigate(withPhotoLibrarySearch(`/photos/${photo.id}`, location.search))}
+            onClick={() => navigate(withPhotoLibrarySearch(
+              `${libraryRoot}/${photo.id}`, location.search))}
             onKeyDown={event => {
-              if (event.key === 'Enter') navigate(withPhotoLibrarySearch(`/photos/${photo.id}`, location.search))
+              if (event.key === 'Enter' && event.target === event.currentTarget) navigate(withPhotoLibrarySearch(
+                `${libraryRoot}/${photo.id}`, location.search))
             }}>
             {photo.thumbnailUrl ? <Image preview={false} src={photo.thumbnailUrl} alt={photo.title} /> : <div className="image-placeholder"><span>{photo.title?.slice(0, 1) || '图'}</span></div>}
-            <div className="photo-overlay">
+            <div className="photo-overlay" onClick={event => event.stopPropagation()}
+              onKeyDown={event => event.stopPropagation()}>
               {(canAddToProject || canDownload || canDelete) && (photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED') && <Checkbox
                 className="photo-select-checkbox"
                 checked={selectedIds.includes(photo.id)}
@@ -270,9 +321,19 @@ export default function PhotosPage() {
                 onClick={event => event.stopPropagation()}
                 onChange={event => toggleSelected(photo, event.target.checked)}
                 aria-label={`选择图片 ${photo.title || photo.id}`} />}
-              {canDownload && <Button className="photo-download-button" shape="circle" icon={<DownloadOutlined />}
-                aria-label={`下载图片 ${photo.title || photo.id}`}
-                onClick={e => { e.stopPropagation(); void download(photo) }} />}
+              <Space size={8} className="photo-card-actions">
+                <Button className={`photo-favorite-button${photo.favorited ? ' is-favorited' : ''}`}
+                  shape="circle" icon={photo.favorited ? <StarFilled /> : <StarOutlined />}
+                  loading={favoriteUpdatingIds.has(photo.id)} aria-pressed={photo.favorited}
+                  aria-label={`${photo.favorited ? '取消收藏' : '收藏'}图片 ${photo.title || photo.id}`}
+                  title={photo.favorited ? '取消收藏' : '收藏图片'}
+                  onClick={event => { event.stopPropagation(); void toggleFavorite(photo) }}
+                  onKeyDown={event => event.stopPropagation()} />
+                {canDownload && <Button className="photo-download-button" shape="circle" icon={<DownloadOutlined />}
+                  aria-label={`下载图片 ${photo.title || photo.id}`} title="下载图片"
+                  onClick={event => { event.stopPropagation(); void download(photo) }}
+                  onKeyDown={event => event.stopPropagation()} />}
+              </Space>
             </div>
             <div className="photo-badges"><Space size={4}><StatusTag value={photo.status} />
               {!!photo.adoptionCount && <Tag color="gold">已采用 × {photo.adoptionCount}</Tag>}

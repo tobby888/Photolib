@@ -57,15 +57,32 @@ test('photo detail and list paths preserve the complete library query', () => {
     '/photos?keyword=%E6%96%B0%E9%97%BB+%E5%9B%BE&status=PROCESSING&page=2',
   )
   assert.equal(withPhotoLibrarySearch('/photos', ''), '/photos')
+  assert.equal(
+    withPhotoLibrarySearch('/favorites/photo-1', search),
+    '/favorites/photo-1?keyword=%E6%96%B0%E9%97%BB+%E5%9B%BE&status=PROCESSING&page=2',
+  )
+  assert.equal(
+    withPhotoLibrarySearch('/favorites', search),
+    '/favorites?keyword=%E6%96%B0%E9%97%BB+%E5%9B%BE&status=PROCESSING&page=2',
+  )
 })
 
-test('photo pages wire the controlled search field and preserved return query', async () => {
-  const [librarySource, detailSource] = await Promise.all([
+test('photo and favorites pages wire the controlled search field and preserved return query', async () => {
+  const [librarySource, detailSource, appSource] = await Promise.all([
     readFile(new URL('../src/pages/PhotosPage.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/pages/PhotoDetailPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/App.tsx', import.meta.url), 'utf8'),
   ])
 
   assert.match(librarySource, /value=\{searchText\} onChange=\{event => setSearchText\(event\.target\.value\)\}/)
-  assert.match(librarySource, /navigate\(withPhotoLibrarySearch\(`\/photos\/\$\{photo\.id\}`, location\.search\)\)/)
-  assert.match(detailSource, /navigate\(withPhotoLibrarySearch\('\/photos', location\.search\)/)
+  assert.match(librarySource, /const libraryRoot = favoritesOnly \? '\/favorites' : '\/photos'/)
+  assert.match(librarySource, /`\$\{libraryRoot\}\/\$\{photo\.id\}`/)
+  assert.match(librarySource, /favoritesOnly: favoritesOnly \|\| undefined/)
+  assert.match(librarySource, /const operationViewKey = currentViewKeyRef\.current/)
+  assert.match(librarySource, /currentViewKeyRef\.current === operationViewKey/)
+  assert.match(detailSource, /withPhotoLibrarySearch\(libraryRoot, location\.search\)/)
+  assert.match(detailSource, /\{favoritesOnly \? '返回收藏图片' : '返回图片库'\}/)
+  assert.match(appSource, /key: '\/favorites'.*label: '收藏图片'/)
+  assert.match(appSource, /path="\/favorites".*<PhotosPage favoritesOnly \/>/)
+  assert.match(appSource, /path="\/favorites\/:photoId".*<PhotoDetailPage favoritesOnly \/>/)
 })

@@ -339,7 +339,7 @@ class PhotoServiceTests {
         linkPhotosToProjects();
         var result = photoService.list(
                 1, 20, null, testProject.getId(), null, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, managerUser);
+                null, null, PhotoStatus.AVAILABLE, false, false, managerUser);
 
         // Then: 应该只看到自己上传的照片
         assertThat(result.items()).hasSize(1);
@@ -370,10 +370,151 @@ class PhotoServiceTests {
         linkPhotosToProjects();
         var result = photoService.list(
                 1, 20, null, testProject.getId(), null, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, adminUser);
+                null, null, PhotoStatus.AVAILABLE, false, false, adminUser);
 
         // Then: 应该看到所有照片
         assertThat(result.items()).hasSizeGreaterThanOrEqualTo(2);
+    }
+
+    @Test
+    void favorites_shouldBeIdempotentUserIsolatedAndReflectedInViews() {
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, title, photographer_student_id, photographer_name, uploaded_by,
+                     campus_id, taken_at, size, content_type, object_key, sha256, status)
+                VALUES
+                    (1600, '收藏测试图片', '20230001', '张三', :userId,
+                     :campusId, NOW(), 1000, 'image/jpeg', 'photos/2026/favorite.jpg',
+                     :sha256, 'AVAILABLE')
+                """)
+                .param("userId", adminUser.id())
+                .param("campusId", testCampus.getId())
+                .param("sha256", "6".repeat(64))
+                .update();
+
+        photoService.favorite(1600L, adminUser);
+        photoService.favorite(1600L, adminUser);
+
+        assertThat(jdbc.sql("""
+                SELECT COUNT(*) FROM photo_favorite
+                WHERE user_id=:userId AND photo_id=1600
+                """).param("userId", adminUser.id()).query(Long.class).single()).isEqualTo(1L);
+        assertThat(photoService.get(1600L, adminUser).favorited()).isTrue();
+        assertThat(photoService.get(1600L, ministerUser).favorited()).isFalse();
+
+        var adminList = photoService.list(1, 20, null, null, null, null, null,
+                null, null, PhotoStatus.AVAILABLE, false, false, adminUser);
+        assertThat(adminList.items()).filteredOn(photo -> photo.id().equals(1600L))
+                .singleElement().extracting(PhotoService.PhotoView::favorited).isEqualTo(true);
+
+        var adminFavorites = photoService.list(1, 20, null, null, null, null, null,
+                null, null, PhotoStatus.AVAILABLE, false, true, adminUser);
+        assertThat(adminFavorites.items()).extracting(PhotoService.PhotoView::id)
+                .containsExactly(1600L);
+        var ministerFavorites = photoService.list(1, 20, null, null, null, null, null,
+                null, null, PhotoStatus.AVAILABLE, false, true, ministerUser);
+        assertThat(ministerFavorites.items()).isEmpty();
+
+        photoService.favorite(1600L, ministerUser);
+        photoService.unfavorite(1600L, adminUser);
+        photoService.unfavorite(1600L, adminUser);
+
+        assertThat(photoService.get(1600L, adminUser).favorited()).isFalse();
+        assertThat(photoService.get(1600L, ministerUser).favorited()).isTrue();
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM photo_favorite WHERE photo_id=1600")
+                .query(Long.class).single()).isEqualTo(1L);
+    }
+
+    @Test
+    void favorite_shouldRejectPhotosOutsideTheUsersCurrentGalleryVisibility() {
+        jdbc.sql("""
+                INSERT INTO photo_request
+                    (id, project_id, title, campus_id, deadline, status, created_by)
+                VALUES
+                    (2960, :projectId, '收藏权限需求', :campusId,
+                     DATEADD('DAY', 1, CURRENT_TIMESTAMP), 'ACCEPTED', :adminId)
+                """)
+                .param("projectId", testProject.getId())
+                .param("campusId", testCampus.getId())
+                .param("adminId", adminUser.id())
+                .update();
+        jdbc.sql("""
+                INSERT INTO request_participant(request_id, user_id, accepted_at)
+                VALUES (2960, :userId, CURRENT_TIMESTAMP)
+                """).param("userId", managerUser.id()).update();
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, title, photographer_student_id, photographer_name, uploaded_by,
+                     campus_id, taken_at, size, content_type, object_key, sha256, status,
+                     request_id, project_id)
+                VALUES
+                    (1601, '本人图片', '20230001', '张三', :managerId,
+                     :campusId, NOW(), 1000, 'image/jpeg', 'photos/2026/favorite-mine.jpg',
+                     :mineSha, 'AVAILABLE', NULL, NULL),
+                    (1602, '同校区他人图片', '20230002', '李四', :adminId,
+                     :campusId, NOW(), 1000, 'image/jpeg', 'photos/2026/favorite-other.jpg',
+                     :otherSha, 'AVAILABLE', NULL, NULL),
+                    (1603, '已参与需求中的他人图片', '20230002', '李四', :adminId,
+                     :campusId, NOW(), 1000, 'image/jpeg', 'photos/2026/favorite-request-other.jpg',
+                     :requestSha, 'AVAILABLE', 2960, :projectId)
+                """)
+                .param("managerId", managerUser.id())
+                .param("adminId", adminUser.id())
+                .param("campusId", testCampus.getId())
+                .param("projectId", testProject.getId())
+                .param("mineSha", "7".repeat(64))
+                .param("otherSha", "8".repeat(64))
+                .param("requestSha", "9".repeat(64))
+                .update();
+
+        photoService.favorite(1601L, managerUser);
+        assertThatThrownBy(() -> photoService.favorite(1602L, managerUser))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("无权收藏其他成员");
+        assertThatThrownBy(() -> photoService.favorite(1603L, managerUser))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("无权收藏其他成员");
+
+        var favorites = photoService.list(1, 20, null, null, null, null, null,
+                null, null, PhotoStatus.AVAILABLE, false, true, managerUser);
+        assertThat(favorites.items()).extracting(PhotoService.PhotoView::id)
+                .containsExactly(1601L);
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM photo_favorite WHERE user_id=:userId")
+                .param("userId", managerUser.id()).query(Long.class).single()).isEqualTo(1L);
+
+        // Simulate a favorite retained from before the account was narrowed to
+        // campus scope. A request filter must not make another uploader's stale
+        // favorite reappear in the personal favorites feed.
+        jdbc.sql("INSERT INTO photo_favorite(user_id, photo_id) VALUES (:userId, 1603)")
+                .param("userId", managerUser.id()).update();
+        var requestFavorites = photoService.list(1, 20, null, null, 2960L, null, null,
+                null, null, PhotoStatus.AVAILABLE, false, true, managerUser);
+        assertThat(requestFavorites.items()).isEmpty();
+
+        // A favorite relationship may outlive the photo's logical visibility.
+        // The join must never resurrect a deleted photo or the stale favorite
+        // from another uploader into the top-level favorites page.
+        jdbc.sql("UPDATE photo SET deleted=TRUE WHERE id=1601").update();
+        // Use a keyword to force a fresh MyBatis query after the out-of-band JDBC
+        // update instead of reusing the transaction-local first-level cache.
+        var favoritesAfterDelete = photoService.list(1, 20, "本人图片", null, null, null, null,
+                null, null, PhotoStatus.AVAILABLE, false, true, managerUser);
+        assertThat(favoritesAfterDelete.items()).isEmpty();
+        assertThat(favoritesAfterDelete.total()).isZero();
+    }
+
+    @Test
+    void favoritesOnly_shouldRequireGalleryViewEvenWithAProjectFilter() {
+        var projectOnly = new AuthenticatedUser(
+                ministerUser.id(), "project-only", "仅项目查看", UserRole.MINISTER, null, false,
+                -30L, "PROJECT_ONLY", "仅项目查看", DataScope.GLOBAL,
+                Set.of(PermissionCode.PROJECT_VIEW), Set.of());
+
+        assertThatThrownBy(() -> photoService.list(
+                1, 20, null, testProject.getId(), null, null, null,
+                null, null, PhotoStatus.AVAILABLE, false, true, projectOnly))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("无权访问收藏图片列表");
     }
 
     @Test
@@ -513,7 +654,7 @@ class PhotoServiceTests {
         linkPhotosToProjects();
         var listed = photoService.list(
                 1, 20, null, testProject.getId(), null, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, adminUser);
+                null, null, PhotoStatus.AVAILABLE, false, false, adminUser);
 
         assertThat(listed.items()).filteredOn(photo -> photo.id().equals(1012L))
                 .singleElement()
@@ -718,9 +859,9 @@ class PhotoServiceTests {
 
         // When & Then: 两个项目的相册都能查到这张照片
         var inA = photoService.list(1, 20, null, testProject.getId(), null, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, adminUser);
+                null, null, PhotoStatus.AVAILABLE, false, false, adminUser);
         var inB = photoService.list(1, 20, null, projectB.getId(), null, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, adminUser);
+                null, null, PhotoStatus.AVAILABLE, false, false, adminUser);
         assertThat(inA.items()).extracting(PhotoService.PhotoView::id).contains(1500L);
         assertThat(inB.items()).extracting(PhotoService.PhotoView::id).contains(1500L);
     }

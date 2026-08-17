@@ -50,10 +50,11 @@ public class PhotoController {
             @RequestParam(required = false) Long campusId,
             @RequestParam(required = false) PhotoStatus status,
             @RequestParam(defaultValue = "false") boolean includeAllStatuses,
+            @RequestParam(defaultValue = "false") boolean favoritesOnly,
             @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.list(page, pageSize, keyword, projectId, requestId,
                 photographerStudentId, photographerName, uploadedBy, campusId, status,
-                includeAllStatuses, user));
+                includeAllStatuses, favoritesOnly, user));
     }
 
     @GetMapping("/{id}")
@@ -61,6 +62,22 @@ public class PhotoController {
     ApiResponse<PhotoService.PhotoView> get(@PathVariable Long id,
                                             @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.get(id, user));
+    }
+
+    @PutMapping("/{id}/favorite")
+    @PreAuthorize("hasAuthority('PHOTO_VIEW')")
+    ApiResponse<Void> favorite(@PathVariable Long id,
+                               @AuthenticationPrincipal AuthenticatedUser user) {
+        service.favorite(id, user);
+        return ApiResponse.ok();
+    }
+
+    @DeleteMapping("/{id}/favorite")
+    @PreAuthorize("hasAuthority('PHOTO_VIEW')")
+    ApiResponse<Void> unfavorite(@PathVariable Long id,
+                                 @AuthenticationPrincipal AuthenticatedUser user) {
+        service.unfavorite(id, user);
+        return ApiResponse.ok();
     }
 
     @PutMapping("/{id}")
