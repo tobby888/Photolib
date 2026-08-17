@@ -1,5 +1,5 @@
 import {
-  Alert, App, Button, Card, Col, Descriptions, Image, Input, Modal, Row, Skeleton, Space, Table, Tag, Typography,
+  Alert, App, Button, Card, Col, Descriptions, Image, Input, Modal, Row, Skeleton, Space, Tag, Typography,
 } from 'antd'
 import {
   ArrowLeftOutlined, DeleteOutlined, DownloadOutlined, FolderAddOutlined,
@@ -9,6 +9,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { api, emptyPage, qs } from '../api'
 import { DataState, formatBytes, PageTitle, StatusTag } from '../components'
+import { ContentFitTable } from '../ContentFitTable'
 import { useAuth } from '../auth'
 import { useLoad } from '../hooks'
 import { hasPermission } from '../permissions'
@@ -227,7 +228,7 @@ export default function PhotoDetailPage() {
             setProjectFilters({ page: 1, keyword })
           }} />
         {projectsError && <Typography.Text type="danger">项目加载失败：{projectsError}</Typography.Text>}
-        <Table<Project> rowKey="id" size="small" loading={projectsLoading}
+        <ContentFitTable<Project> rowKey="id" size="small" loading={projectsLoading}
           dataSource={activeProjects.items}
           rowSelection={{
             type: 'radio',

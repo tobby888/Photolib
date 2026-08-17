@@ -1,6 +1,6 @@
 import {
   Alert, App, Button, Card, Checkbox, Col, Descriptions, Form, Input, Modal, Row, Select, Space,
-  Table, Tag, Typography,
+  Tag, Typography,
 } from 'antd'
 import {
   DeleteOutlined, EditOutlined, EyeOutlined, PlusOutlined, SaveOutlined, SafetyCertificateOutlined,
@@ -8,7 +8,12 @@ import {
 import { useState } from 'react'
 import { api, emptyPage } from './api'
 import { DataState } from './components'
+import { ContentFitTable } from './ContentFitTable'
 import { useLoad } from './hooks'
+import {
+  AUTHORIZATION_ACTION_MIN_WIDTH,
+  PERMISSION_GROUP_ACTION_MIN_WIDTH,
+} from './tableActionWidths'
 import type {
   Campus, DataScope, EntityId, PageData, PermissionCategoryDefinition, PermissionCode,
   PermissionGroup, User,
@@ -193,7 +198,7 @@ export default function PermissionGroupsPanel() {
     <Card title={<Space><SafetyCertificateOutlined />权限组</Space>}
       extra={<Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增权限组</Button>}>
       <DataState loading={groupsState.loading} error={groupsState.error} onRetry={groupsState.reload}>
-        <Table rowKey="id" dataSource={groupsState.data} pagination={false} scroll={{ x: 900 }} columns={[
+        <ContentFitTable rowKey="id" dataSource={groupsState.data} pagination={false} columns={[
           { title: '权限组', render: (_: unknown, group: PermissionGroup) => <div className="table-title">
             <Button type="link" style={{ height: 'auto', padding: 0 }} onClick={() => openDetails(group)}>
               <strong>{group.name}</strong>
@@ -208,7 +213,7 @@ export default function PermissionGroupsPanel() {
           { title: '属性', render: (_: unknown, group: PermissionGroup) => <Space>
             {group.builtIn && <Tag>系统内置</Tag>}{group.lowest && <Tag color="warning">最低权限</Tag>}
           </Space> },
-          { title: '操作', fixed: 'right' as const, render: (_: unknown, group: PermissionGroup) => <Space>
+          { title: '操作', fixed: 'right' as const, minWidth: PERMISSION_GROUP_ACTION_MIN_WIDTH, className: 'table-action-cell', render: (_: unknown, group: PermissionGroup) => <Space>
             <Button icon={<EyeOutlined />} onClick={() => openDetails(group)}>查看详情</Button>
             <Button icon={<EditOutlined />} disabled={group.lowest} onClick={() => openEdit(group)}>编辑权限</Button>
             <Button danger icon={<DeleteOutlined />} disabled={group.builtIn} onClick={() => deleteGroup(group)}>删除</Button>
@@ -233,10 +238,10 @@ export default function PermissionGroupsPanel() {
       <DataState loading={usersState.loading || campusesState.loading}
         error={usersState.error || campusesState.error} empty={!usersState.data.items.length}
         onRetry={() => { void usersState.reload(); void campusesState.reload() }}>
-        <Table rowKey="id" dataSource={usersState.data.items} pagination={{
+        <ContentFitTable rowKey="id" dataSource={usersState.data.items} pagination={{
           current: userPage, pageSize: 20, total: usersState.data.total,
           showTotal: total => `共 ${total} 个账号`, onChange: setUserPage,
-        }} scroll={{ x: 980 }} columns={[
+        }} columns={[
           { title: '账号', render: (_: unknown, user: User) => <div className="table-title">
             <strong>{user.displayName}</strong><span>@{user.username}</span>
           </div> },
@@ -257,7 +262,7 @@ export default function PermissionGroupsPanel() {
                 ...current, [user.id]: { ...draft, campusIds },
               }))} />
           } },
-          { title: '操作', fixed: 'right' as const, render: (_: unknown, user: User) => {
+          { title: '操作', fixed: 'right' as const, minWidth: AUTHORIZATION_ACTION_MIN_WIDTH, className: 'table-action-cell', render: (_: unknown, user: User) => {
             const changed = Boolean(drafts[user.id])
             return <Button type="primary" icon={<SaveOutlined />} disabled={!changed || savingUserId !== null}
               loading={savingUserId === user.id} onClick={() => void saveAuthorization(user)}>保存授权</Button>
@@ -340,7 +345,7 @@ export default function PermissionGroupsPanel() {
           </div>
           <div>
             <Typography.Title level={5}>权限组成员</Typography.Title>
-            <Table rowKey="id" size="small" dataSource={membersState.data.items} pagination={{
+            <ContentFitTable rowKey="id" size="small" dataSource={membersState.data.items} pagination={{
               current: memberPage, pageSize: 10, total: membersState.data.total,
               showTotal: total => `共 ${total} 个成员`, onChange: setMemberPage,
             }} columns={[

@@ -1,8 +1,9 @@
-import { App, Button, DatePicker, Descriptions, Drawer, Form, Input, Select, Space, Table, Tag, Typography } from 'antd'
+import { App, Button, DatePicker, Descriptions, Drawer, Form, Input, Select, Space, Tag, Typography } from 'antd'
 import { DownloadOutlined, SearchOutlined } from '@ant-design/icons'
 import dayjs, { type Dayjs } from 'dayjs'
 import { useEffect, useState } from 'react'
 import { api, emptyPage, http, qs } from './api'
+import { ContentFitTable, TableEllipsisText } from './ContentFitTable'
 import type { AuditLog, PageData } from './types'
 
 interface LogFilters {
@@ -72,7 +73,7 @@ export default function AuditLogsPanel() {
       <Button type="primary" onClick={() => { setPage(1); setFilters(form.getFieldsValue()) }}>查询</Button>
       <Button onClick={() => { form.resetFields(); setPage(1); setFilters({}) }}>重置</Button>
     </Form>
-    <Table rowKey="id" loading={loading} dataSource={data.items} scroll={{ x: 1000 }}
+    <ContentFitTable rowKey="id" loading={loading} dataSource={data.items}
       pagination={{ current: page, pageSize, total: data.total, showSizeChanger: true,
         showTotal: total => `共 ${total} 条`,
         onChange: (nextPage, nextSize) => { setPage(nextSize === pageSize ? nextPage : 1); setPageSize(nextSize) } }}
@@ -84,7 +85,8 @@ export default function AuditLogsPanel() {
         { title: '动作', dataIndex: 'action', width: 90, render: value => <Tag color={actionColors[value]}>{value}</Tag> },
         { title: '资源', render: (_, item) => <Space><Tag>{item.resourceType}</Tag><Typography.Text code>{item.resourceId || '-'}</Typography.Text></Space> },
         { title: 'IP 地址', dataIndex: 'ipAddress', width: 150 },
-        { title: '请求 ID', dataIndex: 'requestId', width: 220, ellipsis: true },
+        { title: '请求 ID', dataIndex: 'requestId', minWidth: 220,
+          render: value => <TableEllipsisText value={value} maxWidth={188} emptyText="-" /> },
       ]} />
     <Drawer title="日志详情" width={560} open={Boolean(selected)} onClose={() => setSelected(undefined)}>
       {selected && <Descriptions column={1} bordered size="small" items={[

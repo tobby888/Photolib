@@ -489,6 +489,19 @@ body { background: var(--studio-paper); color: var(--studio-ink); }
 .ant-table-wrapper .ant-table { border-radius: 12px; overflow: hidden; }
 .ant-table-wrapper .ant-table-thead > tr > th { font-size: 12px; letter-spacing: .02em; }
 .ant-table-wrapper .ant-table-tbody > tr > td { padding-block: 17px; }
+.content-fit-table .table-action-cell,
+.content-fit-table .table-action-cell .ant-space { white-space: nowrap; }
+.content-fit-table .table-action-cell .ant-space { flex-wrap: nowrap; }
+.table-ellipsis-text { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 900px) {
+  .content-fit-table .ant-table-cell-fix-end {
+    position: static !important;
+    inset-inline-end: auto !important;
+    z-index: auto !important;
+  }
+  .content-fit-table .ant-table-cell-fix-end::after,
+  .content-fit-table .ant-table-cell-fix-end-shadow::after { box-shadow: none !important; }
+}
 .ant-modal-content, .ant-drawer-content { background: var(--studio-surface); }
 .filter-card { box-shadow: none; }
 .filter-card .ant-card-body { padding: 18px 20px; }

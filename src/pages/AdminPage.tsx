@@ -1,5 +1,5 @@
 import {
-  Alert, App, Button, Card, Divider, Form, Input, Modal, Select, Space, Switch, Table, Tabs, Tag, Typography, Upload,
+  Alert, App, Button, Card, Divider, Form, Input, Modal, Select, Space, Switch, Tabs, Tag, Typography, Upload,
 } from 'antd'
 import {
   AimOutlined, BgColorsOutlined, BulbOutlined, CameraOutlined, PictureOutlined,
@@ -10,10 +10,12 @@ import { useEffect, useState } from 'react'
 import { api, emptyPage } from '../api'
 import type { BrandingSettings, Campus, PageData, PermissionGroup, ScheduledBrandIcon, User } from '../types'
 import { DataState, PageTitle } from '../components'
+import { ContentFitTable } from '../ContentFitTable'
 import { useLoad } from '../hooks'
 import AuditLogsPanel from '../AuditLogsPanel'
 import PermissionGroupsPanel from '../PermissionGroupsPanel'
 import UserAvatar from '../UserAvatar'
+import { USER_ACTION_MIN_WIDTH } from '../tableActionWidths'
 
 interface BrandingFormValues {
   title: string
@@ -359,7 +361,7 @@ export default function AdminPage() {
               <Button type="primary" icon={<PlusOutlined />} onClick={() => setUserOpen(true)}>创建账号</Button>
             </Space></div>
           <DataState loading={loading} error={error} empty={!users.items.length} onRetry={reload}>
-            <Table rowKey="id" dataSource={users.items} pagination={{ pageSize: 12 }} scroll={{ x: 1050 }} columns={[
+            <ContentFitTable rowKey="id" dataSource={users.items} pagination={{ pageSize: 12 }} columns={[
               { title: '成员', render: (_, item) => <Space>
                 <UserAvatar size={38} avatarUrl={item.avatarUrl} label={item.displayName}
                   style={{ background: '#edf3f0', color: '#28594f' }} />
@@ -370,7 +372,7 @@ export default function AdminPage() {
                 ? values.map(value => campuses.find(c => c.id === value)?.name || `#${value}`).join('、') : '-' },
               { title: '联系方式', render: (_, item) => item.email || item.phone || '-' },
               { title: '状态', dataIndex: 'enabled', render: value => <Tag color={value ? 'green' : 'default'} variant="filled">{value ? '正常' : '已停用'}</Tag> },
-              { title: '操作', fixed: 'right', render: (_, item) => <Space><Switch size="small" checked={item.enabled} onChange={() => void toggleUser(item)} /><Button type="link" icon={<EditOutlined />} onClick={() => openEmailEditor(item)}>修改邮箱</Button><Button type="link" onClick={async () => {
+              { title: '操作', fixed: 'right', minWidth: USER_ACTION_MIN_WIDTH, className: 'table-action-cell', render: (_, item) => <Space><Switch size="small" checked={item.enabled} onChange={() => void toggleUser(item)} /><Button type="link" icon={<EditOutlined />} onClick={() => openEmailEditor(item)}>修改邮箱</Button><Button type="link" onClick={async () => {
                 try { const result = await api<{ initialPassword: string }>({ method: 'PUT', url: `/users/${item.id}/password` }); modal.warning({ title: '密码已重置', content: <Typography.Text copyable code>{result.initialPassword}</Typography.Text> }) } catch (e) { message.error((e as Error).message) }
               }}>重置密码</Button><Button type="link" danger onClick={() => deleteUser(item)}>删除</Button></Space> },
             ]} />
@@ -380,7 +382,7 @@ export default function AdminPage() {
         { key: 'campuses', label: <span><SafetyCertificateOutlined /> 校区管理</span>, children: <>
           <div className="tab-toolbar"><div><Typography.Title level={4}>校区资源</Typography.Title><Typography.Text type="secondary">校区代码创建后不可修改。</Typography.Text></div>
             <Button type="primary" icon={<PlusOutlined />} onClick={() => setCampusOpen(true)}>新建校区</Button></div>
-          <Table rowKey="id" dataSource={campuses} pagination={false} columns={[
+          <ContentFitTable rowKey="id" dataSource={campuses} pagination={false} columns={[
             { title: '代码', dataIndex: 'code', render: value => <Typography.Text code>{value}</Typography.Text> },
             { title: '校区名称', dataIndex: 'name' }, { title: '状态', dataIndex: 'enabled', render: value => <Tag color={value ? 'green' : 'default'}>{value ? '已启用' : '已停用'}</Tag> },
             { title: '版本', dataIndex: 'version', render: value => `v${value}` },

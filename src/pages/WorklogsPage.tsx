@@ -1,5 +1,5 @@
 import {
-  App, Button, Card, DatePicker, Form, Input, InputNumber, Modal, Pagination, Select, Space, Table,
+  App, Button, Card, DatePicker, Form, Input, InputNumber, Modal, Pagination, Select, Space,
 } from 'antd'
 import {
   CheckOutlined, ClockCircleOutlined, DeleteOutlined, DownloadOutlined, PlusOutlined, StopOutlined,
@@ -10,8 +10,13 @@ import { api, emptyPage, qs } from '../api'
 import { useAuth } from '../auth'
 import type { CampusMember, EntityId, PageData, PhotoRequest, Worklog } from '../types'
 import { DataState, formatMinutes, PageTitle, StatusTag } from '../components'
+import { ContentFitTable, TableEllipsisText } from '../ContentFitTable'
 import { useLoad } from '../hooks'
 import { hasPermission } from '../permissions'
+import {
+  WORKLOG_OWNER_ACTION_MIN_WIDTH,
+  WORKLOG_REVIEW_ACTION_MIN_WIDTH,
+} from '../tableActionWidths'
 
 interface ExportJobView {
   job: { status: 'PENDING' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED'; errorMessage?: string }
@@ -217,11 +222,10 @@ export default function WorklogsPage() {
     </Card>
     <Card>
       <DataState loading={loading} error={error} empty={!data.items.length} onRetry={reload}>
-        <Table
+        <ContentFitTable
           rowKey="id"
           dataSource={data.items}
           pagination={false}
-          scroll={{ x: 'max-content' }}
           rowSelection={reviewer ? {
             selectedRowKeys: selectedIds,
             onChange: keys => setSelectedIds(keys as EntityId[]),
@@ -233,9 +237,11 @@ export default function WorklogsPage() {
             { title: '学号', dataIndex: 'memberStudentId', render: value => value || '—' },
             { title: '拍摄', dataIndex: 'shootingMinutes', render: formatMinutes },
             { title: '修图', dataIndex: 'retouchingMinutes', render: formatMinutes },
-            { title: '说明', dataIndex: 'remark', ellipsis: true },
+            { title: '说明', dataIndex: 'remark', minWidth: 320,
+              render: value => <TableEllipsisText value={value} maxWidth={288} /> },
             { title: '状态', dataIndex: 'status', render: value => <StatusTag value={value} /> },
-            { title: '操作', fixed: 'right' as const, width: reviewer ? 320 : 120, render: (_, item: Worklog) => <Space>
+            { title: '操作', fixed: 'right' as const, minWidth: reviewer ? WORKLOG_REVIEW_ACTION_MIN_WIDTH : WORKLOG_OWNER_ACTION_MIN_WIDTH,
+              className: 'table-action-cell', render: (_, item: Worklog) => <Space>
               {canSubmit && item.userId === user?.id && ['DRAFT', 'REJECTED'].includes(item.status) && (
                 <Button onClick={() => void runAction(item, 'submit')}>提交</Button>
               )}

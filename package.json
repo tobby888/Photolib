@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@ant-design/icons": "^6.1.0",
+    "@chenglou/pretext": "0.0.8",
     "antd": "^6.1.0",
     "axios": "^1.10.0",
     "dayjs": "^1.11.13",
