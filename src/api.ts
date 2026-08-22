@@ -1,11 +1,28 @@
 import axios, { type AxiosRequestConfig } from 'axios'
 import type { PageData, User } from './types'
 
+export interface ApiErrorDetail {
+  field?: string
+  message: string
+}
+
 interface Envelope<T> {
   code: string
   message: string
   data: T
-  details?: { field?: string; message: string }[]
+  details?: ApiErrorDetail[]
+}
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly code: string,
+    readonly status?: number,
+    readonly details: ApiErrorDetail[] = [],
+  ) {
+    super(message)
+    this.name = 'ApiError'
+  }
 }
 
 export const http = axios.create({
@@ -64,7 +81,12 @@ export async function api<T>(config: AxiosRequestConfig): Promise<T> {
     if (axios.isAxiosError(error)) {
       const body = error.response?.data as Envelope<unknown> | undefined
       const detail = body?.details?.map((item) => item.message).join('；')
-      throw new Error(detail || body?.message || (error.code === 'ECONNABORTED' ? '请求超时，请稍后重试' : '网络连接失败'))
+      throw new ApiError(
+        detail || body?.message || (error.code === 'ECONNABORTED' ? '请求超时，请稍后重试' : '网络连接失败'),
+        body?.code || (error.code === 'ECONNABORTED' ? 'REQUEST_TIMEOUT' : 'NETWORK_ERROR'),
+        error.response?.status,
+        body?.details || [],
+      )
     }
     throw error
   }

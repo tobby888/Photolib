@@ -7,10 +7,13 @@ import { useRef, useState } from 'react'
 import { api } from './api'
 import MarkdownRenderer from './MarkdownRenderer'
 
-export default function MarkdownEditor({ value = '', onChange, placeholder = '使用 Markdown 编写说明……' }: {
+export default function MarkdownEditor({
+  value = '', onChange, placeholder = '使用 Markdown 编写说明……', allowImageUpload = true,
+}: {
   value?: string
   onChange?: (value: string) => void
   placeholder?: string
+  allowImageUpload?: boolean
 }) {
   const { message } = App.useApp()
   const root = useRef<HTMLDivElement>(null)
@@ -59,11 +62,13 @@ export default function MarkdownEditor({ value = '', onChange, placeholder = '�
         <Tooltip title="无序列表"><Button type="text" disabled={mode !== 'edit'} icon={<UnorderedListOutlined />} onClick={() => insert('- ', '', '列表项')} /></Tooltip>
         <Tooltip title="有序列表"><Button type="text" disabled={mode !== 'edit'} icon={<OrderedListOutlined />} onClick={() => insert('1. ', '', '列表项')} /></Tooltip>
         <Tooltip title="链接"><Button type="text" disabled={mode !== 'edit'} icon={<LinkOutlined />} onClick={() => insert('[', '](https://)', '链接文字')} /></Tooltip>
-        <Tooltip title="上传图片（JPEG、PNG、WebP，最大 5 MB）">
-          <Button type="text" disabled={mode !== 'edit'} loading={uploading} icon={<PictureOutlined />} onClick={() => fileInput.current?.click()} />
-        </Tooltip>
-        <input ref={fileInput} hidden type="file" accept="image/jpeg,image/png,image/webp"
-          onChange={event => void uploadImage(event.target.files?.[0])} />
+        {allowImageUpload && <>
+          <Tooltip title="上传图片（JPEG、PNG、WebP，最大 5 MB）">
+            <Button type="text" disabled={mode !== 'edit'} loading={uploading} icon={<PictureOutlined />} onClick={() => fileInput.current?.click()} />
+          </Tooltip>
+          <input ref={fileInput} hidden type="file" accept="image/jpeg,image/png,image/webp"
+            onChange={event => void uploadImage(event.target.files?.[0])} />
+        </>}
       </Space>
       <Segmented size="small" value={mode} onChange={next => setMode(next as 'edit' | 'preview')}
         options={[{ value: 'edit', label: '编辑' }, { value: 'preview', label: <Space size={4}><EyeOutlined />预览</Space> }]} />

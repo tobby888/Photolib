@@ -7,6 +7,7 @@ public enum PermissionCategory {
     WORKLOG("工时"),
     DIRECTORY("通讯录"),
     MESSAGE("消息"),
+    RECRUITMENT("成员招募"),
     STATISTICS("数据统计"),
     MANAGER_CAMPUS("负责人校区编辑");
 

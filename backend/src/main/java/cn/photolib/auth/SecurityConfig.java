@@ -30,6 +30,7 @@ public class SecurityConfig {
                         .requestMatchers("/", "/index.html", "/assets/**", "/favicon.ico",
                                 "/login", "/initial-password", "/projects/**", "/requests/**",
                                 "/photos", "/worklogs", "/notifications/**", "/statistics", "/admin",
+                                "/recruitment", "/recruitments/**", "/recruitment-applications/**",
                                 "/api", "/api/",
                                 "/api/v1/auth/login", "/api/v1/auth/refresh",
                                 "/api/v1/actuator/health",
@@ -37,6 +38,14 @@ public class SecurityConfig {
                                 "/api/v1/branding/icon").permitAll()
                         .requestMatchers(HttpMethod.GET,
                                 "/api/v1/branding/scheduled-icons/*/icon").permitAll()
+                        .requestMatchers(HttpMethod.GET,
+                                "/api/v1/public/recruitments",
+                                "/api/v1/public/recruitments/*/drafts/*/batches/*").permitAll()
+                        .requestMatchers(HttpMethod.POST,
+                                "/api/v1/public/recruitments/*/drafts",
+                                "/api/v1/public/recruitments/*/drafts/*/submit",
+                                "/api/v1/public/recruitments/*/drafts/*/batches",
+                                "/api/v1/public/recruitments/*/drafts/*/batches/*/complete").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(errors -> errors.authenticationEntryPoint((request, response, ex) -> {
                     response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);

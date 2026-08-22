@@ -3,6 +3,7 @@ package cn.photolib.photo.batch;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
+import cn.photolib.common.upload.ImageUploadPolicy;
 import cn.photolib.common.util.PublicId;
 import cn.photolib.photo.PhotoProcessingService;
 import cn.photolib.photo.mapper.PhotoMapper;
@@ -30,7 +31,6 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class BatchUploadService {
-    private static final long MAX_ARCHIVE = 1_500_000_000L;
     private final PhotoUploadBatchMapper batchMapper;
     private final PhotoUploadItemMapper itemMapper;
     private final PhotoMapper photoMapper;
@@ -55,7 +55,7 @@ public class BatchUploadService {
         }
         if (command.mode() == BatchMode.ZIP
                 && (command.archiveSize() == null || command.archiveSize() <= 0
-                || command.archiveSize() > MAX_ARCHIVE)) {
+                || command.archiveSize() > ImageUploadPolicy.MAX_ARCHIVE_BYTES)) {
             throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "ZIP 不得超过 1.5 GB");
         }
         Long projectId = command.projectId();
@@ -128,7 +128,7 @@ public class BatchUploadService {
         }
         if (batch.getMode() == BatchMode.ZIP) {
             ObjectStorageService.ObjectInfo info = storage.stat(batch.getArchiveObjectKey());
-            if (info.size() > MAX_ARCHIVE) {
+            if (info.size() > ImageUploadPolicy.MAX_ARCHIVE_BYTES) {
                 throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "ZIP 不得超过 1.5 GB");
             }
             transitionBatch(id, BatchStatus.UPLOADING, BatchStatus.PROCESSING);
@@ -138,7 +138,7 @@ public class BatchUploadService {
             List<PhotoUploadItemEntity> items = items(id);
             for (PhotoUploadItemEntity item : items) {
                 ObjectStorageService.ObjectInfo info = storage.stat(item.getTempObjectKey());
-                if (info.size() > storageProperties.imageMaxBytes()) {
+                if (info.size() > ImageUploadPolicy.MAX_IMAGE_BYTES) {
                     item.setStatus(BatchItemStatus.FAILED);
                     item.setFailureReason("图片超过 100 MiB");
                 } else {
@@ -262,13 +262,10 @@ public class BatchUploadService {
     }
 
     private void validateFile(FileSpec file) {
-        if (file.size() <= 0 || file.size() > storageProperties.imageMaxBytes()) {
+        if (file.size() <= 0 || file.size() > ImageUploadPolicy.MAX_IMAGE_BYTES) {
             throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "单张图片不得超过 100 MiB");
         }
-        String lower = file.fileName().toLowerCase();
-        boolean valid = file.contentType().equals("image/png") && lower.endsWith(".png")
-                || file.contentType().equals("image/jpeg")
-                && (lower.endsWith(".jpg") || lower.endsWith(".jpeg"));
+        boolean valid = ImageUploadPolicy.fileNameMatchesContentType(file.fileName(), file.contentType());
         if (!valid) throw new BusinessException(ErrorCode.UNSUPPORTED_FILE_TYPE, "仅支持 JPG 和 PNG");
     }
 
