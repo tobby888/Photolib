@@ -49,7 +49,7 @@ function AttachmentPreview({ attachment }: { attachment: RecruitmentAttachment }
       objectUrl = URL.createObjectURL(response.data)
       setState({ loading: false, url: objectUrl })
     }).catch(error => {
-      if (active) setState({ loading: false, error: (error as Error).message || '预览加载失败' })
+      if (active) setState({ loading: false, error: (error as Error).message || '这张图没能加载出来' })
     })
     return () => {
       active = false
@@ -83,7 +83,7 @@ export default function RecruitmentApplicationDetailPage() {
     setDownloadingId(String(attachment.id))
     try {
       const url = attachment.downloadUrl || ''
-      if (!url) throw new Error('未能获取附件下载地址')
+      if (!url) throw new Error('没拿到这个文件的下载地址，刷新一下再试')
       const apiPath = protectedApiPath(url)
       if (!apiPath) {
         window.open(url, '_blank', 'noopener')
@@ -103,7 +103,7 @@ export default function RecruitmentApplicationDetailPage() {
     }
   }
 
-  if (detailState.error) return <Result status="403" title="无法查看这份招募申请" subTitle={detailState.error}
+  if (detailState.error) return <Result status="403" title="这份报名看不了" subTitle={detailState.error}
     extra={<Button onClick={() => navigate('/recruitments')}>返回招募列表</Button>} />
 
   const markdown = detail?.detailsMarkdown || (detail
@@ -115,28 +115,28 @@ export default function RecruitmentApplicationDetailPage() {
   return <>
     <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => detail?.taskId
       ? navigate(`/recruitments/${detail.taskId}`)
-      : navigate('/recruitments')}>返回招募任务</Button>
+      : navigate('/recruitments')}>返回这次招募</Button>
     {detailState.loading && <Card style={{ marginTop: 12 }}><Skeleton active paragraph={{ rows: 12 }} /></Card>}
     {!detailState.loading && detail && <>
       <section className="project-detail-hero" style={{ marginTop: 10 }}>
         <Space wrap><Typography.Text className="eyebrow">RECRUITMENT APPLICATION · {detail.id}</Typography.Text>
-          <Tag color="green">已提交</Tag></Space>
-        <Typography.Title>{detail.taskTitle || '新人招募申请'}</Typography.Title>
+          <Tag color="green">已收到</Tag></Space>
+        <Typography.Title>{detail.taskTitle || '新成员报名'}</Typography.Title>
         <Space wrap size="large">
           <Typography.Text><IdcardOutlined /> 学号：<strong>{detail.studentId}</strong></Typography.Text>
           <Typography.Text type="secondary">提交时间：{dayjs(detail.submittedAt).format('YYYY-MM-DD HH:mm:ss')}</Typography.Text>
-          <Typography.Text type="secondary"><PaperClipOutlined /> {detail.attachments.length} 个附件</Typography.Text>
+          <Typography.Text type="secondary"><PaperClipOutlined /> 带了 {detail.attachments.length} 个文件</Typography.Text>
         </Space>
       </section>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={detail.attachments.length ? 14 : 24}>
-          <Card title="表单填写内容">
-            {markdown ? <MarkdownRenderer value={markdown} allowLinks={false} /> : <Alert type="info" showIcon title="这份申请没有文本回答" />}
+          <Card title="他/她是这么填的">
+            {markdown ? <MarkdownRenderer value={markdown} allowLinks={false} /> : <Alert type="info" showIcon title="这份报名没有文字回答" />}
           </Card>
         </Col>
         {!!detail.attachments.length && <Col xs={24} xl={10}>
-          <Card title={<Space><PaperClipOutlined />提交作品</Space>}>
+          <Card title={<Space><PaperClipOutlined />交上来的作品</Space>}>
             <Row gutter={[12, 12]}>
               {detail.attachments.map(attachment => <Col xs={24} sm={12} xl={24} key={String(attachment.id)}>
                 <Card size="small" cover={<AttachmentPreview attachment={attachment} />}>
@@ -146,7 +146,7 @@ export default function RecruitmentApplicationDetailPage() {
                   <Space style={{ width: '100%', justifyContent: 'space-between', marginTop: 8 }}>
                     <Typography.Text type="secondary">{formatBytes(attachment.size)}</Typography.Text>
                     <Button type="link" size="small" icon={<DownloadOutlined />}
-                      loading={downloadingId === String(attachment.id)} onClick={() => void download(attachment)}>下载原文件</Button>
+                      loading={downloadingId === String(attachment.id)} onClick={() => void download(attachment)}>下载原图</Button>
                   </Space>
                 </Card>
               </Col>)}

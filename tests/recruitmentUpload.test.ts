@@ -33,30 +33,30 @@ test('FILES accepts exactly 100 images and the 100 MiB boundary', () => {
     name: `${index}.png`, type: 'image/png', size: RECRUITMENT_MAX_IMAGE_BYTES,
   }))
   assert.deepEqual(validateRecruitmentUploadFiles('FILES', files), [])
-  assert.match(validateRecruitmentUploadFiles('FILES', [...files, image()])[0], /最多上传 100/)
-  assert.match(validateRecruitmentUploadFiles('FILES', [image({ size: RECRUITMENT_MAX_IMAGE_BYTES + 1 })])[0], /100 MiB/)
+  assert.match(validateRecruitmentUploadFiles('FILES', [...files, image()])[0], /最多传 100/)
+  assert.match(validateRecruitmentUploadFiles('FILES', [image({ size: RECRUITMENT_MAX_IMAGE_BYTES + 1 })])[0], /100 MB/)
 })
 
 test('FILES rejects empty, zero-byte, spoofed and unsupported files', () => {
-  assert.deepEqual(validateRecruitmentUploadFiles('FILES', []), ['请选择要上传的文件'])
-  assert.ok(validateRecruitmentUploadFiles('FILES', [image({ size: 0 })]).some(error => error.includes('不能为空')))
-  assert.ok(validateRecruitmentUploadFiles('FILES', [image({ name: 'photo.exe' })]).some(error => error.includes('类型一致')))
-  assert.ok(validateRecruitmentUploadFiles('FILES', [image({ name: 'photo.jpg', type: 'text/plain' })]).some(error => error.includes('类型一致')))
-  assert.ok(validateRecruitmentUploadFiles('FILES', [image({ name: 'photo.png', type: 'image/jpeg' })]).some(error => error.includes('类型一致')))
-  assert.ok(validateRecruitmentUploadFiles('FILES', [image({ name: `${'图'.repeat(252)}.jpg` })]).some(error => error.includes('255')))
+  assert.deepEqual(validateRecruitmentUploadFiles('FILES', []), ['还没有选文件哦'])
+  assert.ok(validateRecruitmentUploadFiles('FILES', [image({ size: 0 })]).some(error => error.includes('是空的')))
+  assert.ok(validateRecruitmentUploadFiles('FILES', [image({ name: 'photo.exe' })]).some(error => error.includes('只能传 JPG 或 PNG')))
+  assert.ok(validateRecruitmentUploadFiles('FILES', [image({ name: 'photo.jpg', type: 'text/plain' })]).some(error => error.includes('只能传 JPG 或 PNG')))
+  assert.ok(validateRecruitmentUploadFiles('FILES', [image({ name: 'photo.png', type: 'image/jpeg' })]).some(error => error.includes('只能传 JPG 或 PNG')))
+  assert.ok(validateRecruitmentUploadFiles('FILES', [image({ name: `${'图'.repeat(252)}.jpg` })]).some(error => error.includes('文件名太长')))
   assert.deepEqual(validateRecruitmentUploadFiles('FILES', [image({ type: '' })]), [])
 })
 
 test('ZIP accepts 1.5GB exactly and rejects the next byte or multiple archives', () => {
   const archive = { name: 'works.zip', type: 'application/zip', size: RECRUITMENT_MAX_ZIP_BYTES }
   assert.deepEqual(validateRecruitmentUploadFiles('ZIP', [archive]), [])
-  assert.match(validateRecruitmentUploadFiles('ZIP', [{ ...archive, size: RECRUITMENT_MAX_ZIP_BYTES + 1 }])[0], /1.5GB/)
+  assert.match(validateRecruitmentUploadFiles('ZIP', [{ ...archive, size: RECRUITMENT_MAX_ZIP_BYTES + 1 }])[0], /1\.5 GB/)
   assert.ok(validateRecruitmentUploadFiles('ZIP', [archive, archive]).some(error => error.includes('一个压缩包')))
-  assert.ok(validateRecruitmentUploadFiles('ZIP', [image()]).some(error => error.includes('仅支持 .zip')))
+  assert.ok(validateRecruitmentUploadFiles('ZIP', [image()]).some(error => error.includes('只收 .zip')))
   assert.ok(validateRecruitmentUploadFiles('ZIP', [{ name: 'works.bin', type: 'application/zip', size: 10 }])
-    .some(error => error.includes('仅支持 .zip')))
+    .some(error => error.includes('只收 .zip')))
   assert.ok(validateRecruitmentUploadFiles('ZIP', [{ name: `${'包'.repeat(252)}.zip`, type: 'application/zip', size: 10 }])
-    .some(error => error.includes('255')))
+    .some(error => error.includes('文件名太长')))
 })
 
 test('content types are inferred from safe image extensions when browsers omit MIME', () => {

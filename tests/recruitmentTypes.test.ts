@@ -36,6 +36,24 @@ test('normalizes the exact backend public task DTO and merges fixed form fields'
   assert.equal(task.formSchema.fields[0].id, 'direction')
 })
 
+test('null help text stays empty so republished tasks round-trip unchanged', () => {
+  // The backend freezes the student-id and upload configuration once a task is
+  // published and compares the submitted values byte for byte. Substituting the
+  // built-in placeholder for a stored null would make every later edit of a
+  // published task fail with a spurious "表单已冻结" conflict.
+  const task = normalizePublicRecruitmentTask({ ...publicDto, studentIdHelp: null, uploadHelp: null })
+  assert.equal(task.formSchema.studentId.helpText, '')
+  assert.equal(task.formSchema.upload.prompt, '')
+
+  // An absent key still falls back, so a brand-new form is seeded with defaults.
+  const withoutHelp: Record<string, unknown> = { ...publicDto }
+  delete withoutHelp.studentIdHelp
+  delete withoutHelp.uploadHelp
+  const seeded = normalizePublicRecruitmentTask(withoutHelp)
+  assert.ok(seeded.formSchema.studentId.helpText.length > 0)
+  assert.ok(seeded.formSchema.upload.prompt.length > 0)
+})
+
 test('normalizes internal task metadata and backend PageResponse', () => {
   const taskDto = {
     ...publicDto, id: 17, status: 'PUBLISHED', createdBy: 3, creatorDisplayName: '部长',

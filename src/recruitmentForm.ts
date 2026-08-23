@@ -49,12 +49,12 @@ export const EMPTY_RECRUITMENT_FORM: RecruitmentFormSchema = {
   fields: [],
   studentId: {
     label: '学号',
-    helpText: '同一学号只能提交一次；学号中的前导 0 会完整保留。',
+    helpText: '一个学号只能报一次名；开头的 0 请照写，不会被吞掉。',
   },
   upload: {
     label: '作品上传',
     required: false,
-    prompt: '请上传能展现你摄影能力的原创图片（JPG / PNG），也可以上传 ZIP 压缩包。',
+    prompt: '放几张你自己拍的照片吧（JPG / PNG），图多的话打包成一个 ZIP 一起传也行。',
   },
 }
 
@@ -150,27 +150,27 @@ export function createRecruitmentField(type: RecruitmentFieldType, existingIds: 
 export function validateRecruitmentFormSchema(schema: RecruitmentFormSchema): RecruitmentFormValidationIssue[] {
   const issues: RecruitmentFormValidationIssue[] = []
   const ids = new Set<string>()
-  if (schema.fields.length > 50) issues.push({ message: '自定义问题最多 50 个' })
-  if (!schema.studentId?.label?.trim()) issues.push({ fieldId: 'studentId', message: '请填写学号字段标题' })
-  if (!schema.upload?.label?.trim()) issues.push({ fieldId: 'attachments', message: '请填写作品上传区标题' })
+  if (schema.fields.length > 50) issues.push({ message: '问题最多只能加 50 个' })
+  if (!schema.studentId?.label?.trim()) issues.push({ fieldId: 'studentId', message: '学号这一项还没写标题' })
+  if (!schema.upload?.label?.trim()) issues.push({ fieldId: 'attachments', message: '作品上传区还没写标题' })
   schema.fields.forEach((field, index) => {
     const position = `第 ${index + 1} 个问题`
-    if (!field.id.trim()) issues.push({ fieldId: field.id, message: `${position}缺少字段标识` })
+    if (!field.id.trim()) issues.push({ fieldId: field.id, message: `${position}还没有字段标识` })
     else if (!/^[a-z][a-z0-9_-]{0,63}$/.test(field.id) || ['student_id', 'studentid', 'uploads', 'attachments'].includes(field.id)) {
-      issues.push({ fieldId: field.id, message: `${position}的字段标识不合法` })
+      issues.push({ fieldId: field.id, message: `${position}的字段标识不能用，请换一个（小写字母开头，只含字母、数字、_ 或 -）` })
     }
-    if (ids.has(field.id)) issues.push({ fieldId: field.id, message: `${position}的字段标识重复` })
+    if (ids.has(field.id)) issues.push({ fieldId: field.id, message: `${position}的字段标识和前面的重复了` })
     ids.add(field.id)
-    if (!field.label.trim()) issues.push({ fieldId: field.id, message: `${position}缺少题目` })
+    if (!field.label.trim()) issues.push({ fieldId: field.id, message: `${position}还没写题目` })
     if (!RECRUITMENT_FIELD_TYPES.includes(field.type)) {
-      issues.push({ fieldId: field.id, message: `${position}使用了不支持的类型` })
+      issues.push({ fieldId: field.id, message: `${position}的题型不支持` })
     }
     if (choiceTypes.has(field.type)) {
       const options = normalizeOptions(field.options)
-      if (options.length < 2) issues.push({ fieldId: field.id, message: `${position}至少需要两个不重复的选项` })
+      if (options.length < 2) issues.push({ fieldId: field.id, message: `${position}至少要有两个不重复的选项` })
     }
   })
-  if (!schema.upload?.prompt?.trim()) issues.push({ message: '请填写图片上传区提示' })
+  if (!schema.upload?.prompt?.trim()) issues.push({ message: '给作品上传区写一句提示吧，同学看了才知道该传什么' })
   return issues
 }
 
@@ -186,9 +186,9 @@ export function normalizeStudentId(value: unknown) {
 
 export function validateStudentId(value: unknown) {
   const studentId = normalizeStudentId(value)
-  if (!studentId) return '请输入学号'
+  if (!studentId) return '请填写学号'
   if (!/^[A-Z0-9_-]{2,64}$/.test(studentId)) {
-    return '学号只能包含字母、数字、下划线或连字符，长度须为 2 至 64 位'
+    return '学号只能是字母、数字、下划线或连字符，长度 2–64 位，检查一下有没有输错'
   }
   return undefined
 }
@@ -228,11 +228,11 @@ export function validateRecruitmentAnswers(
   schema.fields.forEach(field => {
     const answer = answers[field.id]
     if (field.required && (Array.isArray(answer) ? answer.length === 0 : !answer)) {
-      issues.push({ fieldId: field.id, message: `请填写“${field.label || '未命名问题'}”` })
+      issues.push({ fieldId: field.id, message: `“${field.label || '这道题'}”还没填` })
     }
   })
   if (schema.upload.required && attachmentCount === 0) {
-    issues.push({ fieldId: 'attachments', message: '请上传招募任务要求的图片或 ZIP 压缩包' })
+    issues.push({ fieldId: 'attachments', message: '这次招募需要看看你的作品，请至少上传一张照片或一个压缩包' })
   }
   return issues
 }

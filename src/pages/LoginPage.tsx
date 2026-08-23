@@ -49,7 +49,7 @@ export default function LoginPage() {
         </Form>
         <Divider plain>想加入摄影部？</Divider>
         <Button block size="large" icon={<TeamOutlined />} onClick={() => navigate('/recruitment')}>
-          招募新成员
+          我要报名
         </Button>
         <Typography.Text className="login-help">首次登录后，系统会引导你修改初始密码</Typography.Text>
       </Card>

@@ -12,18 +12,18 @@ test('public recruitment is wired outside the authenticated shell and login expo
   assert.match(app, /path="\/recruitments\/:taskId"/)
   assert.match(app, /path="\/recruitment-applications\/:applicationId"/)
   assert.match(login, /navigate\('\/recruitment'\)/)
-  assert.match(login, />\s*招募新成员\s*</)
+  assert.match(login, />\s*我要报名\s*</)
 })
 
 test('public form preserves the exact empty-state copy and sends draft tokens on attachment and submit calls', async () => {
   const source = await readFile(new URL('../src/pages/PublicRecruitmentPage.tsx', import.meta.url), 'utf8')
-  assert.match(source, /当前暂无大规模招募任务哦，敬请期待/)
+  assert.match(source, /现在还没有正在进行的招募，过阵子再来看看吧/)
   assert.match(source, /X-Recruitment-Draft-Token/)
   assert.match(source, /PARTIALLY_SUCCEEDED/)
-  assert.match(source, /仅提交成功图片/)
+  assert.match(source, /就交已传好的/)
   assert.match(source, /uploadToObjectStorage\(ticket\.tickets\[index\], files\[index\]/)
   assert.match(source, /normalizeStudentId\(values\.studentId\)/)
-  assert.match(source, /这个学号已经提交过本次招募/)
+  assert.match(source, /这个学号已经报过名/)
   assert.doesNotMatch(source, /canvas|toDataURL|compress/i)
 })
 

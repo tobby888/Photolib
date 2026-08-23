@@ -51,7 +51,7 @@ type CreateValues = {
 const statusOptions = [
   { value: 'DRAFT', label: '草稿' },
   { value: 'PUBLISHED', label: '已发布' },
-  { value: 'CLOSED', label: '已关闭' },
+  { value: 'CLOSED', label: '已结束' },
 ]
 
 export function recruitmentStatusDisplay(status: string, startAt?: string, endAt?: string, now = dayjs()) {
@@ -61,9 +61,9 @@ export function recruitmentStatusDisplay(status: string, startAt?: string, endAt
     const end = dayjs(endAt)
     if (start.isValid() && now.isBefore(start)) return { label: '待开始', color: 'blue' }
     if (end.isValid() && !now.isBefore(end)) return { label: '已截止', color: 'orange' }
-    return { label: '招募中', color: 'green' }
+    return { label: '正在招人', color: 'green' }
   }
-  if (status === 'CLOSED') return { label: '已关闭', color: 'blue' }
+  if (status === 'CLOSED') return { label: '已结束', color: 'blue' }
   if (status === 'CANCELLED') return { label: '已取消', color: 'red' }
   return { label: status, color: 'default' }
 }
@@ -115,7 +115,7 @@ export default function RecruitmentsPage() {
       return
     }
     if (!values.activeRange?.[1]?.isAfter(values.activeRange[0])) {
-      message.error('招募结束时间必须晚于开始时间')
+      message.error('截止时间要晚于开始时间')
       return
     }
     setSaving(true)
@@ -131,7 +131,7 @@ export default function RecruitmentsPage() {
           ...recruitmentTaskFormPayload(schema),
         },
       }))
-      message.success('招募任务草稿已创建')
+      message.success('草稿已保存，检查一遍就可以发布了')
       setModalOpen(false)
       form.resetFields()
       if (task.id) navigate(`/recruitments/${task.id}`)
@@ -144,11 +144,11 @@ export default function RecruitmentsPage() {
   }
 
   return <>
-    <PageTitle eyebrow="RECRUITMENT" title="新成员招募" description="设计申请表、安排招募时间，并集中查看每一份新人申请。"
-      extra={canPublish && <Button type="primary" size="large" icon={<PlusOutlined />} onClick={openCreate}>新建招募任务</Button>} />
+    <PageTitle eyebrow="RECRUITMENT" title="新成员招募" description="做一张报名表、定好报名时间，同学交上来的报名都会汇总在这里。"
+      extra={canPublish && <Button type="primary" size="large" icon={<PlusOutlined />} onClick={openCreate}>发起招募</Button>} />
     <Card className="filter-card">
       <Space wrap>
-        <Input allowClear prefix={<SearchOutlined />} placeholder="搜索招募任务" style={{ width: 260 }}
+        <Input allowClear prefix={<SearchOutlined />} placeholder="搜索招募名称或说明" style={{ width: 260 }}
           onPressEnter={event => setFilters(current => ({ ...current, page: 1, keyword: event.currentTarget.value.trim() }))}
           onClear={() => setFilters(current => ({ ...current, page: 1, keyword: '' }))} />
         <Select allowClear placeholder="全部状态" options={statusOptions} style={{ width: 150 }}
@@ -168,13 +168,13 @@ export default function RecruitmentsPage() {
               </div>
               <Typography.Title level={4} style={{ margin: '18px 0 7px' }}>{task.title}</Typography.Title>
               <Typography.Paragraph type="secondary" ellipsis={{ rows: 2 }} style={{ minHeight: 44 }}>
-                {markdownExcerpt(task.description) || '尚未添加招募说明'}
+                {markdownExcerpt(task.description) || '还没写招募说明'}
               </Typography.Paragraph>
               <Space orientation="vertical" size={5} style={{ width: '100%', margin: '8px 0 16px' }}>
                 <Typography.Text type="secondary"><CalendarOutlined /> {dayjs(task.startAt).format('YYYY-MM-DD HH:mm')} 至 {dayjs(task.endAt).format('YYYY-MM-DD HH:mm')}</Typography.Text>
-                <Typography.Text type="secondary"><TeamOutlined /> 已提交 {task.applicationCount || 0} 份申请</Typography.Text>
+                <Typography.Text type="secondary"><TeamOutlined /> 已收到 {task.applicationCount || 0} 份报名</Typography.Text>
               </Space>
-              <Button block>查看任务与申请 <ArrowRightOutlined /></Button>
+              <Button block>看看详情和报名 <ArrowRightOutlined /></Button>
             </Card>
           </Col>
         })}
@@ -183,19 +183,19 @@ export default function RecruitmentsPage() {
         onChange={page => setFilters(current => ({ ...current, page }))} />
     </DataState>
 
-    <Modal title="新建招募任务" width={900} open={modalOpen} onCancel={() => !saving && setModalOpen(false)}
-      onOk={() => void create()} confirmLoading={saving} okText="保存草稿" cancelText="取消" destroyOnHidden forceRender>
+    <Modal title="发起一次招募" width={900} open={modalOpen} onCancel={() => !saving && setModalOpen(false)}
+      onOk={() => void create()} confirmLoading={saving} okText="先存草稿" cancelText="取消" destroyOnHidden forceRender>
       <Form form={form} layout="vertical" requiredMark={false}>
-        <Form.Item label="任务名称" name="title" rules={[
-          { required: true, whitespace: true, message: '请输入任务名称' }, { max: 200, message: '任务名称不能超过 200 个字符' },
+        <Form.Item label="招募名称" name="title" rules={[
+          { required: true, whitespace: true, message: '请填写招募名称' }, { max: 200, message: '名称最多 200 个字' },
         ]}><Input placeholder="例如：2026 秋季摄影部招新" /></Form.Item>
-        <Form.Item label="招募时间（北京时间）" name="activeRange" rules={[{ required: true, message: '请选择招募开始和结束时间' }]}>
+        <Form.Item label="报名时间（北京时间）" name="activeRange" rules={[{ required: true, message: '请选择报名的开始和截止时间' }]}>
           <DatePicker.RangePicker showTime style={{ width: '100%' }} allowClear={false} />
         </Form.Item>
         <Form.Item label="招募说明" name="description">
-          <MarkdownEditor allowImageUpload={false} placeholder="介绍摄影部、招募对象、流程和注意事项……" />
+          <MarkdownEditor allowImageUpload={false} placeholder="介绍一下摄影部、想招什么样的人、报名后的流程……" />
         </Form.Item>
-        <Form.Item label="新人申请表" name="formSchema" rules={[{ required: true }]}>
+        <Form.Item label="报名表" name="formSchema" rules={[{ required: true }]}>
           <RecruitmentFormEditor />
         </Form.Item>
       </Form>

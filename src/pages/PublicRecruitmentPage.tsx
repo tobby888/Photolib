@@ -79,6 +79,18 @@ function failureReason(batch: RecruitmentBatchView) {
   return itemReasons || batch.batch?.failureReason || batch.failureReason
 }
 
+/**
+ * The object-storage helper is shared with the staff photo tools, so its errors
+ * name buckets, CORS and presigned URLs. An applicant can act on none of that.
+ */
+function friendlyUploadError(error: unknown) {
+  const raw = (error as Error)?.message || ''
+  if (/OSS|Bucket|CORS|预签名|Content-Type/i.test(raw)) {
+    return '图片没能上传成功。请检查网络后重试；如果一直不行，请把这个情况告诉摄影部的同学。'
+  }
+  return raw || '图片没能上传成功，请稍后重试。'
+}
+
 function DynamicAnswerField({ field }: { field: RecruitmentFormField }) {
   const common = {
     name: ['answers', field.id],
@@ -126,18 +138,18 @@ function PublicTaskForm({ task }: { task: PublicRecruitmentTask }) {
       if (isRecruitmentBatchTerminal(latest)) return latest
       await wait(1500)
     }
-    throw new Error('文件仍在后台处理，请保持页面打开并稍后重试')
+    throw new Error('图片还在处理，暂时没等到结果。请先别关页面，稍后再点一次提交。')
   }
 
   const uploadAttachments = async (draftId: string, token: string) => {
     if (!files.length) return
-    setPhase(uploadMode === 'ZIP' ? '正在计算 ZIP 信息并创建上传任务…' : '正在计算图片 SHA-256…')
+    setPhase(uploadMode === 'ZIP' ? '正在读取压缩包…' : '正在整理你选的图片…')
     setProgress(3)
     const request = uploadMode === 'ZIP'
       ? buildRecruitmentZipRequest(files[0])
       : await buildRecruitmentFilesRequest(files)
     setProgress(10)
-    setPhase('正在创建 OSS 直传地址…')
+    setPhase('正在准备上传…')
     const ticket = await api<RecruitmentBatchTicketResponse>({
       method: 'POST',
       url: `/public/recruitments/${task.publicId}/drafts/${draftId}/batches`,
@@ -145,18 +157,24 @@ function PublicTaskForm({ task }: { task: PublicRecruitmentTask }) {
       data: request,
     })
     if (!ticket.batchId || ticket.tickets?.length !== files.length) {
-      throw new Error('未能为全部文件创建上传地址，请重试')
+      throw new Error('有文件没能开始上传，请再试一次')
     }
     for (let index = 0; index < files.length; index += 1) {
-      setPhase(`正在原样上传 ${files[index].name}（${index + 1}/${files.length}）…`)
-      await uploadToObjectStorage(ticket.tickets[index], files[index], filePercent => {
-        const completed = index / files.length
-        const current = filePercent / 100 / files.length
-        setProgress(10 + Math.round((completed + current) * 75))
-      })
+      setPhase(files.length > 1
+        ? `正在上传 ${files[index].name}（第 ${index + 1} 个，共 ${files.length} 个）…`
+        : `正在上传 ${files[index].name}…`)
+      try {
+        await uploadToObjectStorage(ticket.tickets[index], files[index], filePercent => {
+          const completed = index / files.length
+          const current = filePercent / 100 / files.length
+          setProgress(10 + Math.round((completed + current) * 75))
+        })
+      } catch (error) {
+        throw new Error(friendlyUploadError(error))
+      }
     }
     setProgress(88)
-    setPhase(uploadMode === 'ZIP' ? 'OSS 上传完成，正在安全解压并校验图片…' : 'OSS 上传完成，正在校验文件…')
+    setPhase(uploadMode === 'ZIP' ? '上传完成，正在打开压缩包查看图片…' : '上传完成，正在检查图片…')
     const completed = await api<RecruitmentBatchView>({
       method: 'POST',
       url: `/public/recruitments/${task.publicId}/drafts/${draftId}/batches/${ticket.batchId}/complete`,
@@ -166,17 +184,17 @@ function PublicTaskForm({ task }: { task: PublicRecruitmentTask }) {
       ? completed
       : await pollBatch(draftId, token, ticket.batchId)
     if (normalizeRecruitmentBatchStatus(batch) === 'FAILED') {
-      throw new Error(failureReason(batch) || '文件处理失败，请检查文件后重试')
+      throw new Error(failureReason(batch) || '这些文件没能通过检查，换几张图片再试试吧')
     }
     if (normalizeRecruitmentBatchStatus(batch) === 'PARTIALLY_SUCCEEDED') {
-      const reason = failureReason(batch) || '部分图片未能通过格式或完整性校验'
+      const reason = failureReason(batch) || '有几张图片打不开，可能是文件损坏了'
       await new Promise<void>((resolve, reject) => modal.confirm({
-        title: '部分图片处理失败',
-        content: `${reason}。你可以仅提交已成功的图片，或取消后调整文件再重新提交。`,
-        okText: '仅提交成功图片',
-        cancelText: '暂不提交',
+        title: '有几张图片没传上去',
+        content: `${reason}。你可以先交上已经传好的那几张，也可以先取消、换几张图片再交。`,
+        okText: '就交已传好的',
+        cancelText: '我再换几张',
         onOk: () => resolve(),
-        onCancel: () => reject(new Error('已暂停提交；表单内容仍保留，请调整上传文件后重试')),
+        onCancel: () => reject(new Error('已经暂停提交，你填的内容都还在。换好图片后再点一次提交就行。')),
       }))
     }
     setProgress(96)
@@ -206,11 +224,11 @@ function PublicTaskForm({ task }: { task: PublicRecruitmentTask }) {
     setProgress(0)
     try {
       const studentId = normalizeStudentId(values.studentId)
-      setPhase('正在创建安全提交草稿…')
+      setPhase('正在为你占位…')
       const draft = normalizeRecruitmentDraft(await api<unknown>({
         method: 'POST', url: `/public/recruitments/${task.publicId}/drafts`, data: { studentId },
       }))
-      if (!draft.draftId || !draft.token) throw new Error('提交凭证创建失败，请刷新后重试')
+      if (!draft.draftId || !draft.token) throw new Error('没能开始提交，请刷新页面再试一次')
       await uploadAttachments(draft.draftId, draft.token)
       setPhase('正在提交报名表…')
       const result = await api<{ submittedAt?: string }>({
@@ -224,12 +242,12 @@ function PublicTaskForm({ task }: { task: PublicRecruitmentTask }) {
       })
       setProgress(100)
       setSubmittedAt(result.submittedAt || new Date().toISOString())
-      message.success('招募申请已提交')
+      message.success('报名成功')
     } catch (error) {
-      const reason = (error as Error).message || '提交失败，请稍后重试'
+      const reason = (error as Error).message || '提交没成功，请稍后再试一次'
       const duplicate = /重复|已经提交|已提交|DUPLICATE/i.test(reason)
-      setInlineError(duplicate ? '这个学号已经提交过本次招募，每位同学只能提交一次。你已填写的内容仍保留在页面中。' : reason)
-      message.error(duplicate ? '这个学号已经提交过本次招募' : reason)
+      setInlineError(duplicate ? '这个学号已经报过名啦，每人只能报一次。你刚填的内容还在页面上，不会丢。' : reason)
+      message.error(duplicate ? '这个学号已经报过名了' : reason)
     } finally {
       setSubmitting(false)
       setPhase('')
@@ -237,27 +255,28 @@ function PublicTaskForm({ task }: { task: PublicRecruitmentTask }) {
   }
 
   if (submittedAt) return <Result icon={<CheckCircleOutlined style={{ color: '#3f7b65' }} />}
-    title="申请提交成功" subTitle={`提交时间：${dayjs(submittedAt).format('YYYY-MM-DD HH:mm:ss')}。请留意后续通知。`} />
+    title="报名成功，我们收到啦！"
+    subTitle={`提交时间：${dayjs(submittedAt).format('YYYY-MM-DD HH:mm:ss')}。接下来请留意学院或摄影部的通知，我们会尽快联系你。`} />
 
   return <Form name={`recruitment-${task.publicId}`} form={form} layout="vertical" size="large" requiredMark="optional" disabled={submitting}
     preserve initialValues={{ answers: {} }} onFinish={() => void submit()}>
     <Form.Item name="studentId" label={task.formSchema.studentId.label} extra={task.formSchema.studentId.helpText}
-      rules={[{ required: true, message: '请输入学号' }, { validator: async (_, value) => {
+      rules={[{ required: true, message: '请填写学号' }, { validator: async (_, value) => {
         const issue = value ? validateStudentId(value) : undefined
         if (issue) throw new Error(issue)
       } }]}>
-      <Input inputMode="text" autoComplete="off" maxLength={128} placeholder="请输入你的学号" />
+      <Input inputMode="text" autoComplete="off" maxLength={128} placeholder="填写你的学号" />
     </Form.Item>
     {task.formSchema.fields.map(field => <DynamicAnswerField key={field.id} field={field} />)}
 
     <Form.Item required={task.formSchema.upload.required}
-      label={<Space><FileImageOutlined />{task.formSchema.upload.label}{task.formSchema.upload.required && <Tag color="red">必填</Tag>}</Space>}
+      label={<Space><FileImageOutlined />{task.formSchema.upload.label}{task.formSchema.upload.required && <Tag color="red">必传</Tag>}</Space>}
       extra={task.formSchema.upload.prompt}>
       <Radio.Group optionType="button" buttonStyle="solid" value={uploadMode} disabled={submitting}
         onChange={event => { setUploadMode(event.target.value as RecruitmentUploadMode); setFileList([]); setInlineError('') }}
         options={[
-          { value: 'FILES', label: <Space><FileImageOutlined />图片</Space> },
-          { value: 'ZIP', label: <Space><FileZipOutlined />ZIP 压缩包</Space> },
+          { value: 'FILES', label: <Space><FileImageOutlined />逐张选图片</Space> },
+          { value: 'ZIP', label: <Space><FileZipOutlined />传一个压缩包</Space> },
         ]} />
       <Upload.Dragger style={{ marginTop: 12 }} multiple={uploadMode === 'FILES'}
         maxCount={uploadMode === 'ZIP' ? 1 : 100}
@@ -272,21 +291,21 @@ function PublicTaskForm({ task }: { task: PublicRecruitmentTask }) {
           setFileList(errors.length ? fileList : limited)
         }}>
         <p className="ant-upload-drag-icon"><InboxOutlined /></p>
-        <p className="ant-upload-text">{uploadMode === 'ZIP' ? '拖入一个 ZIP，或点击选择' : '拖入 JPG / PNG，或点击选择'}</p>
+        <p className="ant-upload-text">{uploadMode === 'ZIP' ? '把 ZIP 拖到这里，或点一下选择' : '把照片拖到这里，或点一下选择'}</p>
         <p className="ant-upload-hint">{uploadMode === 'ZIP'
-          ? '最大 1.5GB；包内最多 100 张有效图片；安全解压规则与图库批量上传一致'
-          : '1–100 张；单张不超过 100 MiB；原文件直传，不压缩、不转码'}</p>
+          ? '一个 ZIP，不超过 1.5 GB，里面最多放 100 张 JPG / PNG'
+          : '一次 1–100 张 JPG / PNG，单张不超过 100 MB，我们会保留你的原图'}</p>
       </Upload.Dragger>
     </Form.Item>
 
-    {inlineError && <Alert type="error" showIcon title="暂时无法提交" description={inlineError}
+    {inlineError && <Alert type="error" showIcon title="还差一点就好了" description={inlineError}
       style={{ marginBottom: 18 }} />}
     {submitting && <Space orientation="vertical" style={{ width: '100%', marginBottom: 18 }}>
       <Progress percent={progress} status="active" />
       <Typography.Text type="secondary">{phase}</Typography.Text>
     </Space>}
     <Button block size="large" type="primary" htmlType="submit" icon={<SendOutlined />} loading={submitting}>
-      提交招募申请
+      提交报名
     </Button>
   </Form>
 }
@@ -322,15 +341,15 @@ export default function PublicRecruitmentPage() {
       <div style={{ textAlign: 'center', marginBottom: 34 }}>
         <Typography.Text style={{ color: '#b66d31', fontWeight: 700, letterSpacing: '.16em' }}>JOIN THE TEAM</Typography.Text>
         <Typography.Title style={{ margin: '8px 0 6px', fontSize: 'clamp(30px, 6vw, 50px)' }}>把你看到的世界，带到这里</Typography.Title>
-        <Typography.Paragraph type="secondary">请选择正在进行的招募任务，认真填写并提交你的作品。</Typography.Paragraph>
+        <Typography.Paragraph type="secondary">在下面挑一个正在招人的岗位，填好报名表、放上你的照片就可以了。</Typography.Paragraph>
       </div>
 
       {tasks.loading && <Card><Skeleton active paragraph={{ rows: 10 }} /></Card>}
-      {!tasks.loading && tasks.error && <Result status="warning" title="招募信息暂时加载失败" subTitle={tasks.error}
-        extra={<Button onClick={() => void tasks.reload()}>重新加载</Button>} />}
+      {!tasks.loading && tasks.error && <Result status="warning" title="招募信息没能加载出来" subTitle={tasks.error}
+        extra={<Button onClick={() => void tasks.reload()}>再试一次</Button>} />}
       {!tasks.loading && !tasks.error && !tasks.data.length && <Card style={{ textAlign: 'center', padding: '36px 8px' }}>
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={
-          <Typography.Title level={4}>当前暂无大规模招募任务哦，敬请期待</Typography.Title>
+          <Typography.Title level={4}>现在还没有正在进行的招募，过阵子再来看看吧</Typography.Title>
         } />
       </Card>}
       {!tasks.loading && !tasks.error && <Space orientation="vertical" size={24} style={{ width: '100%' }}>
@@ -338,16 +357,16 @@ export default function PublicRecruitmentPage() {
           <Row gutter={[28, 24]}>
             <Col xs={24} lg={9}>
               <Space orientation="vertical" size={14} style={{ width: '100%' }}>
-                <Tag color="green">正在招募</Tag>
+                <Tag color="green">正在招人</Tag>
                 <Typography.Title level={2} style={{ margin: 0 }}>{task.title}</Typography.Title>
                 <Space><CalendarOutlined /><Typography.Text type="secondary">
-                  {dayjs(task.startAt).format('YYYY-MM-DD HH:mm')} 至 {dayjs(task.endAt).format('YYYY-MM-DD HH:mm')}（北京时间）
+                  报名时间：{dayjs(task.startAt).format('YYYY-MM-DD HH:mm')} 至 {dayjs(task.endAt).format('YYYY-MM-DD HH:mm')}（北京时间）
                 </Typography.Text></Space>
                 {task.description
                   ? <MarkdownRenderer value={task.description} />
-                  : <Typography.Paragraph type="secondary">请按右侧表单提交你的招募申请。</Typography.Paragraph>}
-                <Alert type="info" showIcon title="上传文件不会压缩"
-                  description="图片及 ZIP 均原样直传私有 OSS，仅具有权限的摄影部工作人员可以查看。" />
+                  : <Typography.Paragraph type="secondary">填好右边的表格就完成报名啦。</Typography.Paragraph>}
+                <Alert type="info" showIcon title="你的原图会原封不动地保存"
+                  description="我们不会压缩或转格式，照片只有摄影部的工作人员看得到，不会公开。" />
               </Space>
             </Col>
             <Col xs={24} lg={15}><PublicTaskForm task={task} /></Col>
@@ -355,7 +374,7 @@ export default function PublicRecruitmentPage() {
         </Card>)}
       </Space>}
       <Typography.Paragraph type="secondary" style={{ textAlign: 'center', marginTop: 26 }}>
-        已有工作站账号？请<Link to="/login">返回登录页面</Link>。<CloudUploadOutlined /> 你的提交将通过加密连接传输。
+        已经是摄影部成员了？<Link to="/login">去登录工作站</Link>。<CloudUploadOutlined /> 整个提交过程都走加密连接。
       </Typography.Paragraph>
     </div>
   </main>

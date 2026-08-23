@@ -44,9 +44,13 @@ public class AuditInterceptor implements HandlerInterceptor {
         log.setOperatorId(userId);
         log.setAction(request.getMethod());
         String[] segments = request.getRequestURI().split("/");
-        log.setResourceType(segments.length > 3 ? segments[3].toUpperCase() : "UNKNOWN");
-        String resourceId = segments.length > 4 && RESOURCE_ID.matcher(segments[4]).matches()
-                ? segments[4] : null;
+        // Anonymous endpoints live one level deeper (/api/v1/public/<resource>/<id>/…),
+        // so without this shift every public write would be filed as PUBLIC/null.
+        int typeIndex = segments.length > 3 && "public".equals(segments[3]) ? 4 : 3;
+        log.setResourceType(segments.length > typeIndex ? segments[typeIndex].toUpperCase() : "UNKNOWN");
+        int idIndex = typeIndex + 1;
+        String resourceId = segments.length > idIndex && RESOURCE_ID.matcher(segments[idIndex]).matches()
+                ? segments[idIndex] : null;
         if (resourceId == null && segments.length > 4 && "users".equals(segments[3])
                 && "me".equals(segments[4]) && userId != null) {
             resourceId = userId.toString();

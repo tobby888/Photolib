@@ -53,19 +53,19 @@ export function validateRecruitmentUploadFiles(
   files: RecruitmentUploadFileLike[],
 ) {
   const errors: string[] = []
-  if (!files.length) return ['请选择要上传的文件']
+  if (!files.length) return ['还没有选文件哦']
 
   if (mode === 'ZIP') {
-    if (files.length !== 1) errors.push('ZIP 模式一次只能上传一个压缩包')
+    if (files.length !== 1) errors.push('一次只能传一个压缩包')
     const archive = files[0]
-    if (archive && !isZipUploadFile(archive)) errors.push('ZIP 模式仅支持 .zip 压缩包')
-    if (archive && codePointLength(archive.name) > 255) errors.push('ZIP 文件名不得超过 255 个字符')
-    if (archive?.size === 0) errors.push('ZIP 压缩包不能为空')
-    if (archive && archive.size > RECRUITMENT_MAX_ZIP_BYTES) errors.push('ZIP 压缩包不得超过 1.5GB')
+    if (archive && !isZipUploadFile(archive)) errors.push('这里只收 .zip 压缩包，其他格式暂时不支持')
+    if (archive && codePointLength(archive.name) > 255) errors.push('压缩包的文件名太长了，请改短一点（255 字以内）')
+    if (archive?.size === 0) errors.push('这个压缩包是空的')
+    if (archive && archive.size > RECRUITMENT_MAX_ZIP_BYTES) errors.push('压缩包不能超过 1.5 GB，可以分开传或删掉几张再试')
     return errors
   }
 
-  if (files.length > RECRUITMENT_MAX_FILE_COUNT) errors.push('一次最多上传 100 张图片')
+  if (files.length > RECRUITMENT_MAX_FILE_COUNT) errors.push('一次最多传 100 张，请先挑一挑')
   files.forEach(file => {
     const normalizedType = normalizedRecruitmentContentType(file)
     const fileExtension = extension(file.name)
@@ -75,11 +75,11 @@ export function validateRecruitmentUploadFiles(
       ? fileExtension === 'png'
       : normalizedType === 'image/jpeg' && ['jpg', 'jpeg'].includes(fileExtension)
     if (!imageType || !imageExtension || !typeMatchesExtension) {
-      errors.push(`${file.name}：文件扩展名必须与 JPG / PNG 类型一致`)
+      errors.push(`${file.name}：只能传 JPG 或 PNG 图片`)
     }
-    if (codePointLength(file.name) > 255) errors.push(`${file.name}：文件名不得超过 255 个字符`)
-    if (file.size === 0) errors.push(`${file.name}：文件不能为空`)
-    if (file.size > RECRUITMENT_MAX_IMAGE_BYTES) errors.push(`${file.name}：单张图片不得超过 100 MiB`)
+    if (codePointLength(file.name) > 255) errors.push(`${file.name}：文件名太长了，请改短一点（255 字以内）`)
+    if (file.size === 0) errors.push(`${file.name}：这个文件是空的`)
+    if (file.size > RECRUITMENT_MAX_IMAGE_BYTES) errors.push(`${file.name}：单张不能超过 100 MB`)
   })
   return errors
 }

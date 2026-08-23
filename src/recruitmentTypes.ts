@@ -112,6 +112,18 @@ function number(value: unknown, fallback = 0) {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 
+/**
+ * Distinguishes "the server omitted this key" from "the server stored no value".
+ * Substituting a built-in default for an explicit null would silently resurrect
+ * text the operator deleted, and — because the backend freezes the student-id
+ * and upload configuration once a task is published — would make every later
+ * edit of that task fail with a spurious "表单已冻结" conflict.
+ */
+function storedText(value: unknown, fallbackWhenAbsent: string) {
+  if (value === undefined) return fallbackWhenAbsent
+  return typeof value === 'string' ? value : ''
+}
+
 export function normalizePublicRecruitmentTask(value: unknown): PublicRecruitmentTask {
   const raw = object(value)
   const formSchema = normalizeRecruitmentFormSchema(raw.formSchema ?? raw.schema)
@@ -126,11 +138,11 @@ export function normalizePublicRecruitmentTask(value: unknown): PublicRecruitmen
       ...formSchema,
       studentId: {
         label: string(raw.studentIdLabel, formSchema.studentId.label),
-        helpText: string(raw.studentIdHelp, formSchema.studentId.helpText),
+        helpText: storedText(raw.studentIdHelp, formSchema.studentId.helpText),
       },
       upload: {
         label: string(raw.uploadLabel, formSchema.upload.label),
-        prompt: string(raw.uploadHelp, formSchema.upload.prompt),
+        prompt: storedText(raw.uploadHelp, formSchema.upload.prompt),
         required: typeof raw.uploadRequired === 'boolean' ? raw.uploadRequired : formSchema.upload.required,
       },
     },

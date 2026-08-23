@@ -40,7 +40,7 @@ test('normalizes JSON schemas, legacy keys and duplicate choice options', () => 
     { id: 'name', type: 'SHORT_TEXT', label: '姓名', helpText: '请填写', placeholder: undefined, required: true, options: undefined },
     { id: 'name_2', type: 'SINGLE_CHOICE', label: '方向', helpText: undefined, placeholder: undefined, required: false, options: ['纪实', '人像'] },
   ])
-  assert.deepEqual(normalized.studentId, { label: '学号', helpText: '同一学号只能提交一次；学号中的前导 0 会完整保留。' })
+  assert.deepEqual(normalized.studentId, { label: '学号', helpText: '一个学号只能报一次名；开头的 0 请照写，不会被吞掉。' })
   assert.deepEqual(normalized.upload, { label: '作品上传', required: true, prompt: '原图' })
 })
 
@@ -58,10 +58,10 @@ test('schema validation reports blank labels, duplicate ids, choice and upload e
     studentId: { label: '学号', helpText: '' },
     upload: { label: '作品上传', required: false, prompt: '' },
   })
-  assert.ok(issues.some(issue => issue.message.includes('缺少题目')))
-  assert.ok(issues.some(issue => issue.message.includes('字段标识重复')))
-  assert.ok(issues.some(issue => issue.message.includes('至少需要两个')))
-  assert.ok(issues.some(issue => issue.message.includes('上传区提示')))
+  assert.ok(issues.some(issue => issue.message.includes('还没写题目')))
+  assert.ok(issues.some(issue => issue.message.includes('字段标识和前面的重复了')))
+  assert.ok(issues.some(issue => issue.message.includes('至少要有两个')))
+  assert.ok(issues.some(issue => issue.message.includes('作品上传区写一句提示')))
 })
 
 test('student identifiers remain strings and preserve leading zeroes', () => {

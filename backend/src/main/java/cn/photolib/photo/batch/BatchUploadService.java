@@ -138,7 +138,7 @@ public class BatchUploadService {
             List<PhotoUploadItemEntity> items = items(id);
             for (PhotoUploadItemEntity item : items) {
                 ObjectStorageService.ObjectInfo info = storage.stat(item.getTempObjectKey());
-                if (info.size() > ImageUploadPolicy.MAX_IMAGE_BYTES) {
+                if (info.size() > imageMaxBytes()) {
                     item.setStatus(BatchItemStatus.FAILED);
                     item.setFailureReason("图片超过 100 MiB");
                 } else {
@@ -262,11 +262,20 @@ public class BatchUploadService {
     }
 
     private void validateFile(FileSpec file) {
-        if (file.size() <= 0 || file.size() > ImageUploadPolicy.MAX_IMAGE_BYTES) {
+        if (file.size() <= 0 || file.size() > imageMaxBytes()) {
             throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "单张图片不得超过 100 MiB");
         }
         boolean valid = ImageUploadPolicy.fileNameMatchesContentType(file.fileName(), file.contentType());
         if (!valid) throw new BusinessException(ErrorCode.UNSUPPORTED_FILE_TYPE, "仅支持 JPG 和 PNG");
+    }
+
+    /**
+     * {@code storage.image-max-bytes} stays authoritative for the gallery so an
+     * operator can tighten the limit, while the shared policy constant remains
+     * the hard ceiling a looser configuration cannot raise.
+     */
+    private long imageMaxBytes() {
+        return Math.min(storageProperties.imageMaxBytes(), ImageUploadPolicy.MAX_IMAGE_BYTES);
     }
 
     private PhotoUploadBatchEntity requireOwned(String id, AuthenticatedUser user) {
