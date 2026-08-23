@@ -34,13 +34,20 @@ function MarkdownImage({ src, alt, ...props }: ComponentPropsWithoutRef<'img'>) 
   return <img {...props} src={objectUrl} alt={alt || ''} />
 }
 
-export default function MarkdownRenderer({ value, className = '' }: {
+function PlainMarkdownLink({ children }: ComponentPropsWithoutRef<'a'>) {
+  return <>{children}</>
+}
+
+export default function MarkdownRenderer({ value, className = '', allowLinks = true }: {
   value?: string | null
   className?: string
+  allowLinks?: boolean
 }) {
   if (!value?.trim()) return null
   return <div className={`markdown-body ${className}`.trim()}>
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ img: MarkdownImage }}>
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={allowLinks
+      ? { img: MarkdownImage }
+      : { img: MarkdownImage, a: PlainMarkdownLink }}>
       {value}
     </ReactMarkdown>
   </div>

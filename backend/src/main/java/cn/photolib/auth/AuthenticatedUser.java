@@ -56,7 +56,8 @@ public record AuthenticatedUser(
                     PermissionCode.REQUEST_CONFIRM, PermissionCode.REQUEST_PHOTO_MANAGE,
                     PermissionCode.WORKLOG_CONFIRM, PermissionCode.WORKLOG_EXPORT,
                     PermissionCode.DIRECTORY_VIEW, PermissionCode.DIRECTORY_MANAGE,
-                    PermissionCode.MESSAGE_SEND,
+                    PermissionCode.MESSAGE_SEND, PermissionCode.RECRUITMENT_VIEW,
+                    PermissionCode.RECRUITMENT_PUBLISH,
                     PermissionCode.STATISTICS_DOWNLOAD, PermissionCode.MANAGER_CAMPUS_ASSIGN);
             case CAMPUS_MANAGER -> Set.of(
                     PermissionCode.PROJECT_VIEW, PermissionCode.PROJECT_ADOPT,
@@ -64,7 +65,7 @@ public record AuthenticatedUser(
                     PermissionCode.PHOTO_UPLOAD, PermissionCode.PHOTO_DOWNLOAD,
                     PermissionCode.REQUEST_VIEW, PermissionCode.REQUEST_PHOTO_MANAGE,
                     PermissionCode.WORKLOG_SUBMIT, PermissionCode.DIRECTORY_VIEW,
-                    PermissionCode.DIRECTORY_MANAGE);
+                    PermissionCode.DIRECTORY_MANAGE, PermissionCode.RECRUITMENT_VIEW);
         };
     }
 

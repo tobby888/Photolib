@@ -26,6 +26,8 @@ public enum PermissionCode {
     DIRECTORY_VIEW(PermissionCategory.DIRECTORY, "通讯录查看"),
     DIRECTORY_MANAGE(PermissionCategory.DIRECTORY, "通讯录管理"),
     MESSAGE_SEND(PermissionCategory.MESSAGE, "消息发送"),
+    RECRUITMENT_VIEW(PermissionCategory.RECRUITMENT, "查看招募任务和报名详情"),
+    RECRUITMENT_PUBLISH(PermissionCategory.RECRUITMENT, "创建、编辑、发布和关闭招募任务"),
     STATISTICS_DOWNLOAD(PermissionCategory.STATISTICS, "统计数据查看和下载"),
     MANAGER_CAMPUS_ASSIGN(PermissionCategory.MANAGER_CAMPUS, "负责人校区重新指定");
 

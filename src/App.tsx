@@ -4,7 +4,7 @@ import {
 import {
   AimOutlined, BarChartOutlined, BellOutlined, BookOutlined, BulbOutlined, CameraOutlined, ContactsOutlined,
   DashboardOutlined, EnvironmentOutlined, FolderOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SettingOutlined,
-  MessageOutlined, PictureOutlined, StarOutlined, UnorderedListOutlined, UserOutlined,
+  MessageOutlined, PictureOutlined, StarOutlined, TeamOutlined, UnorderedListOutlined, UserOutlined,
 } from '@ant-design/icons'
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
@@ -33,6 +33,10 @@ const ManagerCampusesPage = lazy(() => import('./pages/ManagerCampusesPage'))
 const AdminPage = lazy(() => import('./pages/AdminPage'))
 const NotificationsPage = lazy(() => import('./pages/NotificationsPage'))
 const NotificationDetailPage = lazy(() => import('./pages/NotificationDetailPage'))
+const PublicRecruitmentPage = lazy(() => import('./pages/PublicRecruitmentPage'))
+const RecruitmentsPage = lazy(() => import('./pages/RecruitmentsPage'))
+const RecruitmentDetailPage = lazy(() => import('./pages/RecruitmentDetailPage'))
+const RecruitmentApplicationDetailPage = lazy(() => import('./pages/RecruitmentApplicationDetailPage'))
 const AvatarSettingsModal = lazy(() => import('./AvatarSettingsModal'))
 
 const { Header, Sider, Content } = Layout
@@ -195,6 +199,8 @@ function Shell() {
       { key: '/worklogs', icon: <BookOutlined />, label: '工时记录' })
     if (hasAnyPermission(user, 'DIRECTORY_VIEW', 'DIRECTORY_MANAGE')) common.push(
       { key: '/directory', icon: <ContactsOutlined />, label: '通讯录' })
+    if (hasPermission(user, 'RECRUITMENT_VIEW')) common.push(
+      { key: '/recruitments', icon: <TeamOutlined />, label: '成员招募' })
     common.push({ key: '/notifications', icon: <MessageOutlined />, label: '消息中心' })
     if (hasPermission(user, 'STATISTICS_DOWNLOAD')) common.push(
       { key: '/statistics', icon: <BarChartOutlined />, label: '数据统计' })
@@ -215,7 +221,9 @@ function Shell() {
         await logout(); navigate('/login')
       }}>退出登录</Button>} />
   </div>
-  const selected = location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`
+  const selected = location.pathname.startsWith('/recruitment-applications/')
+    ? '/recruitments'
+    : location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`
   const displayIconType = branding.displayIconType ?? branding.iconType
   const displayIconUrl = branding.displayIconUrl ?? branding.customIconUrl
 
@@ -331,6 +339,9 @@ function Shell() {
             <Route path="/notifications/:notificationId" element={<NotificationDetailPage />} />
             <Route path="/statistics" element={hasPermission(user, 'STATISTICS_DOWNLOAD') ? <StatisticsPage /> : <Navigate to="/" />} />
             <Route path="/manager-campuses" element={hasPermission(user, 'MANAGER_CAMPUS_ASSIGN') ? <ManagerCampusesPage /> : <Navigate to="/" />} />
+            <Route path="/recruitments" element={hasPermission(user, 'RECRUITMENT_VIEW') ? <RecruitmentsPage /> : <Navigate to="/" />} />
+            <Route path="/recruitments/:taskId" element={hasPermission(user, 'RECRUITMENT_VIEW') ? <RecruitmentDetailPage /> : <Navigate to="/" />} />
+            <Route path="/recruitment-applications/:applicationId" element={hasPermission(user, 'RECRUITMENT_VIEW') ? <RecruitmentApplicationDetailPage /> : <Navigate to="/" />} />
             <Route path="/admin" element={user.permissionGroupCode === 'ADMIN' ? <AdminPage /> : <Navigate to="/" />} />
             <Route path="*" element={<NotFound />} />
           </Routes></Suspense>
@@ -347,6 +358,9 @@ export default function App() {
   const { user } = useAuth()
   return <Suspense fallback={<div className="route-loading">正在进入 PhotoLib…</div>}><Routes>
     <Route path="/login" element={user ? <Navigate to={user.mustChangePassword ? '/initial-password' : '/'} replace /> : <LoginPage />} />
+    <Route path="/recruitment" element={user
+      ? <Navigate to={user.mustChangePassword ? '/initial-password' : '/'} replace />
+      : <PublicRecruitmentPage />} />
     <Route path="/initial-password" element={!user ? <Navigate to="/login" replace /> :
       user.mustChangePassword ? <InitialPasswordPage /> : <Navigate to="/" replace />} />
     <Route path="/*" element={<Shell />} />

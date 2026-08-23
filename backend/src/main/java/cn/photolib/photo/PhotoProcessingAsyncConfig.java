@@ -7,6 +7,8 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
+import java.util.concurrent.ThreadPoolExecutor;
+
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(PhotoProcessingProperties.class)
 public class PhotoProcessingAsyncConfig {
@@ -65,6 +67,20 @@ public class PhotoProcessingAsyncConfig {
         executor.setMaxPoolSize(1);
         executor.setQueueCapacity(100);
         executor.setThreadNamePrefix("batch-processing-");
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(60);
+        return executor;
+    }
+
+    /** Recruitment validation cannot occupy or starve the gallery ZIP worker. */
+    @Bean(name = "recruitmentUploadExecutor")
+    ThreadPoolTaskExecutor recruitmentUploadExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(1);
+        executor.setMaxPoolSize(1);
+        executor.setQueueCapacity(100);
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
+        executor.setThreadNamePrefix("recruitment-upload-");
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(60);
         return executor;

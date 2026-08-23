@@ -23,6 +23,20 @@ public class ImageCompressor {
         this.nativeProcessor = nativeProcessor;
     }
 
+    /**
+     * Parses the image with the native decoder/header pipeline and enforces the
+     * same dimension/pixel safety limits as normal processing, without writing
+     * or changing a single source byte.
+     */
+    public ImageInfo validateStructure(Path source, String contentType) throws IOException {
+        requireSafeInputSize(source);
+        NativeImageProcessor.Dimensions dimensions = nativeProcessor.dimensions(source, contentType);
+        if (dimensions.width() <= 0 || dimensions.height() <= 0) {
+            throw new IOException("图片尺寸无效");
+        }
+        return new ImageInfo(dimensions.width(), dimensions.height(), contentType);
+    }
+
     public FileResult compress(Path source, Path destination, String contentType,
                                long targetBytes) throws IOException {
         if (targetBytes <= 0) {
@@ -89,5 +103,8 @@ public class ImageCompressor {
     }
 
     public record FileResult(Path path, long size, int width, int height, String contentType) {
+    }
+
+    public record ImageInfo(int width, int height, String contentType) {
     }
 }

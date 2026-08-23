@@ -1,5 +1,6 @@
 package cn.photolib.photo.batch;
 
+import cn.photolib.common.upload.SafeImageZipExtractor;
 import cn.photolib.storage.ObjectStorageService;
 import cn.photolib.photo.PhotoProcessingWorkspace;
 import lombok.RequiredArgsConstructor;
@@ -12,26 +13,21 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.io.InputStream;
-import java.io.OutputStream;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class BatchProcessingService {
-    private static final long MAX_ITEM = 100L * 1024 * 1024;
-    private static final long MAX_TOTAL = 10L * 1024 * 1024 * 1024;
     private final PhotoUploadBatchMapper batchMapper;
     private final PhotoUploadItemMapper itemMapper;
     private final ObjectStorageService storage;
     private final PhotoProcessingWorkspace workspace;
+    private final SafeImageZipExtractor zipExtractor;
     private final TransactionTemplate transactions;
 
     @Async("batchProcessingExecutor")
@@ -44,36 +40,17 @@ public class BatchProcessingService {
         requireNoActiveTransaction();
         PhotoUploadBatchEntity batch = batchMapper.selectById(batchId);
         if (batch == null || batch.getStatus() != BatchStatus.PROCESSING) return;
-        long total = 0;
         List<ExtractedItem> extracted = new ArrayList<>();
         String failureReason = null;
-        try (InputStream source = storage.open(batch.getArchiveObjectKey());
-             ZipInputStream zip = new ZipInputStream(source)) {
-            ZipEntry entry;
-            while ((entry = zip.getNextEntry()) != null) {
-                if (entry.isDirectory()) continue;
-                String name = safeName(entry.getName());
-                String type = contentType(name);
-                if (type == null) continue;
-                if (extracted.size() >= 100) throw new IllegalArgumentException("ZIP 内图片超过 100 张");
-                String extension = type.equals("image/png") ? ".png" : ".jpg";
-                Path localFile = workspace.createBatchFile(batchId, extension);
-                long size;
-                try {
-                    size = copyLimited(zip, localFile, MAX_ITEM);
-                } catch (Exception exception) {
-                    cleanupFile(localFile);
-                    throw exception;
-                }
-                total += size;
-                if (total > MAX_TOTAL) {
-                    cleanupFile(localFile);
-                    throw new IllegalArgumentException("ZIP 解压总大小超过 10 GiB");
-                }
-                String key = "temporary/batches/" + batchId + "/" + UUID.randomUUID() + extension;
-                extracted.add(new ExtractedItem(name, key, localFile, type, size));
+        try (InputStream source = storage.open(batch.getArchiveObjectKey())) {
+            var images = zipExtractor.extract(source,
+                    extension -> workspace.createBatchFile(batchId, extension));
+            for (SafeImageZipExtractor.ExtractedImage image : images) {
+                String key = "temporary/batches/" + batchId + "/" + UUID.randomUUID()
+                        + cn.photolib.common.upload.ImageUploadPolicy.extension(image.contentType());
+                extracted.add(new ExtractedItem(image.originalFileName(), key,
+                        image.localFile(), image.contentType(), image.size()));
             }
-            if (extracted.isEmpty()) throw new IllegalArgumentException("ZIP 中没有 JPG/PNG 图片");
         } catch (Exception ex) {
             failureReason = failureReason(ex);
         }
@@ -132,21 +109,6 @@ public class BatchProcessingService {
         }
     }
 
-    private long copyLimited(InputStream input, Path destination, long max) throws java.io.IOException {
-        byte[] buffer = new byte[64 * 1024];
-        long total = 0;
-        try (OutputStream output = Files.newOutputStream(destination)) {
-            int read;
-            while ((read = input.read(buffer)) >= 0) {
-                if (read == 0) continue;
-                total += read;
-                if (total > max) throw new IllegalArgumentException("单张图片超过 100 MiB");
-                output.write(buffer, 0, read);
-            }
-        }
-        return total;
-    }
-
     private void cleanupFile(Path file) {
         try {
             workspace.deleteBatchFile(file);
@@ -184,21 +146,6 @@ public class BatchProcessingService {
         if (message == null || message.isBlank()) message = exception.getClass().getSimpleName();
         int[] codePoints = message.codePoints().limit(1000).toArray();
         return new String(codePoints, 0, codePoints.length);
-    }
-
-    private String safeName(String name) {
-        String normalized = name.replace('\\', '/');
-        if (normalized.contains("../") || normalized.startsWith("/")) {
-            throw new IllegalArgumentException("ZIP 包含非法路径");
-        }
-        return normalized.substring(normalized.lastIndexOf('/') + 1);
-    }
-
-    private String contentType(String name) {
-        String lower = name.toLowerCase();
-        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
-        if (lower.endsWith(".png")) return "image/png";
-        return null;
     }
 
     private record ExtractedItem(String originalFileName, String tempObjectKey, Path localFile,
