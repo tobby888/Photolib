@@ -79,7 +79,7 @@ class RecruitmentControllerSecurityTests {
                 .isInstanceOf(AccessDeniedException.class);
         assertThatThrownBy(() -> taskController.get(11L, principal))
                 .isInstanceOf(AccessDeniedException.class);
-        assertThatThrownBy(() -> taskController.applications(11L, 1, 20, principal))
+        assertThatThrownBy(() -> taskController.applications(11L, 1, 20, null, principal))
                 .isInstanceOf(AccessDeniedException.class);
         assertThatThrownBy(() -> applicationController.get("application-id", principal))
                 .isInstanceOf(AccessDeniedException.class);
@@ -92,12 +92,12 @@ class RecruitmentControllerSecurityTests {
     void viewAuthorityCanEnterTaskAndApplicationReadMethods() {
         taskController.list(2, 25, "新人", RecruitmentTaskStatus.DRAFT, principal);
         taskController.get(11L, principal);
-        taskController.applications(11L, 3, 30, principal);
+        taskController.applications(11L, 3, 30, "2023001", principal);
         applicationController.get("application-id", principal);
 
         verify(taskService).list(2, 25, "新人", RecruitmentTaskStatus.DRAFT, principal);
         verify(taskService).get(11L, principal);
-        verify(applicationService).list(11L, 3, 30, principal);
+        verify(applicationService).list(11L, 3, 30, "2023001", principal);
         verify(applicationService).get("application-id", principal);
     }
 

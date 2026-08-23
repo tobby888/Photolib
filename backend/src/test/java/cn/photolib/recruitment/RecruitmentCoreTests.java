@@ -195,7 +195,7 @@ class RecruitmentCoreTests {
                     assertThat(business.getCode()).isEqualTo(ErrorCode.VALIDATION_ERROR);
                     assertThat(business).hasMessageContaining("创建申请草稿时填写的学号一致");
                 });
-        assertThat(applicationMapper.countByTask(task.id())).isZero();
+        assertThat(applicationMapper.countByTask(task.id(), null)).isZero();
         assertThat(jdbc.sql("SELECT status FROM recruitment_draft WHERE id=:id")
                 .param("id", ticket.draftId()).query(String.class).single()).isEqualTo("DRAFT");
     }
@@ -395,6 +395,34 @@ class RecruitmentCoreTests {
                 .isInstanceOf(BusinessException.class).hasMessageContaining("选项不能重复");
     }
 
+    @Test
+    void applicationSearchNormalizesStudentIdFragmentAndTreatsLikeWildcardsLiterally() {
+        var task = publish(false);
+        submitAs(task, "AB_001");
+        submitAs(task, "ABX001");
+        submitAs(task, "２０２３ ００１a");
+
+        assertThat(applications.list(task.id(), 1, 20, null, admin).items())
+                .extracting(RecruitmentApplicationService.ApplicationSummary::studentId)
+                .containsExactlyInAnyOrder("AB_001", "ABX001", "2023 001a");
+        assertThat(applications.list(task.id(), 1, 20, "   ", admin).total()).isEqualTo(3);
+
+        // '_' is a legal identifier character and a LIKE wildcard; it must match literally.
+        assertThat(applications.list(task.id(), 1, 20, "B_0", admin).items())
+                .extracting(RecruitmentApplicationService.ApplicationSummary::studentId)
+                .containsExactly("AB_001");
+        assertThat(applications.list(task.id(), 1, 20, "%", admin).items()).isEmpty();
+
+        // The search box is normalized exactly like the stored identifier.
+        var byFullWidth = applications.list(task.id(), 1, 20, " ００1ａ ", admin);
+        assertThat(byFullWidth.total()).isOne();
+        assertThat(byFullWidth.items())
+                .extracting(RecruitmentApplicationService.ApplicationSummary::studentId)
+                .containsExactly("2023 001a");
+
+        assertThat(applications.list(task.id(), 1, 20, "NO-SUCH-STUDENT", admin).total()).isZero();
+    }
+
     private RecruitmentTaskService.TaskView publish(boolean uploadRequired) {
         var created = tasks.create(command(uploadRequired), admin);
         return tasks.publish(created.id(), created.version(), admin);
@@ -429,5 +457,11 @@ class RecruitmentCoreTests {
     private Map<String, Object> validAnswers() {
         return Map.of("motivation", "热爱摄影，希望参与校园记录。", "campus", "东校区",
                 "available_date", "2026-09-01");
+    }
+
+    private void submitAs(RecruitmentTaskService.TaskView task, String studentId) {
+        var ticket = drafts.create(task.publicId(), studentId);
+        applications.submit(task.publicId(), ticket.draftId(), ticket.draftToken(),
+                studentId, validAnswers());
     }
 }

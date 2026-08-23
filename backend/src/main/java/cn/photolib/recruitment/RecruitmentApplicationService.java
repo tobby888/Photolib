@@ -91,13 +91,14 @@ public class RecruitmentApplicationService {
     }
 
     public PageResponse<ApplicationSummary> list(long taskId, int page, int pageSize,
-                                                  AuthenticatedUser user) {
+                                                  String studentIdFragment, AuthenticatedUser user) {
         requireView(user);
         RecruitmentTaskEntity task = taskService.requireTask(taskId);
+        String normalizedFragment = RecruitmentStudentId.normalizeSearchFragment(studentIdFragment);
         int safePage = Math.max(1, page);
         int safePageSize = Math.max(1, Math.min(100, pageSize));
-        long total = mapper.countByTask(task.getId());
-        List<ApplicationSummary> items = mapper.findByTask(task.getId(), safePageSize,
+        long total = mapper.countByTask(task.getId(), normalizedFragment);
+        List<ApplicationSummary> items = mapper.findByTask(task.getId(), normalizedFragment, safePageSize,
                         (long) (safePage - 1) * safePageSize).stream()
                 .map(application -> new ApplicationSummary(application.getId(), application.getTaskId(),
                         application.getStudentId(), application.getSubmittedAt()))

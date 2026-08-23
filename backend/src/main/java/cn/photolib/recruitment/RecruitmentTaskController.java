@@ -92,8 +92,9 @@ public class RecruitmentTaskController {
             @PathVariable long id,
             @RequestParam(defaultValue = "1") @Min(1) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int pageSize,
+            @RequestParam(required = false) @Size(max = 64) String studentId,
             @AuthenticationPrincipal AuthenticatedUser user) {
-        return ApiResponse.ok(applicationService.list(id, page, pageSize, user));
+        return ApiResponse.ok(applicationService.list(id, page, pageSize, studentId, user));
     }
 
     record TaskRequest(@NotBlank @Size(max = 200) String title,

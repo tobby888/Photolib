@@ -8,6 +8,7 @@ import {
   FileImageOutlined,
   IdcardOutlined,
   RocketOutlined,
+  SearchOutlined,
   StopOutlined,
   TeamOutlined,
 } from '@ant-design/icons'
@@ -18,6 +19,7 @@ import {
   Col,
   DatePicker,
   Descriptions,
+  Empty,
   Form,
   Input,
   Modal,
@@ -32,7 +34,7 @@ import {
 import dayjs, { type Dayjs } from 'dayjs'
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { api } from '../api'
+import { api, qs } from '../api'
 import { useAuth } from '../auth'
 import { DataState } from '../components'
 import { useLoad } from '../hooks'
@@ -72,6 +74,8 @@ export default function RecruitmentDetailPage() {
   const [saving, setSaving] = useState(false)
   const [actioning, setActioning] = useState(false)
   const [applicationPage, setApplicationPage] = useState(1)
+  const [studentIdInput, setStudentIdInput] = useState('')
+  const [studentIdFilter, setStudentIdFilter] = useState('')
   const canPublish = canPublishRecruitments(user)
 
   const taskState = useLoad(
@@ -81,13 +85,19 @@ export default function RecruitmentDetailPage() {
   )
   const applications = useLoad(async () => {
     const value = await api<unknown>({
-      url: `/recruitment-tasks/${taskId}/applications`, params: { page: applicationPage, pageSize: 20 },
+      url: `/recruitment-tasks/${taskId}/applications`,
+      params: qs({ page: applicationPage, pageSize: 20, studentId: studentIdFilter }),
     })
     return normalizeRecruitmentPage(value, normalizeApplicationSummary, applicationPage, 20)
   }, { items: [] as RecruitmentApplicationSummary[], page: 1, pageSize: 20, total: 0, totalPages: 0 },
-  [taskId, applicationPage])
+  [taskId, applicationPage, studentIdFilter])
 
   const task = taskState.data
+
+  const searchByStudentId = (value: string) => {
+    setApplicationPage(1)
+    setStudentIdFilter(value.trim())
+  }
 
   const openEdit = () => {
     if (!task) return
@@ -201,7 +211,9 @@ export default function RecruitmentDetailPage() {
       </section>
 
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-        <Col xs={12} lg={6}><Card><Statistic title="收到报名" value={applications.data.total || task.applicationCount || 0} prefix={<TeamOutlined />} /></Card></Col>
+        <Col xs={12} lg={6}><Card><Statistic title="收到报名" value={studentIdFilter
+          ? task.applicationCount || 0
+          : applications.data.total || task.applicationCount || 0} prefix={<TeamOutlined />} /></Card></Col>
         <Col xs={12} lg={6}><Card><Statistic title="自定义问题" value={task.formSchema.fields.length} prefix={<IdcardOutlined />} /></Card></Col>
         <Col xs={12} lg={6}><Card><Statistic title="作品上传" value={task.formSchema.upload.required ? '必须上传' : '可以不传'} prefix={<FileImageOutlined />} /></Card></Col>
         <Col xs={12} lg={6}><Card><Statistic title="当前状态" value={status.label} prefix={<CheckCircleOutlined />} /></Card></Col>
@@ -222,32 +234,46 @@ export default function RecruitmentDetailPage() {
           </Card>
         </Col>
         <Col xs={24} xl={15}>
-          <Card title={<Space><TeamOutlined />收到的报名</Space>} extra={<Typography.Text type="secondary">部内成员都能查看</Typography.Text>}>
-            <DataState loading={applications.loading} error={applications.error} empty={!applications.data.items.length}
+          <Card title={<Space><TeamOutlined />收到的报名</Space>} extra={<Space wrap>
+            <Input allowClear prefix={<SearchOutlined />} placeholder="按学号搜索" style={{ width: 200 }}
+              value={studentIdInput} onChange={event => setStudentIdInput(event.target.value)}
+              onPressEnter={event => searchByStudentId(event.currentTarget.value)}
+              onClear={() => searchByStudentId('')} />
+            <Button onClick={() => searchByStudentId(studentIdInput)}>搜索</Button>
+            <Typography.Text type="secondary">部内成员都能查看</Typography.Text>
+          </Space>}>
+            {studentIdFilter && <Typography.Paragraph type="secondary">
+              学号包含“{studentIdFilter}”的报名共 {applications.data.total} 条
+            </Typography.Paragraph>}
+            <DataState loading={applications.loading} error={applications.error}
+              empty={!applications.data.items.length && !studentIdFilter}
               onRetry={applications.reload}>
-              <div>
-                {applications.data.items.map((application, index) => <div key={String(application.id)} style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap',
-                  gap: 12, padding: '14px 0', borderBottom: index === applications.data.items.length - 1
-                    ? undefined : '1px solid rgba(5, 5, 5, 0.08)',
-                }}>
-                  <Space align="start">
-                    <span style={{ width: 42, height: 42, display: 'grid', placeItems: 'center', flex: '0 0 auto',
-                      borderRadius: 12, background: '#edf3f0', color: '#28594f' }}><IdcardOutlined /></span>
-                    <div>
-                      <Space wrap><Typography.Text strong>{application.studentId}</Typography.Text>
-                        {application.attachmentCount !== undefined && <Tag>{application.attachmentCount} 个附件</Tag>}</Space>
-                      <div><Typography.Text type="secondary">
-                        提交于 {dayjs(application.submittedAt).format('YYYY-MM-DD HH:mm:ss')}
-                      </Typography.Text></div>
-                    </div>
-                  </Space>
-                  <Button type="link" icon={<EyeOutlined />}
-                    onClick={() => navigate(`/recruitment-applications/${application.id}`)}>查看详情</Button>
-                </div>)}
-              </div>
-              <Pagination style={{ marginTop: 16 }} current={applicationPage} pageSize={20} total={applications.data.total}
-                hideOnSinglePage onChange={setApplicationPage} />
+              {!applications.data.items.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description={`没有学号包含“${studentIdFilter}”的报名`} /> : <>
+                <div>
+                  {applications.data.items.map((application, index) => <div key={String(application.id)} style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap',
+                    gap: 12, padding: '14px 0', borderBottom: index === applications.data.items.length - 1
+                      ? undefined : '1px solid rgba(5, 5, 5, 0.08)',
+                  }}>
+                    <Space align="start">
+                      <span style={{ width: 42, height: 42, display: 'grid', placeItems: 'center', flex: '0 0 auto',
+                        borderRadius: 12, background: '#edf3f0', color: '#28594f' }}><IdcardOutlined /></span>
+                      <div>
+                        <Space wrap><Typography.Text strong>{application.studentId}</Typography.Text>
+                          {application.attachmentCount !== undefined && <Tag>{application.attachmentCount} 个附件</Tag>}</Space>
+                        <div><Typography.Text type="secondary">
+                          提交于 {dayjs(application.submittedAt).format('YYYY-MM-DD HH:mm:ss')}
+                        </Typography.Text></div>
+                      </div>
+                    </Space>
+                    <Button type="link" icon={<EyeOutlined />}
+                      onClick={() => navigate(`/recruitment-applications/${application.id}`)}>查看详情</Button>
+                  </div>)}
+                </div>
+                <Pagination style={{ marginTop: 16 }} current={applicationPage} pageSize={20} total={applications.data.total}
+                  hideOnSinglePage onChange={setApplicationPage} />
+              </>}
             </DataState>
           </Card>
         </Col>

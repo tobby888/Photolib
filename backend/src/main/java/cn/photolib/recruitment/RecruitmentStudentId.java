@@ -21,15 +21,35 @@ public final class RecruitmentStudentId {
         if (display.codePointCount(0, display.length()) > 128) {
             throw invalid();
         }
-        StringBuilder compact = new StringBuilder(display.length());
-        display.codePoints()
-                .filter(codePoint -> !Character.isWhitespace(codePoint) && !Character.isSpaceChar(codePoint))
-                .forEach(compact::appendCodePoint);
-        String normalized = compact.toString().toUpperCase(Locale.ROOT);
+        String normalized = compactUpperCase(display);
         if (!FORMAT.matcher(normalized).matches()) {
             throw invalid();
         }
         return new Normalized(display, normalized);
+    }
+
+    /**
+     * Normalizes an operator's search input the same way stored identifiers are
+     * normalized, so a fragment typed with full-width digits, spaces or lower case
+     * still matches. Unlike {@link #normalize(String)} this accepts partial input
+     * and never throws: a search box is a filter, not a submission, so an
+     * unmatchable fragment must simply return no rows rather than an error.
+     * Returns {@code null} when nothing searchable remains.
+     */
+    public static String normalizeSearchFragment(String input) {
+        if (input == null) {
+            return null;
+        }
+        String normalized = compactUpperCase(Normalizer.normalize(input, Normalizer.Form.NFKC));
+        return normalized.isEmpty() ? null : normalized;
+    }
+
+    private static String compactUpperCase(String value) {
+        StringBuilder compact = new StringBuilder(value.length());
+        value.codePoints()
+                .filter(codePoint -> !Character.isWhitespace(codePoint) && !Character.isSpaceChar(codePoint))
+                .forEach(compact::appendCodePoint);
+        return compact.toString().toUpperCase(Locale.ROOT);
     }
 
     private static BusinessException invalid() {
