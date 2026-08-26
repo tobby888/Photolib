@@ -2,6 +2,7 @@ package cn.photolib.photo;
 
 import cn.photolib.common.api.ApiResponse;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -13,6 +14,7 @@ public class PreviewRegenerationController {
     private final PreviewRegenerationCoordinator coordinator;
 
     @GetMapping("/status")
+    @PreAuthorize("isAuthenticated()")
     ApiResponse<PreviewRegenerationCoordinator.StatusView> status() {
         return ApiResponse.ok(coordinator.status());
     }

@@ -1,6 +1,7 @@
 package cn.photolib.recruitment.upload;
 
 import cn.photolib.common.error.BusinessException;
+import cn.photolib.common.upload.ImageUploadPolicy;
 import cn.photolib.common.util.PublicId;
 import cn.photolib.recruitment.RecruitmentAttachmentReader;
 import cn.photolib.recruitment.RecruitmentDraftService;
@@ -21,6 +22,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -52,6 +54,8 @@ class RecruitmentUploadServiceTests {
     @Autowired
     @Qualifier("recruitmentUploadExecutor")
     private ThreadPoolTaskExecutor recruitmentUploadExecutor;
+    @Autowired
+    private RecruitmentUploadProperties uploadProperties;
     @Autowired
     private ObjectStorageService storage;
     @Autowired
@@ -87,6 +91,50 @@ class RecruitmentUploadServiceTests {
     @AfterEach
     void tearDown() {
         cleanFixture();
+    }
+
+    @Test
+    void anonymousQuotaIsTheRecruitmentOneNotTheGallerys() {
+        var draft = draftService.create(publicId, "20260101");
+        String sha = "a".repeat(64);
+        long overImage = uploadProperties.maxImageBytes() + 1;
+
+        // The gallery accepts 100 MiB per image; this path must not inherit that.
+        assertThat(overImage).isLessThanOrEqualTo(ImageUploadPolicy.MAX_IMAGE_BYTES);
+        assertThatThrownBy(() -> service.create(publicId, draft.draftId(), draft.draftToken(),
+                new RecruitmentUploadService.CreateBatch(RecruitmentUploadMode.FILES, null, null,
+                        List.of(new RecruitmentUploadService.FileSpec(
+                                "big.jpg", "image/jpeg", overImage, sha)))))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("单张图片不得超过");
+
+        List<RecruitmentUploadService.FileSpec> tooMany = new ArrayList<>();
+        for (int index = 0; index <= uploadProperties.maxImageCount(); index++) {
+            tooMany.add(new RecruitmentUploadService.FileSpec(
+                    index + ".jpg", "image/jpeg", 1024, sha));
+        }
+        assertThat(tooMany).hasSizeLessThanOrEqualTo(ImageUploadPolicy.MAX_IMAGE_COUNT);
+        assertThatThrownBy(() -> service.create(publicId, draft.draftId(), draft.draftToken(),
+                new RecruitmentUploadService.CreateBatch(
+                        RecruitmentUploadMode.FILES, null, null, tooMany)))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("一次可上传");
+
+        long overArchive = uploadProperties.maxArchiveBytes() + 1;
+        assertThat(overArchive).isLessThanOrEqualTo(ImageUploadPolicy.MAX_ARCHIVE_BYTES);
+        assertThatThrownBy(() -> service.create(publicId, draft.draftId(), draft.draftToken(),
+                new RecruitmentUploadService.CreateBatch(
+                        RecruitmentUploadMode.ZIP, "works.zip", overArchive, null)))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("压缩包不得超过");
+    }
+
+    @Test
+    void quotaAtTheBoundaryIsStillAccepted() {
+        var draft = draftService.create(publicId, "20260102");
+        var ticket = service.create(publicId, draft.draftId(), draft.draftToken(),
+                new RecruitmentUploadService.CreateBatch(RecruitmentUploadMode.FILES, null, null,
+                        List.of(new RecruitmentUploadService.FileSpec("edge.jpg", "image/jpeg",
+                                uploadProperties.maxImageBytes(), "b".repeat(64)))));
+
+        assertThat(ticket.tickets()).hasSize(1);
     }
 
     @Test

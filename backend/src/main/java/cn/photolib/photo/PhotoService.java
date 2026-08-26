@@ -4,6 +4,7 @@ import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.campus.CampusService;
 import cn.photolib.common.api.PageResponse;
 import cn.photolib.common.error.BusinessException;
+import cn.photolib.common.util.LikeFilter;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.photo.mapper.PhotoFavoriteMapper;
 import cn.photolib.photo.mapper.PhotoMapper;
@@ -160,15 +161,19 @@ public class PhotoService {
         // caller opts into every status (used by the project detail gallery to match photoCount).
         PhotoStatus effectiveStatus = status != null ? status
                 : includeAllStatuses ? null : PhotoStatus.AVAILABLE;
+        String likeKeyword = LikeFilter.escape(keyword);
+        String likePhotographer = LikeFilter.escape(photographerName);
         var query = Wrappers.<PhotoEntity>lambdaQuery()
-                .and(StringUtils.hasText(keyword), q -> q.like(PhotoEntity::getTitle, keyword)
-                        .or().like(PhotoEntity::getDescription, keyword)
-                        .or().like(PhotoEntity::getTagsJson, keyword))
+                .and(StringUtils.hasText(keyword), q -> q
+                        .apply(LikeFilter.contains("title"), likeKeyword)
+                        .or().apply(LikeFilter.contains("description"), likeKeyword)
+                        .or().apply(LikeFilter.contains("tags_json"), likeKeyword))
                 .inSql(projectId != null, PhotoEntity::getId,
                         "SELECT photo_id FROM photo_project WHERE project_id = " + projectId)
                 .eq(requestId != null, PhotoEntity::getRequestId, requestId)
                 .eq(StringUtils.hasText(studentId), PhotoEntity::getPhotographerStudentId, studentId)
-                .like(StringUtils.hasText(photographerName), PhotoEntity::getPhotographerName, photographerName)
+                .apply(StringUtils.hasText(photographerName),
+                        LikeFilter.contains("photographer_name"), likePhotographer)
                 .eq(effectiveUploader != null, PhotoEntity::getUploadedBy, effectiveUploader)
                 .eq(!user.isCampusScoped() && campusId != null, PhotoEntity::getCampusId, campusId)
                 .in(user.isCampusScoped(), PhotoEntity::getCampusId,

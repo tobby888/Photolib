@@ -149,7 +149,8 @@ class RecruitmentUploadProcessorRaceTests {
         RecruitmentUploadProcessor processor = new RecruitmentUploadProcessor(
                 batches, items, storage, workspace, mock(SafeImageZipExtractor.class),
                 mock(ImageCompressor.class), directTransactions(),
-                mock(RecruitmentUploadDispatchQueue.class));
+                mock(RecruitmentUploadDispatchQueue.class),
+                new RecruitmentUploadProperties(null, null, null, null, null));
         return new Fixture(processor, items, storage, bytes);
     }
 

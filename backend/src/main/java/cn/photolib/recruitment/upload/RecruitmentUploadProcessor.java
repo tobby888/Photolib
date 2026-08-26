@@ -41,6 +41,7 @@ public class RecruitmentUploadProcessor {
     private final ImageCompressor imageValidator;
     private final TransactionTemplate transactions;
     private final RecruitmentUploadDispatchQueue dispatchQueue;
+    private final RecruitmentUploadProperties uploadProperties;
 
     public RecruitmentUploadProcessor(
             RecruitmentUploadBatchMapper batchMapper,
@@ -50,7 +51,8 @@ public class RecruitmentUploadProcessor {
             SafeImageZipExtractor zipExtractor,
             ImageCompressor imageValidator,
             TransactionTemplate transactions,
-            RecruitmentUploadDispatchQueue dispatchQueue) {
+            RecruitmentUploadDispatchQueue dispatchQueue,
+            RecruitmentUploadProperties uploadProperties) {
         this.batchMapper = batchMapper;
         this.itemMapper = itemMapper;
         this.storage = storage;
@@ -59,6 +61,7 @@ public class RecruitmentUploadProcessor {
         this.imageValidator = imageValidator;
         this.transactions = transactions;
         this.dispatchQueue = dispatchQueue;
+        this.uploadProperties = uploadProperties;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -136,7 +139,8 @@ public class RecruitmentUploadProcessor {
             }
             try (InputStream archive = storage.open(batch.getArchiveObjectKey())) {
                 extracted = zipExtractor.extract(archive,
-                        extension -> workspace.createBatchFile(batch.getId(), extension), 255);
+                        extension -> workspace.createBatchFile(batch.getId(), extension),
+                        uploadProperties.zipLimits());
             }
             List<RecruitmentUploadItemEntity> items = allItems(batch.getId());
             if (items.isEmpty()) items = persistExtracted(batch.getId(), extracted);

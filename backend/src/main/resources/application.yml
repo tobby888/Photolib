@@ -50,6 +50,14 @@ photolib:
     access-ttl: 15m
     idle-ttl: 30m
     secure-cookie: ${AUTH_SECURE_COOKIE:true}
+    login-throttle:
+      # 单个账号连续失败多少次后锁定
+      max-identifier-failures: ${LOGIN_MAX_IDENTIFIER_FAILURES:5}
+      # 单个客户端地址累计失败多少次后锁定。校区可能整体走同一个出口 IP，
+      # 所以要明显高于账号阈值，避免几个人打错字就把整栋楼锁在外面。
+      max-address-failures: ${LOGIN_MAX_ADDRESS_FAILURES:40}
+      failure-window: ${LOGIN_FAILURE_WINDOW:15m}
+      lock-duration: ${LOGIN_LOCK_DURATION:15m}
   bootstrap:
     enabled: ${ADMIN_BOOTSTRAP_ENABLED:true}
     admin-username: ${ADMIN_USERNAME:admin}

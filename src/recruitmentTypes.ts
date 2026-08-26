@@ -1,4 +1,5 @@
 import { normalizeRecruitmentFormSchema, type RecruitmentAnswers, type RecruitmentFormSchema } from './recruitmentForm.ts'
+import { RECRUITMENT_FALLBACK_UPLOAD_LIMITS, type RecruitmentUploadLimits } from './recruitmentUpload.ts'
 
 export type RecruitmentId = string | number
 export type RecruitmentTaskStatus = 'DRAFT' | 'PUBLISHED' | 'ACTIVE' | 'CLOSED' | 'CANCELLED'
@@ -11,6 +12,8 @@ export interface PublicRecruitmentTask {
   startAt: string
   endAt: string
   formSchema: RecruitmentFormSchema
+  /** Server-enforced upload quota; the page states and pre-checks against these. */
+  uploadLimits: RecruitmentUploadLimits
 }
 
 export interface RecruitmentTask extends PublicRecruitmentTask {
@@ -146,6 +149,18 @@ export function normalizePublicRecruitmentTask(value: unknown): PublicRecruitmen
         required: typeof raw.uploadRequired === 'boolean' ? raw.uploadRequired : formSchema.upload.required,
       },
     },
+    uploadLimits: normalizeUploadLimits(raw.uploadLimits),
+  }
+}
+
+function normalizeUploadLimits(value: unknown): RecruitmentUploadLimits {
+  const raw = object(value)
+  const positive = (candidate: unknown, fallback: number) =>
+    typeof candidate === 'number' && Number.isFinite(candidate) && candidate > 0 ? candidate : fallback
+  return {
+    maxImageCount: positive(raw.maxImageCount, RECRUITMENT_FALLBACK_UPLOAD_LIMITS.maxImageCount),
+    maxImageBytes: positive(raw.maxImageBytes, RECRUITMENT_FALLBACK_UPLOAD_LIMITS.maxImageBytes),
+    maxArchiveBytes: positive(raw.maxArchiveBytes, RECRUITMENT_FALLBACK_UPLOAD_LIMITS.maxArchiveBytes),
   }
 }
 

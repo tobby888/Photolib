@@ -1,5 +1,6 @@
 package cn.photolib.recruitment.mapper;
 
+import cn.photolib.common.util.LikeFilter;
 import cn.photolib.recruitment.model.RecruitmentTaskEntity;
 import cn.photolib.recruitment.model.RecruitmentTaskStatus;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
@@ -21,17 +22,17 @@ public interface RecruitmentTaskMapper extends BaseMapper<RecruitmentTaskEntity>
             WHERE t.deleted=FALSE
             <if test="status != null">AND t.status=#{status}</if>
             <if test="keyword != null and keyword != ''">
-              AND (LOWER(t.title) LIKE CONCAT('%', LOWER(#{keyword}), '%')
-                   OR LOWER(COALESCE(t.intro_markdown, '')) LIKE CONCAT('%', LOWER(#{keyword}), '%'))
+              AND (LOWER(t.title) LIKE CONCAT('%', LOWER(#{keyword}), '%') ESCAPE '!'
+                   OR LOWER(COALESCE(t.intro_markdown, '')) LIKE CONCAT('%', LOWER(#{keyword}), '%') ESCAPE '!')
             </if>
             ORDER BY t.created_at DESC, t.id DESC
             LIMIT #{limit} OFFSET #{offset}
             </script>
             """)
-    List<RecruitmentTaskEntity> findPage(@Param("status") RecruitmentTaskStatus status,
-                                         @Param("keyword") String keyword,
-                                         @Param("limit") int limit,
-                                         @Param("offset") long offset);
+    List<RecruitmentTaskEntity> findPageQuery(@Param("status") RecruitmentTaskStatus status,
+                                              @Param("keyword") String keyword,
+                                              @Param("limit") int limit,
+                                              @Param("offset") long offset);
 
     @Select("""
             <script>
@@ -39,13 +40,28 @@ public interface RecruitmentTaskMapper extends BaseMapper<RecruitmentTaskEntity>
             WHERE t.deleted=FALSE
             <if test="status != null">AND t.status=#{status}</if>
             <if test="keyword != null and keyword != ''">
-              AND (LOWER(t.title) LIKE CONCAT('%', LOWER(#{keyword}), '%')
-                   OR LOWER(COALESCE(t.intro_markdown, '')) LIKE CONCAT('%', LOWER(#{keyword}), '%'))
+              AND (LOWER(t.title) LIKE CONCAT('%', LOWER(#{keyword}), '%') ESCAPE '!'
+                   OR LOWER(COALESCE(t.intro_markdown, '')) LIKE CONCAT('%', LOWER(#{keyword}), '%') ESCAPE '!')
             </if>
             </script>
             """)
-    long countPage(@Param("status") RecruitmentTaskStatus status,
-                   @Param("keyword") String keyword);
+    long countPageQuery(@Param("status") RecruitmentTaskStatus status,
+                        @Param("keyword") String keyword);
+
+    /**
+     * Lists tasks, optionally narrowed by a title/intro fragment. The statements
+     * declare {@code ESCAPE '!'}, so the fragment has to arrive already escaped —
+     * an operator searching for a literal {@code %} or {@code _} would otherwise
+     * silently match every task.
+     */
+    default List<RecruitmentTaskEntity> findPage(RecruitmentTaskStatus status, String keyword,
+                                                 int limit, long offset) {
+        return findPageQuery(status, LikeFilter.escape(keyword), limit, offset);
+    }
+
+    default long countPage(RecruitmentTaskStatus status, String keyword) {
+        return countPageQuery(status, LikeFilter.escape(keyword));
+    }
 
     @Select("""
             SELECT t.*, u.display_name AS creator_display_name,

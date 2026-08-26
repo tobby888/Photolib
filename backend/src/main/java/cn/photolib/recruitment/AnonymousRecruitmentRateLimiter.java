@@ -131,6 +131,7 @@ public class AnonymousRecruitmentRateLimiter {
 
     public enum Action {
         DRAFT_CREATE(8, Duration.ofMinutes(10)),
+        SUBMIT(12, Duration.ofMinutes(10)),
         UPLOAD_CREATE(20, Duration.ofMinutes(10)),
         UPLOAD_COMPLETE(40, Duration.ofMinutes(10));
 

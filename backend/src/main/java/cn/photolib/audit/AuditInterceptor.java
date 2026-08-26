@@ -13,6 +13,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -25,6 +26,8 @@ public class AuditInterceptor implements HandlerInterceptor {
     private static final Set<String> WRITES = Set.of("POST", "PUT", "PATCH", "DELETE");
     private static final Pattern RESOURCE_ID = Pattern.compile("(?:[0-9]+|[0-9A-HJKMNP-TV-Z]{26})");
     private static final ObjectMapper objectMapper = new ObjectMapper();
+    /** Request attribute a handler can set to enrich this request's audit detail. */
+    public static final String DETAIL_ATTRIBUTE = "auditDetail";
     private final AuditLogMapper mapper;
 
     @Override
@@ -36,7 +39,7 @@ public class AuditInterceptor implements HandlerInterceptor {
     @Override
     public void afterCompletion(HttpServletRequest request, HttpServletResponse response,
                                 Object handler, Exception ex) {
-        if (!WRITES.contains(request.getMethod()) || request.getRequestURI().contains("/auth/login")
+        if (!WRITES.contains(request.getMethod())
                 || request.getRequestURI().contains("/auth/refresh")) return;
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         Long userId = auth != null && auth.getPrincipal() instanceof AuthenticatedUser user ? user.id() : null;
@@ -58,10 +61,15 @@ public class AuditInterceptor implements HandlerInterceptor {
         log.setResourceId(resourceId);
         log.setRequestId(String.valueOf(request.getAttribute("requestId")));
         try {
-            String detailJson = objectMapper.writeValueAsString(
-                Map.of("path", request.getRequestURI(), "status", response.getStatus())
-            );
-            log.setDetailJson(detailJson);
+            Map<String, Object> detail = new LinkedHashMap<>();
+            detail.put("path", request.getRequestURI());
+            detail.put("status", response.getStatus());
+            // Handlers may add context the URL cannot carry — the account a login
+            // attempt targeted, for instance. Never credentials or request bodies.
+            if (request.getAttribute(DETAIL_ATTRIBUTE) instanceof Map<?, ?> extra) {
+                extra.forEach((key, value) -> detail.put(String.valueOf(key), value));
+            }
+            log.setDetailJson(objectMapper.writeValueAsString(detail));
         } catch (Exception e) {
             log.setDetailJson("{}");
             AuditInterceptor.log.warn("审计日志详情序列化失败", e);

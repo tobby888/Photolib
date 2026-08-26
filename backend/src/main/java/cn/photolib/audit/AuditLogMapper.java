@@ -1,5 +1,6 @@
 package cn.photolib.audit;
 
+import cn.photolib.common.util.LikeFilter;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -85,6 +86,6 @@ public interface AuditLogMapper extends BaseMapper<AuditLogEntity> {
     }
 
     private static String escapeLike(String value) {
-        return value == null ? null : value.replace("!", "!!").replace("%", "!%").replace("_", "!_");
+        return LikeFilter.escape(value);
     }
 }

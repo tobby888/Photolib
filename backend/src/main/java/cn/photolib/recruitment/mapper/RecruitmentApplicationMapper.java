@@ -1,5 +1,6 @@
 package cn.photolib.recruitment.mapper;
 
+import cn.photolib.common.util.LikeFilter;
 import cn.photolib.recruitment.model.RecruitmentApplicationEntity;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import org.apache.ibatis.annotations.Mapper;
@@ -65,6 +66,6 @@ public interface RecruitmentApplicationMapper extends BaseMapper<RecruitmentAppl
      * LIKE wildcard, so an unescaped fragment would silently over-match.
      */
     private static String escapeLike(String value) {
-        return value == null ? null : value.replace("!", "!!").replace("%", "!%").replace("_", "!_");
+        return LikeFilter.escape(value);
     }
 }

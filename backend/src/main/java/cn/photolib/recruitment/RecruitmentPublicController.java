@@ -48,8 +48,16 @@ public class RecruitmentPublicController {
             @PathVariable String publicId,
             @PathVariable String draftId,
             @RequestHeader("X-Recruitment-Draft-Token") String draftToken,
-            @Valid @RequestBody SubmitRequest request) {
-        return ApiResponse.ok(applicationService.submit(publicId, draftId, draftToken,
+            @Valid @RequestBody SubmitRequest request,
+            HttpServletRequest servletRequest) {
+        // Submission is the most expensive anonymous operation on this path: full
+        // schema validation, an attachment-state query and a write transaction. A
+        // valid draft token is required, but that is no reason to leave the only
+        // anonymous mutation on the chain without the limiter the others use.
+        String activePublicId = taskService.requireActivePublicId(publicId);
+        rateLimiter.requireAllowed(AnonymousRecruitmentRateLimiter.Action.SUBMIT,
+                activePublicId, servletRequest.getRemoteAddr());
+        return ApiResponse.ok(applicationService.submit(activePublicId, draftId, draftToken,
                 request.studentId(), request.answers()));
     }
 

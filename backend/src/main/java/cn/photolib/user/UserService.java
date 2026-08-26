@@ -7,6 +7,7 @@ import cn.photolib.campus.mapper.CampusMapper;
 import cn.photolib.campus.model.CampusEntity;
 import cn.photolib.common.api.PageResponse;
 import cn.photolib.common.error.BusinessException;
+import cn.photolib.common.util.LikeFilter;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.user.mapper.UserMapper;
 import cn.photolib.user.model.UserEntity;
@@ -84,10 +85,12 @@ public class UserService {
 
     public PageResponse<UserView> list(int page, int pageSize, String keyword, UserRole role,
                                        Long permissionGroupId, Long campusId, Boolean enabled) {
+        String likeKeyword = LikeFilter.escape(keyword);
         var query = Wrappers.<UserEntity>lambdaQuery()
-                .and(StringUtils.hasText(keyword), q -> q.like(UserEntity::getUsername, keyword)
-                        .or().like(UserEntity::getDisplayName, keyword)
-                        .or().like(UserEntity::getEmail, keyword))
+                .and(StringUtils.hasText(keyword), q -> q
+                        .apply(LikeFilter.contains("username"), likeKeyword)
+                        .or().apply(LikeFilter.contains("display_name"), likeKeyword)
+                        .or().apply(LikeFilter.contains("email"), likeKeyword))
                 .eq(role != null, UserEntity::getRole, role)
                 .eq(permissionGroupId != null, UserEntity::getPermissionGroupId, permissionGroupId)
                 .inSql(campusId != null, UserEntity::getId,

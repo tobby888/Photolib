@@ -83,21 +83,46 @@ export default function WorklogsPage() {
     }
   }
 
-  const action = async (item: Worklog, type: 'confirm' | 'reject' | 'submit') => {
-    const actionData = type === 'reject'
-      ? { reason: '请重新核对工时', version: item.version }
-      : { version: item.version }
-    await api({ method: 'POST', url: `/worklogs/${item.id}/${type}`, data: actionData })
+  const action = async (item: Worklog, type: 'confirm' | 'submit') => {
+    await api({ method: 'POST', url: `/worklogs/${item.id}/${type}`, data: { version: item.version } })
   }
 
-  const runAction = async (item: Worklog, type: 'confirm' | 'reject' | 'submit') => {
+  const runAction = async (item: Worklog, type: 'confirm' | 'submit') => {
     try {
       await action(item, type)
-      message.success(type === 'confirm' ? '工时已批准' : type === 'reject' ? '工时已退回' : '工时已提交')
+      message.success(type === 'confirm' ? '工时已批准' : '工时已提交')
       await reload()
     } catch (e) {
       message.error((e as Error).message)
     }
+  }
+
+  // 后端把退回理由存进 rejectReason 并作为通知正文发出，填报人只会看到这段话。
+  // 之前前端写死一句“请重新核对工时”，等于把这个字段浪费掉了。
+  const rejectWorklog = (item: Worklog) => {
+    let reason = ''
+    modal.confirm({
+      title: '退回这条工时？',
+      content: <Input.TextArea rows={4} maxLength={500} showCount
+        placeholder="说明需要改什么，填报人会收到这段话"
+        onChange={event => { reason = event.target.value }} />,
+      okText: '确认退回',
+      cancelText: '取消',
+      onOk: async () => {
+        if (!reason.trim()) throw new Error('请填写退回原因')
+        try {
+          await api({
+            method: 'POST', url: `/worklogs/${item.id}/reject`,
+            data: { reason: reason.trim(), version: item.version },
+          })
+          message.success('工时已退回，填报人会收到通知')
+          await reload()
+        } catch (e) {
+          message.error((e as Error).message)
+          throw e
+        }
+      },
+    })
   }
 
   const deleteItems = async (items: Worklog[]) => {
@@ -254,7 +279,7 @@ export default function WorklogsPage() {
               )}
               {reviewer && item.status === 'SUBMITTED' && <>
                 <Button type="primary" icon={<CheckOutlined />} onClick={() => void runAction(item, 'confirm')}>批准</Button>
-                <Button icon={<StopOutlined />} onClick={() => void runAction(item, 'reject')}>退回</Button>
+                <Button icon={<StopOutlined />} onClick={() => rejectWorklog(item)}>退回</Button>
               </>}
               {reviewer && (
                 <Button danger type="text" icon={<DeleteOutlined />} onClick={() => confirmDelete([item])}>删除</Button>

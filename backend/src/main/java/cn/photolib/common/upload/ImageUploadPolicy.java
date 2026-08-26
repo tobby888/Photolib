@@ -36,6 +36,23 @@ public final class ImageUploadPolicy {
         return contentType != null && contentType.equals(contentTypeFromFileName(fileName));
     }
 
+    /**
+     * Renders a byte limit the way the UI states it, so an error message and the
+     * constant behind it can be checked against each other at a glance.
+     */
+    public static String describe(long bytes) {
+        if (bytes >= 1024L * 1024 * 1024 && bytes % (1024L * 1024 * 1024) == 0) {
+            return (bytes / (1024L * 1024 * 1024)) + " GiB";
+        }
+        if (bytes >= 1024L * 1024 && bytes % (1024L * 1024) == 0) {
+            return (bytes / (1024L * 1024)) + " MiB";
+        }
+        if (bytes >= 1024 && bytes % 1024 == 0) {
+            return (bytes / 1024) + " KiB";
+        }
+        return bytes + " 字节";
+    }
+
     public static String extension(String contentType) {
         return switch (contentType) {
             case "image/jpeg" -> ".jpg";

@@ -49,6 +49,7 @@ import {
   inferRecruitmentUploadMode,
   isRecruitmentBatchTerminal,
   normalizeRecruitmentBatchStatus,
+  describeBytes,
   validateRecruitmentUploadFiles,
   type RecruitmentUploadMode,
 } from '../recruitmentUpload'
@@ -208,7 +209,8 @@ function PublicTaskForm({ task }: { task: PublicRecruitmentTask }) {
     } catch {
       return
     }
-    const uploadErrors = files.length ? validateRecruitmentUploadFiles(uploadMode, files) : []
+    const uploadErrors = files.length
+      ? validateRecruitmentUploadFiles(uploadMode, files, task.uploadLimits) : []
     const answerIssues = validateRecruitmentAnswers(task.formSchema, values.studentId, values.answers || {}, files.length)
     const validationMessage = answerIssues[0]?.message || uploadErrors[0]
     if (validationMessage) {
@@ -283,9 +285,10 @@ function PublicTaskForm({ task }: { task: PublicRecruitmentTask }) {
         accept={uploadMode === 'ZIP' ? '.zip,application/zip' : '.jpg,.jpeg,.png,image/jpeg,image/png'}
         fileList={fileList} disabled={submitting} beforeUpload={() => false}
         onChange={({ fileList: next }) => {
-          const limited = next.slice(0, uploadMode === 'ZIP' ? 1 : 100)
+          const limited = next.slice(0, uploadMode === 'ZIP' ? 1 : task.uploadLimits.maxImageCount)
           const selected = nativeFiles(limited)
-          const errors = selected.length ? validateRecruitmentUploadFiles(uploadMode, selected) : []
+          const errors = selected.length
+            ? validateRecruitmentUploadFiles(uploadMode, selected, task.uploadLimits) : []
           if (errors.length) message.error(errors[0])
           setInlineError(errors[0] || '')
           setFileList(errors.length ? fileList : limited)
@@ -293,8 +296,10 @@ function PublicTaskForm({ task }: { task: PublicRecruitmentTask }) {
         <p className="ant-upload-drag-icon"><InboxOutlined /></p>
         <p className="ant-upload-text">{uploadMode === 'ZIP' ? '把 ZIP 拖到这里，或点一下选择' : '把照片拖到这里，或点一下选择'}</p>
         <p className="ant-upload-hint">{uploadMode === 'ZIP'
-          ? '一个 ZIP，不超过 1.5 GB，里面最多放 100 张 JPG / PNG'
-          : '一次 1–100 张 JPG / PNG，单张不超过 100 MiB，我们会保留你的原图'}</p>
+          ? `一个 ZIP，不超过 ${describeBytes(task.uploadLimits.maxArchiveBytes)}，`
+            + `里面最多放 ${task.uploadLimits.maxImageCount} 张 JPG / PNG`
+          : `一次 1–${task.uploadLimits.maxImageCount} 张 JPG / PNG，`
+            + `单张不超过 ${describeBytes(task.uploadLimits.maxImageBytes)}，我们会保留你的原图`}</p>
       </Upload.Dragger>
     </Form.Item>
 
