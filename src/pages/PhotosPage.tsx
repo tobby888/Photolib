@@ -211,7 +211,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
     if (!selectedIds.length) return
     modal.confirm({
       title: `批量删除 ${selectedIds.length} 张图片`,
-      content: '删除后图片记录和存储对象将被清理；已被引图片不能直接删除。',
+      content: '删除后图片记录和存储对象将被清理；已采纳图片不能直接删除。',
       okText: '确认删除', okButtonProps: { danger: true }, cancelText: '取消',
       onOk: async () => {
         await api({ method: 'POST', url: '/photos/batch-delete', data: { photoIds: selectedIds } })
@@ -336,7 +336,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
               </Space>
             </div>
             <div className="photo-badges"><Space size={4}><StatusTag value={photo.status} />
-              {!!photo.adoptionCount && <Tag color="gold">已采用 × {photo.adoptionCount}</Tag>}
+              {!!photo.adoptionCount && <Tag color="gold">已采纳 × {photo.adoptionCount}</Tag>}
             </Space></div>
           </div>}>
             <Typography.Title level={5} ellipsis>{photo.title || '未命名图片'}</Typography.Title>
@@ -396,7 +396,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
           将所选 {projectPickerPhotos.length} 张图片加入一个进行中的选题项目。添加后图片只会进入项目相册，
-          不会自动标记为被引。
+          不会自动标记为采纳。
         </Typography.Paragraph>
         <Input.Search allowClear placeholder="搜索项目名称或说明" style={{ maxWidth: 420 }}
           onSearch={keyword => {

@@ -63,7 +63,7 @@ export default function MarkdownEditor({
         <Tooltip title="有序列表"><Button type="text" disabled={mode !== 'edit'} icon={<OrderedListOutlined />} onClick={() => insert('1. ', '', '列表项')} /></Tooltip>
         <Tooltip title="链接"><Button type="text" disabled={mode !== 'edit'} icon={<LinkOutlined />} onClick={() => insert('[', '](https://)', '链接文字')} /></Tooltip>
         {allowImageUpload && <>
-          <Tooltip title="上传图片（JPEG、PNG、WebP，最大 5 MB）">
+          <Tooltip title="上传图片（JPEG、PNG、WebP，最大 5 MiB）">
             <Button type="text" disabled={mode !== 'edit'} loading={uploading} icon={<PictureOutlined />} onClick={() => fileInput.current?.click()} />
           </Tooltip>
           <input ref={fileInput} hidden type="file" accept="image/jpeg,image/png,image/webp"

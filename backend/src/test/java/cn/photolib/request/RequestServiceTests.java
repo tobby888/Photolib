@@ -332,7 +332,7 @@ class RequestServiceTests {
         assertThatThrownBy(() -> requestService.returnForRevision(
                 accepted.getId(), "需要修改", accepted.getVersion(), ministerUser))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("仅待确认需求可打回");
+                .hasMessageContaining("仅待确认需求可退回");
     }
 
     @Test
@@ -349,7 +349,7 @@ class RequestServiceTests {
                 submitted.getId(), submitted.getVersion(), scopedReviewer))
                 .isInstanceOf(BusinessException.class).hasMessageContaining("无权操作该校区");
         assertThatThrownBy(() -> requestService.returnForRevision(
-                submitted.getId(), "越权打回", submitted.getVersion(), scopedReviewer))
+                submitted.getId(), "越权退回", submitted.getVersion(), scopedReviewer))
                 .isInstanceOf(BusinessException.class).hasMessageContaining("无权操作该校区");
         assertThatThrownBy(() -> requestService.delete(submitted.getId(), scopedReviewer))
                 .isInstanceOf(BusinessException.class).hasMessageContaining("无权操作该校区");
@@ -360,9 +360,9 @@ class RequestServiceTests {
         PhotoRequestEntity submitted = createSubmittedRequest();
 
         assertThatThrownBy(() -> requestService.returnForRevision(
-                submitted.getId(), "自行打回", submitted.getVersion(), managerUser))
+                submitted.getId(), "自行退回", submitted.getVersion(), managerUser))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("仅管理员或部长可打回需求");
+                .hasMessageContaining("仅管理员或部长可退回需求");
     }
 
     @Test

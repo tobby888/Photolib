@@ -27,7 +27,7 @@ public class BrandIconValidator {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择图标文件");
         }
         if (file.getSize() > MAX_ICON_BYTES) {
-            throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "图标不能超过 512 KB");
+            throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "图标不能超过 512 KiB");
         }
         String contentType = file.getContentType();
         if (!IMAGE_TYPES.contains(contentType)) {

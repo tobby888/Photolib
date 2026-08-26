@@ -89,7 +89,7 @@ export default function BatchUploadPage() {
       return
     }
     if (file.size > ZIP_MAX_BYTES) {
-      message.error('ZIP 压缩包不得超过 1.5GB')
+      message.error('ZIP 压缩包不得超过 1.5 GB')
       return
     }
     setSubmitting(true)
@@ -186,12 +186,12 @@ export default function BatchUploadPage() {
           <Upload.Dragger accept=".zip,application/zip" maxCount={1} disabled={submitting}
             beforeUpload={(file) => {
               if (!file.name.toLowerCase().endsWith('.zip')) message.error('仅支持 ZIP 压缩包')
-              if (file.size > ZIP_MAX_BYTES) message.error('ZIP 压缩包不得超过 1.5GB')
+              if (file.size > ZIP_MAX_BYTES) message.error('ZIP 压缩包不得超过 1.5 GB')
               return false
             }}>
             <p className="ant-upload-drag-icon"><InboxOutlined /></p>
             <p className="ant-upload-text">拖入 ZIP，或点击选择文件</p>
-            <p className="ant-upload-hint">最大 1.5GB；包内最多 100 张 JPG / PNG；单张不超过 100MiB</p>
+            <p className="ant-upload-hint">最大 1.5 GB；包内最多 100 张 JPG / PNG；单张不超过 100 MiB</p>
           </Upload.Dragger>
         </Form.Item>
         <Form.Item label="拍摄者" name="photographerContactId"

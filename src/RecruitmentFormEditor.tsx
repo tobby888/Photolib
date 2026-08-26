@@ -144,7 +144,7 @@ export default function RecruitmentFormEditor({ value, onChange, disabled = fals
           <Typography.Text>{schema.upload.required ? '必须交作品才能报名' : '不交作品也能报名'}</Typography.Text>
         </Space>
         <Typography.Text type="secondary">
-          同学可以一次传 1–100 张 JPG / PNG（单张不超过 100 MB），也可以打包成一个不超过 1.5 GB 的 ZIP。原图保存，不压缩。
+          同学可以一次传 1–100 张 JPG / PNG（单张不超过 100 MiB），也可以打包成一个不超过 1.5 GB 的 ZIP。原图保存，不压缩。
         </Typography.Text>
       </Space>
     </Card>

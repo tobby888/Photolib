@@ -133,21 +133,21 @@ export default function RequestsPage() {
   const returnForRevision = (item: PhotoRequest) => {
     let reason = ''
     modal.confirm({
-      title: '打回图片需求',
+      title: '退回图片需求',
       content: <Input.TextArea rows={4} maxLength={500} showCount
         placeholder="请说明需要负责人修改或补充的内容"
         onChange={event => { reason = event.target.value }} />,
-      okText: '确认打回',
+      okText: '确认退回',
       cancelText: '取消',
       onOk: async () => {
-        if (!reason.trim()) throw new Error('请填写打回原因')
+        if (!reason.trim()) throw new Error('请填写退回原因')
         try {
           await api({
             method: 'POST', url: `/requests/${item.id}/return`,
             data: { reason: reason.trim(), version: item.version },
           })
           if (detail?.id === item.id) setDetail(null)
-          message.success('需求已打回，参与负责人将收到通知')
+          message.success('需求已退回，参与负责人将收到通知')
           await reload()
         } catch (e) {
           message.error((e as Error).message)
@@ -179,7 +179,7 @@ export default function RequestsPage() {
     {canCreate && item.status === 'DRAFT' && <Button onClick={() => void action(item, 'publish')}>发布</Button>}
     {campusScoped && item.status === 'ACCEPTED' && <Button onClick={() => void action(item, 'submit')}>提交</Button>}
     {canConfirm && item.status === 'SUBMITTED' &&
-      <Button icon={<RollbackOutlined />} onClick={() => returnForRevision(item)}>打回</Button>}
+      <Button icon={<RollbackOutlined />} onClick={() => returnForRevision(item)}>退回</Button>}
     {canConfirm && item.status === 'SUBMITTED' &&
       <Button type="primary" onClick={() => void action(item, 'complete')}>确认完成</Button>}
     {canClose && !['COMPLETED', 'CANCELLED'].includes(item.status) &&
@@ -254,7 +254,7 @@ export default function RequestsPage() {
           { key: 'campus', label: '拍摄校区', children: options.campuses.find(c => c.id === detail.campusId)?.name || `#${detail.campusId}` },
           { key: 'deadline', label: '截止时间', children: dayjs(detail.deadline).format('YYYY 年 M 月 D 日 HH:mm') },
           ...(detail.status === 'ACCEPTED' && detail.returnReason ? [{
-            key: 'returnReason', label: '最近打回原因',
+            key: 'returnReason', label: '最近退回原因',
             children: <Space direction="vertical" size={0}>
               <span>{detail.returnReason}</span>
               {detail.returnedAt && <Typography.Text type="secondary">

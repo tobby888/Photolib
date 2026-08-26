@@ -305,16 +305,16 @@ public class RequestService {
     @Transactional
     public PhotoRequestEntity returnForRevision(Long id, String reason, int version, AuthenticatedUser reviewer) {
         if (!reviewer.hasPermission(PermissionCode.REQUEST_CONFIRM)) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "仅管理员或部长可打回需求");
+            throw new BusinessException(ErrorCode.FORBIDDEN, "仅管理员或部长可退回需求");
         }
         PhotoRequestEntity request = get(id);
         requireCampusAccess(request, reviewer);
         if (request.getStatus() != RequestStatus.SUBMITTED) {
-            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "仅待确认需求可打回");
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "仅待确认需求可退回");
         }
         String normalizedReason = reason == null ? "" : reason.trim();
         if (normalizedReason.isEmpty()) {
-            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "打回原因不能为空");
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "退回原因不能为空");
         }
         request.setStatus(RequestStatus.ACCEPTED);
         request.setReturnReason(normalizedReason);
@@ -324,14 +324,14 @@ public class RequestService {
         updateChecked(request);
 
         String notificationBody = "<p>需求“" + HtmlUtils.htmlEscape(request.getTitle())
-                + "”已被打回，请修改后重新提交。</p><p>打回原因："
+                + "”已被退回，请修改后重新提交。</p><p>退回原因："
                 + HtmlUtils.htmlEscape(normalizedReason) + "</p>";
         participantMapper.selectList(Wrappers.<RequestParticipantEntity>lambdaQuery()
                         .eq(RequestParticipantEntity::getRequestId, id))
                 .forEach(participant -> notifications.notifyUser(participant.getUserId(), "REQUEST_RETURNED",
-                        "图片需求被打回", notificationBody));
+                        "图片需求被退回", notificationBody));
         notifications.notifyUser(request.getCreatedBy(), "REQUEST_RETURNED",
-                "图片需求被打回", notificationBody);
+                "图片需求被退回", notificationBody);
         return get(id);
     }
 

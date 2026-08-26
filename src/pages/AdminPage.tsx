@@ -119,7 +119,7 @@ export default function AdminPage() {
       return
     }
     if (file.size > 512 * 1024) {
-      message.error('图标不能超过 512 KB')
+      message.error('图标不能超过 512 KiB')
       return
     }
     try {
@@ -149,7 +149,7 @@ export default function AdminPage() {
       return
     }
     if (file.size > 512 * 1024) {
-      message.error('图标不能超过 512 KB')
+      message.error('图标不能超过 512 KiB')
       return
     }
     updateScheduledIcon(key, { file })
@@ -279,7 +279,7 @@ export default function AdminPage() {
                     ...(branding.customIconUrl ? [{ value: 'custom', label: '已上传的自定义图片' }] : []),
                   ]} />
                 </Form.Item>
-                <Form.Item label="上传自定义图标" extra="支持 PNG、JPEG；文件不超过 512 KB，尺寸不超过 1024 × 1024 像素。">
+                <Form.Item label="上传自定义图标" extra="支持 PNG、JPEG；文件不超过 512 KiB，尺寸不超过 1024 × 1024 像素。">
                   <Upload accept="image/png,image/jpeg" maxCount={1} showUploadList={false}
                     beforeUpload={file => { void uploadIcon(file); return false }}>
                     <Button icon={<UploadOutlined />}>选择图片并上传</Button>

@@ -11,7 +11,7 @@ public enum PermissionCode {
     REQUEST_CREATE(PermissionCategory.REQUEST, "新建、编辑和发布需求"),
     REQUEST_DELETE(PermissionCategory.REQUEST, "删除需求"),
     REQUEST_CLOSE(PermissionCategory.REQUEST, "关闭需求"),
-    REQUEST_CONFIRM(PermissionCategory.REQUEST, "确认或打回需求"),
+    REQUEST_CONFIRM(PermissionCategory.REQUEST, "确认或退回需求"),
     REQUEST_PHOTO_MANAGE(PermissionCategory.REQUEST, "管理需求图片（上传、下载、删除）"),
 
     PHOTO_VIEW(PermissionCategory.PHOTO, "图库访问"),

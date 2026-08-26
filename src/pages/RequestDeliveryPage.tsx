@@ -230,11 +230,11 @@ export default function RequestDeliveryPage() {
       </section>
 
       {request.status === 'ACCEPTED' && request.returnReason && <Alert showIcon type="warning"
-        title="需求已被打回，请修改后重新提交"
+        title="需求已被退回，请修改后重新提交"
         description={<Space direction="vertical" size={2}>
           <span>{request.returnReason}</span>
           {request.returnedAt && <Typography.Text type="secondary">
-            打回时间：{dayjs(request.returnedAt).format('YYYY-MM-DD HH:mm')}
+            退回时间：{dayjs(request.returnedAt).format('YYYY-MM-DD HH:mm')}
           </Typography.Text>}
         </Space>} />}
 
