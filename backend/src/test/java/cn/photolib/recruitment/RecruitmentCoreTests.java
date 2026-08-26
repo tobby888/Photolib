@@ -8,7 +8,11 @@ import cn.photolib.recruitment.mapper.RecruitmentTaskMapper;
 import cn.photolib.recruitment.model.RecruitmentFieldType;
 import cn.photolib.recruitment.model.RecruitmentFormSchema;
 import cn.photolib.recruitment.model.RecruitmentTaskStatus;
+import cn.photolib.permission.DataScope;
 import cn.photolib.user.model.UserRole;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,11 +22,14 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.mock.web.MockHttpServletRequest;
 
+import java.io.ByteArrayInputStream;
 import java.time.Clock;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -423,6 +430,105 @@ class RecruitmentCoreTests {
         assertThat(applications.list(task.id(), 1, 20, "NO-SUCH-STUDENT", admin).total()).isZero();
     }
 
+    @Test
+    void applicationExportMatchesTheListFilterAndCountsFinalizedAttachments() throws Exception {
+        var task = publish(false);
+        submitAs(task, "AB_001");
+        String withFiles = submitAs(task, "ABX001");
+        attachTwoFinalizedImages(withFiles);
+
+        var full = applications.export(task.id(), null, admin);
+        assertThat(full.fileName())
+                .isEqualTo("2026 秋季招募-报名-" + LocalDate.now(clock) + ".xlsx");
+        List<List<String>> rows = readSheet(full.content());
+        assertThat(rows.get(0)).containsExactly("学号", "提交时间", "附件数量",
+                "报名理由", "所在校区", "可入部日期");
+        assertThat(rows.subList(1, rows.size())).extracting(row -> row.get(0))
+                .containsExactlyInAnyOrder("AB_001", "ABX001");
+        List<String> withAttachments = rowFor(rows, "ABX001");
+        assertThat(withAttachments.get(1)).matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}");
+        assertThat(withAttachments).element(2).isEqualTo("2");
+        assertThat(withAttachments.subList(3, withAttachments.size()))
+                .containsExactly("热爱摄影，希望参与校园记录。", "东校区", "2026-09-01");
+        assertThat(rowFor(rows, "AB_001")).element(2).isEqualTo("0");
+
+        // 导出口径必须和列表一致：搜索框里输了什么，导出的就是那一批。
+        List<List<String>> filtered = readSheet(applications.export(task.id(), "B_0", admin).content());
+        assertThat(filtered).hasSize(2);
+        assertThat(filtered.get(1).get(0)).isEqualTo("AB_001");
+        assertThat(readSheet(applications.export(task.id(), "NO-SUCH-STUDENT", admin).content()))
+                .hasSize(1);
+    }
+
+    @Test
+    void applicationExportRequiresRecruitmentViewPermission() {
+        var task = publish(false);
+        var outsider = new AuthenticatedUser(9_703L, "outsider", "无权限用户",
+                UserRole.CAMPUS_MANAGER, 1L, false, -1L, "NONE", "NONE",
+                DataScope.GLOBAL, Set.of(), Set.of(1L));
+
+        assertThatThrownBy(() -> applications.export(task.id(), null, outsider))
+                .isInstanceOf(BusinessException.class)
+                .extracting(error -> ((BusinessException) error).getCode())
+                .isEqualTo(ErrorCode.FORBIDDEN);
+    }
+
+    private static List<String> rowFor(List<List<String>> rows, String studentId) {
+        return rows.stream().filter(row -> row.get(0).equals(studentId)).findFirst().orElseThrow();
+    }
+
+    /** 直接写库造两个已完成的附件，导出只数这种“真的传上来了”的对象。 */
+    private void attachTwoFinalizedImages(String draftId) {
+        String batchId = draftId.substring(0, 25) + "B";
+        jdbc.sql("""
+                INSERT INTO recruitment_upload_batch
+                    (id, draft_id, mode, status, total_count, success_count, failure_count,
+                     created_at, updated_at)
+                VALUES (:id, :draftId, 'FILES', 'SUCCEEDED', 3, 2, 1,
+                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """).param("id", batchId).param("draftId", draftId).update();
+        for (int index = 0; index < 2; index++) {
+            insertItem(batchId, "作品" + index + ".jpg", "recruitments/final/" + batchId + "-" + index,
+                    "SUCCEEDED");
+        }
+        // 失败的那张既没有对象也不该被数进去。
+        insertItem(batchId, "坏掉的.jpg", null, "FAILED");
+    }
+
+    private void insertItem(String batchId, String fileName, String objectKey, String status) {
+        jdbc.sql("""
+                INSERT INTO recruitment_upload_item
+                    (batch_id, original_file_name, object_key, content_type, size, status,
+                     created_at, updated_at)
+                VALUES (:batchId, :fileName, :objectKey, 'image/jpeg', 1024, :status,
+                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """).param("batchId", batchId).param("fileName", fileName)
+                .param("objectKey", objectKey).param("status", status).update();
+    }
+
+    /** 把导出的 XLSX 读回来，每行按表头宽度补齐，空单元格读成空串。 */
+    private static List<List<String>> readSheet(byte[] content) throws Exception {
+        try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(content))) {
+            Sheet sheet = workbook.getSheetAt(0);
+            int width = sheet.getRow(0).getLastCellNum();
+            List<List<String>> rows = new ArrayList<>();
+            for (int index = 0; index <= sheet.getLastRowNum(); index++) {
+                org.apache.poi.ss.usermodel.Row row = sheet.getRow(index);
+                List<String> values = new ArrayList<>(width);
+                for (int column = 0; column < width; column++) {
+                    Cell cell = row == null ? null : row.getCell(column);
+                    values.add(cell == null ? "" : switch (cell.getCellType()) {
+                        case NUMERIC -> String.valueOf((long) cell.getNumericCellValue());
+                        case BLANK -> "";
+                        default -> cell.getStringCellValue();
+                    });
+                }
+                rows.add(values);
+            }
+            return rows;
+        }
+    }
+
     private RecruitmentTaskService.TaskView publish(boolean uploadRequired) {
         var created = tasks.create(command(uploadRequired), admin);
         return tasks.publish(created.id(), created.version(), admin);
@@ -459,9 +565,11 @@ class RecruitmentCoreTests {
                 "available_date", "2026-09-01");
     }
 
-    private void submitAs(RecruitmentTaskService.TaskView task, String studentId) {
+    /** 提交一份报名，返回它绑定的草稿 id——附件挂在草稿上。 */
+    private String submitAs(RecruitmentTaskService.TaskView task, String studentId) {
         var ticket = drafts.create(task.publicId(), studentId);
         applications.submit(task.publicId(), ticket.draftId(), ticket.draftToken(),
                 studentId, validAnswers());
+        return ticket.draftId();
     }
 }

@@ -1,6 +1,8 @@
 package cn.photolib.recruitment;
 
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Read-only boundary between immutable applications and the upload pipeline.
@@ -8,6 +10,14 @@ import java.util.List;
  */
 public interface RecruitmentAttachmentReader {
     DraftAttachmentState stateForDraft(String draftId);
+
+    /**
+     * Finalized attachment counts for several drafts at once, keyed by draft id.
+     * Drafts without a finalized attachment may be omitted; callers read a missing
+     * key as zero. Counts must cover exactly the objects {@link #stateForDraft}
+     * would report, so a listing and an export never disagree.
+     */
+    Map<String, Integer> attachmentCountsByDraft(Collection<String> draftIds);
 
     record DraftAttachmentState(boolean inProgress, List<Attachment> attachments) {
         public DraftAttachmentState {

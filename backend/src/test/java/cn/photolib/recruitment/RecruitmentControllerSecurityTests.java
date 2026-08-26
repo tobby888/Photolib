@@ -7,18 +7,25 @@ import cn.photolib.user.model.UserRole;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.List;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 @SpringBootTest
@@ -81,6 +88,8 @@ class RecruitmentControllerSecurityTests {
                 .isInstanceOf(AccessDeniedException.class);
         assertThatThrownBy(() -> taskController.applications(11L, 1, 20, null, principal))
                 .isInstanceOf(AccessDeniedException.class);
+        assertThatThrownBy(() -> taskController.exportApplications(11L, null, principal))
+                .isInstanceOf(AccessDeniedException.class);
         assertThatThrownBy(() -> applicationController.get("application-id", principal))
                 .isInstanceOf(AccessDeniedException.class);
 
@@ -90,15 +99,42 @@ class RecruitmentControllerSecurityTests {
     @Test
     @WithMockUser(authorities = "RECRUITMENT_VIEW")
     void viewAuthorityCanEnterTaskAndApplicationReadMethods() {
+        // 导出接口会立刻读返回值组装下载响应，桩不给值就只能测到 NPE。
+        when(applicationService.export(11L, "2023001", principal)).thenReturn(
+                new RecruitmentApplicationService.ApplicationExport("秋季招募-报名-2026-08-25.xlsx",
+                        new byte[] {1, 2, 3}));
         taskController.list(2, 25, "新人", RecruitmentTaskStatus.DRAFT, principal);
         taskController.get(11L, principal);
         taskController.applications(11L, 3, 30, "2023001", principal);
+        taskController.exportApplications(11L, "2023001", principal);
         applicationController.get("application-id", principal);
 
         verify(taskService).list(2, 25, "新人", RecruitmentTaskStatus.DRAFT, principal);
         verify(taskService).get(11L, principal);
         verify(applicationService).list(11L, 3, 30, "2023001", principal);
+        verify(applicationService).export(11L, "2023001", principal);
         verify(applicationService).get("application-id", principal);
+    }
+
+    @Test
+    @WithMockUser(authorities = "RECRUITMENT_VIEW")
+    void applicationExportRespondsAsAnXlsxAttachmentWithAnEncodedChineseFileName() {
+        String fileName = "2026秋季摄影部招新-报名-2026-08-25.xlsx";
+        byte[] content = {80, 75, 3, 4};
+        when(applicationService.export(11L, null, principal))
+                .thenReturn(new RecruitmentApplicationService.ApplicationExport(fileName, content));
+
+        ResponseEntity<byte[]> response = taskController.exportApplications(11L, null, principal);
+
+        assertThat(response.getBody()).isEqualTo(content);
+        assertThat(response.getHeaders().getContentType())
+                .isEqualTo(MediaType.parseMediaType(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
+        String disposition = response.getHeaders().getFirst(HttpHeaders.CONTENT_DISPOSITION);
+        assertThat(disposition).startsWith("attachment;")
+                // 中文文件名走 RFC 5987，浏览器才存得出正确的名字。
+                .contains("filename*=UTF-8''" + URLEncoder.encode(fileName, StandardCharsets.UTF_8)
+                        .replace("+", "%20"));
     }
 
     private static RecruitmentTaskController.TaskRequest taskRequest() {

@@ -3,6 +3,7 @@ import {
   CalendarOutlined,
   CheckCircleOutlined,
   ClockCircleOutlined,
+  DownloadOutlined,
   EditOutlined,
   EyeOutlined,
   FileImageOutlined,
@@ -34,9 +35,10 @@ import {
 import dayjs, { type Dayjs } from 'dayjs'
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { api, qs } from '../api'
+import { api, http, qs } from '../api'
 import { useAuth } from '../auth'
 import { DataState } from '../components'
+import { blobErrorMessage, fileNameFromContentDisposition, saveBlobAs } from '../exportDownload'
 import { useLoad } from '../hooks'
 import MarkdownEditor from '../MarkdownEditor'
 import MarkdownRenderer from '../MarkdownRenderer'
@@ -74,6 +76,7 @@ export default function RecruitmentDetailPage() {
   const [saving, setSaving] = useState(false)
   const [actioning, setActioning] = useState(false)
   const [applicationPage, setApplicationPage] = useState(1)
+  const [exporting, setExporting] = useState(false)
   const [studentIdInput, setStudentIdInput] = useState('')
   const [studentIdFilter, setStudentIdFilter] = useState('')
   const canPublish = canPublishRecruitments(user)
@@ -97,6 +100,24 @@ export default function RecruitmentDetailPage() {
   const searchByStudentId = (value: string) => {
     setApplicationPage(1)
     setStudentIdFilter(value.trim())
+  }
+
+  const exportApplications = async () => {
+    if (!task) return
+    setExporting(true)
+    try {
+      const response = await http.get<Blob>(`/recruitment-tasks/${task.id}/applications/export`, {
+        params: qs({ studentId: studentIdFilter }),
+        responseType: 'blob',
+      })
+      saveBlobAs(response.data, fileNameFromContentDisposition(response.headers['content-disposition'])
+        || `${task.title}-报名-${dayjs().format('YYYY-MM-DD')}.xlsx`)
+      message.success(studentIdFilter ? '已导出当前筛选出的报名' : '报名已导出')
+    } catch (error) {
+      message.error(await blobErrorMessage(error, '报名导出失败，请稍后重试'))
+    } finally {
+      setExporting(false)
+    }
   }
 
   const openEdit = () => {
@@ -242,6 +263,8 @@ export default function RecruitmentDetailPage() {
               onPressEnter={event => searchByStudentId(event.currentTarget.value)}
               onClear={() => searchByStudentId('')} />
             <Button onClick={() => searchByStudentId(studentIdInput)}>搜索</Button>
+            <Button icon={<DownloadOutlined />} loading={exporting}
+              onClick={() => void exportApplications()}>导出 XLSX</Button>
             <Typography.Text type="secondary">部内成员都能查看</Typography.Text>
           </Space>}>
             {studentIdFilter && <Typography.Paragraph type="secondary">

@@ -7,6 +7,7 @@ import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 
 @Mapper
@@ -18,6 +19,26 @@ public interface RecruitmentUploadItemMapper extends BaseMapper<RecruitmentUploa
             ORDER BY i.id
             """)
     List<RecruitmentUploadItemEntity> findSucceededByDraft(@Param("draftId") String draftId);
+
+    /**
+     * Counts finalized attachments for many drafts in one statement. The application
+     * export needs the number for every listed row, and per-draft lookups would issue
+     * two queries per applicant. Drafts with no finalized attachment are simply absent
+     * from the result — callers must default those to zero.
+     */
+    @Select("""
+            <script>
+            SELECT b.draft_id AS draft_id, COUNT(*) AS attachment_count
+            FROM recruitment_upload_item i
+            JOIN recruitment_upload_batch b ON b.id=i.batch_id
+            WHERE i.status='SUCCEEDED' AND i.object_key IS NOT NULL
+              AND b.draft_id IN
+              <foreach item="draftId" collection="draftIds" open="(" separator="," close=")">#{draftId}</foreach>
+            GROUP BY b.draft_id
+            </script>
+            """)
+    List<RecruitmentDraftAttachmentCount> countSucceededByDrafts(
+            @Param("draftIds") Collection<String> draftIds);
 
     @Select("""
             SELECT * FROM recruitment_upload_item
