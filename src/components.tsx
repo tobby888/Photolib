@@ -37,13 +37,30 @@ export function PageTitle({ eyebrow, title, description, extra }: {
   </div>
 }
 
-export function DataState({ loading, error, empty, onRetry, children }: {
-  loading: boolean; error?: string; empty?: boolean; onRetry?: () => void; children: ReactNode
+/**
+ * 空状态默认只说“这里还没有内容”，因为组件不知道自己包着哪一块业务。
+ * 调用方知道，所以每个列表都应当传 emptyText 说清是什么空了，
+ * 并尽量用 emptyHint 给出下一步——“没有”和“筛选没命中”对用户是两回事。
+ */
+export function DataState({ loading, error, empty, emptyText, emptyHint, emptyAction, onRetry, children }: {
+  loading: boolean
+  error?: string
+  empty?: boolean
+  emptyText?: string
+  emptyHint?: string
+  emptyAction?: ReactNode
+  onRetry?: () => void
+  children: ReactNode
 }) {
   if (loading) return <Skeleton active paragraph={{ rows: 7 }} />
-  if (error) return <Alert showIcon type="error" title="数据加载失败" description={error}
+  if (error) return <Alert showIcon type="error" title="这块内容没能加载出来" description={error}
     action={onRetry && <Button icon={<ReloadOutlined />} onClick={onRetry}>重试</Button>} />
-  if (empty) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂时没有数据" />
+  if (empty) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={
+    <span className="empty-copy">
+      <strong>{emptyText || '这里还没有内容'}</strong>
+      {emptyHint && <span>{emptyHint}</span>}
+    </span>
+  }>{emptyAction}</Empty>
   return children
 }
 

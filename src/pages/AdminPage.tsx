@@ -360,7 +360,11 @@ export default function AdminPage() {
               />
               <Button type="primary" icon={<PlusOutlined />} onClick={() => setUserOpen(true)}>创建账号</Button>
             </Space></div>
-          <DataState loading={loading} error={error} empty={!users.items.length} onRetry={reload}>
+          <DataState loading={loading} error={error} empty={!users.items.length} onRetry={reload}
+            emptyText={userKeyword ? `没有匹配“${userKeyword}”的账号` : '还没有创建任何成员账号'}
+            emptyHint={userKeyword
+              ? '姓名、账号和邮箱都会被搜索，换个词再试试。'
+              : '系统不开放注册，成员账号都要在这里创建。'}>
             <ContentFitTable rowKey="id" dataSource={users.items} pagination={{ pageSize: 12 }} columns={[
               { title: '成员', render: (_, item) => <Space>
                 <UserAvatar size={38} avatarUrl={item.avatarUrl} label={item.displayName}

@@ -20,11 +20,17 @@ function createResource(remoteUrl: string): SharedImageResource {
   const controller = new AbortController()
   const promise = fetch(remoteUrl, { signal: controller.signal, mode: 'cors' })
     .then(response => {
-      if (!response.ok) throw new Error(`预览图请求失败（HTTP ${response.status}）`)
+      if (!response.ok) {
+        console.error('[preview] 预览图请求失败', { url: remoteUrl, status: response.status })
+        throw new Error('预览图没能加载出来')
+      }
       return response.blob()
     })
     .then(blob => {
-      if (!blob.type.startsWith('image/')) throw new Error('预览图响应不是有效图片')
+      if (!blob.type.startsWith('image/')) {
+        console.error('[preview] 预览图响应不是图片', { url: remoteUrl, type: blob.type })
+        throw new Error('预览图文件好像损坏了')
+      }
       const objectUrl = URL.createObjectURL(blob)
       const current = resources.get(remoteUrl)
       if (current?.promise === promise) current.objectUrl = objectUrl
@@ -84,7 +90,7 @@ export function useLocalImageUrl(remoteUrl?: string): LocalImageState {
       if (active) setState({ status: 'ready', url })
     }).catch(reason => {
       if (!active || (reason as Error).name === 'AbortError') return
-      setState({ status: 'error', message: (reason as Error).message || '预览图加载失败' })
+      setState({ status: 'error', message: (reason as Error).message || '预览图没能加载出来' })
     })
 
     return () => {

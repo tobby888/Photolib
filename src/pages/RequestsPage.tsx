@@ -201,7 +201,15 @@ export default function RequestsPage() {
       </Space>
     </Card>
     <Card>
-      <DataState loading={loading} error={error} empty={!data.items.length} onRetry={reload}>
+      <DataState loading={loading} error={error} empty={!data.items.length} onRetry={reload}
+        emptyText={filters.projectId || filters.status
+          ? '没有符合筛选条件的需求'
+          : campusScoped ? '你的授权校区暂时没有需求' : '还没有图片需求'}
+        emptyHint={filters.projectId || filters.status
+          ? '换个项目或状态再看看。'
+          : campusScoped
+            ? '部长发布新的拍摄任务后，会出现在这里，你可以直接接单。'
+            : '先在选题项目里建一个需求，再发布给对应校区。'}>
         <ContentFitTable rowKey="id" dataSource={data.items} pagination={false} columns={[
           { title: '需求', dataIndex: 'title', render: (value, item) => <div className="table-title"><strong>{value}</strong><span>项目 #{item.projectId}</span></div> },
           { title: '校区', dataIndex: 'campusId', render: value => options.campuses.find(c => c.id === value)?.name || `校区 #${value}` },

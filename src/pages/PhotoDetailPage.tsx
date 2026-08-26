@@ -191,7 +191,9 @@ export default function PhotoDetailPage({ favoritesOnly = false }: { favoritesOn
           onClick={() => void download()}>下载原图</Button>}
       </>} />
 
-    <DataState loading={loading} error={error} empty={!photo} onRetry={reload}>
+    <DataState loading={loading} error={error} empty={!photo} onRetry={reload}
+      emptyText="找不到这张图片"
+      emptyHint="它可能已经被删除，或者不在你有权查看的校区里。">
       {photo && <Row gutter={[24, 24]} className="photo-detail-layout">
         <Col xs={24} xl={16}>
           <Space direction="vertical" size="large" style={{ width: '100%' }}>

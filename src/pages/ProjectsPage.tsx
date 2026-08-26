@@ -52,7 +52,11 @@ export default function ProjectsPage() {
           onChange={(status = '') => setFilters({ ...filters, page: 1, status })} />
       </Space>
     </Card>
-    <DataState loading={loading} error={error} empty={!data.items.length} onRetry={reload}>
+    <DataState loading={loading} error={error} empty={!data.items.length} onRetry={reload}
+      emptyText={filters.keyword || filters.status ? '没有符合筛选条件的项目' : '还没有选题项目'}
+      emptyHint={filters.keyword || filters.status
+        ? '换个关键词或状态再看看。'
+        : '新建一个选题，就可以往下拆需求、收图片了。'}>
       <Row gutter={[16, 16]} className="project-grid">
         {data.items.map((item) => <Col xs={24} md={12} xl={8} key={item.id}>
           <Card className="project-card" hoverable>

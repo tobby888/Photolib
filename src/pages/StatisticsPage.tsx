@@ -41,7 +41,8 @@ export default function StatisticsPage() {
           message.success('统计文件已生成')
           return
         }
-        if (result.job.status === 'FAILED') throw new Error(result.job.errorMessage || '导出失败')
+        if (result.job.status === 'FAILED') throw new Error(result.job.errorMessage
+          || '统计文件没能生成。这个时间范围内可能没有可统计的记录，换个范围再试一次。')
         await wait(1000)
       }
       message.info('导出任务仍在处理中，请稍后重试')

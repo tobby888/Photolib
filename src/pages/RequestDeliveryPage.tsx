@@ -203,7 +203,9 @@ export default function RequestDeliveryPage() {
       extra={<Button onClick={() => navigate('/requests')}>返回需求列表</Button>} />
   }
 
-  return <DataState loading={requestState.loading} error={undefined} empty={!request} onRetry={requestState.reload}>
+  return <DataState loading={requestState.loading} error={undefined} empty={!request} onRetry={requestState.reload}
+    emptyText="找不到这个需求"
+    emptyHint="它可能已经被删除，或者已经不在你的授权校区里。">
     {request && <div className="request-delivery">
       <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/requests')}>返回需求列表</Button>
 
@@ -258,7 +260,9 @@ export default function RequestDeliveryPage() {
             }} style={{ width: 130 }} />
           </Space>}>
             <DataState loading={photosState.loading} error={photosState.error}
-              empty={!photosState.data.items.length} onRetry={photosState.reload}>
+              empty={!photosState.data.items.length} onRetry={photosState.reload}
+              emptyText="这个状态下还没有图片"
+              emptyHint="上传交付图片后，会先进入“处理中”，压缩完成才变成可用图片。">
               <div className="delivery-gallery">
                 {photosState.data.items.map(photo => <article key={photo.id}>
                   <div>

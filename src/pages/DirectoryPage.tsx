@@ -147,7 +147,9 @@ export default function DirectoryPage() {
       <Card>
         {showCampusPicker && !selectedCampus
           ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="请先选择要查看的校区" />
-          : <DataState loading={loading} error={error} empty={!members.length} onRetry={reload}>
+          : <DataState loading={loading} error={error} empty={!members.length} onRetry={reload}
+              emptyText="这个校区的通讯录还是空的"
+              emptyHint="先把摄影人员加进来，上传图片选拍摄者、填报工时选成员时才有人可选。">
               <ContentFitTable
                 rowKey="id"
                 dataSource={members}

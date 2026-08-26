@@ -122,7 +122,8 @@ export default function BatchUploadPage() {
       const extracted = await pollBatch(ticket.batchId,
         status => status === 'WAITING_METADATA' || status === 'FAILED')
       if (extracted.batch.status === 'FAILED') {
-        throw new Error(extracted.batch.failureReason || 'ZIP 解压失败')
+        throw new Error(extracted.batch.failureReason
+          || '压缩包没能解开。请确认它是完整的 .zip，且里面有 JPG / PNG 图片，然后重新上传。')
       }
 
       setPhase('organizing')
@@ -147,7 +148,8 @@ export default function BatchUploadPage() {
       } else if (finished.batch.status === 'PARTIALLY_SUCCEEDED') {
         message.warning(`已完成 ${finished.batch.successCount} 张，失败 ${finished.batch.failureCount} 张`)
       } else {
-        throw new Error(finished.batch.failureReason || '批量处理失败')
+        throw new Error(finished.batch.failureReason
+          || '这批图片没能全部处理完成。先回图片库看看已经入库的部分，剩下的重新传一次。')
       }
     } catch (error) {
       setPhase('finished')

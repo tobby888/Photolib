@@ -321,7 +321,9 @@ export default function ProjectDetailPage() {
   ).length
   const addableGalleryPhotos = galleryPhotos.items.filter(photo =>
     !photo.relatedProjectIds?.some(id => String(id) === projectId))
-  return <DataState loading={loading} error={error} empty={!project} onRetry={reload}>
+  return <DataState loading={loading} error={error} empty={!project} onRetry={reload}
+    emptyText="找不到这个项目"
+    emptyHint="它可能已经被删除，或者你参与的需求都不在这个项目下。">
     {project && <>
       <Breadcrumb className="detail-breadcrumb" items={[
         { title: <a onClick={() => navigate('/projects')}>选题项目</a> },

@@ -136,7 +136,9 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
       } else if (photo.status === 'PROCESSING') {
         message.warning('图片仍在后台处理，请稍后在图片库刷新查看')
       } else {
-        message.error(photo.failureReason ? `图片处理失败：${photo.failureReason}` : '图片处理失败，请重新上传')
+        message.error(photo.failureReason
+          ? `这张图片没能处理完成：${photo.failureReason}`
+          : '这张图片没能处理完成，可能是文件损坏。换一张 JPG / PNG 再传一次。')
       }
       setUploadOpen(false); uploadForm.resetFields(); await reload()
     } catch (e) { message.error((e as Error).message) }
@@ -299,7 +301,15 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
       </Space>
       <Typography.Text type="secondary">共 {data.total} 张图片</Typography.Text>
     </Card>
-    <DataState loading={loading} error={error} empty={!data.items.length} onRetry={reload}>
+    <DataState loading={loading} error={error} empty={!data.items.length} onRetry={reload}
+      emptyText={filters.keyword
+        ? `没有匹配“${filters.keyword}”的图片`
+        : favoritesOnly ? '还没有收藏任何图片'
+          : filters.status === 'AVAILABLE' ? '图库里还没有可用图片' : '这个状态下没有图片'}
+      emptyHint={filters.keyword
+        ? '标题、描述和标签都会被搜索，换个词或清空搜索框再看看。'
+        : favoritesOnly ? '在图片上点收藏，之后就能在这里集中查看。'
+          : filters.status === 'AVAILABLE' ? '上传的图片处理完成后会出现在这里。' : '换一个状态筛选试试。'}>
       <Row gutter={[16, 20]} className="photo-grid">
         {data.items.map(photo => <Col xs={24} sm={12} lg={8} xxl={6} key={photo.id}>
           <Card className={`photo-card${selectedIds.includes(photo.id) ? ' photo-card-selected' : ''}`} hoverable cover={<div

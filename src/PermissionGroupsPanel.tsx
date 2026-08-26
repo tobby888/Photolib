@@ -237,7 +237,11 @@ export default function PermissionGroupsPanel() {
       </Typography.Paragraph>
       <DataState loading={usersState.loading || campusesState.loading}
         error={usersState.error || campusesState.error} empty={!usersState.data.items.length}
-        onRetry={() => { void usersState.reload(); void campusesState.reload() }}>
+        onRetry={() => { void usersState.reload(); void campusesState.reload() }}
+        emptyText={search || permissionGroupFilter ? '没有符合筛选条件的账号' : '还没有可授权的账号'}
+        emptyHint={search || permissionGroupFilter
+          ? '换个关键词，或清掉权限组筛选再看看。'
+          : '先在“账号管理”里创建成员账号，再回到这里分配权限组和校区。'}>
         <ContentFitTable rowKey="id" dataSource={usersState.data.items} pagination={{
           current: userPage, pageSize: 20, total: usersState.data.total,
           showTotal: total => `共 ${total} 个账号`, onChange: setUserPage,
