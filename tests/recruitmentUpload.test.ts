@@ -34,7 +34,7 @@ test('FILES accepts exactly 100 images and the 100 MiB boundary', () => {
   }))
   assert.deepEqual(validateRecruitmentUploadFiles('FILES', files), [])
   assert.match(validateRecruitmentUploadFiles('FILES', [...files, image()])[0], /最多传 100/)
-  assert.match(validateRecruitmentUploadFiles('FILES', [image({ size: RECRUITMENT_MAX_IMAGE_BYTES + 1 })])[0], /100 MB/)
+  assert.match(validateRecruitmentUploadFiles('FILES', [image({ size: RECRUITMENT_MAX_IMAGE_BYTES + 1 })])[0], /100 MiB/)
 })
 
 test('FILES rejects empty, zero-byte, spoofed and unsupported files', () => {

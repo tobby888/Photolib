@@ -189,7 +189,9 @@ export default function RecruitmentDetailPage() {
       : now.isBefore(dayjs(task.startAt)) ? '还没到开始时间'
         : !now.isBefore(dayjs(task.endAt)) ? '已过报名截止时间' : '正在接收报名'
 
-  return <DataState loading={taskState.loading} error={undefined} empty={!task} onRetry={taskState.reload}>
+  return <DataState loading={taskState.loading} error={undefined} empty={!task} onRetry={taskState.reload}
+    emptyText="找不到这次招募"
+    emptyHint="它可能已经被删除了，回列表看看还有哪些在进行。">
     {task && <>
       <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/recruitments')}>返回招募列表</Button>
       <section className="project-detail-hero" style={{ marginTop: 10 }}>
@@ -247,7 +249,9 @@ export default function RecruitmentDetailPage() {
             </Typography.Paragraph>}
             <DataState loading={applications.loading} error={applications.error}
               empty={!applications.data.items.length && !studentIdFilter}
-              onRetry={applications.reload}>
+              onRetry={applications.reload}
+              emptyText="还没有人报名"
+              emptyHint="把报名页链接发给同学，交上来的报名会实时出现在这里。">
               {!applications.data.items.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE}
                 description={`没有学号包含“${studentIdFilter}”的报名`} /> : <>
                 <div>

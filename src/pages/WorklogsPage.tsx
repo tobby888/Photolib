@@ -156,7 +156,8 @@ export default function WorklogsPage() {
           setExportOpen(false)
           return
         }
-        if (result.job.status === 'FAILED') throw new Error(result.job.errorMessage || '导出失败')
+        if (result.job.status === 'FAILED') throw new Error(result.job.errorMessage
+          || '工时文件没能生成。这个日期范围内可能没有工时记录，换个范围再试一次。')
         await wait(1000)
       }
       message.info('导出任务仍在处理中，请稍后重试')
@@ -221,7 +222,13 @@ export default function WorklogsPage() {
       </span>
     </Card>
     <Card>
-      <DataState loading={loading} error={error} empty={!data.items.length} onRetry={reload}>
+      <DataState loading={loading} error={error} empty={!data.items.length} onRetry={reload}
+        emptyText={filters.status ? '没有这个状态的工时记录' : reviewer ? '还没有待审核的工时' : '还没有工时记录'}
+        emptyHint={filters.status
+          ? '清掉状态筛选就能看到全部。'
+          : reviewer
+            ? '成员提交工时后会出现在这里，等你确认或退回。'
+            : '拍完、修完就来填一笔，导出统计时用的就是这些记录。'}>
         <ContentFitTable
           rowKey="id"
           dataSource={data.items}

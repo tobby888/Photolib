@@ -136,7 +136,9 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
       } else if (photo.status === 'PROCESSING') {
         message.warning('图片仍在后台处理，请稍后在图片库刷新查看')
       } else {
-        message.error(photo.failureReason ? `图片处理失败：${photo.failureReason}` : '图片处理失败，请重新上传')
+        message.error(photo.failureReason
+          ? `这张图片没能处理完成：${photo.failureReason}`
+          : '这张图片没能处理完成，可能是文件损坏。换一张 JPG / PNG 再传一次。')
       }
       setUploadOpen(false); uploadForm.resetFields(); await reload()
     } catch (e) { message.error((e as Error).message) }
@@ -211,7 +213,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
     if (!selectedIds.length) return
     modal.confirm({
       title: `批量删除 ${selectedIds.length} 张图片`,
-      content: '删除后图片记录和存储对象将被清理；已被引图片不能直接删除。',
+      content: '删除后图片记录和存储对象将被清理；已采纳图片不能直接删除。',
       okText: '确认删除', okButtonProps: { danger: true }, cancelText: '取消',
       onOk: async () => {
         await api({ method: 'POST', url: '/photos/batch-delete', data: { photoIds: selectedIds } })
@@ -299,7 +301,15 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
       </Space>
       <Typography.Text type="secondary">共 {data.total} 张图片</Typography.Text>
     </Card>
-    <DataState loading={loading} error={error} empty={!data.items.length} onRetry={reload}>
+    <DataState loading={loading} error={error} empty={!data.items.length} onRetry={reload}
+      emptyText={filters.keyword
+        ? `没有匹配“${filters.keyword}”的图片`
+        : favoritesOnly ? '还没有收藏任何图片'
+          : filters.status === 'AVAILABLE' ? '图库里还没有可用图片' : '这个状态下没有图片'}
+      emptyHint={filters.keyword
+        ? '标题、描述和标签都会被搜索，换个词或清空搜索框再看看。'
+        : favoritesOnly ? '在图片上点收藏，之后就能在这里集中查看。'
+          : filters.status === 'AVAILABLE' ? '上传的图片处理完成后会出现在这里。' : '换一个状态筛选试试。'}>
       <Row gutter={[16, 20]} className="photo-grid">
         {data.items.map(photo => <Col xs={24} sm={12} lg={8} xxl={6} key={photo.id}>
           <Card className={`photo-card${selectedIds.includes(photo.id) ? ' photo-card-selected' : ''}`} hoverable cover={<div
@@ -336,7 +346,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
               </Space>
             </div>
             <div className="photo-badges"><Space size={4}><StatusTag value={photo.status} />
-              {!!photo.adoptionCount && <Tag color="gold">已采用 × {photo.adoptionCount}</Tag>}
+              {!!photo.adoptionCount && <Tag color="gold">已采纳 × {photo.adoptionCount}</Tag>}
             </Space></div>
           </div>}>
             <Typography.Title level={5} ellipsis>{photo.title || '未命名图片'}</Typography.Title>
@@ -396,7 +406,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
           将所选 {projectPickerPhotos.length} 张图片加入一个进行中的选题项目。添加后图片只会进入项目相册，
-          不会自动标记为被引。
+          不会自动标记为采纳。
         </Typography.Paragraph>
         <Input.Search allowClear placeholder="搜索项目名称或说明" style={{ maxWidth: 420 }}
           onSearch={keyword => {

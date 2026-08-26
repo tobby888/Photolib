@@ -191,7 +191,9 @@ export default function PhotoDetailPage({ favoritesOnly = false }: { favoritesOn
           onClick={() => void download()}>下载原图</Button>}
       </>} />
 
-    <DataState loading={loading} error={error} empty={!photo} onRetry={reload}>
+    <DataState loading={loading} error={error} empty={!photo} onRetry={reload}
+      emptyText="找不到这张图片"
+      emptyHint="它可能已经被删除，或者不在你有权查看的校区里。">
       {photo && <Row gutter={[24, 24]} className="photo-detail-layout">
         <Col xs={24} xl={16}>
           <Space direction="vertical" size="large" style={{ width: '100%' }}>
@@ -225,8 +227,8 @@ export default function PhotoDetailPage({ favoritesOnly = false }: { favoritesOn
             </Space>}
             <Descriptions column={1} size="small" items={[
               { key: 'status', label: '状态', children: <StatusTag value={photo.status} /> },
-              { key: 'adoption', label: '采用状态', children: photo.adoptionCount
-                ? <Tag color="gold">已采用 × {photo.adoptionCount}</Tag> : '未采用' },
+              { key: 'adoption', label: '采纳状态', children: photo.adoptionCount
+                ? <Tag color="gold">已采纳 × {photo.adoptionCount}</Tag> : '未采纳' },
               { key: 'projects', label: '关联项目', children: photo.relatedProjects?.length
                 ? <Space size={4} wrap>{photo.relatedProjects.map(project =>
                     <Tag key={project.id} color="blue">{project.title}</Tag>)}</Space>
@@ -253,7 +255,7 @@ export default function PhotoDetailPage({ favoritesOnly = false }: { favoritesOn
       cancelButtonProps={{ disabled: projectSaving }} destroyOnHidden>
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          添加后图片只会进入项目相册，不会自动标记为被引。
+          添加后图片只会进入项目相册，不会自动标记为采纳。
         </Typography.Paragraph>
         <Input.Search allowClear placeholder="搜索项目名称或说明" style={{ maxWidth: 420 }}
           onSearch={keyword => {

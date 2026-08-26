@@ -79,7 +79,7 @@ export function validateRecruitmentUploadFiles(
     }
     if (codePointLength(file.name) > 255) errors.push(`${file.name}：文件名太长了，请改短一点（255 字以内）`)
     if (file.size === 0) errors.push(`${file.name}：这个文件是空的`)
-    if (file.size > RECRUITMENT_MAX_IMAGE_BYTES) errors.push(`${file.name}：单张不能超过 100 MB`)
+    if (file.size > RECRUITMENT_MAX_IMAGE_BYTES) errors.push(`${file.name}：单张不能超过 100 MiB`)
   })
   return errors
 }

@@ -136,6 +136,10 @@ button, input, textarea, select { font-family: inherit; }
 .route-loading { min-height: 45vh; display: grid; place-items: center; color: #78827f; font-size: 13px; letter-spacing: .08em; }
 .preview-generation-alert { margin-bottom: 18px; }
 
+.empty-copy { display: flex; flex-direction: column; gap: 4px; max-width: 420px; margin: 0 auto; }
+.empty-copy strong { font-weight: 600; color: rgba(0, 0, 0, .72); }
+.empty-copy span { font-size: 13px; line-height: 1.6; }
+
 .page-heading, .welcome-panel {
   display: flex;
   align-items: flex-end;

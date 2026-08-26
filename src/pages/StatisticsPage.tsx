@@ -41,7 +41,8 @@ export default function StatisticsPage() {
           message.success('统计文件已生成')
           return
         }
-        if (result.job.status === 'FAILED') throw new Error(result.job.errorMessage || '导出失败')
+        if (result.job.status === 'FAILED') throw new Error(result.job.errorMessage
+          || '统计文件没能生成。这个时间范围内可能没有可统计的记录，换个范围再试一次。')
         await wait(1000)
       }
       message.info('导出任务仍在处理中，请稍后重试')
@@ -50,7 +51,7 @@ export default function StatisticsPage() {
   }
   const maxAdopted = Math.max(1, ...data.members.map(m => m.adoptedCount))
   return <>
-    <PageTitle eyebrow="INSIGHTS" title="数据统计" description="按选题结束时间统计工时，并对应每位成员的图片被引数。"
+    <PageTitle eyebrow="INSIGHTS" title="数据统计" description="按选题结束时间统计工时，并对应每位成员的图片采纳数。"
       extra={<Button type="primary" size="large" icon={<DownloadOutlined />} loading={exporting} onClick={() => void exportData()}>导出 XLSX</Button>} />
     <Card className="filter-card">
       <Space><span>选题结束时间</span><DatePicker.RangePicker value={[dayjs(range[0]), dayjs(range[1])]}
@@ -60,7 +61,7 @@ export default function StatisticsPage() {
       <Row gutter={[16, 16]} className="metric-grid">
         <Col xs={12} xl={6}><Card><Statistic title="项目数" value={data.overview.projectCount || 0} prefix={<FolderOutlined />} /></Card></Col>
         <Col xs={12} xl={6}><Card><Statistic title="图库图片" value={data.overview.photoCount || 0} prefix={<CameraOutlined />} /></Card></Col>
-        <Col xs={12} xl={6}><Card><Statistic title="被采纳图片" value={data.overview.adoptedPhotoCount || data.overview.adoptionCount || 0} prefix={<TrophyOutlined />} /></Card></Col>
+        <Col xs={12} xl={6}><Card><Statistic title="已采纳图片" value={data.overview.adoptedPhotoCount || data.overview.adoptionCount || 0} prefix={<TrophyOutlined />} /></Card></Col>
         <Col xs={12} xl={6}><Card><Statistic title="总工时" value={Math.round(((data.overview.shootingMinutes || 0) + (data.overview.retouchingMinutes || 0)) / 60)} suffix="小时" prefix={<ClockCircleOutlined />} /></Card></Col>
       </Row>
       <Row gutter={[16, 16]}>
@@ -74,7 +75,7 @@ export default function StatisticsPage() {
         <Col xs={24} xl={15}><Card title="成员工作统计">
           <ContentFitTable rowKey={member => `${member.studentId}-${member.campus}`} dataSource={data.members} pagination={false} columns={[
             { title: '成员', dataIndex: 'displayName' }, { title: '学号', dataIndex: 'studentId' }, { title: '校区', dataIndex: 'campus' },
-            { title: '被采纳', dataIndex: 'adoptedCount', render: value => `${value} 张`, sorter: (a,b) => a.adoptedCount - b.adoptedCount },
+            { title: '已采纳', dataIndex: 'adoptedCount', render: value => `${value} 张`, sorter: (a,b) => a.adoptedCount - b.adoptedCount },
             { title: '拍摄（小时）', dataIndex: 'shootingMinutes', render: formatHours },
             { title: '修图（小时）', dataIndex: 'retouchingMinutes', render: formatHours },
             { title: '合计（小时）', dataIndex: 'totalMinutes', render: value => <strong>{formatHours(value)}</strong> },

@@ -26,7 +26,7 @@ export const DIRECTORY_ACTION_MIN_WIDTH = calculateActionColumnWidth([[
 export const REQUEST_ACTION_MIN_WIDTH = calculateActionColumnWidth([
   [
     { label: '交付图片', icon: true },
-    { label: '打回', icon: true },
+    { label: '退回', icon: true },
     { label: '确认完成' },
     { label: '关闭' },
     { label: '删除', icon: true },

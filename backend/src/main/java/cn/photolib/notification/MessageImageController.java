@@ -38,7 +38,7 @@ public class MessageImageController {
                                      @AuthenticationPrincipal AuthenticatedUser user) throws IOException {
         if (file.isEmpty()) throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择图片");
         if (file.getSize() > MAX_SIZE) {
-            throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "消息图片不能超过 5 MB");
+            throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "消息图片不能超过 5 MiB");
         }
         if (!IMAGE_TYPES.contains(file.getContentType())) {
             throw new BusinessException(ErrorCode.UNSUPPORTED_FILE_TYPE, "仅支持 JPEG、PNG 或 WebP 图片");

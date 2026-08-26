@@ -155,7 +155,11 @@ export default function RecruitmentsPage() {
           onChange={(status = '') => setFilters(current => ({ ...current, page: 1, status }))} />
       </Space>
     </Card>
-    <DataState loading={tasks.loading} error={tasks.error} empty={!tasks.data.items.length} onRetry={tasks.reload}>
+    <DataState loading={tasks.loading} error={tasks.error} empty={!tasks.data.items.length} onRetry={tasks.reload}
+      emptyText={filters.keyword || filters.status ? '没有符合筛选条件的招募' : '还没有发起过招募'}
+      emptyHint={filters.keyword || filters.status
+        ? '换个关键词或状态再看看。'
+        : '做一张报名表、定好报名时间，同学交上来的报名都会汇总在这里。'}>
       <Row gutter={[16, 16]} style={{ marginBottom: 22 }}>
         {tasks.data.items.map(task => {
           const status = recruitmentStatusDisplay(task.status, task.startAt, task.endAt)

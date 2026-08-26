@@ -89,7 +89,7 @@ export default function BatchUploadPage() {
       return
     }
     if (file.size > ZIP_MAX_BYTES) {
-      message.error('ZIP 压缩包不得超过 1.5GB')
+      message.error('ZIP 压缩包不得超过 1.5 GB')
       return
     }
     setSubmitting(true)
@@ -122,7 +122,8 @@ export default function BatchUploadPage() {
       const extracted = await pollBatch(ticket.batchId,
         status => status === 'WAITING_METADATA' || status === 'FAILED')
       if (extracted.batch.status === 'FAILED') {
-        throw new Error(extracted.batch.failureReason || 'ZIP 解压失败')
+        throw new Error(extracted.batch.failureReason
+          || '压缩包没能解开。请确认它是完整的 .zip，且里面有 JPG / PNG 图片，然后重新上传。')
       }
 
       setPhase('organizing')
@@ -147,7 +148,8 @@ export default function BatchUploadPage() {
       } else if (finished.batch.status === 'PARTIALLY_SUCCEEDED') {
         message.warning(`已完成 ${finished.batch.successCount} 张，失败 ${finished.batch.failureCount} 张`)
       } else {
-        throw new Error(finished.batch.failureReason || '批量处理失败')
+        throw new Error(finished.batch.failureReason
+          || '这批图片没能全部处理完成。先回图片库看看已经入库的部分，剩下的重新传一次。')
       }
     } catch (error) {
       setPhase('finished')
@@ -186,12 +188,12 @@ export default function BatchUploadPage() {
           <Upload.Dragger accept=".zip,application/zip" maxCount={1} disabled={submitting}
             beforeUpload={(file) => {
               if (!file.name.toLowerCase().endsWith('.zip')) message.error('仅支持 ZIP 压缩包')
-              if (file.size > ZIP_MAX_BYTES) message.error('ZIP 压缩包不得超过 1.5GB')
+              if (file.size > ZIP_MAX_BYTES) message.error('ZIP 压缩包不得超过 1.5 GB')
               return false
             }}>
             <p className="ant-upload-drag-icon"><InboxOutlined /></p>
             <p className="ant-upload-text">拖入 ZIP，或点击选择文件</p>
-            <p className="ant-upload-hint">最大 1.5GB；包内最多 100 张 JPG / PNG；单张不超过 100MiB</p>
+            <p className="ant-upload-hint">最大 1.5 GB；包内最多 100 张 JPG / PNG；单张不超过 100 MiB</p>
           </Upload.Dragger>
         </Form.Item>
         <Form.Item label="拍摄者" name="photographerContactId"

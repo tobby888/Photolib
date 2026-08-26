@@ -43,7 +43,7 @@ public class DescriptionImageController {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择图片");
         }
         if (file.getSize() > MAX_SIZE) {
-            throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "说明图片不能超过 5 MB");
+            throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "说明图片不能超过 5 MiB");
         }
         String contentType = file.getContentType();
         if (!IMAGE_TYPES.contains(contentType)) {

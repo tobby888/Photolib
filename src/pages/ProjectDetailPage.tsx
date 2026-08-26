@@ -128,7 +128,7 @@ export default function ProjectDetailPage() {
             : item),
           adoptions: current.adoptions.filter(item => item.id !== adoption.id),
         }))
-        message.success('已取消被引标注')
+        message.success('已取消采纳标注')
       } else {
         const created = await api<Adoption[]>({
           method: 'POST',
@@ -149,7 +149,7 @@ export default function ProjectDetailPage() {
             ...created,
           ],
         }))
-        message.success('已标注为被引图片')
+        message.success('已标注为采纳图片')
       }
     } catch (reason) {
       message.error((reason as Error).message)
@@ -252,7 +252,7 @@ export default function ProjectDetailPage() {
         url: `/projects/${projectId}/photos`,
         data: { photoIds: selectedPhotoIds },
       })
-      message.success(`已向项目相册添加 ${selectedPhotoIds.length} 张图片，请按需标注被引`)
+      message.success(`已向项目相册添加 ${selectedPhotoIds.length} 张图片，请按需标注采纳`)
       setGalleryOpen(false)
       setSelectedPhotoIds([])
       await reload()
@@ -321,7 +321,9 @@ export default function ProjectDetailPage() {
   ).length
   const addableGalleryPhotos = galleryPhotos.items.filter(photo =>
     !photo.relatedProjectIds?.some(id => String(id) === projectId))
-  return <DataState loading={loading} error={error} empty={!project} onRetry={reload}>
+  return <DataState loading={loading} error={error} empty={!project} onRetry={reload}
+    emptyText="找不到这个项目"
+    emptyHint="它可能已经被删除，或者你参与的需求都不在这个项目下。">
     {project && <>
       <Breadcrumb className="detail-breadcrumb" items={[
         { title: <a onClick={() => navigate('/projects')}>选题项目</a> },
@@ -439,7 +441,7 @@ export default function ProjectDetailPage() {
                   </div>
                   <div className="photo-badges"><Space size={4}>
                     <StatusTag value={photo.status} />
-                    {adopted && <Tag color="gold">已被引</Tag>}
+                    {adopted && <Tag color="gold">已采纳</Tag>}
                   </Space></div>
                 </div>}
               >
@@ -460,7 +462,7 @@ export default function ProjectDetailPage() {
                   disabled={project.status !== 'ACTIVE' || photo.status !== 'AVAILABLE'}
                   onClick={() => void toggleAdoption(photo)}
                 >
-                  {adopted ? '取消被引' : '标注图片被引'}
+                  {adopted ? '取消采纳' : '标注为采纳'}
                 </Button>}
               </Card>
             </Col>
@@ -515,7 +517,7 @@ export default function ProjectDetailPage() {
         confirmLoading={saving}>
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
           <Typography.Paragraph type="secondary">
-            选择你有权查看的可用图库图片。添加后只会进入项目相册，默认不标记为被引；
+            选择你有权查看的可用图库图片。添加后只会进入项目相册，默认不标记为采纳；
             管理员可在项目图片中按需标注。
           </Typography.Paragraph>
           <Input.Search allowClear placeholder="搜索图片标题、描述或标签"

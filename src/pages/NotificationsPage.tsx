@@ -54,7 +54,9 @@ export default function NotificationsPage() {
     <PageTitle eyebrow="MESSAGE CENTER" title="消息中心" description="查看工作通知与管理消息。"
       extra={canSend && <Button type="primary" icon={<SendOutlined />} onClick={() => setOpen(true)}>发送消息</Button>} />
     <Card>
-      <DataState loading={loading} error={error} empty={!data.length} onRetry={reload}>
+      <DataState loading={loading} error={error} empty={!data.length} onRetry={reload}
+        emptyText="还没有收到消息"
+        emptyHint="需求发布、工时审核这些事发生时，通知会送到这里。">
         <List dataSource={data} renderItem={(item) =>
           <List.Item className="message-list-item" onClick={() => navigate(`/notifications/${item.id}`)}>
             <Badge dot={!item.readAt} offset={[-3, 4]}>

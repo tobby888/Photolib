@@ -88,7 +88,11 @@ export default function ManagerCampusesPage() {
         </Space>
       </div>
       <DataState loading={loading || campusesLoading} error={error || campusesError}
-        empty={!filteredUsers.length} onRetry={() => { void reload(); void reloadCampuses() }}>
+        empty={!filteredUsers.length} onRetry={() => { void reload(); void reloadCampuses() }}
+        emptyText={keyword ? `没有匹配“${keyword}”的负责人` : '还没有校区范围的账号'}
+        emptyHint={keyword
+          ? '姓名和账号都会被搜索，换个词再试试。'
+          : '在“系统管理 - 权限管理”里把账号设为校区范围，才能在这里指定负责校区。'}>
         <ContentFitTable
           rowKey="id"
           dataSource={filteredUsers}

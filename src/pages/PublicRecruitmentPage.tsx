@@ -294,7 +294,7 @@ function PublicTaskForm({ task }: { task: PublicRecruitmentTask }) {
         <p className="ant-upload-text">{uploadMode === 'ZIP' ? '把 ZIP 拖到这里，或点一下选择' : '把照片拖到这里，或点一下选择'}</p>
         <p className="ant-upload-hint">{uploadMode === 'ZIP'
           ? '一个 ZIP，不超过 1.5 GB，里面最多放 100 张 JPG / PNG'
-          : '一次 1–100 张 JPG / PNG，单张不超过 100 MB，我们会保留你的原图'}</p>
+          : '一次 1–100 张 JPG / PNG，单张不超过 100 MiB，我们会保留你的原图'}</p>
       </Upload.Dragger>
     </Form.Item>
 

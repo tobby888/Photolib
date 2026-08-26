@@ -119,7 +119,7 @@ export default function AdminPage() {
       return
     }
     if (file.size > 512 * 1024) {
-      message.error('图标不能超过 512 KB')
+      message.error('图标不能超过 512 KiB')
       return
     }
     try {
@@ -149,7 +149,7 @@ export default function AdminPage() {
       return
     }
     if (file.size > 512 * 1024) {
-      message.error('图标不能超过 512 KB')
+      message.error('图标不能超过 512 KiB')
       return
     }
     updateScheduledIcon(key, { file })
@@ -279,7 +279,7 @@ export default function AdminPage() {
                     ...(branding.customIconUrl ? [{ value: 'custom', label: '已上传的自定义图片' }] : []),
                   ]} />
                 </Form.Item>
-                <Form.Item label="上传自定义图标" extra="支持 PNG、JPEG；文件不超过 512 KB，尺寸不超过 1024 × 1024 像素。">
+                <Form.Item label="上传自定义图标" extra="支持 PNG、JPEG；文件不超过 512 KiB，尺寸不超过 1024 × 1024 像素。">
                   <Upload accept="image/png,image/jpeg" maxCount={1} showUploadList={false}
                     beforeUpload={file => { void uploadIcon(file); return false }}>
                     <Button icon={<UploadOutlined />}>选择图片并上传</Button>
@@ -360,7 +360,11 @@ export default function AdminPage() {
               />
               <Button type="primary" icon={<PlusOutlined />} onClick={() => setUserOpen(true)}>创建账号</Button>
             </Space></div>
-          <DataState loading={loading} error={error} empty={!users.items.length} onRetry={reload}>
+          <DataState loading={loading} error={error} empty={!users.items.length} onRetry={reload}
+            emptyText={userKeyword ? `没有匹配“${userKeyword}”的账号` : '还没有创建任何成员账号'}
+            emptyHint={userKeyword
+              ? '姓名、账号和邮箱都会被搜索，换个词再试试。'
+              : '系统不开放注册，成员账号都要在这里创建。'}>
             <ContentFitTable rowKey="id" dataSource={users.items} pagination={{ pageSize: 12 }} columns={[
               { title: '成员', render: (_, item) => <Space>
                 <UserAvatar size={38} avatarUrl={item.avatarUrl} label={item.displayName}
