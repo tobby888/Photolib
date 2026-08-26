@@ -19,6 +19,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -27,6 +28,9 @@ import java.util.Map;
 @Service
 @RequiredArgsConstructor
 public class RecruitmentApplicationService {
+    /** 同步导出的行数上限；超过就要求先缩小筛选范围，而不是截断结果。 */
+    static final int EXPORT_ROW_LIMIT = 10_000;
+
     private final RecruitmentApplicationMapper mapper;
     private final RecruitmentDraftService draftService;
     private final RecruitmentTaskService taskService;
@@ -105,6 +109,39 @@ public class RecruitmentApplicationService {
                 .toList();
         return new PageResponse<>(items, safePage, safePageSize, total,
                 total == 0 ? 0 : (total + safePageSize - 1) / safePageSize);
+    }
+
+    /**
+     * 导出当前筛选条件下的报名，供部内打印后带到面试现场核对。
+     * 筛选口径必须与 {@link #list} 完全一致，否则页面上看到的和导出的会对不上。
+     */
+    public ApplicationExport export(long taskId, String studentIdFragment, AuthenticatedUser user) {
+        requireView(user);
+        RecruitmentTaskEntity task = taskService.requireTask(taskId);
+        String normalizedFragment = RecruitmentStudentId.normalizeSearchFragment(studentIdFragment);
+        // 同步生成、整表进内存，所以先数一遍：宁可让用户按学号缩小范围，
+        // 也不要悄悄只导出前一部分，让面试现场少叫几个人。
+        long total = mapper.countByTask(task.getId(), normalizedFragment);
+        if (total > EXPORT_ROW_LIMIT) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                    "一次最多导出 " + EXPORT_ROW_LIMIT + " 条报名，请先按学号缩小范围再导出");
+        }
+        List<RecruitmentApplicationEntity> applications =
+                mapper.findByTask(task.getId(), normalizedFragment, EXPORT_ROW_LIMIT, 0);
+        Map<String, Integer> attachmentCounts = attachmentReader.attachmentCountsByDraft(
+                applications.stream().map(RecruitmentApplicationEntity::getDraftId).toList());
+        List<RecruitmentApplicationExport.Entry> entries = applications.stream()
+                .map(application -> new RecruitmentApplicationExport.Entry(
+                        application.getStudentId(), application.getSubmittedAt(),
+                        attachmentCounts.getOrDefault(application.getDraftId(), 0),
+                        schemaValidator.readSchema(application.getFormSchemaJson()),
+                        schemaValidator.readAnswers(application.getAnswersJson())))
+                .toList();
+        byte[] content = RecruitmentApplicationExport.workbook(
+                schemaValidator.readSchema(task.getFormSchemaJson()), entries);
+        String fileName = RecruitmentApplicationExport.fileName(task.getTitle(),
+                LocalDate.now(recruitmentClock));
+        return new ApplicationExport(fileName, content);
     }
 
     public ApplicationDetail get(String id, AuthenticatedUser user) {
@@ -211,6 +248,10 @@ public class RecruitmentApplicationService {
 
     public record ApplicationSummary(String id, Long taskId, String studentId,
                                      LocalDateTime submittedAt) {
+    }
+
+    /** 导出结果：文件名（含招募标题和导出日期）和 XLSX 字节流。 */
+    public record ApplicationExport(String fileName, byte[] content) {
     }
 
     public record ApplicationDetail(String id, Long taskId, String taskTitle,

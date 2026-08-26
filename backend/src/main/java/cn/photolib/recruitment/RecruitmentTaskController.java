@@ -12,6 +12,10 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -23,6 +27,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 
 @RestController
@@ -95,6 +100,23 @@ public class RecruitmentTaskController {
             @RequestParam(required = false) @Size(max = 64) String studentId,
             @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(applicationService.list(id, page, pageSize, studentId, user));
+    }
+
+    @GetMapping(value = "/{id}/applications/export",
+            produces = RecruitmentApplicationExport.CONTENT_TYPE)
+    @PreAuthorize("hasAuthority('RECRUITMENT_VIEW')")
+    ResponseEntity<byte[]> exportApplications(
+            @PathVariable long id,
+            @RequestParam(required = false) @Size(max = 64) String studentId,
+            @AuthenticationPrincipal AuthenticatedUser user) {
+        RecruitmentApplicationService.ApplicationExport export =
+                applicationService.export(id, studentId, user);
+        return ResponseEntity.ok()
+                // 文件名带中文，必须走 RFC 5987 编码，否则浏览器存成乱码。
+                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
+                        .filename(export.fileName(), StandardCharsets.UTF_8).build().toString())
+                .contentType(MediaType.parseMediaType(RecruitmentApplicationExport.CONTENT_TYPE))
+                .body(export.content());
     }
 
     record TaskRequest(@NotBlank @Size(max = 200) String title,
