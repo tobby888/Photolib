@@ -232,9 +232,12 @@ class RecruitmentCoreTests {
         assertThat(jdbc.sql("SELECT status FROM recruitment_draft WHERE id=:id")
                 .param("id", openDraft.draftId()).query(String.class).single())
                 .isEqualTo("EXPIRED");
+        // expires_at 是 DATETIME(6)：系统时钟的亚微秒部分入库时会四舍五入，
+        // 存进去的值可能比写它的那一刻晚最多 500ns。断言的是“关闭后立刻过期、
+        // 不再是未来的截止时间”，所以放开一微秒的入库取整误差。
         assertThat(jdbc.sql("SELECT expires_at FROM recruitment_draft WHERE id=:id")
                 .param("id", openDraft.draftId()).query(LocalDateTime.class).single())
-                .isBeforeOrEqualTo(LocalDateTime.now(clock));
+                .isBeforeOrEqualTo(LocalDateTime.now(clock).plusNanos(1_000));
     }
 
     @Test
