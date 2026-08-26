@@ -60,7 +60,7 @@ class BatchRequestPublisher {
                 WHERE u.enabled=TRUE AND u.deleted=FALSE AND pg.deleted=FALSE
                 """).param("campusId", campusId).query(Long.class).list()
                 .forEach(userId -> notifications.notifyUser(userId, "REQUEST_PUBLISHED",
-                        "新的图片需求", "<p>" + request.getTitle() + "</p>"));
+                        "新的图片需求", NotificationService.paragraphs(request.getTitle())));
         return request;
     }
 }

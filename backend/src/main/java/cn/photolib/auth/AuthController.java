@@ -1,7 +1,9 @@
 package cn.photolib.auth;
 
+import cn.photolib.audit.AuditInterceptor;
 import cn.photolib.common.api.ApiResponse;
 import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -19,19 +21,51 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.Map;
+
 @RestController
 @RequestMapping("/auth")
 @RequiredArgsConstructor
 public class AuthController {
     private static final String REFRESH_COOKIE = "photolib_refresh";
+    private static final int MAX_AUDITED_IDENTIFIER_LENGTH = 190;
     private final AuthService authService;
     private final AuthProperties properties;
+    private final LoginThrottle loginThrottle;
 
+    /**
+     * Throttling lives here rather than inside {@link AuthService#login} because a
+     * failed login unwinds that method's transaction; a counter written inside it
+     * would roll back with the failure and never accumulate.
+     */
     @PostMapping("/login")
-    ApiResponse<LoginResponse> login(@Valid @RequestBody LoginRequest request, HttpServletResponse response) {
-        AuthService.TokenPair pair = authService.login(request.username(), request.password());
+    ApiResponse<LoginResponse> login(@Valid @RequestBody LoginRequest request,
+                                     HttpServletRequest servletRequest,
+                                     HttpServletResponse response) {
+        String identifier = request.username();
+        String remoteAddress = servletRequest.getRemoteAddr();
+        // The audit interceptor records this request's outcome; give it the account
+        // that was targeted, so a guessing run is legible afterwards. Never the password.
+        servletRequest.setAttribute(AuditInterceptor.DETAIL_ATTRIBUTE,
+                Map.of("identifier", auditIdentifier(identifier)));
+        loginThrottle.requireNotLocked(identifier, remoteAddress);
+        AuthService.TokenPair pair;
+        try {
+            pair = authService.login(identifier, request.password());
+        } catch (RuntimeException failure) {
+            loginThrottle.recordFailure(identifier, remoteAddress);
+            throw failure;
+        }
+        loginThrottle.clearIdentifier(identifier);
         setRefreshCookie(response, pair.refreshToken());
         return ApiResponse.ok(toResponse(pair));
+    }
+
+    private static String auditIdentifier(String identifier) {
+        if (identifier == null) return "";
+        String trimmed = identifier.trim();
+        return trimmed.length() > MAX_AUDITED_IDENTIFIER_LENGTH
+                ? trimmed.substring(0, MAX_AUDITED_IDENTIFIER_LENGTH) : trimmed;
     }
 
     @PostMapping("/refresh")

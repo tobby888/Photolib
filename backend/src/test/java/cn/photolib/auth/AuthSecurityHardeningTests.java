@@ -24,7 +24,7 @@ class AuthSecurityHardeningTests {
         when(users.selectList(any())).thenReturn(List.of());
         when(encoder.matches(anyString(), anyString())).thenReturn(false);
         AuthService service = new AuthService(users, sessions, encoder,
-                new AuthProperties(Duration.ofMinutes(15), Duration.ofMinutes(30), true));
+                new AuthProperties(Duration.ofMinutes(15), Duration.ofMinutes(30), true, null));
 
         assertThatThrownBy(() -> service.login("missing", "password"))
                 .isInstanceOf(BusinessException.class);

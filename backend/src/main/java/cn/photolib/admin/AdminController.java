@@ -23,6 +23,7 @@ public class AdminController {
     private final AdminAlertMapper alertMapper;
 
     @GetMapping("/metadata/options")
+    @PreAuthorize("isAuthenticated()")
     ApiResponse<Map<String, Object>> options() {
         return ApiResponse.ok(Map.of(
                 "roles", UserRole.values(),

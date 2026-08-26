@@ -11,6 +11,7 @@ import cn.photolib.recruitment.mapper.RecruitmentTaskMapper;
 import cn.photolib.recruitment.model.RecruitmentFormSchema;
 import cn.photolib.recruitment.model.RecruitmentTaskEntity;
 import cn.photolib.recruitment.model.RecruitmentTaskStatus;
+import cn.photolib.recruitment.upload.RecruitmentUploadProperties;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,6 +27,7 @@ public class RecruitmentTaskService {
     private final RecruitmentTaskMapper mapper;
     private final RecruitmentDraftMapper draftMapper;
     private final RecruitmentFormSchemaValidator schemaValidator;
+    private final RecruitmentUploadProperties uploadProperties;
     private final Clock recruitmentClock;
 
     @Transactional
@@ -199,7 +201,9 @@ public class RecruitmentTaskService {
         return new PublicTaskView(task.getPublicId(), task.getTitle(), task.getIntroMarkdown(),
                 schemaValidator.readSchema(task.getFormSchemaJson()), task.getStudentIdLabel(),
                 task.getStudentIdHelp(), task.getUploadLabel(), task.getUploadHelp(),
-                Boolean.TRUE.equals(task.getUploadRequired()), task.getStartsAt(), task.getEndsAt());
+                Boolean.TRUE.equals(task.getUploadRequired()), task.getStartsAt(), task.getEndsAt(),
+                new UploadLimitsView(uploadProperties.maxImageCount(),
+                        uploadProperties.maxImageBytes(), uploadProperties.maxArchiveBytes()));
     }
 
     private TaskView toView(RecruitmentTaskEntity task) {
@@ -332,7 +336,17 @@ public class RecruitmentTaskService {
                                  String uploadHelp,
                                  boolean uploadRequired,
                                  LocalDateTime startsAt,
-                                 LocalDateTime endsAt) {
+                                 LocalDateTime endsAt,
+                                 UploadLimitsView uploadLimits) {
+    }
+
+    /**
+     * The quota the public application page must state and pre-check against. Served with the task so
+     * the browser cannot drift from what the server actually enforces — the copy
+     * and the constants used to be maintained in two places and disagreed.
+     */
+    public record UploadLimitsView(int maxImageCount, long maxImageBytes,
+                                   long maxArchiveBytes) {
     }
 
     public record TaskView(Long id,

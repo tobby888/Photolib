@@ -23,9 +23,10 @@ import java.util.zip.ZipInputStream;
 @Component
 public class SafeImageZipExtractor {
 
+    /** Extracts with the gallery quota, for signed-in bulk uploads. */
     public List<ExtractedImage> extract(InputStream source, DestinationFactory destinations)
             throws IOException {
-        return extract(source, destinations, null);
+        return extract(source, destinations, Limits.gallery(), null);
     }
 
     /** Applies a caller-specific Unicode code-point display-name limit. */
@@ -34,10 +35,21 @@ public class SafeImageZipExtractor {
         if (maxDisplayNameCodePoints < 1) {
             throw new IllegalArgumentException("文件名长度上限必须大于 0");
         }
-        return extract(source, destinations, Integer.valueOf(maxDisplayNameCodePoints));
+        return extract(source, destinations, Limits.gallery(),
+                Integer.valueOf(maxDisplayNameCodePoints));
+    }
+
+    /**
+     * Extracts under caller-supplied limits. Anonymous paths must pass their own
+     * quota rather than inheriting the gallery's, which is sized for members.
+     */
+    public List<ExtractedImage> extract(InputStream source, DestinationFactory destinations,
+                                        Limits limits) throws IOException {
+        return extract(source, destinations, limits, limits.maxFileNameCodePoints());
     }
 
     private List<ExtractedImage> extract(InputStream source, DestinationFactory destinations,
+                                         Limits limits,
                                          Integer maxDisplayNameCodePoints) throws IOException {
         List<ExtractedImage> extracted = new ArrayList<>();
         long expandedTotal = 0;
@@ -52,22 +64,25 @@ public class SafeImageZipExtractor {
                         : ImageUploadPolicy.safeDisplayFileName(baseName, maxDisplayNameCodePoints);
                 String contentType = ImageUploadPolicy.contentTypeFromFileName(originalFileName);
                 if (contentType == null) continue;
-                if (extracted.size() >= ImageUploadPolicy.MAX_IMAGE_COUNT) {
-                    throw new IllegalArgumentException("ZIP 内图片超过 100 张");
+                if (extracted.size() >= limits.maxImageCount()) {
+                    throw new IllegalArgumentException(
+                            "ZIP 内图片超过 " + limits.maxImageCount() + " 张");
                 }
 
                 Path destination = destinations.create(ImageUploadPolicy.extension(contentType));
                 try {
-                    CopiedFile copied = copyLimited(zip, destination);
+                    CopiedFile copied = copyLimited(zip, destination, limits);
                     expandedTotal = Math.addExact(expandedTotal, copied.size());
-                    if (expandedTotal > ImageUploadPolicy.MAX_EXPANDED_BYTES) {
-                        throw new IllegalArgumentException("ZIP 解压总大小超过 10 GiB");
+                    if (expandedTotal > limits.maxExpandedBytes()) {
+                        throw new IllegalArgumentException(
+                                "ZIP 解压总大小超过 " + ImageUploadPolicy.describe(limits.maxExpandedBytes()));
                     }
                     extracted.add(new ExtractedImage(originalFileName, destination,
                             contentType, copied.size(), copied.sha256()));
                 } catch (ArithmeticException exception) {
                     deleteQuietly(destination);
-                    throw new IllegalArgumentException("ZIP 解压总大小超过 10 GiB", exception);
+                    throw new IllegalArgumentException(
+                            "ZIP 解压总大小超过 " + ImageUploadPolicy.describe(limits.maxExpandedBytes()), exception);
                 } catch (IOException | RuntimeException exception) {
                     deleteQuietly(destination);
                     throw exception;
@@ -107,7 +122,8 @@ public class SafeImageZipExtractor {
         return result;
     }
 
-    private CopiedFile copyLimited(InputStream input, Path destination) throws IOException {
+    private CopiedFile copyLimited(InputStream input, Path destination, Limits limits)
+            throws IOException {
         MessageDigest digest;
         try {
             digest = MessageDigest.getInstance("SHA-256");
@@ -122,13 +138,37 @@ public class SafeImageZipExtractor {
             while ((read = input.read(buffer)) >= 0) {
                 if (read == 0) continue;
                 total += read;
-                if (total > ImageUploadPolicy.MAX_IMAGE_BYTES) {
-                    throw new IllegalArgumentException("单张图片超过 100 MiB");
+                if (total > limits.maxImageBytes()) {
+                    throw new IllegalArgumentException(
+                            "单张图片超过 " + ImageUploadPolicy.describe(limits.maxImageBytes()));
                 }
                 output.write(buffer, 0, read);
             }
         }
         return new CopiedFile(total, HexFormat.of().formatHex(digest.digest()));
+    }
+
+    /**
+     * Per-archive extraction quota.
+     *
+     * @param maxImageCount          images accepted before the archive is rejected
+     * @param maxImageBytes          largest single extracted image
+     * @param maxExpandedBytes       total expanded size, the guard against a zip bomb
+     * @param maxFileNameCodePoints  display-name truncation limit
+     */
+    public record Limits(int maxImageCount, long maxImageBytes, long maxExpandedBytes,
+                         int maxFileNameCodePoints) {
+        public Limits {
+            if (maxImageCount < 1 || maxImageBytes < 1 || maxExpandedBytes < 1
+                    || maxFileNameCodePoints < 1) {
+                throw new IllegalArgumentException("ZIP 解压限额必须为正数");
+            }
+        }
+
+        public static Limits gallery() {
+            return new Limits(ImageUploadPolicy.MAX_IMAGE_COUNT, ImageUploadPolicy.MAX_IMAGE_BYTES,
+                    ImageUploadPolicy.MAX_EXPANDED_BYTES, 255);
+        }
     }
 
     private void deleteQuietly(Path path) {

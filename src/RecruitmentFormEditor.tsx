@@ -15,6 +15,11 @@ import {
   type RecruitmentFormField,
   type RecruitmentFormSchema,
 } from './recruitmentForm'
+import {
+  RECRUITMENT_FALLBACK_UPLOAD_LIMITS,
+  describeBytes,
+  type RecruitmentUploadLimits,
+} from './recruitmentUpload'
 
 const fieldTypeOptions: { value: RecruitmentFieldType; label: string }[] = [
   { value: 'SHORT_TEXT', label: '单行文本' },
@@ -26,10 +31,18 @@ const fieldTypeOptions: { value: RecruitmentFieldType; label: string }[] = [
 
 const choiceTypes = new Set<RecruitmentFieldType>(['SINGLE_CHOICE', 'MULTIPLE_CHOICE'])
 
-export default function RecruitmentFormEditor({ value, onChange, disabled = false }: {
+export default function RecruitmentFormEditor({
+  value, onChange, disabled = false, limits = RECRUITMENT_FALLBACK_UPLOAD_LIMITS,
+}: {
   value?: RecruitmentFormSchema | string | null
   onChange?: (value: RecruitmentFormSchema) => void
   disabled?: boolean
+  /**
+   * Quota shown to the person building the form. Pass the task's own limits when
+   * one exists; the fallback matches the shipped defaults and is only right for a
+   * deployment that has not overridden them.
+   */
+  limits?: RecruitmentUploadLimits
 }) {
   const schema = normalizeRecruitmentFormSchema(value)
 
@@ -144,7 +157,8 @@ export default function RecruitmentFormEditor({ value, onChange, disabled = fals
           <Typography.Text>{schema.upload.required ? '必须交作品才能报名' : '不交作品也能报名'}</Typography.Text>
         </Space>
         <Typography.Text type="secondary">
-          同学可以一次传 1–100 张 JPG / PNG（单张不超过 100 MiB），也可以打包成一个不超过 1.5 GB 的 ZIP。原图保存，不压缩。
+          同学可以一次传 1–{limits.maxImageCount} 张 JPG / PNG（单张不超过 {describeBytes(limits.maxImageBytes)}），
+          也可以打包成一个不超过 {describeBytes(limits.maxArchiveBytes)} 的 ZIP。原图保存，不压缩。
         </Typography.Text>
       </Space>
     </Card>

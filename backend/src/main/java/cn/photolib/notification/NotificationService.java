@@ -17,6 +17,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.jsoup.Jsoup;
 import org.jsoup.safety.Safelist;
+import org.springframework.web.util.HtmlUtils;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
@@ -43,6 +44,26 @@ public class NotificationService {
     private static final Safelist SYSTEM_MAIL_HTML = Safelist.none()
             .addTags("p", "div", "br", "strong", "b", "em", "i")
             .preserveRelativeLinks(false);
+
+    /**
+     * Builds a notification body out of plain text, one paragraph per argument.
+     *
+     * <p>Callers must not concatenate user-controlled text into HTML themselves.
+     * {@link #notifyUser} does run every body through {@link #SYSTEM_MAIL_HTML},
+     * but that safelist is a backstop, not the contract: anyone widening it would
+     * silently turn every hand-rolled call site into an injection point, and
+     * nothing in those call sites would say so. Escaping here also keeps the
+     * notification faithful to the original text — a request title containing
+     * {@code <} or {@code &} used to be rewritten on its way to the reader.</p>
+     */
+    public static String paragraphs(String... texts) {
+        StringBuilder html = new StringBuilder();
+        for (String text : texts) {
+            if (text == null || text.isBlank()) continue;
+            html.append("<p>").append(HtmlUtils.htmlEscape(text.trim())).append("</p>");
+        }
+        return html.toString();
+    }
 
     @Transactional
     public void notifyUser(Long userId, String event, String subject, String html) {

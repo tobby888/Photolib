@@ -3,6 +3,7 @@ package cn.photolib.project;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.PageResponse;
 import cn.photolib.common.error.BusinessException;
+import cn.photolib.common.util.LikeFilter;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.photo.mapper.PhotoMapper;
 import cn.photolib.photo.model.PhotoEntity;
@@ -48,9 +49,11 @@ public class ProjectService {
     public PageResponse<ProjectEntity> list(int page, int pageSize, String keyword, ProjectStatus status,
                                             AuthenticatedUser user) {
         requirePermission(user, PermissionCode.PROJECT_VIEW);
+        String likeKeyword = LikeFilter.escape(keyword);
         LambdaQueryWrapper<ProjectEntity> query = Wrappers.<ProjectEntity>lambdaQuery()
-                .and(StringUtils.hasText(keyword), q -> q.like(ProjectEntity::getTitle, keyword)
-                        .or().like(ProjectEntity::getDescription, keyword))
+                .and(StringUtils.hasText(keyword), q -> q
+                        .apply(LikeFilter.contains("title"), likeKeyword)
+                        .or().apply(LikeFilter.contains("description"), likeKeyword))
                 .eq(status != null, ProjectEntity::getStatus, status);
 
         // For campus managers, restrict to projects they participate in

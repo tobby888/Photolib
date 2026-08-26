@@ -34,6 +34,7 @@ public class RecruitmentUploadService {
     private final ObjectStorageService storage;
     private final StorageProperties storageProperties;
     private final ApplicationEventPublisher events;
+    private final RecruitmentUploadProperties uploadProperties;
     private final Clock recruitmentClock;
 
     @Transactional
@@ -115,7 +116,7 @@ public class RecruitmentUploadService {
                     .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
                             "ZIP 尚未上传完成"));
             boolean invalidArchive = archive.size() <= 0
-                    || archive.size() > ImageUploadPolicy.MAX_ARCHIVE_BYTES
+                    || archive.size() > uploadProperties.maxArchiveBytes()
                     || archive.size() != batch.getArchiveSize()
                     || !"application/zip".equalsIgnoreCase(archive.contentType());
             if (invalidArchive) {
@@ -157,16 +158,18 @@ public class RecruitmentUploadService {
         }
         if (command.mode() == RecruitmentUploadMode.FILES) {
             if (command.files() == null || command.files().isEmpty()
-                    || command.files().size() > ImageUploadPolicy.MAX_IMAGE_COUNT) {
+                    || command.files().size() > uploadProperties.maxImageCount()) {
                 throw new BusinessException(ErrorCode.VALIDATION_ERROR,
-                        "FILES 模式需上传 1 至 100 张图片");
+                        "一次可上传 1 至 " + uploadProperties.maxImageCount() + " 张图片");
             }
             command.files().forEach(this::validateFile);
             return;
         }
         if (command.archiveSize() == null || command.archiveSize() <= 0
-                || command.archiveSize() > ImageUploadPolicy.MAX_ARCHIVE_BYTES) {
-            throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "ZIP 不得超过 1.5 GB");
+                || command.archiveSize() > uploadProperties.maxArchiveBytes()) {
+            throw new BusinessException(ErrorCode.FILE_TOO_LARGE,
+                    "压缩包不得超过 " + ImageUploadPolicy.describe(
+                            uploadProperties.maxArchiveBytes()));
         }
         String archiveName = command.archiveFileName();
         if (archiveName == null || archiveName.isBlank()
@@ -181,8 +184,10 @@ public class RecruitmentUploadService {
                 || file.fileName().codePointCount(0, file.fileName().length()) > 255) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "图片文件名不合法");
         }
-        if (file.size() <= 0 || file.size() > ImageUploadPolicy.MAX_IMAGE_BYTES) {
-            throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "单张图片不得超过 100 MiB");
+        if (file.size() <= 0 || file.size() > uploadProperties.maxImageBytes()) {
+            throw new BusinessException(ErrorCode.FILE_TOO_LARGE,
+                    "单张图片不得超过 " + ImageUploadPolicy.describe(
+                            uploadProperties.maxImageBytes()));
         }
         if (!ImageUploadPolicy.fileNameMatchesContentType(file.fileName(), file.contentType())) {
             throw new BusinessException(ErrorCode.UNSUPPORTED_FILE_TYPE, "仅支持 JPG 和 PNG");

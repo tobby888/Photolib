@@ -31,6 +31,7 @@ public class MessageImageController {
 
     private final MessageImageMapper mapper;
     private final ObjectStorageService storage;
+    private final MessageImageAuthorizationService authorization;
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasAuthority('MESSAGE_SEND')")
@@ -68,9 +69,11 @@ public class MessageImageController {
 
     @GetMapping("/{id}")
     @PreAuthorize("isAuthenticated()")
-    ResponseEntity<InputStreamResource> get(@PathVariable String id) {
+    ResponseEntity<InputStreamResource> get(@PathVariable String id,
+                                            @AuthenticationPrincipal AuthenticatedUser user) {
         MessageImageEntity image = mapper.selectById(id);
         if (image == null) return ResponseEntity.notFound().build();
+        authorization.requireReadable(image, user);
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.maxAge(java.time.Duration.ofDays(7)).cachePrivate())
                 .contentType(MediaType.parseMediaType(image.getContentType()))

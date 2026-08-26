@@ -22,7 +22,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.util.HtmlUtils;
 
 import java.time.LocalDateTime;
 import java.util.HashSet;
@@ -227,7 +226,7 @@ public class RequestService {
             mapper.updateById(request);
         }
         notifications.notifyUser(request.getCreatedBy(), "REQUEST_ACCEPTED",
-                "图片需求已被接受", "<p>" + request.getTitle() + "</p>");
+                "图片需求已被接受", NotificationService.paragraphs(request.getTitle()));
         return get(id);
     }
 
@@ -281,7 +280,7 @@ public class RequestService {
         updateChecked(request);
         clearReturnFields(id);
         notifications.notifyUser(request.getCreatedBy(), "REQUEST_SUBMITTED",
-                "图片需求已提交", "<p>" + request.getTitle() + "</p>");
+                "图片需求已提交", NotificationService.paragraphs(request.getTitle()));
         return get(id);
     }
 
@@ -323,9 +322,9 @@ public class RequestService {
         request.setVersion(version);
         updateChecked(request);
 
-        String notificationBody = "<p>需求“" + HtmlUtils.htmlEscape(request.getTitle())
-                + "”已被退回，请修改后重新提交。</p><p>退回原因："
-                + HtmlUtils.htmlEscape(normalizedReason) + "</p>";
+        String notificationBody = NotificationService.paragraphs(
+                "需求“" + request.getTitle() + "”已被退回，请修改后重新提交。",
+                "退回原因：" + normalizedReason);
         participantMapper.selectList(Wrappers.<RequestParticipantEntity>lambdaQuery()
                         .eq(RequestParticipantEntity::getRequestId, id))
                 .forEach(participant -> notifications.notifyUser(participant.getUserId(), "REQUEST_RETURNED",
@@ -421,7 +420,7 @@ public class RequestService {
                 WHERE u.enabled=TRUE AND u.deleted=FALSE AND pg.deleted=FALSE
                 """).param("campusId", request.getCampusId()).query(Long.class).list()
                 .forEach(userId -> notifications.notifyUser(userId, "REQUEST_PUBLISHED",
-                        "新的图片需求", "<p>" + request.getTitle() + "</p>"));
+                        "新的图片需求", NotificationService.paragraphs(request.getTitle())));
     }
 
     private void requireCampusAccess(PhotoRequestEntity request, AuthenticatedUser user) {

@@ -1,6 +1,30 @@
-export const RECRUITMENT_MAX_FILE_COUNT = 100
-export const RECRUITMENT_MAX_IMAGE_BYTES = 100 * 1024 * 1024
-export const RECRUITMENT_MAX_ZIP_BYTES = 1_500_000_000
+export interface RecruitmentUploadLimits {
+  maxImageCount: number
+  maxImageBytes: number
+  maxArchiveBytes: number
+}
+
+/**
+ * Only a fallback for a server that predates `uploadLimits` on the task payload.
+ * The real numbers come from the task itself — the browser must never state a
+ * quota the server does not actually enforce, which is what happened while these
+ * were maintained here as constants.
+ */
+export const RECRUITMENT_FALLBACK_UPLOAD_LIMITS: RecruitmentUploadLimits = {
+  maxImageCount: 20,
+  maxImageBytes: 20 * 1024 * 1024,
+  maxArchiveBytes: 200 * 1024 * 1024,
+}
+
+/** Formats a byte limit the way the backend states it (binary units). */
+export function describeBytes(bytes: number) {
+  const gib = 1024 ** 3
+  const mib = 1024 ** 2
+  if (bytes >= gib && bytes % gib === 0) return `${bytes / gib} GiB`
+  if (bytes >= mib && bytes % mib === 0) return `${bytes / mib} MiB`
+  if (bytes >= 1024 && bytes % 1024 === 0) return `${bytes / 1024} KiB`
+  return `${bytes} 字节`
+}
 
 export type RecruitmentUploadMode = 'FILES' | 'ZIP'
 
@@ -51,6 +75,7 @@ function codePointLength(value: string) {
 export function validateRecruitmentUploadFiles(
   mode: RecruitmentUploadMode,
   files: RecruitmentUploadFileLike[],
+  limits: RecruitmentUploadLimits = RECRUITMENT_FALLBACK_UPLOAD_LIMITS,
 ) {
   const errors: string[] = []
   if (!files.length) return ['还没有选文件哦']
@@ -61,11 +86,15 @@ export function validateRecruitmentUploadFiles(
     if (archive && !isZipUploadFile(archive)) errors.push('这里只收 .zip 压缩包，其他格式暂时不支持')
     if (archive && codePointLength(archive.name) > 255) errors.push('压缩包的文件名太长了，请改短一点（255 字以内）')
     if (archive?.size === 0) errors.push('这个压缩包是空的')
-    if (archive && archive.size > RECRUITMENT_MAX_ZIP_BYTES) errors.push('压缩包不能超过 1.5 GB，可以分开传或删掉几张再试')
+    if (archive && archive.size > limits.maxArchiveBytes) {
+      errors.push(`压缩包不能超过 ${describeBytes(limits.maxArchiveBytes)}，可以分开传或删掉几张再试`)
+    }
     return errors
   }
 
-  if (files.length > RECRUITMENT_MAX_FILE_COUNT) errors.push('一次最多传 100 张，请先挑一挑')
+  if (files.length > limits.maxImageCount) {
+    errors.push(`一次最多传 ${limits.maxImageCount} 张，请先挑一挑`)
+  }
   files.forEach(file => {
     const normalizedType = normalizedRecruitmentContentType(file)
     const fileExtension = extension(file.name)
@@ -79,7 +108,9 @@ export function validateRecruitmentUploadFiles(
     }
     if (codePointLength(file.name) > 255) errors.push(`${file.name}：文件名太长了，请改短一点（255 字以内）`)
     if (file.size === 0) errors.push(`${file.name}：这个文件是空的`)
-    if (file.size > RECRUITMENT_MAX_IMAGE_BYTES) errors.push(`${file.name}：单张不能超过 100 MiB`)
+    if (file.size > limits.maxImageBytes) {
+      errors.push(`${file.name}：单张不能超过 ${describeBytes(limits.maxImageBytes)}`)
+    }
   })
   return errors
 }

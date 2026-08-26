@@ -1,19 +1,20 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  RECRUITMENT_MAX_FILE_COUNT,
-  RECRUITMENT_MAX_IMAGE_BYTES,
-  RECRUITMENT_MAX_ZIP_BYTES,
+  RECRUITMENT_FALLBACK_UPLOAD_LIMITS,
   buildRecruitmentFilesRequest,
   buildRecruitmentZipRequest,
   inferRecruitmentUploadMode,
   isRecruitmentBatchTerminal,
   normalizeRecruitmentBatchStatus,
   normalizedRecruitmentContentType,
+  describeBytes,
   sha256Hex,
   validateRecruitmentUploadFiles,
   type RecruitmentUploadFileLike,
 } from '../src/recruitmentUpload.ts'
+
+const LIMITS = RECRUITMENT_FALLBACK_UPLOAD_LIMITS
 
 const image = (overrides: Partial<RecruitmentUploadFileLike> = {}): RecruitmentUploadFileLike => ({
   name: 'photo.jpg', type: 'image/jpeg', size: 1024, ...overrides,
@@ -28,13 +29,38 @@ test('infers ZIP only for one archive and uses FILES for image selections', () =
   ]), 'FILES')
 })
 
-test('FILES accepts exactly 100 images and the 100 MiB boundary', () => {
-  const files = Array.from({ length: RECRUITMENT_MAX_FILE_COUNT }, (_, index) => image({
-    name: `${index}.png`, type: 'image/png', size: RECRUITMENT_MAX_IMAGE_BYTES,
+test('FILES accepts the count and per-image boundary exactly, and rejects the next step', () => {
+  const files = Array.from({ length: LIMITS.maxImageCount }, (_, index) => image({
+    name: `${index}.png`, type: 'image/png', size: LIMITS.maxImageBytes,
   }))
   assert.deepEqual(validateRecruitmentUploadFiles('FILES', files), [])
-  assert.match(validateRecruitmentUploadFiles('FILES', [...files, image()])[0], /最多传 100/)
-  assert.match(validateRecruitmentUploadFiles('FILES', [image({ size: RECRUITMENT_MAX_IMAGE_BYTES + 1 })])[0], /100 MiB/)
+  assert.match(validateRecruitmentUploadFiles('FILES', [...files, image()])[0],
+    new RegExp(`最多传 ${LIMITS.maxImageCount}`))
+  assert.match(validateRecruitmentUploadFiles('FILES', [image({ size: LIMITS.maxImageBytes + 1 })])[0],
+    new RegExp(describeBytes(LIMITS.maxImageBytes)))
+})
+
+test('server-supplied limits override the fallback in both directions', () => {
+  const tighter = { maxImageCount: 2, maxImageBytes: 1024, maxArchiveBytes: 4096 }
+  const three = Array.from({ length: 3 }, (_, index) => image({ name: `${index}.jpg` }))
+  assert.match(validateRecruitmentUploadFiles('FILES', three, tighter)[0], /最多传 2/)
+  assert.match(validateRecruitmentUploadFiles('FILES', [image({ size: 1025 })], tighter)[0], /1 KiB/)
+  assert.match(
+    validateRecruitmentUploadFiles('ZIP', [{ name: 'w.zip', type: 'application/zip', size: 4097 }], tighter)[0],
+    /4 KiB/)
+
+  // A department that raises the quota must not be second-guessed by the browser.
+  const looser = { maxImageCount: 200, maxImageBytes: 300 * 1024 * 1024, maxArchiveBytes: 2 * 1024 ** 3 }
+  assert.deepEqual(
+    validateRecruitmentUploadFiles('FILES', [image({ size: 200 * 1024 * 1024 })], looser), [])
+})
+
+test('byte limits are described in the same binary units the backend states', () => {
+  assert.equal(describeBytes(20 * 1024 * 1024), '20 MiB')
+  assert.equal(describeBytes(200 * 1024 * 1024), '200 MiB')
+  assert.equal(describeBytes(2 * 1024 ** 3), '2 GiB')
+  assert.equal(describeBytes(512 * 1024), '512 KiB')
+  assert.equal(describeBytes(1500), '1500 字节')
 })
 
 test('FILES rejects empty, zero-byte, spoofed and unsupported files', () => {
@@ -47,10 +73,11 @@ test('FILES rejects empty, zero-byte, spoofed and unsupported files', () => {
   assert.deepEqual(validateRecruitmentUploadFiles('FILES', [image({ type: '' })]), [])
 })
 
-test('ZIP accepts 1.5GB exactly and rejects the next byte or multiple archives', () => {
-  const archive = { name: 'works.zip', type: 'application/zip', size: RECRUITMENT_MAX_ZIP_BYTES }
+test('ZIP accepts the archive boundary exactly and rejects the next byte or multiple archives', () => {
+  const archive = { name: 'works.zip', type: 'application/zip', size: LIMITS.maxArchiveBytes }
   assert.deepEqual(validateRecruitmentUploadFiles('ZIP', [archive]), [])
-  assert.match(validateRecruitmentUploadFiles('ZIP', [{ ...archive, size: RECRUITMENT_MAX_ZIP_BYTES + 1 }])[0], /1\.5 GB/)
+  assert.match(validateRecruitmentUploadFiles('ZIP', [{ ...archive, size: LIMITS.maxArchiveBytes + 1 }])[0],
+    new RegExp(describeBytes(LIMITS.maxArchiveBytes)))
   assert.ok(validateRecruitmentUploadFiles('ZIP', [archive, archive]).some(error => error.includes('一个压缩包')))
   assert.ok(validateRecruitmentUploadFiles('ZIP', [image()]).some(error => error.includes('只收 .zip')))
   assert.ok(validateRecruitmentUploadFiles('ZIP', [{ name: 'works.bin', type: 'application/zip', size: 10 }])

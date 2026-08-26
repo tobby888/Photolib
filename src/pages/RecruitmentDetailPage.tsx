@@ -232,7 +232,7 @@ export default function RecruitmentDetailPage() {
             ]} />
           </Card>
           <Card title="报名表长什么样" style={{ marginBottom: 16 }}>
-            <RecruitmentFormEditor value={task.formSchema} disabled />
+            <RecruitmentFormEditor value={task.formSchema} disabled limits={task.uploadLimits} />
           </Card>
         </Col>
         <Col xs={24} xl={15}>
@@ -296,7 +296,7 @@ export default function RecruitmentDetailPage() {
           <Form.Item label="招募说明" name="description"><MarkdownEditor allowImageUpload={false} /></Form.Item>
           <Form.Item label="报名表" name="formSchema"
             extra={task.status === 'DRAFT' ? undefined : '已经发布了，为了不影响正在填写的同学，题目、学号项和上传项不能再改；名称、说明和时间还可以调整。'}>
-            <RecruitmentFormEditor disabled={task.status !== 'DRAFT'} />
+            <RecruitmentFormEditor disabled={task.status !== 'DRAFT'} limits={task.uploadLimits} />
           </Form.Item>
         </Form>
       </Modal>

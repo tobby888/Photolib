@@ -130,7 +130,7 @@ public class WorklogService {
         worklog.setVersion(version);
         updateChecked(worklog);
         notifications.notifyUser(worklog.getUserId(), "WORKLOG_CONFIRMED",
-                "工时已确认", "<p>工时记录 #" + worklog.getId() + " 已确认</p>");
+                "工时已确认", NotificationService.paragraphs("工时记录 #" + worklog.getId() + " 已确认"));
         return mapper.selectById(id);
     }
 
@@ -149,7 +149,7 @@ public class WorklogService {
         worklog.setVersion(version);
         updateChecked(worklog);
         notifications.notifyUser(worklog.getUserId(), "WORKLOG_REJECTED",
-                "工时被退回", "<p>" + reason + "</p>");
+                "工时被退回", NotificationService.paragraphs("退回原因：" + reason));
         return mapper.selectById(id);
     }
 
