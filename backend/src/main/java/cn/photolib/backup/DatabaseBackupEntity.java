@@ -21,6 +21,7 @@ public class DatabaseBackupEntity {
     private String schemaVersion;
     private Integer migrationCount;
     private String errorMessage;
+    private String sourceFileName;
     private Long createdBy;
     private String createdByName;
     private LocalDateTime startedAt;

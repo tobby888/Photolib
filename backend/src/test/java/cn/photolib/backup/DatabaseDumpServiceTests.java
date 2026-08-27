@@ -160,6 +160,121 @@ class DatabaseDumpServiceTests {
                 .hasMessageContaining("缺少备份中的数据表");
     }
 
+    @Test
+    void acceptsABackupWhoseTablesAndColumnsMatchTheLiveSchema() throws Exception {
+        DataSource dataSource = freshDatabase();
+        execute(dataSource, "CREATE TABLE campus (id BIGINT PRIMARY KEY, code VARCHAR(32), name VARCHAR(64))");
+        execute(dataSource, "INSERT INTO campus VALUES (1, 'SOUTH', '南校区')");
+        DatabaseDumpService service = new DatabaseDumpService(dataSource);
+        ByteArrayOutputStream backup = new ByteArrayOutputStream();
+        service.dump(backup);
+
+        DatabaseDumpService.ValidationResult result =
+                service.validate(new ByteArrayInputStream(backup.toByteArray()));
+
+        assertThat(result.tableCount()).isEqualTo(1);
+        assertThat(result.rowCount()).isEqualTo(1);
+    }
+
+    @Test
+    void rejectsBackupsWhoseColumnsDoNotMatchTheLiveTable() throws Exception {
+        DataSource dataSource = freshDatabase();
+        execute(dataSource, "CREATE TABLE campus (id BIGINT PRIMARY KEY, code VARCHAR(32), name VARCHAR(64))");
+        DatabaseDumpService service = new DatabaseDumpService(dataSource);
+
+        assertThatThrownBy(() -> service.validate(archive(
+                manifest("campus"),
+                "{\"table\":\"campus\",\"columns\":[\"id\",\"code\"],\"types\":[-5,12]}",
+                "{\"endTable\":\"campus\",\"rows\":0}")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("缺少字段");
+
+        assertThatThrownBy(() -> service.validate(archive(
+                manifest("campus"),
+                "{\"table\":\"campus\",\"columns\":[\"id\",\"code\",\"name\",\"secret\"],"
+                        + "\"types\":[-5,12,12,12]}",
+                "{\"endTable\":\"campus\",\"rows\":0}")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("没有的字段");
+
+        // id 是 BIGINT，备份却声明成字符串：类型族不同，拒绝。
+        assertThatThrownBy(() -> service.validate(archive(
+                manifest("campus"),
+                "{\"table\":\"campus\",\"columns\":[\"id\",\"code\",\"name\"],\"types\":[12,12,12]}",
+                "{\"endTable\":\"campus\",\"rows\":0}")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("字段类型与当前表结构不一致");
+    }
+
+    @Test
+    void rejectsStructurallyBrokenBackupContent() throws Exception {
+        DataSource dataSource = freshDatabase();
+        execute(dataSource, "CREATE TABLE campus (id BIGINT PRIMARY KEY, code VARCHAR(32), name VARCHAR(64))");
+        DatabaseDumpService service = new DatabaseDumpService(dataSource);
+        String header = "{\"table\":\"campus\",\"columns\":[\"id\",\"code\",\"name\"],\"types\":[-5,12,12]}";
+
+        assertThatThrownBy(() -> service.validate(archive(manifest("campus"), header, "[1,\"SOUTH\"]")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("表头声明");
+        assertThatThrownBy(() -> service.validate(archive(manifest("campus"), header,
+                "[1,\"SOUTH\",\"南校区\"]", "{\"endTable\":\"campus\",\"rows\":5}")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("实际 1 行");
+        assertThatThrownBy(() -> service.validate(archive(manifest("campus"), header,
+                "[1,{\"nested\":true},\"南校区\"]", "{\"endTable\":\"campus\",\"rows\":1}")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("无法识别的字段取值");
+        assertThatThrownBy(() -> service.validate(archive(manifest("campus"), header)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("意外结束");
+        assertThatThrownBy(() -> service.validate(archive(manifest("campus"))))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("缺少清单声明的数据表");
+        assertThatThrownBy(() -> service.validate(archive(manifest("campus"), header,
+                "{\"endTable\":\"campus\",\"rows\":0}", header, "{\"endTable\":\"campus\",\"rows\":0}")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("重复出现");
+        assertThatThrownBy(() -> service.validate(archive("{\"format\":\"photolib-backup\",\"version\":1,"
+                + "\"schemaVersion\":\"unknown\",\"migrationCount\":0,\"tables\":[\"campus\"]}",
+                header, "[not json")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("无法解析");
+    }
+
+    @Test
+    void rejectsBackupsThatTryToRewriteSystemMaintainedTables() throws Exception {
+        DataSource dataSource = freshDatabase();
+        execute(dataSource, "CREATE TABLE database_backup (id VARCHAR(26) PRIMARY KEY)");
+        DatabaseDumpService service = new DatabaseDumpService(dataSource);
+
+        assertThatThrownBy(() -> service.validate(archive(manifest("database_backup"))))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("系统自身维护的数据表");
+    }
+
+    @Test
+    void rejectsBackupsTakenAgainstADifferentSchemaVersion() throws Exception {
+        DataSource dataSource = freshDatabase();
+        execute(dataSource, "CREATE TABLE campus (id BIGINT PRIMARY KEY)");
+        DatabaseDumpService service = new DatabaseDumpService(dataSource);
+
+        assertThatThrownBy(() -> service.validate(archive(
+                "{\"format\":\"photolib-backup\",\"version\":1,\"schemaVersion\":\"33\","
+                        + "\"migrationCount\":33,\"tables\":[\"campus\"]}")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("无法回滚");
+    }
+
+    private String manifest(String... tables) {
+        String names = String.join(",", java.util.Arrays.stream(tables).map(t -> '"' + t + '"').toList());
+        return "{\"format\":\"photolib-backup\",\"version\":1,\"schemaVersion\":\"unknown\","
+                + "\"migrationCount\":0,\"tables\":[" + names + "]}";
+    }
+
+    private ByteArrayInputStream archive(String... lines) {
+        return new ByteArrayInputStream(String.join("\n", lines).getBytes(StandardCharsets.UTF_8));
+    }
+
     private DataSource freshDatabase() {
         DriverManagerDataSource dataSource = new DriverManagerDataSource();
         dataSource.setDriverClassName("org.h2.Driver");

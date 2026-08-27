@@ -11,10 +11,16 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.TestPropertySource;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.util.Arrays;
+import java.util.zip.GZIPOutputStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -38,6 +44,7 @@ class DatabaseBackupServiceTests {
             new AuthenticatedUser(2L, "minister", "部长", UserRole.MINISTER, null, false);
 
     @Autowired DatabaseBackupService service;
+    @Autowired DatabaseDumpService dump;
     @Autowired DatabaseBackupMapper backups;
     @Autowired DatabaseRestoreMapper restores;
     @Autowired ObjectStorageService storage;
@@ -176,6 +183,118 @@ class DatabaseBackupServiceTests {
         assertThat(pruned.getStatus()).isEqualTo(DatabaseBackupService.STATUS_EXPIRED);
         assertThat(pruned.getObjectKey()).isNull();
         assertThat(storage.find(objectKey)).isEmpty();
+    }
+
+    @Test
+    void importsADownloadedBackupFileAndCanRollBackToIt() throws Exception {
+        long campusId = System.nanoTime() & Long.MAX_VALUE;
+        insertCampus(campusId, "import");
+        service.runScheduledBackup();
+        DatabaseBackupEntity source = latestBackup();
+        byte[] archive = readObject(source.getObjectKey());
+
+        // 管理员把刚下载下来的那份文件原样传回来。
+        DatabaseBackupService.BackupView imported = service.importUploaded(
+                new MockMultipartFile("file", "photolib-backup-1.jsonl.gz", "application/gzip", archive), ADMIN);
+
+        assertThat(imported.type()).isEqualTo(DatabaseBackupService.TYPE_UPLOADED);
+        assertThat(imported.status()).isEqualTo(DatabaseBackupService.STATUS_SUCCEEDED);
+        assertThat(imported.sourceFileName()).isEqualTo("photolib-backup-1.jsonl.gz");
+        assertThat(imported.sha256()).isEqualTo(source.getSha256());
+        assertThat(imported.rowCount()).isEqualTo(source.getRowCount());
+        assertThat(imported.tableCount()).isEqualTo(source.getTableCount());
+        assertThat(imported.restorable()).isTrue();
+        assertThat(imported.createdByName()).isEqualTo(ADMIN.displayName());
+        // 导入的对象必须是独立的一份，不能复用原备份的 object key。
+        assertThat(backups.selectById(imported.id()).getObjectKey())
+                .isNotEqualTo(source.getObjectKey())
+                .startsWith("backups/uploads/");
+
+        jdbc.sql("DELETE FROM campus WHERE id = :id").param("id", campusId).update();
+        DatabaseRestoreEntity restore = awaitRestore(service.startRestore(imported.id(), ADMIN).id());
+
+        assertThat(restore.getStatus()).isEqualTo(DatabaseBackupService.STATUS_SUCCEEDED);
+        assertThat(campusCount(campusId)).isEqualTo(1);
+    }
+
+    @Test
+    void rejectsUploadsThatAreNotIntactBackupArchives() throws Exception {
+        service.runScheduledBackup();
+        byte[] archive = readObject(latestBackup().getObjectKey());
+
+        assertThatThrownBy(() -> service.importUploaded(upload(new byte[0]), ADMIN))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("请选择要导入的备份文件");
+        assertThatThrownBy(() -> service.importUploaded(
+                upload("这不是备份文件".getBytes(StandardCharsets.UTF_8)), ADMIN))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("只接受本系统导出的");
+        // 截断的归档：gzip 自带的 CRC 与长度校验必须把它挡下来。
+        assertThatThrownBy(() -> service.importUploaded(
+                upload(Arrays.copyOf(archive, archive.length - 32)), ADMIN))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("gzip 归档");
+        assertThatThrownBy(() -> service.importUploaded(
+                upload(gzip("{\"format\":\"mysqldump\",\"version\":1}")), ADMIN))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("格式无法识别");
+        assertThatThrownBy(() -> service.importUploaded(upload(archive), MINISTER))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("仅系统管理员");
+    }
+
+    @Test
+    void rejectsUploadsWhoseTableOrColumnStructureDoesNotMatchTheDatabase() throws Exception {
+        long before = uploadedBackupCount();
+
+        assertThatThrownBy(() -> service.importUploaded(upload(gzip(
+                manifest("campus"),
+                "{\"table\":\"campus\",\"columns\":[\"id\"],\"types\":[-5]}",
+                "{\"endTable\":\"campus\",\"rows\":0}")), ADMIN))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("缺少字段");
+        assertThatThrownBy(() -> service.importUploaded(upload(gzip(
+                manifest("not_a_real_table"))), ADMIN))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("当前数据库缺少备份中的数据表");
+        assertThatThrownBy(() -> service.importUploaded(upload(gzip(
+                manifest("database_backup"))), ADMIN))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("系统自身维护的数据表");
+
+        // 被拒绝的文件一条记录都不该留下。
+        assertThat(uploadedBackupCount()).isEqualTo(before);
+    }
+
+    private long uploadedBackupCount() {
+        return backups.selectCount(Wrappers.<DatabaseBackupEntity>lambdaQuery()
+                .eq(DatabaseBackupEntity::getType, DatabaseBackupService.TYPE_UPLOADED));
+    }
+
+    private MockMultipartFile upload(byte[] content) {
+        return new MockMultipartFile("file", "backup.jsonl.gz", "application/gzip", content);
+    }
+
+    private byte[] gzip(String... lines) throws IOException {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        try (GZIPOutputStream gzip = new GZIPOutputStream(buffer)) {
+            gzip.write(String.join("\n", lines).getBytes(StandardCharsets.UTF_8));
+        }
+        return buffer.toByteArray();
+    }
+
+    private String manifest(String... tables) throws Exception {
+        DatabaseDumpService.SchemaState schema = dump.currentSchemaState();
+        String names = String.join(",", Arrays.stream(tables).map(table -> '"' + table + '"').toList());
+        return "{\"format\":\"photolib-backup\",\"version\":1,\"schemaVersion\":\"%s\","
+                .formatted(schema.version())
+                + "\"migrationCount\":%d,\"tables\":[%s]}".formatted(schema.migrationCount(), names);
+    }
+
+    private byte[] readObject(String objectKey) throws IOException {
+        try (var input = storage.open(objectKey)) {
+            return input.readAllBytes();
+        }
     }
 
     private void insertCampus(long id, String prefix) {

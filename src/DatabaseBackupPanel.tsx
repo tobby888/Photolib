@@ -1,5 +1,8 @@
-import { Alert, App, Button, Input, Modal, Space, Tag, Tooltip, Typography } from 'antd'
-import { CloudDownloadOutlined, DatabaseOutlined, HistoryOutlined, RedoOutlined, SaveOutlined } from '@ant-design/icons'
+import { Alert, App, Button, Input, Modal, Space, Tag, Tooltip, Typography, Upload } from 'antd'
+import {
+  CloudDownloadOutlined, CloudUploadOutlined, DatabaseOutlined, HistoryOutlined,
+  RedoOutlined, SaveOutlined,
+} from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, emptyPage } from './api'
@@ -12,6 +15,7 @@ const typeLabels: Record<DatabaseBackup['type'], string> = {
   SCHEDULED: '每日自动',
   MANUAL: '手动',
   PRE_RESTORE: '回滚前兜底',
+  UPLOADED: '上传导入',
 }
 const statusLabels: Record<DatabaseBackup['status'], { text: string; color: string }> = {
   RUNNING: { text: '进行中', color: 'processing' },
@@ -41,6 +45,7 @@ function formatTime(value?: string | null) {
 export default function DatabaseBackupPanel() {
   const { message, modal } = App.useApp()
   const [starting, setStarting] = useState(false)
+  const [importing, setImporting] = useState(false)
   const [restoreTarget, setRestoreTarget] = useState<DatabaseBackup | null>(null)
   const [confirmation, setConfirmation] = useState('')
   const [restoring, setRestoring] = useState(false)
@@ -82,6 +87,21 @@ export default function DatabaseBackupPanel() {
     }
   }
 
+  const importBackup = async (file: File) => {
+    setImporting(true)
+    try {
+      const data = new FormData()
+      data.append('file', file)
+      const imported = await api<DatabaseBackup>({ method: 'POST', url: '/database-backups/upload', data })
+      message.success(`已导入 ${imported.tableCount} 张表 / ${imported.rowCount} 行，可在列表中选择回滚`)
+      refresh.current()
+    } catch (e) {
+      message.error((e as Error).message)
+    } finally {
+      setImporting(false)
+    }
+  }
+
   const download = async (backup: DatabaseBackup) => {
     try {
       const link = await api<DatabaseBackupDownload>({ url: `/database-backups/${backup.id}/download` })
@@ -115,11 +135,15 @@ export default function DatabaseBackupPanel() {
       <div>
         <Typography.Title level={4}><DatabaseOutlined /> 数据库备份</Typography.Title>
         <Typography.Text type="secondary">
-          每天凌晨 0 点自动把整库业务数据备份到对象存储；该能力仅系统管理员可见。
+          每天凌晨 0 点自动把整库业务数据备份到对象存储；也可以把下载下来的备份文件重新导入再回滚。该能力仅系统管理员可见。
         </Typography.Text>
       </div>
       <Space wrap>
         <Button icon={<RedoOutlined />} onClick={() => refresh.current()}>刷新</Button>
+        <Upload accept=".gz,application/gzip" maxCount={1} showUploadList={false}
+          beforeUpload={file => { void importBackup(file); return false }}>
+          <Button icon={<CloudUploadOutlined />} loading={importing} disabled={busy}>导入备份文件</Button>
+        </Upload>
         <Button type="primary" icon={<SaveOutlined />} loading={starting} disabled={busy}
           onClick={() => void startBackup()}>立即备份</Button>
       </Space>
@@ -136,7 +160,9 @@ export default function DatabaseBackupPanel() {
           title: '备份时间',
           render: (_, item) => <div className="table-title">
             <strong>{formatTime(item.startedAt)}</strong>
-            <span>{typeLabels[item.type] || item.type}</span>
+            <span>{item.sourceFileName
+              ? `${typeLabels[item.type] || item.type} · ${item.sourceFileName}`
+              : typeLabels[item.type] || item.type}</span>
           </div>,
         },
         {
