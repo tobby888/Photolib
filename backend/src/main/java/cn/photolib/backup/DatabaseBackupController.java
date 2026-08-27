@@ -4,13 +4,16 @@ import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.api.PageResponse;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 /**
  * 数据库备份与回滚接口，仅系统管理员可用。
@@ -28,6 +31,18 @@ public class DatabaseBackupController {
     @PreAuthorize("hasRole('ADMIN')")
     ApiResponse<DatabaseBackupService.BackupView> create(@AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.startManualBackup(user));
+    }
+
+    /**
+     * 导入管理员上传的备份文件。校验通过后它会成为一条 `UPLOADED` 备份记录，
+     * 回滚仍走 {@code /database-backups/{id}/restore}，不在这里直接改数据库——
+     * 上传和"用它覆盖整库"是两个决定，应该分两步确认。
+     */
+    @PostMapping(value = "/database-backups/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasRole('ADMIN')")
+    ApiResponse<DatabaseBackupService.BackupView> upload(@RequestPart("file") MultipartFile file,
+                                                         @AuthenticationPrincipal AuthenticatedUser user) {
+        return ApiResponse.ok(service.importUploaded(file, user));
     }
 
     @GetMapping("/database-backups")

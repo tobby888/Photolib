@@ -283,7 +283,7 @@ export interface AuditLog {
   createdAt: string
 }
 
-export type DatabaseBackupType = 'SCHEDULED' | 'MANUAL' | 'PRE_RESTORE'
+export type DatabaseBackupType = 'SCHEDULED' | 'MANUAL' | 'PRE_RESTORE' | 'UPLOADED'
 export type DatabaseBackupStatus = 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'EXPIRED'
 
 export interface DatabaseBackup {
@@ -296,6 +296,7 @@ export interface DatabaseBackup {
   rowCount?: number | null
   schemaVersion?: string | null
   errorMessage?: string | null
+  sourceFileName?: string | null
   createdBy?: EntityId | null
   createdByName?: string | null
   startedAt: string

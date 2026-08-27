@@ -49,6 +49,10 @@ photolib:
     cron: ${DATABASE_BACKUP_CRON:0 0 0 * * *}
     retention: ${DATABASE_BACKUP_RETENTION:30d}
     minimum-retained: ${DATABASE_BACKUP_MINIMUM_RETAINED:7}
+    # 管理员导入备份文件时的体积上限。压缩后的上限与 EndpointUploadLimitFilter 里的
+    # 请求体上限对应，解压后的上限用于挡住压缩炸弹。
+    max-upload-bytes: ${DATABASE_BACKUP_MAX_UPLOAD_BYTES:512MB}
+    max-decompressed-bytes: ${DATABASE_BACKUP_MAX_DECOMPRESSED_BYTES:2GB}
   photo-processing:
     threads: ${PHOTO_PROCESSING_THREADS:1}
     temporary-directory: ${PHOTO_PROCESSING_TEMPORARY_DIRECTORY:./data/photo-processing}

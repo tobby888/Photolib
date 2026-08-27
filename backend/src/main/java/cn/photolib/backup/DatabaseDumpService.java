@@ -34,9 +34,13 @@ import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 
 /**
  * 逻辑备份引擎：按 JDBC 元数据把整库业务数据导出成 JSON Lines，并能原样写回。
@@ -80,7 +84,18 @@ public class DatabaseDumpService {
 
     public record RestoreResult(int tableCount, long rowCount) {}
 
+    public record ValidationResult(int tableCount, long rowCount, String schemaVersion, int migrationCount) {}
+
     public record SchemaState(String version, int migrationCount) {}
+
+    /**
+     * 取值的兼容族。上传的备份未必来自同一种数据库，逐个比对 {@link java.sql.Types}
+     * 会把 MySQL 的 BOOLEAN(BIT/TINYINT) 之类的等价表示误判成不合法，所以按族比对。
+     * {@link #OTHER} 是通配族：JSON 列在不同驱动上分别报成 OTHER/JAVA_OBJECT/LONGVARCHAR。
+     */
+    private enum TypeFamily {
+        INTEGRAL, REAL, STRING, BINARY, DATE, TIME, TIMESTAMP, OTHER
+    }
 
     /** 导出当前库的全部业务数据。调用方负责关闭 {@code output}。 */
     public DumpResult dump(OutputStream output) throws SQLException, IOException {
@@ -115,29 +130,13 @@ public class DatabaseDumpService {
      */
     public RestoreResult restore(InputStream input) throws SQLException, IOException {
         BufferedReader reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8));
-        String manifestLine = reader.readLine();
-        if (manifestLine == null) {
-            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "备份文件为空");
-        }
-        JsonNode manifest = json.readTree(manifestLine);
-        if (!FORMAT_NAME.equals(manifest.path("format").asText())
-                || manifest.path("version").asInt() != FORMAT_VERSION) {
-            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "备份文件格式无法识别");
-        }
-        List<String> tables = new ArrayList<>();
-        manifest.path("tables").forEach(node -> tables.add(node.asText()));
-        if (tables.isEmpty()) {
-            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "备份文件没有任何数据表");
-        }
+        JsonNode manifest = readManifest(reader);
+        List<String> tables = manifestTables(manifest);
 
         try (Connection connection = dataSource.getConnection()) {
             verifySchemaMatches(connection, manifest);
-            List<String> present = listTables(connection);
-            List<String> missing = tables.stream().filter(table -> !present.contains(table)).toList();
-            if (!missing.isEmpty()) {
-                throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
-                        "当前数据库缺少备份中的数据表：" + String.join("、", missing));
-            }
+            Map<String, Map<String, Integer>> live = liveColumns(connection);
+            verifyTablesExist(tables, live);
 
             boolean autoCommit = connection.getAutoCommit();
             connection.setAutoCommit(false);
@@ -148,7 +147,7 @@ public class DatabaseDumpService {
                         statement.executeUpdate("DELETE FROM " + quote(connection, table));
                     }
                 }
-                long rows = applyRows(connection, reader);
+                long rows = applyRows(connection, reader, live);
                 connection.commit();
                 return new RestoreResult(tables.size(), rows);
             } catch (RuntimeException | SQLException | IOException failure) {
@@ -213,61 +212,316 @@ public class DatabaseDumpService {
         }
     }
 
-    private long applyRows(Connection connection, BufferedReader reader) throws SQLException, IOException {
-        long total = 0;
-        String line;
-        int[] types = new int[0];
-        PreparedStatement insert = null;
-        int pending = 0;
-        try {
-            while ((line = reader.readLine()) != null) {
-                if (line.isBlank()) continue;
-                JsonNode node = json.readTree(line);
-                if (node.isArray()) {
-                    if (insert == null) {
-                        throw new BusinessException(ErrorCode.VALIDATION_ERROR, "备份文件的数据行缺少表头");
+    /**
+     * 干跑一遍备份文件：确认它确实是本系统产出的格式、结构版本与当前库一致，
+     * 并且每张表、每个字段、每行的形态都能对上当前的表结构。只读元数据，不写任何数据。
+     *
+     * <p>管理员上传的文件必须先过这一关再入库，否则一个残缺或伪造的文件会在回滚
+     * 事务跑到一半时才报错——那时整库已经被清空，只能靠兜底备份救回来。
+     */
+    public ValidationResult validate(InputStream input) throws SQLException, IOException {
+        BufferedReader reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8));
+        JsonNode manifest = readManifest(reader);
+        List<String> tables = manifestTables(manifest);
+        try (Connection connection = dataSource.getConnection()) {
+            SchemaState schema = readSchemaState(connection);
+            verifySchemaMatches(connection, manifest);
+            Map<String, Map<String, Integer>> live = liveColumns(connection);
+            verifyTablesExist(tables, live);
+
+            Set<String> seen = new LinkedHashSet<>();
+            long total = walk(reader, live, new BlockVisitor() {
+                private String current;
+
+                @Override
+                public void table(String table, List<String> columns, int[] types) {
+                    if (!containsIgnoreCase(tables, table)) {
+                        throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                                "备份文件包含清单之外的数据表：" + table);
                     }
-                    for (int index = 0; index < types.length; index++) {
-                        bindValue(insert, index + 1, types[index], node.get(index));
+                    if (!seen.add(table.toLowerCase(Locale.ROOT))) {
+                        throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                                "备份文件中的数据表重复出现：" + table);
                     }
-                    insert.addBatch();
-                    total++;
-                    if (++pending >= INSERT_BATCH) {
-                        insert.executeBatch();
-                        pending = 0;
+                    current = table;
+                }
+
+                @Override
+                public void row(JsonNode row) {
+                    for (int index = 0; index < row.size(); index++) {
+                        JsonNode value = row.get(index);
+                        boolean scalar = value.isNull() || value.isTextual() || value.isNumber()
+                                || value.isBoolean()
+                                || (value.isObject() && value.size() == 1 && value.path("b64").isTextual());
+                        if (!scalar) {
+                            throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                                    "备份文件中 " + current + " 表存在无法识别的字段取值");
+                        }
                     }
-                    continue;
                 }
-                if (node.has("endTable")) {
-                    if (insert != null) {
-                        if (pending > 0) insert.executeBatch();
-                        insert.close();
-                        insert = null;
-                        pending = 0;
+
+                @Override
+                public void endTable(String table, long declared, long actual) {
+                    if (declared >= 0 && declared != actual) {
+                        throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                                "备份文件中 %s 表声明 %d 行，实际 %d 行".formatted(table, declared, actual));
                     }
-                    continue;
                 }
-                if (!node.has("table")) continue;
-                if (insert != null) {
-                    if (pending > 0) insert.executeBatch();
-                    insert.close();
-                    pending = 0;
-                }
-                String table = node.get("table").asText();
-                List<String> columns = new ArrayList<>();
-                node.path("columns").forEach(column -> columns.add(column.asText()));
-                JsonNode typeNodes = node.path("types");
-                types = new int[typeNodes.size()];
-                for (int index = 0; index < types.length; index++) {
-                    types[index] = typeNodes.get(index).asInt();
-                }
+            });
+
+            List<String> absent = tables.stream()
+                    .filter(table -> !seen.contains(table.toLowerCase(Locale.ROOT))).toList();
+            if (!absent.isEmpty()) {
+                throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                        "备份文件缺少清单声明的数据表：" + String.join("、", absent));
+            }
+            return new ValidationResult(tables.size(), total, schema.version(), schema.migrationCount());
+        }
+    }
+
+    private long applyRows(Connection connection, BufferedReader reader,
+                           Map<String, Map<String, Integer>> live) throws SQLException, IOException {
+        class Inserter implements BlockVisitor {
+            private PreparedStatement insert;
+            private int[] types = new int[0];
+            private int pending;
+
+            @Override
+            public void table(String table, List<String> columns, int[] columnTypes) throws SQLException {
+                flush();
+                types = columnTypes;
                 insert = connection.prepareStatement(insertSql(connection, table, columns));
             }
-            if (insert != null && pending > 0) insert.executeBatch();
+
+            @Override
+            public void row(JsonNode row) throws SQLException {
+                if (insert == null) {
+                    throw new BusinessException(ErrorCode.VALIDATION_ERROR, "备份文件的数据行缺少表头");
+                }
+                for (int index = 0; index < types.length; index++) {
+                    bindValue(insert, index + 1, types[index], row.get(index));
+                }
+                insert.addBatch();
+                if (++pending >= INSERT_BATCH) {
+                    insert.executeBatch();
+                    pending = 0;
+                }
+            }
+
+            @Override
+            public void endTable(String table, long declared, long actual) throws SQLException {
+                flush();
+            }
+
+            void flush() throws SQLException {
+                if (insert == null) return;
+                if (pending > 0) insert.executeBatch();
+                insert.close();
+                insert = null;
+                pending = 0;
+            }
+        }
+
+        Inserter inserter = new Inserter();
+        try {
+            long total = walk(reader, live, inserter);
+            inserter.flush();
+            return total;
         } finally {
-            if (insert != null) insert.close();
+            if (inserter.insert != null) inserter.insert.close();
+        }
+    }
+
+    /** 备份文件按块（表头 → 数据行 → 表尾）读取时的回调，校验与写入共用同一套解析。 */
+    private interface BlockVisitor {
+        void table(String table, List<String> columns, int[] types) throws SQLException;
+
+        void row(JsonNode row) throws SQLException;
+
+        void endTable(String table, long declaredRows, long actualRows) throws SQLException;
+    }
+
+    /**
+     * 逐行解析备份内容并回调访问者。表头一出现就按当前库的表结构校验字段，
+     * 数据行的字段数量也在这里核对——校验和写回两条路径都靠它保证形态正确。
+     */
+    private long walk(BufferedReader reader, Map<String, Map<String, Integer>> live, BlockVisitor visitor)
+            throws SQLException, IOException {
+        long total = 0;
+        long tableRows = 0;
+        String current = null;
+        int columnCount = 0;
+        String line;
+        while ((line = reader.readLine()) != null) {
+            if (line.isBlank()) continue;
+            JsonNode node = readJson(line);
+            if (node.isArray()) {
+                if (current == null) {
+                    throw new BusinessException(ErrorCode.VALIDATION_ERROR, "备份文件的数据行缺少表头");
+                }
+                if (node.size() != columnCount) {
+                    throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                            "备份文件中 %s 表的数据行有 %d 个字段，表头声明 %d 个"
+                                    .formatted(current, node.size(), columnCount));
+                }
+                visitor.row(node);
+                total++;
+                tableRows++;
+                continue;
+            }
+            if (!node.isObject()) {
+                throw new BusinessException(ErrorCode.VALIDATION_ERROR, "备份文件包含无法识别的数据块");
+            }
+            if (node.has("endTable")) {
+                if (current == null) {
+                    throw new BusinessException(ErrorCode.VALIDATION_ERROR, "备份文件的表尾缺少对应表头");
+                }
+                visitor.endTable(current, node.path("rows").isNumber() ? node.path("rows").asLong() : -1,
+                        tableRows);
+                current = null;
+                continue;
+            }
+            if (!node.has("table")) continue;
+            String table = node.get("table").asText();
+            List<String> columns = new ArrayList<>();
+            node.path("columns").forEach(column -> columns.add(column.asText()));
+            JsonNode typeNodes = node.path("types");
+            if (columns.isEmpty() || typeNodes.size() != columns.size()) {
+                throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                        "备份文件中 " + table + " 表的表头字段定义不完整");
+            }
+            int[] types = new int[typeNodes.size()];
+            for (int index = 0; index < types.length; index++) {
+                types[index] = typeNodes.get(index).asInt();
+            }
+            verifyColumns(table, columns, types, live);
+            visitor.table(table, columns, types);
+            current = table;
+            columnCount = columns.size();
+            tableRows = 0;
+        }
+        if (current != null) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                    "备份文件在 " + current + " 表中间意外结束");
         }
         return total;
+    }
+
+    /** 表头里的字段必须与当前库的该表完全对应，类型也要属于同一个兼容族。 */
+    private void verifyColumns(String table, List<String> columns, int[] types,
+                               Map<String, Map<String, Integer>> live) {
+        Map<String, Integer> actual = live.get(table);
+        if (actual == null) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
+                    "当前数据库缺少备份中的数据表：" + table);
+        }
+        Map<String, Integer> declared = new LinkedHashMap<>();
+        for (int index = 0; index < columns.size(); index++) {
+            if (declared.put(columns.get(index).toLowerCase(Locale.ROOT), types[index]) != null) {
+                throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                        "备份文件中 " + table + " 表的字段重复：" + columns.get(index));
+            }
+        }
+        Map<String, Integer> present = new LinkedHashMap<>();
+        actual.forEach((name, type) -> present.put(name.toLowerCase(Locale.ROOT), type));
+
+        List<String> missing = present.keySet().stream().filter(name -> !declared.containsKey(name)).toList();
+        if (!missing.isEmpty()) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                    "备份文件中 %s 表缺少字段：%s".formatted(table, String.join("、", missing)));
+        }
+        List<String> unknown = declared.keySet().stream().filter(name -> !present.containsKey(name)).toList();
+        if (!unknown.isEmpty()) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                    "备份文件中 %s 表包含当前表结构没有的字段：%s".formatted(table, String.join("、", unknown)));
+        }
+        declared.forEach((name, type) -> {
+            TypeFamily backup = family(type);
+            TypeFamily current = family(present.get(name));
+            if (backup != TypeFamily.OTHER && current != TypeFamily.OTHER && backup != current) {
+                throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                        "备份文件中 %s.%s 的字段类型与当前表结构不一致".formatted(table, name));
+            }
+        });
+    }
+
+    private TypeFamily family(int type) {
+        return switch (type) {
+            case Types.BIT, Types.BOOLEAN, Types.TINYINT, Types.SMALLINT, Types.INTEGER, Types.BIGINT ->
+                    TypeFamily.INTEGRAL;
+            case Types.REAL, Types.FLOAT, Types.DOUBLE, Types.DECIMAL, Types.NUMERIC -> TypeFamily.REAL;
+            case Types.CHAR, Types.VARCHAR, Types.LONGVARCHAR, Types.NCHAR, Types.NVARCHAR,
+                 Types.LONGNVARCHAR, Types.CLOB, Types.NCLOB -> TypeFamily.STRING;
+            case Types.BINARY, Types.VARBINARY, Types.LONGVARBINARY, Types.BLOB -> TypeFamily.BINARY;
+            case Types.DATE -> TypeFamily.DATE;
+            case Types.TIME, Types.TIME_WITH_TIMEZONE -> TypeFamily.TIME;
+            case Types.TIMESTAMP, Types.TIMESTAMP_WITH_TIMEZONE -> TypeFamily.TIMESTAMP;
+            default -> TypeFamily.OTHER;
+        };
+    }
+
+    private JsonNode readJson(String line) {
+        try {
+            return json.readTree(line);
+        } catch (IOException malformed) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "备份文件包含无法解析的内容");
+        }
+    }
+
+    private JsonNode readManifest(BufferedReader reader) throws IOException {
+        String manifestLine = reader.readLine();
+        if (manifestLine == null || manifestLine.isBlank()) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "备份文件为空");
+        }
+        JsonNode manifest = readJson(manifestLine);
+        if (!FORMAT_NAME.equals(manifest.path("format").asText())
+                || manifest.path("version").asInt() != FORMAT_VERSION) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "备份文件格式无法识别");
+        }
+        return manifest;
+    }
+
+    private List<String> manifestTables(JsonNode manifest) {
+        List<String> tables = new ArrayList<>();
+        manifest.path("tables").forEach(node -> tables.add(node.asText()));
+        if (tables.isEmpty()) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "备份文件没有任何数据表");
+        }
+        List<String> forbidden = tables.stream()
+                .filter(table -> EXCLUDED_TABLES.contains(table.toLowerCase(Locale.ROOT))).toList();
+        if (!forbidden.isEmpty()) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                    "备份文件不得包含由系统自身维护的数据表：" + String.join("、", forbidden));
+        }
+        return tables;
+    }
+
+    private void verifyTablesExist(List<String> tables, Map<String, Map<String, Integer>> live) {
+        List<String> missing = tables.stream().filter(table -> !live.containsKey(table)).toList();
+        if (!missing.isEmpty()) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
+                    "当前数据库缺少备份中的数据表：" + String.join("、", missing));
+        }
+    }
+
+    private boolean containsIgnoreCase(List<String> values, String candidate) {
+        return values.stream().anyMatch(value -> value.equalsIgnoreCase(candidate));
+    }
+
+    /** 当前库里可备份的表及其字段类型，键忽略大小写。 */
+    private Map<String, Map<String, Integer>> liveColumns(Connection connection) throws SQLException {
+        Set<String> tables = new LinkedHashSet<>(listTables(connection));
+        Map<String, Map<String, Integer>> result = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        DatabaseMetaData meta = connection.getMetaData();
+        try (ResultSet columns = meta.getColumns(connection.getCatalog(), connection.getSchema(), "%", "%")) {
+            while (columns.next()) {
+                String table = columns.getString("TABLE_NAME");
+                if (table == null || !tables.contains(table)) continue;
+                result.computeIfAbsent(table, key -> new LinkedHashMap<>())
+                        .put(columns.getString("COLUMN_NAME"), columns.getInt("DATA_TYPE"));
+            }
+        }
+        return result;
     }
 
     private String insertSql(Connection connection, String table, List<String> columns) throws SQLException {

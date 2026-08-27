@@ -1782,6 +1782,7 @@ operatorId? action? resourceType? keyword? from? to? page=1 pageSize=20
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | POST | `/database-backups` | 立即发起一次手动备份，异步执行 |
+| POST | `/database-backups/upload` | 导入管理员上传的备份文件（multipart，字段名 `file`），同步校验后入库 |
 | GET | `/database-backups?page&pageSize` | 备份列表，按开始时间倒序 |
 | GET | `/database-backups/{id}` | 单条备份 |
 | GET | `/database-backups/{id}/download` | 取备份文件的短期签名下载地址 |
@@ -1811,13 +1812,14 @@ operatorId? action? resourceType? keyword? from? to? page=1 pageSize=20
 }
 ```
 
-- `type`：`SCHEDULED`（每天凌晨 0 点自动）、`MANUAL`（管理员手动）、`PRE_RESTORE`（回滚前自动生成的兜底备份）。
+- `type`：`SCHEDULED`（每天凌晨 0 点自动）、`MANUAL`（管理员手动）、`PRE_RESTORE`（回滚前自动生成的兜底备份）、`UPLOADED`（管理员上传导入）。`UPLOADED` 会额外返回 `sourceFileName`（原始文件名）。
 - `status`：`RUNNING`、`SUCCEEDED`、`FAILED`、`EXPIRED`（超过保留期，文件已删除，记录保留）。
 - `restorable` 为 `false` 时不要展示回滚入口：备份只含数据不含表结构，`schemaVersion` 与当前库不一致时不能回滚。
 - `POST` 两个接口都立刻返回 `RUNNING` 记录，实际执行是异步的；客户端应轮询列表或单条记录直到状态不再是 `RUNNING`。已有任务在执行时再次发起会返回 `409 RESOURCE_STATE_CONFLICT`。
 - 回滚会先自动生成一份 `PRE_RESTORE` 备份并记录在 `safetyBackupId` 上，再用目标备份整体替换数据库；备份文件的大小和 SHA-256 校验不通过时会中止，不会改动数据。
 - 回滚只替换业务数据，不会删除对象存储中的图片文件；但数据库中已不存在的图片记录将无法再访问。回滚后所有会话可能失效，客户端应能正常走 401 → refresh → 登录页链路。
 - 下载响应是 `{ "url": "...", "fileName": "...", "expiresAt": "..." }`，`url` 是短期签名地址，直接跳转下载，不要加 Bearer 头。
+- **导入备份文件**：`POST /database-backups/upload` 是 `multipart/form-data`，字段名固定为 `file`，只接受本系统导出的 `.jsonl.gz`。该接口**同步**完成校验和入库，成功返回一条 `status=SUCCEEDED` 的 `UPLOADED` 备份，随后按普通备份调用 `/restore` 回滚；导入本身不会改动数据库。校验不通过时不会留下任何记录，按错误码区分：`413 FILE_TOO_LARGE`（体积或解压体积超限）、`415 UNSUPPORTED_FILE_TYPE`（不是 gzip 文件）、`409 RESOURCE_STATE_CONFLICT`（当前库缺少备份里的表，或结构版本不一致）、`400 VALIDATION_ERROR`（归档损坏、格式无法识别、表或字段与当前表结构对不上、行结构非法），`message` 会指出具体是哪张表、哪个字段。
 
 ## 17. 客户端实现检查清单
 

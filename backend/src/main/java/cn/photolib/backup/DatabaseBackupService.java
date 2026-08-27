@@ -20,11 +20,16 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.EOFException;
+import java.io.FilterInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.security.DigestInputStream;
 import java.security.DigestOutputStream;
 import java.security.MessageDigest;
@@ -36,6 +41,7 @@ import java.util.List;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
+import java.util.zip.ZipException;
 
 /**
  * 数据库备份与回滚的编排层：负责生成备份对象、上传到对象存储、记录任务状态，
@@ -54,6 +60,7 @@ public class DatabaseBackupService {
     public static final String TYPE_SCHEDULED = "SCHEDULED";
     public static final String TYPE_MANUAL = "MANUAL";
     public static final String TYPE_PRE_RESTORE = "PRE_RESTORE";
+    public static final String TYPE_UPLOADED = "UPLOADED";
     public static final String STATUS_RUNNING = "RUNNING";
     public static final String STATUS_SUCCEEDED = "SUCCEEDED";
     public static final String STATUS_FAILED = "FAILED";
@@ -81,7 +88,8 @@ public class DatabaseBackupService {
     public record BackupView(
             String id, String type, String status, Long sizeBytes, String sha256,
             Integer tableCount, Long rowCount, String schemaVersion, String errorMessage,
-            Long createdBy, String createdByName, LocalDateTime startedAt, LocalDateTime finishedAt,
+            String sourceFileName, Long createdBy, String createdByName,
+            LocalDateTime startedAt, LocalDateTime finishedAt,
             boolean downloadable, boolean restorable) {}
 
     public record RestoreView(
@@ -186,6 +194,161 @@ public class DatabaseBackupService {
                     backup.getId(), result.tableCount(), result.rowCount(), size);
         } finally {
             Files.deleteIfExists(temp);
+        }
+    }
+
+    // ---------------------------------------------------------------- 导入上传的备份
+
+    /**
+     * 导入管理员上传的备份文件（通常是之前从本系统下载下来的那一份）。
+     *
+     * <p>文件在入库前必须**完整**通过校验：gzip 归档完好、格式与版本可识别、结构版本与当前库
+     * 一致、清单里的每张表都存在、每张表的字段集合与类型族都对得上、每行字段数量与取值形态
+     * 合法。只有全部通过才写入对象存储并登记成一条 `UPLOADED` 备份，之后走与其他备份完全
+     * 相同的回滚路径（含兜底备份与 SHA-256 校验）。
+     *
+     * <p>这道校验必须发生在导入时而不是回滚时：回滚是先清空整库再写回，等到写到一半才发现
+     * 文件缺字段，损失已经造成，只能靠兜底备份救回来。
+     */
+    public BackupView importUploaded(MultipartFile file, AuthenticatedUser user) {
+        requireAdmin(user);
+        if (file == null || file.isEmpty()) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择要导入的备份文件");
+        }
+        long maxUpload = properties.maxUploadBytes().toBytes();
+        if (file.getSize() > maxUpload) {
+            throw new BusinessException(ErrorCode.FILE_TOO_LARGE,
+                    "备份文件不能超过 " + properties.maxUploadBytes().toMegabytes() + " MB");
+        }
+        String fileName = sanitizeFileName(file.getOriginalFilename());
+        Path temp = null;
+        try {
+            temp = Files.createTempFile("photolib-backup-import-", ".jsonl.gz");
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            long size;
+            try (InputStream upload = file.getInputStream();
+                 DigestInputStream digested = new DigestInputStream(upload, digest)) {
+                size = Files.copy(digested, temp, StandardCopyOption.REPLACE_EXISTING);
+            }
+            if (size == 0) {
+                throw new BusinessException(ErrorCode.VALIDATION_ERROR, "备份文件为空");
+            }
+            if (size > maxUpload) {
+                throw new BusinessException(ErrorCode.FILE_TOO_LARGE,
+                        "备份文件不能超过 " + properties.maxUploadBytes().toMegabytes() + " MB");
+            }
+            requireGzip(temp);
+
+            DatabaseDumpService.ValidationResult validated = validateArchive(temp);
+
+            String id = PublicId.next();
+            LocalDateTime now = LocalDateTime.now();
+            String objectKey = "backups/uploads/%04d/%02d/%s.jsonl.gz"
+                    .formatted(now.getYear(), now.getMonthValue(), id);
+            try (InputStream content = Files.newInputStream(temp)) {
+                storage.put(objectKey, content, size, "application/gzip");
+            }
+
+            DatabaseBackupEntity backup = new DatabaseBackupEntity();
+            backup.setId(id);
+            backup.setType(TYPE_UPLOADED);
+            backup.setStatus(STATUS_SUCCEEDED);
+            backup.setObjectKey(objectKey);
+            backup.setSizeBytes(size);
+            backup.setSha256(HexFormat.of().formatHex(digest.digest()));
+            backup.setTableCount(validated.tableCount());
+            backup.setRowCount(validated.rowCount());
+            backup.setSchemaVersion(validated.schemaVersion());
+            backup.setMigrationCount(validated.migrationCount());
+            backup.setSourceFileName(fileName);
+            backup.setCreatedBy(user.id());
+            backup.setCreatedByName(user.displayName());
+            backup.setStartedAt(now);
+            backup.setFinishedAt(LocalDateTime.now());
+            backups.insert(backup);
+            log.info("已导入上传的备份: id={}, 文件={}, 表={}, 行={}, 字节={}",
+                    id, fileName, validated.tableCount(), validated.rowCount(), size);
+            return toView(backup);
+        } catch (BusinessException known) {
+            throw known;
+        } catch (Exception failure) {
+            log.error("导入备份文件失败: {}", fileName, failure);
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "导入备份文件失败：" + message(failure));
+        } finally {
+            deleteQuietly(temp);
+        }
+    }
+
+    /** 解压并干跑一遍上传的文件。gzip 自带 CRC，截断或改写的文件会在这里暴露。 */
+    private DatabaseDumpService.ValidationResult validateArchive(Path archive) throws Exception {
+        try (InputStream file = Files.newInputStream(archive);
+             GZIPInputStream gzip = new GZIPInputStream(file);
+             InputStream bounded = new BoundedInputStream(gzip, properties.maxDecompressedBytes().toBytes())) {
+            return dump.validate(bounded);
+        } catch (ZipException | EOFException broken) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                    "备份文件不是完整的 gzip 归档，可能已损坏或被截断");
+        }
+    }
+
+    private void requireGzip(Path archive) throws IOException {
+        byte[] magic = new byte[2];
+        try (InputStream input = Files.newInputStream(archive)) {
+            if (input.read(magic) != magic.length
+                    || (magic[0] & 0xFF) != 0x1F || (magic[1] & 0xFF) != 0x8B) {
+                throw new BusinessException(ErrorCode.UNSUPPORTED_FILE_TYPE,
+                        "只接受本系统导出的 .jsonl.gz 备份文件");
+            }
+        }
+    }
+
+    /** 只保留文件名本身，避免把上传方给的路径写进数据库或日志。 */
+    private String sanitizeFileName(String original) {
+        if (original == null || original.isBlank()) return null;
+        String name = original.replace('\\', '/');
+        name = name.substring(name.lastIndexOf('/') + 1).trim();
+        if (name.isEmpty()) return null;
+        return name.length() <= 255 ? name : name.substring(0, 255);
+    }
+
+    private void deleteQuietly(Path path) {
+        if (path == null) return;
+        try {
+            Files.deleteIfExists(path);
+        } catch (IOException failure) {
+            log.warn("临时备份文件删除失败: {}", path, failure);
+        }
+    }
+
+    /** 解压后的字节数上限，用来挡住压缩炸弹。 */
+    private static final class BoundedInputStream extends FilterInputStream {
+        private final long maximum;
+        private long count;
+
+        private BoundedInputStream(InputStream delegate, long maximum) {
+            super(delegate);
+            this.maximum = maximum;
+        }
+
+        @Override
+        public int read() throws IOException {
+            int value = super.read();
+            if (value >= 0) increment(1);
+            return value;
+        }
+
+        @Override
+        public int read(byte[] bytes, int offset, int length) throws IOException {
+            int read = super.read(bytes, offset, length);
+            if (read > 0) increment(read);
+            return read;
+        }
+
+        private void increment(long amount) {
+            count += amount;
+            if (count > maximum) {
+                throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "备份文件解压后的体积超出允许范围");
+            }
         }
     }
 
@@ -329,7 +492,8 @@ public class DatabaseBackupService {
         if (!STATUS_SUCCEEDED.equals(backup.getStatus()) || backup.getObjectKey() == null) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "该备份没有可下载的文件");
         }
-        String fileName = "photolib-backup-" + backup.getId() + ".jsonl.gz";
+        String fileName = backup.getSourceFileName() != null ? backup.getSourceFileName()
+                : "photolib-backup-" + backup.getId() + ".jsonl.gz";
         ObjectStorageService.SignedUrl signed = storage.presignGet(
                 backup.getObjectKey(), fileName, storageProperties.downloadUrlTtl());
         return new DownloadLink(signed.url().toString(), fileName, signed.expiresAt());
@@ -482,8 +646,9 @@ public class DatabaseBackupService {
                 && currentSchemaVersion.equals(backup.getSchemaVersion());
         return new BackupView(backup.getId(), backup.getType(), backup.getStatus(), backup.getSizeBytes(),
                 backup.getSha256(), backup.getTableCount(), backup.getRowCount(), backup.getSchemaVersion(),
-                backup.getErrorMessage(), backup.getCreatedBy(), backup.getCreatedByName(),
-                backup.getStartedAt(), backup.getFinishedAt(), downloadable, restorable);
+                backup.getErrorMessage(), backup.getSourceFileName(), backup.getCreatedBy(),
+                backup.getCreatedByName(), backup.getStartedAt(), backup.getFinishedAt(),
+                downloadable, restorable);
     }
 
     private String currentSchemaVersion() {

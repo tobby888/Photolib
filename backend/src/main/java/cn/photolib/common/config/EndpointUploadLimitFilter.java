@@ -19,6 +19,8 @@ public class EndpointUploadLimitFilter extends OncePerRequestFilter {
     private static final long BRAND_ICON_MAX_BYTES = 512L * 1024;
     private static final long AVATAR_MAX_BYTES = 1024L * 1024;
     private static final int SCHEDULED_ICON_MAX_COUNT = 20;
+    /** 与 photolib.backup.max-upload-bytes 的默认值保持一致；服务层还会按实际配置再判一次。 */
+    private static final long DATABASE_BACKUP_MAX_BYTES = 512L * 1024 * 1024;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
@@ -62,6 +64,9 @@ public class EndpointUploadLimitFilter extends OncePerRequestFilter {
         if ("POST".equals(request.getMethod())
                 && (path.endsWith("/description-images") || path.endsWith("/notifications/images"))) {
             return 5L * 1024 * 1024 + MULTIPART_OVERHEAD;
+        }
+        if ("POST".equals(request.getMethod()) && path.endsWith("/database-backups/upload")) {
+            return DATABASE_BACKUP_MAX_BYTES + MULTIPART_OVERHEAD;
         }
         return -1;
     }
