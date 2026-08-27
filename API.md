@@ -1775,6 +1775,50 @@ operatorId? action? resourceType? keyword? from? to? page=1 pageSize=20
 
 客户端可用它生成筛选选项和上传限制，但角色对应的中文标签仍由客户端本地化。
 
+### 16.4 数据库备份与回滚
+
+仅 A。这组接口刻意不对应任何权限码，因此不会出现在权限面板，也无法授予自定义权限组；后端按"系统管理员"直接判定。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| POST | `/database-backups` | 立即发起一次手动备份，异步执行 |
+| GET | `/database-backups?page&pageSize` | 备份列表，按开始时间倒序 |
+| GET | `/database-backups/{id}` | 单条备份 |
+| GET | `/database-backups/{id}/download` | 取备份文件的短期签名下载地址 |
+| POST | `/database-backups/{id}/restore` | 回滚到该备份，异步执行 |
+| GET | `/database-restores?page&pageSize` | 回滚记录列表 |
+| GET | `/database-restores/{id}` | 单条回滚记录 |
+
+备份实体：
+
+```json
+{
+  "id": "01J8Z...",
+  "type": "SCHEDULED",
+  "status": "SUCCEEDED",
+  "sizeBytes": 2906,
+  "sha256": "…64 位小写…",
+  "tableCount": 36,
+  "rowCount": 65,
+  "schemaVersion": "33",
+  "errorMessage": null,
+  "createdBy": null,
+  "createdByName": null,
+  "startedAt": "2026-08-27T00:00:00",
+  "finishedAt": "2026-08-27T00:00:03",
+  "downloadable": true,
+  "restorable": true
+}
+```
+
+- `type`：`SCHEDULED`（每天凌晨 0 点自动）、`MANUAL`（管理员手动）、`PRE_RESTORE`（回滚前自动生成的兜底备份）。
+- `status`：`RUNNING`、`SUCCEEDED`、`FAILED`、`EXPIRED`（超过保留期，文件已删除，记录保留）。
+- `restorable` 为 `false` 时不要展示回滚入口：备份只含数据不含表结构，`schemaVersion` 与当前库不一致时不能回滚。
+- `POST` 两个接口都立刻返回 `RUNNING` 记录，实际执行是异步的；客户端应轮询列表或单条记录直到状态不再是 `RUNNING`。已有任务在执行时再次发起会返回 `409 RESOURCE_STATE_CONFLICT`。
+- 回滚会先自动生成一份 `PRE_RESTORE` 备份并记录在 `safetyBackupId` 上，再用目标备份整体替换数据库；备份文件的大小和 SHA-256 校验不通过时会中止，不会改动数据。
+- 回滚只替换业务数据，不会删除对象存储中的图片文件；但数据库中已不存在的图片记录将无法再访问。回滚后所有会话可能失效，客户端应能正常走 401 → refresh → 登录页链路。
+- 下载响应是 `{ "url": "...", "fileName": "...", "expiresAt": "..." }`，`url` 是短期签名地址，直接跳转下载，不要加 Bearer 头。
+
 ## 17. 客户端实现检查清单
 
 ### 17.1 登录与会话

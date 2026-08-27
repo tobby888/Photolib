@@ -282,3 +282,44 @@ export interface AuditLog {
   ipAddress?: string | null
   createdAt: string
 }
+
+export type DatabaseBackupType = 'SCHEDULED' | 'MANUAL' | 'PRE_RESTORE'
+export type DatabaseBackupStatus = 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'EXPIRED'
+
+export interface DatabaseBackup {
+  id: string
+  type: DatabaseBackupType
+  status: DatabaseBackupStatus
+  sizeBytes?: number | null
+  sha256?: string | null
+  tableCount?: number | null
+  rowCount?: number | null
+  schemaVersion?: string | null
+  errorMessage?: string | null
+  createdBy?: EntityId | null
+  createdByName?: string | null
+  startedAt: string
+  finishedAt?: string | null
+  downloadable: boolean
+  restorable: boolean
+}
+
+export interface DatabaseRestore {
+  id: string
+  backupId: string
+  safetyBackupId?: string | null
+  status: 'RUNNING' | 'SUCCEEDED' | 'FAILED'
+  tableCount?: number | null
+  rowCount?: number | null
+  errorMessage?: string | null
+  createdBy?: EntityId | null
+  createdByName?: string | null
+  startedAt: string
+  finishedAt?: string | null
+}
+
+export interface DatabaseBackupDownload {
+  url: string
+  fileName: string
+  expiresAt: string
+}
