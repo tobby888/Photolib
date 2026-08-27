@@ -7,12 +7,46 @@ param(
 
 $ErrorActionPreference = "Stop"
 $sourceDirectory = $PSScriptRoot
+
+# Every path handed to CMake and Ninja must be absolute: Ninja resolves relative
+# paths against its own build directory, which silently turns a relative
+# -BuildDirectory into "…/wrapper/target/native-build/…/libturbojpeg.a: missing
+# and no known rule to make it" much later in the build.
+$OutputDirectory = [System.IO.Path]::GetFullPath(
+    [System.IO.Path]::Combine((Get-Location).ProviderPath, $OutputDirectory))
+$BuildDirectory = [System.IO.Path]::GetFullPath(
+    [System.IO.Path]::Combine((Get-Location).ProviderPath, $BuildDirectory))
+
 $dependencyDirectory = Join-Path $BuildDirectory "dependencies"
 $archiveDirectory = Join-Path $dependencyDirectory "archives"
 $dependencySourceDirectory = Join-Path $dependencyDirectory "sources"
 
 New-Item -ItemType Directory -Force -Path $archiveDirectory | Out-Null
 New-Item -ItemType Directory -Force -Path $dependencySourceDirectory | Out-Null
+
+# Which tar wins on PATH depends on how Maven was launched: from Git Bash or any
+# MSYS shell, GNU tar shadows the Windows bsdtar and reads the "C:" in an archive
+# path as a remote host ("tar (child): Cannot connect to C: resolve failed").
+# Prefer the Windows bsdtar, and fall back to GNU tar with --force-local.
+$tarExecutable = Join-Path (Join-Path $env:SystemRoot "System32") "tar.exe"
+$tarForceLocal = $false
+if (-not (Test-Path -LiteralPath $tarExecutable)) {
+    $tarExecutable = "tar"
+    $tarForceLocal = ((& tar --version 2>&1) -join "`n") -match "GNU tar"
+}
+
+function Expand-TarArchive {
+    param(
+        [string]$Archive,
+        [string]$Destination
+    )
+
+    $arguments = @()
+    if ($tarForceLocal) { $arguments += "--force-local" }
+    $arguments += @("-xzf", $Archive, "-C", $Destination)
+    & $tarExecutable @arguments
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
 
 function Get-VerifiedArchive {
     param(
@@ -44,8 +78,7 @@ Get-VerifiedArchive `
     -Path $libjpegArchive `
     -Sha256 "ecae8008e2cc9ade2f2c1bb9d5e6d4fb73e7c433866a056bd82980741571a022"
 if (-not (Test-Path -LiteralPath (Join-Path $libjpegSource "CMakeLists.txt"))) {
-    & tar -xzf $libjpegArchive -C $dependencySourceDirectory
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Expand-TarArchive -Archive $libjpegArchive -Destination $dependencySourceDirectory
 }
 
 $stbCommit = "31c1ad37456438565541f4919958214b6e762fb4"
@@ -56,8 +89,7 @@ Get-VerifiedArchive `
     -Path $stbArchive `
     -Sha256 "e4e3bba9c572a4a4148373a914d88ea0f0d11de8cc2c66739926e7eca0223319"
 if (-not (Test-Path -LiteralPath (Join-Path $stbSource "stb_image.h"))) {
-    & tar -xzf $stbArchive -C $dependencySourceDirectory
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Expand-TarArchive -Archive $stbArchive -Destination $dependencySourceDirectory
 }
 
 $gplLicense = Join-Path $archiveDirectory "GPL-3.0.txt"
@@ -85,8 +117,7 @@ Get-VerifiedArchive `
     -Sha256 "bcae355919358e0406c1674d0beaf841e9b11f321f8a54b927cddf4935c27668"
 if (-not (Test-Path -LiteralPath (Join-Path $vipsWindowsSource "package/lib/libvips-42.dll"))) {
     New-Item -ItemType Directory -Force -Path $vipsWindowsSource | Out-Null
-    & tar -xzf $vipsWindowsArchive -C $vipsWindowsSource
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Expand-TarArchive -Archive $vipsWindowsArchive -Destination $vipsWindowsSource
 }
 
 $vipsLinuxArchive = Join-Path $archiveDirectory "sharp-libvips-linux-x64-$vipsVersion.tgz"
@@ -97,8 +128,7 @@ Get-VerifiedArchive `
     -Sha256 "8cf0eafeaca832b68942fe1a770fb5f3b490504d3a9f2e3f56ee8784c9d65c45"
 if (-not (Test-Path -LiteralPath (Join-Path $vipsLinuxSource "package/lib/libvips-cpp.so.8.18.3"))) {
     New-Item -ItemType Directory -Force -Path $vipsLinuxSource | Out-Null
-    & tar -xzf $vipsLinuxArchive -C $vipsLinuxSource
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Expand-TarArchive -Archive $vipsLinuxArchive -Destination $vipsLinuxSource
 }
 
 $vipsWindowsDll = Join-Path $vipsWindowsSource "package/lib/libvips-42.dll"

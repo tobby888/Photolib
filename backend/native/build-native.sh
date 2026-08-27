@@ -9,6 +9,13 @@ fi
 SOURCE_DIRECTORY=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 OUTPUT_DIRECTORY=$1
 BUILD_DIRECTORY=$2
+
+# Ninja resolves relative paths against its own build directory, so a relative
+# argument here only surfaces much later as a missing libturbojpeg.a.
+mkdir -p "$OUTPUT_DIRECTORY" "$BUILD_DIRECTORY"
+OUTPUT_DIRECTORY=$(CDPATH= cd -- "$OUTPUT_DIRECTORY" && pwd)
+BUILD_DIRECTORY=$(CDPATH= cd -- "$BUILD_DIRECTORY" && pwd)
+
 DEPENDENCY_DIRECTORY="$BUILD_DIRECTORY/dependencies"
 ARCHIVE_DIRECTORY="$DEPENDENCY_DIRECTORY/archives"
 DEPENDENCY_SOURCE_DIRECTORY="$DEPENDENCY_DIRECTORY/sources"
