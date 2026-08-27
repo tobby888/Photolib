@@ -13,6 +13,9 @@ spring:
       mode: never
 
 photolib:
+  backup:
+    # 共享测试上下文里关掉每日备份，避免测试恰好跑到零点时被调度任务写脏数据。
+    enabled: false
   photo-processing:
     threads: 2
     temporary-directory: ${java.io.tmpdir}/photolib-test-photo-processing

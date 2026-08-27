@@ -43,6 +43,12 @@ photolib:
     enabled: ${STARTUP_MISSING_OBJECT_CLEANUP_ENABLED:true}
     max-ratio: ${STARTUP_MISSING_OBJECT_CLEANUP_MAX_RATIO:0.2}
     min-absolute: ${STARTUP_MISSING_OBJECT_CLEANUP_MIN_ABSOLUTE:20}
+  backup:
+    # 每天凌晨 0 点（Asia/Shanghai）自动把整库业务数据备份到对象存储。
+    enabled: ${DATABASE_BACKUP_ENABLED:true}
+    cron: ${DATABASE_BACKUP_CRON:0 0 0 * * *}
+    retention: ${DATABASE_BACKUP_RETENTION:30d}
+    minimum-retained: ${DATABASE_BACKUP_MINIMUM_RETAINED:7}
   photo-processing:
     threads: ${PHOTO_PROCESSING_THREADS:1}
     temporary-directory: ${PHOTO_PROCESSING_TEMPORARY_DIRECTORY:./data/photo-processing}

@@ -2,7 +2,7 @@ import {
   Alert, App, Button, Card, Divider, Form, Input, Modal, Select, Space, Switch, Tabs, Tag, Typography, Upload,
 } from 'antd'
 import {
-  AimOutlined, BgColorsOutlined, BulbOutlined, CameraOutlined, PictureOutlined,
+  AimOutlined, BgColorsOutlined, BulbOutlined, CameraOutlined, DatabaseOutlined, PictureOutlined,
   ClockCircleOutlined, DeleteOutlined, EditOutlined, FileTextOutlined, PlusOutlined,
   SafetyCertificateOutlined, StarOutlined, TeamOutlined, UploadOutlined,
 } from '@ant-design/icons'
@@ -14,6 +14,7 @@ import { DataState, PageTitle } from '../components'
 import { ContentFitTable } from '../ContentFitTable'
 import { useLoad } from '../hooks'
 import AuditLogsPanel from '../AuditLogsPanel'
+import DatabaseBackupPanel from '../DatabaseBackupPanel'
 import PermissionGroupsPanel from '../PermissionGroupsPanel'
 import UserAvatar from '../UserAvatar'
 import { USER_ACTION_MIN_WIDTH } from '../tableActionWidths'
@@ -394,6 +395,8 @@ export default function AdminPage() {
           ]} />
         </> },
         { key: 'audit-logs', label: <span><FileTextOutlined /> 操作日志</span>, children: <AuditLogsPanel /> },
+        // 数据库备份/回滚只对系统管理员开放，刻意没有对应的权限项，因此不出现在权限面板里。
+        { key: 'backups', label: <span><DatabaseOutlined /> 数据备份</span>, children: <DatabaseBackupPanel /> },
       ]} />
     </Card>
     <Modal title="创建成员账号" open={userOpen} onCancel={() => setUserOpen(false)} onOk={createUser} okText="创建账号">
