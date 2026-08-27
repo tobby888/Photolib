@@ -9,6 +9,7 @@ import {
 import { useEffect, useState } from 'react'
 import { api, emptyPage } from '../api'
 import type { BrandingSettings, Campus, PageData, PermissionGroup, ScheduledBrandIcon, User } from '../types'
+import { BRANDING_UPDATED_EVENT, defaultBranding } from '../branding'
 import { DataState, PageTitle } from '../components'
 import { ContentFitTable } from '../ContentFitTable'
 import { useLoad } from '../hooks'
@@ -76,7 +77,7 @@ export default function AdminPage() {
   )
   const { data: branding, loading: brandingLoading, error: brandingError, reload: reloadBranding } = useLoad(
     () => api<BrandingSettings>({ url: '/branding' }),
-    { title: 'PhotoLib', iconType: 'builtin', builtinIcon: 'camera', slogan: '摄影工作站' } as BrandingSettings, [],
+    defaultBranding, [],
   )
   const {
     data: scheduledIcons,
@@ -108,7 +109,7 @@ export default function AdminPage() {
         iconType: values.iconChoice === 'custom' ? 'custom' : 'builtin',
         builtinIcon: values.iconChoice === 'custom' ? branding.builtinIcon : values.iconChoice,
       } })
-      window.dispatchEvent(new Event('branding-updated'))
+      window.dispatchEvent(new Event(BRANDING_UPDATED_EVENT))
       message.success('面板品牌设置已保存')
       await reloadBranding()
     } catch (e) { message.error((e as Error).message) }
@@ -126,7 +127,7 @@ export default function AdminPage() {
       const data = new FormData()
       data.append('file', file)
       await api<BrandingSettings>({ method: 'POST', url: '/branding/icon', data })
-      window.dispatchEvent(new Event('branding-updated'))
+      window.dispatchEvent(new Event(BRANDING_UPDATED_EVENT))
       message.success('自定义图标已上传并启用')
       await reloadBranding()
     } catch (e) { message.error((e as Error).message) }
@@ -178,7 +179,7 @@ export default function AdminPage() {
       files.forEach(file => data.append('files', file))
       await api<ScheduledBrandIcon[]>({ method: 'PUT', url: '/branding/scheduled-icons', data })
       await reloadScheduledIcons()
-      window.dispatchEvent(new Event('branding-updated'))
+      window.dispatchEvent(new Event(BRANDING_UPDATED_EVENT))
       message.success('定时图标规则已保存')
     } catch (e) {
       message.error((e as Error).message)
@@ -267,7 +268,7 @@ export default function AdminPage() {
                   { required: true, whitespace: true, message: '请输入品牌名称' },
                   { max: 40, message: '品牌名称不能超过 40 个字符' },
                 ]}>
-                  <Input showCount maxLength={40} placeholder="例如：PhotoLib" />
+                  <Input showCount maxLength={40} placeholder="例如：摄影工作站" />
                 </Form.Item>
                 <Form.Item label="面板图标" name="iconChoice" rules={[{ required: true }]}>
                   <Select size="large" options={[
@@ -293,7 +294,7 @@ export default function AdminPage() {
                   { required: true, whitespace: true, message: '请输入 Slogan' },
                   { max: 80, message: 'Slogan 不能超过 80 个字符' },
                 ]}>
-                  <Input showCount maxLength={80} placeholder="例如：摄影工作站" />
+                  <Input showCount maxLength={80} placeholder="例如：影像协作平台" />
                 </Form.Item>
                 <Button type="primary" onClick={() => void saveBranding()}>保存品牌设置</Button>
               </Form>

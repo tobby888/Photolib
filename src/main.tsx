@@ -4,6 +4,7 @@ import { App as AntApp, ConfigProvider, theme } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import { HashRouter } from 'react-router-dom'
 import { AuthProvider } from './auth'
+import { BrandingProvider } from './branding'
 import App from './App'
 import AppErrorBoundary from './AppErrorBoundary'
 import './styles.css'
@@ -61,7 +62,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       }}>
         <AntApp>
           <HashRouter>
-            <AuthProvider><App /></AuthProvider>
+            <BrandingProvider><AuthProvider><App /></AuthProvider></BrandingProvider>
           </HashRouter>
         </AntApp>
       </ConfigProvider>

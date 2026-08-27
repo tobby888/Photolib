@@ -2,9 +2,9 @@ import {
   Alert, App as AntApp, Badge, Button, Divider, Dropdown, Empty, Grid, Layout, List, Menu, Popover, Progress, Result, Space, Typography,
 } from 'antd'
 import {
-  AimOutlined, BarChartOutlined, BellOutlined, BookOutlined, BulbOutlined, CameraOutlined, ContactsOutlined,
+  BarChartOutlined, BellOutlined, BookOutlined, CameraOutlined, ContactsOutlined,
   DashboardOutlined, EnvironmentOutlined, FolderOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SettingOutlined,
-  MessageOutlined, PictureOutlined, StarOutlined, TeamOutlined, UnorderedListOutlined, UserOutlined,
+  MessageOutlined, StarOutlined, TeamOutlined, UnorderedListOutlined, UserOutlined,
 } from '@ant-design/icons'
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
@@ -12,6 +12,7 @@ import { useAuth } from './auth'
 import { NotFound } from './components'
 import { api } from './api'
 import type { BrandingSettings, Notification, PreviewGenerationStatus } from './types'
+import { BrandGlyph, useBranding } from './branding'
 import { hasAnyPermission, hasPermission, hasSystemAccess } from './permissions'
 import dayjs from 'dayjs'
 import UserAvatar from './UserAvatar'
@@ -40,13 +41,6 @@ const RecruitmentApplicationDetailPage = lazy(() => import('./pages/RecruitmentA
 const AvatarSettingsModal = lazy(() => import('./AvatarSettingsModal'))
 
 const { Header, Sider, Content } = Layout
-const defaultBranding: BrandingSettings = {
-  title: 'PhotoLib', iconType: 'builtin', builtinIcon: 'camera', slogan: '摄影工作站',
-}
-const brandIcons = {
-  camera: <CameraOutlined />, aperture: <AimOutlined />, picture: <PictureOutlined />,
-  bulb: <BulbOutlined />, star: <StarOutlined />,
-}
 
 function BrandCopy({ title, slogan }: Pick<BrandingSettings, 'title' | 'slogan'>) {
   const copyRef = useRef<HTMLDivElement>(null)
@@ -94,7 +88,7 @@ function Shell() {
   const location = useLocation()
   const screens = Grid.useBreakpoint()
   const [collapsed, setCollapsed] = useState(false)
-  const [branding, setBranding] = useState<BrandingSettings>(defaultBranding)
+  const branding = useBranding()
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
   const [notificationOpen, setNotificationOpen] = useState(false)
@@ -105,22 +99,6 @@ function Shell() {
   useEffect(() => {
     setCollapsed(mobile)
   }, [mobile])
-  useEffect(() => {
-    const loadBranding = () => void api<BrandingSettings>({ url: '/branding' })
-      .then(setBranding).catch(() => setBranding(defaultBranding))
-    loadBranding()
-    window.addEventListener('branding-updated', loadBranding)
-    return () => window.removeEventListener('branding-updated', loadBranding)
-  }, [])
-  useEffect(() => {
-    if (!branding.nextIconRefreshAt) return
-    const refreshAt = Date.parse(branding.nextIconRefreshAt)
-    if (!Number.isFinite(refreshAt)) return
-    const timer = window.setTimeout(() => {
-      window.dispatchEvent(new Event('branding-updated'))
-    }, Math.max(1000, refreshAt - Date.now() + 1000))
-    return () => window.clearTimeout(timer)
-  }, [branding.nextIconRefreshAt])
   const loadNotifications = async () => {
     try {
       const [items, unread] = await Promise.all([
@@ -224,9 +202,6 @@ function Shell() {
   const selected = location.pathname.startsWith('/recruitment-applications/')
     ? '/recruitments'
     : location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`
-  const displayIconType = branding.displayIconType ?? branding.iconType
-  const displayIconUrl = branding.displayIconUrl ?? branding.customIconUrl
-
   return <Layout className="app-shell" onPointerMove={(event) => {
     event.currentTarget.style.setProperty('--pointer-x', `${event.clientX}px`)
     event.currentTarget.style.setProperty('--pointer-y', `${event.clientY}px`)
@@ -234,10 +209,8 @@ function Shell() {
     <Sider className="side-nav" width={236} collapsedWidth={mobile ? 0 : 72}
       collapsed={collapsed} breakpoint="md" trigger={null} theme="light">
       <div className="brand" onClick={() => navigate('/')}>
-        <div className={`brand-mark ${displayIconType === 'custom' ? 'brand-mark-custom' : ''}`}>
-          {displayIconType === 'custom' && displayIconUrl
-            ? <img src={displayIconUrl} alt="" />
-            : brandIcons[branding.builtinIcon] || brandIcons.camera}
+        <div className={`brand-mark ${(branding.displayIconType ?? branding.iconType) === 'custom' ? 'brand-mark-custom' : ''}`}>
+          <BrandGlyph branding={branding} />
         </div>
         {!collapsed && <BrandCopy title={branding.title} slogan={branding.slogan} />}
       </div>
@@ -259,7 +232,7 @@ function Shell() {
             icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
             onClick={() => setCollapsed(!collapsed)} />
           <div className="topbar-context">
-            <span>PHOTOLIB /</span>
+            <span>{branding.title} /</span>
             <strong>{nav.find((item) => item.key === selected)?.label}</strong>
           </div>
         </div>
@@ -356,7 +329,8 @@ function Shell() {
 
 export default function App() {
   const { user } = useAuth()
-  return <Suspense fallback={<div className="route-loading">正在进入 PhotoLib…</div>}><Routes>
+  const branding = useBranding()
+  return <Suspense fallback={<div className="route-loading">正在进入{branding.title}…</div>}><Routes>
     <Route path="/login" element={user ? <Navigate to={user.mustChangePassword ? '/initial-password' : '/'} replace /> : <LoginPage />} />
     <Route path="/recruitment" element={user
       ? <Navigate to={user.mustChangePassword ? '/initial-password' : '/'} replace />

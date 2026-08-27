@@ -12,7 +12,7 @@ export default class AppErrorBoundary extends Component<PropsWithChildren, State
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error('PhotoLib 页面渲染失败', error, info)
+    console.error('页面渲染失败', error, info)
   }
 
   private reload = () => {

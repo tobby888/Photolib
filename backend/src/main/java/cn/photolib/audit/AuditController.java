@@ -68,7 +68,7 @@ public class AuditController {
         }
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION,
-                        "attachment; filename=\"photolib-audit-logs-" + LocalDate.now() + ".csv\"")
+                        "attachment; filename=\"audit-logs-" + LocalDate.now() + ".csv\"")
                 .contentType(new MediaType("text", "csv", StandardCharsets.UTF_8))
                 .body(csv.toString().getBytes(StandardCharsets.UTF_8));
     }

@@ -1,6 +1,5 @@
 import {
   CalendarOutlined,
-  CameraOutlined,
   CheckCircleOutlined,
   CloudUploadOutlined,
   FileImageOutlined,
@@ -34,6 +33,7 @@ import { useMemo, useState } from 'react'
 import { Link, Navigate } from 'react-router-dom'
 import { api } from '../api'
 import { useAuth } from '../auth'
+import { BrandGlyph, useBranding } from '../branding'
 import { useLoad } from '../hooks'
 import MarkdownRenderer from '../MarkdownRenderer'
 import {
@@ -317,6 +317,7 @@ function PublicTaskForm({ task }: { task: PublicRecruitmentTask }) {
 
 export default function PublicRecruitmentPage() {
   const { user } = useAuth()
+  const branding = useBranding()
   const tasks = useLoad(
     async () => {
       const response = await api<unknown>({ url: '/public/recruitments' })
@@ -338,8 +339,8 @@ export default function PublicRecruitmentPage() {
 
   return <main style={{ minHeight: '100vh', background: 'linear-gradient(145deg, #f7f4ee 0%, #edf3f0 100%)' }}>
     <header style={{ background: '#173b35', color: 'white', padding: '22px clamp(18px, 5vw, 68px)' }}>
-      <Space size={12}><CameraOutlined style={{ color: '#f0b66d', fontSize: 25 }} />
-        <div><Typography.Title level={4} style={{ color: 'white', margin: 0 }}>PhotoLib</Typography.Title>
+      <Space size={12}><span className="brand-glyph"><BrandGlyph branding={branding} /></span>
+        <div><Typography.Title level={4} style={{ color: 'white', margin: 0 }}>{branding.title}</Typography.Title>
           <Typography.Text style={{ color: 'rgba(255,255,255,.62)' }}>摄影部新成员招募</Typography.Text></div></Space>
     </header>
     <div style={{ width: 'min(1120px, calc(100% - 28px))', margin: '0 auto', padding: 'clamp(30px, 6vw, 72px) 0 60px' }}>

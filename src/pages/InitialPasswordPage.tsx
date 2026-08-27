@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, type LoginResult } from '../api'
 import { useAuth } from '../auth'
+import { useBranding } from '../branding'
 
 interface PasswordValues {
   initialPassword: string
@@ -13,6 +14,7 @@ interface PasswordValues {
 
 export default function InitialPasswordPage() {
   const { updateSession, logout } = useAuth()
+  const branding = useBranding()
   const { message } = App.useApp()
   const navigate = useNavigate()
   const [loading, setLoading] = useState(false)
@@ -27,7 +29,7 @@ export default function InitialPasswordPage() {
         data: { initialPassword: values.initialPassword, newPassword: values.newPassword },
       })
       updateSession(result)
-      message.success('密码修改成功，欢迎使用 PhotoLib')
+      message.success(`密码修改成功，欢迎使用${branding.title}`)
       navigate('/', { replace: true })
     } catch (error) {
       message.error((error as Error).message)

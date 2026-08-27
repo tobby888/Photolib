@@ -144,10 +144,10 @@ public class BrandingController {
 
     private BrandingSettingEntity defaults() {
         BrandingSettingEntity setting = new BrandingSettingEntity();
-        setting.setTitle("PhotoLib");
+        setting.setTitle("摄影工作站");
         setting.setIconType("builtin");
         setting.setBuiltinIcon("camera");
-        setting.setSlogan("摄影工作站");
+        setting.setSlogan("影像协作平台");
         return setting;
     }
 

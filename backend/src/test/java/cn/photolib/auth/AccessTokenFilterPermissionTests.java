@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
+import java.util.List;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -52,6 +53,30 @@ class AccessTokenFilterPermissionTests {
 
             verify(chain).doFilter(request, response);
             assertThat(response.getStatus()).isEqualTo(200);
+        }
+    }
+
+    @Test
+    void restrictedSessionsStillReadTheAdministratorBranding() throws Exception {
+        AuthService auth = mock(AuthService.class);
+        AccessTokenFilter filter = new AccessTokenFilter(auth);
+        var noAccess = noAccessUser();
+        var mustChangePassword = new AuthenticatedUser(8L, "fresh", "新同学", UserRole.CAMPUS_MANAGER,
+                null, true, 4L, "CAMPUS_MANAGER", "校区负责人",
+                DataScope.CAMPUS, Set.of(PermissionCode.PHOTO_UPLOAD), Set.of(1L));
+
+        for (AuthenticatedUser user : List.of(noAccess, mustChangePassword)) {
+            when(auth.authenticate("token")).thenReturn(new AuthService.SessionAuthentication(91L, user));
+            for (String path : List.of("/api/v1/branding", "/api/v1/branding/icon")) {
+                MockHttpServletRequest request = request(path);
+                MockHttpServletResponse response = new MockHttpServletResponse();
+                FilterChain chain = mock(FilterChain.class);
+
+                filter.doFilterInternal(request, response, chain);
+
+                verify(chain).doFilter(request, response);
+                assertThat(response.getStatus()).isEqualTo(200);
+            }
         }
     }
 

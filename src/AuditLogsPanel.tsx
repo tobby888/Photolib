@@ -47,7 +47,7 @@ export default function AuditLogsPanel() {
       const url = URL.createObjectURL(response.data)
       const anchor = document.createElement('a')
       anchor.href = url
-      anchor.download = `photolib-audit-logs-${dayjs().format('YYYY-MM-DD')}.csv`
+      anchor.download = `audit-logs-${dayjs().format('YYYY-MM-DD')}.csv`
       anchor.click()
       URL.revokeObjectURL(url)
       message.success('日志已导出')

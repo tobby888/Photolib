@@ -36,7 +36,10 @@ public class SecurityConfig {
                                 "/api/v1/actuator/health",
                                 "/api/v1/local-storage/objects/**",
                                 "/api/v1/branding/icon").permitAll()
+                        // The login and public recruitment pages must render the
+                        // administrator's branding before anyone is authenticated.
                         .requestMatchers(HttpMethod.GET,
+                                "/api/v1/branding",
                                 "/api/v1/branding/scheduled-icons/*/icon").permitAll()
                         .requestMatchers(HttpMethod.GET,
                                 "/api/v1/public/recruitments",
