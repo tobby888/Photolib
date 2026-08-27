@@ -1,5 +1,5 @@
 import {
-  Alert, App as AntApp, Badge, Button, Divider, Dropdown, Empty, Grid, Layout, List, Menu, Popover, Progress, Result, Space, Typography,
+  Alert, App as AntApp, Badge, Button, Dropdown, Grid, Layout, Menu, Popover, Progress, Result, Space, Typography,
 } from 'antd'
 import {
   BarChartOutlined, BellOutlined, BookOutlined, CameraOutlined, ContactsOutlined,
@@ -14,7 +14,6 @@ import { api } from './api'
 import type { BrandingSettings, Notification, PreviewGenerationStatus } from './types'
 import { BrandGlyph, useBranding } from './branding'
 import { hasAnyPermission, hasPermission, hasSystemAccess } from './permissions'
-import dayjs from 'dayjs'
 import UserAvatar from './UserAvatar'
 
 const LoginPage = lazy(() => import('./pages/LoginPage'))
@@ -39,6 +38,7 @@ const RecruitmentsPage = lazy(() => import('./pages/RecruitmentsPage'))
 const RecruitmentDetailPage = lazy(() => import('./pages/RecruitmentDetailPage'))
 const RecruitmentApplicationDetailPage = lazy(() => import('./pages/RecruitmentApplicationDetailPage'))
 const AvatarSettingsModal = lazy(() => import('./AvatarSettingsModal'))
+const NotificationPanel = lazy(() => import('./NotificationPanel'))
 
 const { Header, Sider, Content } = Layout
 
@@ -240,29 +240,14 @@ function Shell() {
           <Popover open={notificationOpen} onOpenChange={(open) => {
             setNotificationOpen(open)
             if (open) void loadNotifications()
-          }} trigger="click" placement="bottomRight" content={<div className="notification-panel">
-            <div className="notification-head">
-              <Typography.Text strong>消息通知</Typography.Text>
-              <Button type="link" size="small" disabled={!unreadCount} onClick={() => void markAllRead()}>
-                全部已读
-              </Button>
-            </div>
-            <Divider />
-            {notifications.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无消息" /> :
-              <List dataSource={notifications} renderItem={(item) =>
-                <List.Item className={`notification-item ${item.readAt ? '' : 'unread'}`}
-                  onClick={() => void markRead(item)}>
-                  <div className="notification-dot" />
-                  <div>
-                    <Typography.Text strong={!item.readAt}>{item.title}</Typography.Text>
-                    {item.content && <Typography.Paragraph ellipsis={{ rows: 2 }}>{item.content}</Typography.Paragraph>}
-                    <Typography.Text type="secondary">{dayjs(item.createdAt).format('MM-DD HH:mm')}</Typography.Text>
-                  </div>
-                </List.Item>} />}
-            <Button block type="link" onClick={() => { setNotificationOpen(false); navigate('/notifications') }}>
-              查看全部消息
-            </Button>
-          </div>}>
+          }} trigger="click" placement="bottomRight" content={
+            // The element itself must stay truthy even while closed: antd keeps a popover with
+            // empty content shut, which would leave the bell dead until the panel loads.
+            <Suspense fallback={<div className="notification-panel notification-loading">正在加载消息…</div>}>
+              {notificationOpen && <NotificationPanel notifications={notifications} unreadCount={unreadCount}
+                onOpen={(item) => void markRead(item)} onMarkAllRead={() => void markAllRead()}
+                onViewAll={() => { setNotificationOpen(false); navigate('/notifications') }} />}
+            </Suspense>}>
             <Badge count={unreadCount} size="small" overflowCount={99}>
               <Button aria-label="消息通知" type="text" shape="circle" icon={<BellOutlined />} />
             </Badge>

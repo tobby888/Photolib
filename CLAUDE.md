@@ -33,6 +33,8 @@ Requires Node 20+, Java 21, MySQL 8. Local backend needs a `backend/.env` with `
 
 **Frontend** — Vite + React 19 + Ant Design 6, in `src/`. Uses **Hash Router** (`/#/projects`) so the SPA survives being served from the backend JAR without SPA-fallback config. Flat structure: pages in `src/pages/`, all API types in `src/types.ts`, request layer in `src/api.ts` (the `api` wrapper unwraps standard JSON envelopes; use the raw `http` axios instance only for Blob downloads, and always `URL.revokeObjectURL` after).
 
+Build pipeline lives in `build/` (imported by `vite.config.ts`): a build-only plugin rewrites `antd`/`@ant-design/icons` barrel imports to deep imports, and `createManualChunks` gives shell-reachable dependencies fixed vendor chunks while route-only code stays with Rollup's per-route split. Keep barrel imports in source. Do not chunk route-only dependencies by package name — the UI kit's cross-imports make that inflate the first paint. See `AGENTS.md` §2.18.
+
 **Backend** — `backend/src/main/java/cn/photolib/`, one package per domain (`project`, `request`, `photo`, `adoption`, `worklog`, `statistics`, `notification`, `audit`, `storage`, `migration`, `auth`, `admin`, `campus`, `user`). Standard layering per package: **Controller** (params, authz, HTTP) → **Service** (business rules) → **Mapper** (MyBatis-Plus queries). Cross-cutting code lives in `common/` (`api/ApiResponse`, `api/PageResponse`, `error/BusinessException` + `ErrorCode` + `GlobalExceptionHandler`).
 
 Conventions that matter across the codebase:

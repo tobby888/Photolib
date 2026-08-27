@@ -286,6 +286,7 @@ button, input, textarea, select { font-family: inherit; }
 .tab-toolbar h4 { margin: 0; }
 .notification-panel { width: min(380px, calc(100vw - 32px)); max-height: 520px; overflow: auto; }
 .notification-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px; }
+.notification-loading { padding: 24px 8px; text-align: center; color: #68736f; }
 .notification-panel .ant-divider { margin: 6px 0; }
 .notification-item { position: relative; align-items: flex-start !important; gap: 10px; padding: 13px 8px !important; cursor: pointer; border-radius: 8px; }
 .notification-item:hover { background: #f6f4ef; }
