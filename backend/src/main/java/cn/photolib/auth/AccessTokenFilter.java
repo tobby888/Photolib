@@ -62,13 +62,21 @@ public class AccessTokenFilter extends OncePerRequestFilter {
     private boolean isAllowedBeforePasswordChange(String path) {
         return path.equals("/api/v1/auth/me")
                 || path.equals("/api/v1/auth/initial-password")
-                || path.equals("/api/v1/auth/logout");
+                || path.equals("/api/v1/auth/logout")
+                || isPublicBranding(path);
     }
 
     private boolean isAllowedWithoutSystemAccess(String path) {
         return path.equals("/api/v1/auth/me")
                 || path.equals("/api/v1/auth/initial-password")
                 || path.equals("/api/v1/auth/password")
-                || path.equals("/api/v1/auth/logout");
+                || path.equals("/api/v1/auth/logout")
+                || isPublicBranding(path);
+    }
+
+    // Branding is anonymous-readable, so a restricted session must not be worse
+    // off than a logged-out visitor: these screens still show the product identity.
+    private boolean isPublicBranding(String path) {
+        return path.equals("/api/v1/branding") || path.equals("/api/v1/branding/icon");
     }
 }
