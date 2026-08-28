@@ -1,6 +1,8 @@
 export type Role = 'ADMIN' | 'MINISTER' | 'CAMPUS_MANAGER'
 export type EntityId = string
 export type DataScope = 'NONE' | 'CAMPUS' | 'GLOBAL'
+// 权限组的图库可见范围，与数据范围正交：SELF 仅本人上传、CAMPUS 授权校区内全部、GLOBAL 全站全部。
+export type PhotoVisibility = 'SELF' | 'CAMPUS' | 'GLOBAL'
 export type PermissionCode =
   | 'PROJECT_VIEW' | 'PROJECT_ADOPT' | 'PROJECT_CREATE' | 'PROJECT_COMPLETE' | 'PROJECT_DOWNLOAD'
   | 'REQUEST_VIEW' | 'REQUEST_CREATE' | 'REQUEST_DELETE' | 'REQUEST_CLOSE' | 'REQUEST_CONFIRM' | 'REQUEST_PHOTO_MANAGE'
@@ -48,6 +50,7 @@ export interface PermissionGroup {
   name: string
   description?: string | null
   dataScope: DataScope
+  photoVisibility: PhotoVisibility
   builtIn: boolean
   lowest: boolean
   permissions: PermissionCode[]

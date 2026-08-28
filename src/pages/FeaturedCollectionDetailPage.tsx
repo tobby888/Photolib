@@ -46,11 +46,14 @@ export default function FeaturedCollectionDetailPage() {
     [] as FeaturedEntry[], [collectionId],
   )
   // 选图弹窗打开时才拉图库，避免每次进详情页都多打一次图库查询。
+  // selectableOnly 让后端按"精选可选范围"（授权校区内全部图片）返回，而不是按权限组的
+  // 图库可见范围：可见范围放宽到全站的账号，选图仍然只限本校区，两边必须对齐，
+  // 否则弹窗里会列出点下去必然 403 的图片。
   const photos = useLoad(
     () => pickerOpen
       ? api<PageData<Photo>>({
           url: '/photos',
-          params: qs({ ...photoFilters, pageSize: 12, status: 'AVAILABLE' }),
+          params: qs({ ...photoFilters, pageSize: 12, status: 'AVAILABLE', selectableOnly: true }),
         })
       : Promise.resolve(emptyPage<Photo>()),
     emptyPage<Photo>(), [pickerOpen, photoFilters.page, photoFilters.keyword],

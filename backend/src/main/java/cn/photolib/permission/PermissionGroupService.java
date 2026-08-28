@@ -105,12 +105,14 @@ public class PermissionGroupService {
     @Transactional
     public GroupView create(CreateCommand command) {
         String code = normalizeCode(command.code());
-        validateMutableFields(command.name(), command.dataScope(), command.permissions());
+        validateMutableFields(command.name(), command.dataScope(), command.photoVisibility(),
+                command.permissions());
         PermissionGroupEntity group = new PermissionGroupEntity();
         group.setCode(code);
         group.setName(command.name().trim());
         group.setDescription(normalizeDescription(command.description()));
         group.setDataScope(command.dataScope());
+        group.setPhotoVisibility(command.photoVisibility());
         group.setBuiltIn(false);
         group.setLowest(false);
         try {
@@ -128,7 +130,8 @@ public class PermissionGroupService {
         if (Boolean.TRUE.equals(group.getLowest())) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "最低权限组不能编辑");
         }
-        validateMutableFields(command.name(), command.dataScope(), command.permissions());
+        validateMutableFields(command.name(), command.dataScope(), command.photoVisibility(),
+                command.permissions());
         DataScope targetScope = Boolean.TRUE.equals(group.getBuiltIn())
                 ? group.getDataScope() : command.dataScope();
         if (group.getDataScope() != targetScope && memberCount(id) > 0) {
@@ -136,12 +139,19 @@ public class PermissionGroupService {
                     "修改数据范围前必须先清空权限组成员");
         }
         Set<PermissionCode> permissions = command.permissions();
+        // 图库可见范围是纯粹的权限设置，内置权限组也必须可调——"校区负责人只能看自己上传的
+        // 图片"正是内置组的默认值，锁住它等于这个开关对最需要它的账号不可用。因此它写在
+        // built_in 分支之外，与 name/description/data_scope 的处理不同。
+        PhotoVisibility photoVisibility = command.photoVisibility();
         if ("ADMIN".equals(group.getCode())) {
             // 系统管理员组是权限系统自身的管理入口（权限组、账号、校区、操作日志都靠
             // hasRole('ADMIN')）。允许裁剪它的权限明细会造出"能进管理页但业务权限被削掉"
             // 的不一致状态，且没有其他角色能恢复，因此固定为全集。
             permissions = Set.of(PermissionCode.values());
+            // 同理固定为全站可见：管理员把自己的图库范围收窄后没有别的角色能改回来。
+            photoVisibility = PhotoVisibility.GLOBAL;
         }
+        group.setPhotoVisibility(photoVisibility);
         if (!Boolean.TRUE.equals(group.getBuiltIn())) {
             group.setName(command.name().trim());
             group.setDescription(normalizeDescription(command.description()));
@@ -196,7 +206,7 @@ public class PermissionGroupService {
         return new AuthenticatedUser(user.getId(), user.getUsername(), user.getDisplayName(),
                 compatibleRole, primaryCampusId, Boolean.TRUE.equals(user.getMustChangePassword()),
                 group.getId(), group.getCode(), group.getName(), group.getDataScope(),
-                permissions, campusIds, UserAvatarService.avatarUrl(user));
+                photoVisibility(group), permissions, campusIds, UserAvatarService.avatarUrl(user));
     }
 
     public Set<Long> campusIds(Long userId) {
@@ -241,12 +251,16 @@ public class PermissionGroupService {
         };
     }
 
-    private void validateMutableFields(String name, DataScope scope, Set<PermissionCode> permissions) {
+    private void validateMutableFields(String name, DataScope scope, PhotoVisibility photoVisibility,
+                                       Set<PermissionCode> permissions) {
         if (!StringUtils.hasText(name) || name.trim().length() > 100) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "权限组名称长度必须为 1 到 100 个字符");
         }
         if (scope == null || scope == DataScope.NONE) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "自定义权限组的数据范围必须为全局或校区");
+        }
+        if (photoVisibility == null) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "必须指定图库可见范围");
         }
         if (permissions == null) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "权限列表不能为空");
@@ -297,9 +311,18 @@ public class PermissionGroupService {
 
     private GroupView toView(PermissionGroupEntity group) {
         return new GroupView(group.getId(), group.getCode(), group.getName(), group.getDescription(),
-                group.getDataScope(), Boolean.TRUE.equals(group.getBuiltIn()),
+                group.getDataScope(), photoVisibility(group), Boolean.TRUE.equals(group.getBuiltIn()),
                 Boolean.TRUE.equals(group.getLowest()), permissionCodes(group.getId()), memberCount(group.getId()),
                 group.getCreatedAt(), group.getUpdatedAt(), group.getVersion());
+    }
+
+    /**
+     * 存量行在 V36 之前没有这一列，滚动升级期间也可能读到还没补值的行；一律按数据范围
+     * 回退到改动前的行为（全局看全站、其余仅看本人上传），不要把 null 当成"全站可见"。
+     */
+    private PhotoVisibility photoVisibility(PermissionGroupEntity group) {
+        if (group.getPhotoVisibility() != null) return group.getPhotoVisibility();
+        return group.getDataScope() == DataScope.GLOBAL ? PhotoVisibility.GLOBAL : PhotoVisibility.SELF;
     }
 
     private long memberCount(Long groupId) {
@@ -310,11 +333,12 @@ public class PermissionGroupService {
     public record PermissionDefinition(String code, String label) {}
     public record CategoryDefinition(String code, String label, List<PermissionDefinition> permissions) {}
     public record GroupView(Long id, String code, String name, String description, DataScope dataScope,
-                            boolean builtIn, boolean lowest, Set<PermissionCode> permissions,
-                            long memberCount, LocalDateTime createdAt, LocalDateTime updatedAt,
-                            Integer version) {}
+                            PhotoVisibility photoVisibility, boolean builtIn, boolean lowest,
+                            Set<PermissionCode> permissions, long memberCount, LocalDateTime createdAt,
+                            LocalDateTime updatedAt, Integer version) {}
     public record CreateCommand(String code, String name, String description, DataScope dataScope,
-                                Set<PermissionCode> permissions) {}
+                                PhotoVisibility photoVisibility, Set<PermissionCode> permissions) {}
     public record UpdateCommand(String name, String description, DataScope dataScope,
-                                Set<PermissionCode> permissions, int version) {}
+                                PhotoVisibility photoVisibility, Set<PermissionCode> permissions,
+                                int version) {}
 }

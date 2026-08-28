@@ -222,18 +222,27 @@ class FeaturedCollectionServiceTests {
         assertThat(entry.mine()).isTrue();
     }
 
+    /**
+     * 选图范围按校区划线，不按上传者：同校区同事的图片可以选，别校区的不行。
+     * 章节是按图片的 campusId 分的，选到别校区的图片会把稿子写进不属于自己的章节。
+     */
     @Test
-    void aManagerCannotSelectAnotherMembersGalleryPhoto() {
+    void aManagerSelectsAnyPhotoInTheirCampusButNoneFromAnother() {
         long id = publishedCollection(new FeaturedCollectionService.CollectionCommand(
-                "跨人选图", "<p>要求</p>", LocalDateTime.now().minusHours(1),
+                "跨校区选图", "<p>要求</p>", LocalDateTime.now().minusHours(1),
                 LocalDateTime.now().plusDays(1), true, 10, List.of(), List.of()));
-        long foreign = photo(WEST_MANAGER_ID, WEST_CAMPUS_ID, "别人的照片");
+        long foreign = photo(WEST_MANAGER_ID, WEST_CAMPUS_ID, "别校区的照片");
+        long peer = photo(WEST_MANAGER_ID, EAST_CAMPUS_ID, "同校区同事的照片");
 
         assertThatThrownBy(() -> service.addEntry(id,
                 new FeaturedCollectionService.EntryCommand(foreign, "思路", "地点"), eastManager))
                 .isInstanceOf(BusinessException.class)
                 .extracting(error -> ((BusinessException) error).getCode())
                 .isEqualTo(ErrorCode.FORBIDDEN);
+
+        var entry = service.addEntry(id,
+                new FeaturedCollectionService.EntryCommand(peer, "思路", "地点"), eastManager);
+        assertThat(entry.photoTitle()).isEqualTo("同校区同事的照片");
     }
 
     @Test

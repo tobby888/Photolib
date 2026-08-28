@@ -51,10 +51,11 @@ public class PhotoController {
             @RequestParam(required = false) PhotoStatus status,
             @RequestParam(defaultValue = "false") boolean includeAllStatuses,
             @RequestParam(defaultValue = "false") boolean favoritesOnly,
+            @RequestParam(defaultValue = "false") boolean selectableOnly,
             @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.list(page, pageSize, keyword, projectId, requestId,
                 photographerStudentId, photographerName, uploadedBy, campusId, status,
-                includeAllStatuses, favoritesOnly, user));
+                includeAllStatuses, favoritesOnly, selectableOnly, user));
     }
 
     @GetMapping("/{id}")

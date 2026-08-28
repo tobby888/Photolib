@@ -151,11 +151,24 @@ public class PhotoService {
                                         Long requestId, String studentId, String photographerName,
                                         Long uploadedBy, Long campusId, PhotoStatus status,
                                         boolean includeAllStatuses, boolean favoritesOnly,
-                                        AuthenticatedUser user) {
-        requireListPermission(projectId, requestId, favoritesOnly, user);
+                                        boolean selectableOnly, AuthenticatedUser user) {
+        requireListPermission(projectId, requestId, favoritesOnly, selectableOnly, user);
         if (requestId != null && user.isCampusScoped()) requestService.requireParticipantAccess(requestId, user);
         if (projectId != null) projectService.getVisible(projectId, user);
-        Long effectiveUploader = user.isCampusScoped() && (requestId == null || favoritesOnly)
+        // selectableOnly 是好图精选选图弹窗用的：它要的是"这个账号能选用的图片"，而选图范围
+        // 固定为授权校区（见 requireGallerySelectable），与权限组的图库可见范围无关。因此它
+        // 既压过 SELF 的上传者过滤，也压过 GLOBAL 的跨校区放行——否则弹窗里会列出点下去必然
+        // 403 的图片，或者反过来把本可选的同校区图片藏起来。
+        boolean selfOnly = !selectableOnly && user.seesOnlyOwnPhotos();
+        boolean campusFiltered = user.isCampusScoped()
+                && (selectableOnly || !user.seesPhotosAcrossCampuses());
+        // requireVisible 对校区范围账号有一条独立的规则：需求图片只对该需求的参与人可见。
+        // 以前"只看本人上传"顺带满足了它（往需求里传图本来就得先接单），可见范围放宽之后
+        // 不再成立，必须在列表里显式过滤，否则列表会摆出点进去必然 403 的图片。
+        // 传了 requestId 时上面已经查过参与关系，不需要重复过滤。
+        boolean nonParticipantRequestPhotosHidden = !selectableOnly
+                && user.isCampusScoped() && requestId == null;
+        Long effectiveUploader = selfOnly && (requestId == null || favoritesOnly)
                 ? user.id() : uploadedBy;
         // status explicitly given -> filter by it; otherwise default to AVAILABLE unless the
         // caller opts into every status (used by the project detail gallery to match photoCount).
@@ -175,9 +188,13 @@ public class PhotoService {
                 .apply(StringUtils.hasText(photographerName),
                         LikeFilter.contains("photographer_name"), likePhotographer)
                 .eq(effectiveUploader != null, PhotoEntity::getUploadedBy, effectiveUploader)
-                .eq(!user.isCampusScoped() && campusId != null, PhotoEntity::getCampusId, campusId)
-                .in(user.isCampusScoped(), PhotoEntity::getCampusId,
+                .eq(!campusFiltered && campusId != null, PhotoEntity::getCampusId, campusId)
+                .in(campusFiltered, PhotoEntity::getCampusId,
                         user.campusIds().isEmpty() ? List.of(-1L) : user.campusIds())
+                .and(nonParticipantRequestPhotosHidden, q -> q
+                        .isNull(PhotoEntity::getRequestId)
+                        .or().inSql(PhotoEntity::getRequestId,
+                                "SELECT request_id FROM request_participant WHERE user_id = " + user.id()))
                 .inSql(favoritesOnly, PhotoEntity::getId,
                         "SELECT photo_id FROM photo_favorite WHERE user_id = " + user.id())
                 .eq(effectiveStatus != null, PhotoEntity::getStatus, effectiveStatus)
@@ -367,7 +384,7 @@ public class PhotoService {
     }
 
     private void requireVisible(PhotoEntity photo, AuthenticatedUser user) {
-        if (!user.canAccessCampus(photo.getCampusId())) {
+        if (!user.canViewPhotoCampus(photo.getCampusId())) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该图片");
         }
         if (user.isCampusScoped() && photo.getRequestId() != null
@@ -411,11 +428,15 @@ public class PhotoService {
     }
 
     private void requireListPermission(Long projectId, Long requestId, boolean favoritesOnly,
-                                       AuthenticatedUser user) {
+                                       boolean selectableOnly, AuthenticatedUser user) {
         // The favorites sidebar is a gallery capability, not a way for users with
         // only project/request access to construct a cross-context photo feed.
         if (favoritesOnly && !user.hasPermission(PermissionCode.PHOTO_VIEW)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问收藏图片列表");
+        }
+        // 与 requireGallerySelectable 的第一道判断保持一致：选图列表同样是图库能力。
+        if (selectableOnly && !user.hasPermission(PermissionCode.PHOTO_VIEW)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问图库图片");
         }
         boolean allowed = requestId != null
                 ? user.hasAnyPermission(PermissionCode.REQUEST_VIEW, PermissionCode.REQUEST_PHOTO_MANAGE)
@@ -426,11 +447,18 @@ public class PhotoService {
     }
 
     /**
-     * 好图精选选图沿用图库的可见范围：必须有图库访问权限、图片在授权校区内，
-     * 且校区范围账号只能选自己上传的图片。规则与 {@link #requireFavoriteAccess}
-     * 完全一致——那里解释了为什么"参与某个需求"不能扩大这个范围：接口放行、
-     * 图库却看不到的话，用户会得到一份自己无法核对的选图。两处的判断顺序也保持一致，
-     * 只有面向用户的文案不同，改动可见范围时必须同时修改。
+     * 好图精选选图范围：必须有图库访问权限，且图片在账号的授权校区内——负责人只能选
+     * 同校区的图片，无论是谁上传的。
+     *
+     * <p><b>这里刻意用 {@link AuthenticatedUser#canAccessCampus} 而不是
+     * {@link AuthenticatedUser#canViewPhotoCampus}</b>：权限组把图库可见范围放宽到全站后，
+     * 负责人能在图库里浏览别的校区的图片，但精选是按校区分章节成稿的
+     * （{@code FeaturedCollectionService.addEntry} 用图片的 campusId 定章节），
+     * 选到别校区的图片会把稿子写进不属于自己的章节里。图库可见范围与精选选图范围
+     * 从此是两件事，不要再把它们合并回一套判断。</p>
+     *
+     * <p>选图弹窗的列表走 {@code GET /photos?selectableOnly=true}，那条分支必须与这里的
+     * 范围一致，否则会列出点下去必然 403 的图片。</p>
      */
     public PhotoEntity requireGallerySelectable(Long id, AuthenticatedUser user) {
         if (!user.hasPermission(PermissionCode.PHOTO_VIEW)) {
@@ -438,10 +466,7 @@ public class PhotoService {
         }
         PhotoEntity photo = require(id);
         if (!user.canAccessCampus(photo.getCampusId())) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该图片");
-        }
-        if (user.isCampusScoped() && !photo.getUploadedBy().equals(user.id())) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "无权选用其他成员的图库图片");
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权选用其他校区的图库图片");
         }
         return photo;
     }
@@ -464,13 +489,12 @@ public class PhotoService {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权收藏图库图片");
         }
         PhotoEntity photo = require(id);
-        // Match GET /photos without a project/request context exactly. In
-        // particular, participating in a request does not make another
-        // uploader's photo part of a campus-scoped user's personal gallery.
-        if (!user.canAccessCampus(photo.getCampusId())) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该图片");
-        }
-        if (user.isCampusScoped() && !photo.getUploadedBy().equals(user.id())) {
+        // Match GET /photos without a project/request context exactly, including the
+        // permission group's photo visibility and the campus/participation rules in
+        // requireVisible. In particular, participating in a request does not make another
+        // uploader's photo part of a self-only gallery.
+        requireVisible(photo, user);
+        if (user.seesOnlyOwnPhotos() && !photo.getUploadedBy().equals(user.id())) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权收藏其他成员的图库图片");
         }
         return photo;
@@ -485,7 +509,7 @@ public class PhotoService {
         if (!requestAllowed && !projectAllowed && !user.hasPermission(PermissionCode.PHOTO_VIEW)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权查看该图片");
         }
-        if (user.isCampusScoped() && !requestAllowed && !photo.getUploadedBy().equals(user.id())) {
+        if (user.seesOnlyOwnPhotos() && !requestAllowed && !photo.getUploadedBy().equals(user.id())) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权查看其他成员的图库图片");
         }
     }
@@ -515,8 +539,10 @@ public class PhotoService {
                         """).param("photoId", photo.getId())
                 .param("globalScope", !user.isCampusScoped()).param("userId", user.id())
                 .query(Long.class).single() > 0;
+        // 下载跟着图库可见范围走：看得到就下得到（仍然需要 PHOTO_DOWNLOAD）。编辑、归档、
+        // 删除不在此列，它们保持"仅限本人上传"。
         boolean galleryDownload = user.hasPermission(PermissionCode.PHOTO_DOWNLOAD)
-                && (!user.isCampusScoped() || photo.getUploadedBy().equals(user.id()));
+                && (!user.seesOnlyOwnPhotos() || photo.getUploadedBy().equals(user.id()));
         if (!requestDownload && !projectDownload && !galleryDownload) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权下载该图片");
         }

@@ -126,8 +126,10 @@ public class ExportService {
     }
 
     private boolean canDownload(PhotoEntity photo, AuthenticatedUser user) {
-        if (!user.canAccessCampus(photo.getCampusId())) return false;
-        if (!user.isCampusScoped() && user.hasPermission(PermissionCode.PHOTO_DOWNLOAD)) {
+        // 与 PhotoService.download 的逐张判断保持一致：打包下载不能比单张下载更宽，
+        // 也不能更窄（否则 ZIP 会静默漏掉用户在图库里看得见的图片）。
+        if (!user.canViewPhotoCampus(photo.getCampusId())) return false;
+        if (!user.seesOnlyOwnPhotos() && user.hasPermission(PermissionCode.PHOTO_DOWNLOAD)) {
             return true;
         }
         boolean requestParticipant = photo.getRequestId() != null && (!user.isCampusScoped()
@@ -139,7 +141,7 @@ public class ExportService {
         boolean requestAllowed = requestParticipant
                 && user.hasPermission(PermissionCode.REQUEST_PHOTO_MANAGE);
         boolean galleryAllowed = user.hasPermission(PermissionCode.PHOTO_DOWNLOAD)
-                && (!user.isCampusScoped() || photo.getUploadedBy().equals(user.id()));
+                && (!user.seesOnlyOwnPhotos() || photo.getUploadedBy().equals(user.id()));
         boolean projectAllowed = user.hasPermission(PermissionCode.PROJECT_DOWNLOAD)
                 && jdbc.sql("""
                         SELECT COUNT(*) FROM photo_project pp
