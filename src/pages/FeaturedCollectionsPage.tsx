@@ -1,14 +1,18 @@
 import {
   App, Button, Card, Col, DatePicker, Form, Input, InputNumber, Modal, Pagination, Radio, Row,
-  Select, Space, Tag, Typography,
+  Select, Space, Tag, Tree, Typography,
 } from 'antd'
 import { ArrowRightOutlined, CalendarOutlined, FileWordOutlined, PictureOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons'
 import dayjs, { type Dayjs } from 'dayjs'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, emptyPage, qs } from '../api'
 import { useAuth } from '../auth'
 import { DataState, PageTitle } from '../components'
+import {
+  buildAssignmentTree, checkedKeysToSelection, coveredUserIds, describeSelection,
+  pruneCoveredUsers, selectionToCheckedKeys, type AssignmentNode,
+} from '../featuredAssignmentTree'
 import { FEATURED_DOCUMENT_LABELS, featuredStatusDisplay } from '../featuredCollections'
 import { useLoad } from '../hooks'
 import { hasPermission } from '../permissions'
@@ -25,6 +29,9 @@ interface CollectionValues {
   campusIds: EntityId[]
   userIds: EntityId[]
 }
+
+// 共享的空数组：useWatch 未初始化时每次渲染都新建一个 []，会让下面的 useMemo 永远失效。
+const NO_IDS: EntityId[] = []
 
 const statusOptions = [
   { value: 'DRAFT', label: '草稿' },
@@ -188,6 +195,22 @@ export default function FeaturedCollectionsPage() {
   })
 
   const scope = Form.useWatch('scope', form)
+  const campusIds = Form.useWatch('campusIds', form) ?? NO_IDS
+  const userIds = Form.useWatch('userIds', form) ?? NO_IDS
+  const tree = useMemo(() => buildAssignmentTree(campuses, managers), [campuses, managers])
+  const covered = useMemo(() => coveredUserIds(campusIds, managers), [campusIds, managers])
+  const checkedKeys = useMemo(
+    () => selectionToCheckedKeys({ campusIds, userIds }, tree),
+    [campusIds, userIds, tree])
+
+  const onCheck = (keys: React.Key[] | { checked: React.Key[] }) => {
+    // checkStrictly 下 antd 回传的是 { checked, halfChecked }。
+    const next = pruneCoveredUsers(
+      checkedKeysToSelection(Array.isArray(keys) ? keys : keys.checked), managers)
+    form.setFieldsValue({ campusIds: next.campusIds, userIds: next.userIds })
+  }
+
+  const treeData = useMemo(() => tree.map(node => toTreeNode(node, covered)), [tree, covered])
 
   return <div className="page">
     <PageTitle eyebrow="好图精选" title="好图精选"
@@ -302,18 +325,71 @@ export default function FeaturedCollectionsPage() {
           ]} optionType="button" />
         </Form.Item>
         {scope === 'PICKED' && <>
-          <Form.Item name="campusIds" label="按校区指派" extra="该校区的全部负责人都需要提交。">
-            <Select mode="multiple" allowClear placeholder="选择校区"
-              options={campuses.map(campus => ({ value: campus.id, label: campus.name }))} />
-          </Form.Item>
-          <Form.Item name="userIds" label="单独点名" extra="不受校区指派影响，单独要求这几位负责人提交。">
-            <Select mode="multiple" allowClear placeholder="选择负责人" optionFilterProp="label"
-              options={managers.map(manager => ({
-                value: manager.id, label: `${manager.displayName} · ${manager.permissionGroupName}`,
-              }))} />
+          {/* campusIds / userIds 由下面的树统一维护，表单里只留隐藏项承载取值。 */}
+          <Form.Item name="campusIds" hidden><Input /></Form.Item>
+          <Form.Item name="userIds" hidden><Input /></Form.Item>
+          <Form.Item label="选择提交对象"
+            extra="勾选校区＝该校区全部负责人（含之后新增的成员）；只勾某个人＝单独点名他。两者互不影响。">
+            <div className="featured-assign-tree">
+              {treeData.length
+                ? <Tree checkable selectable={false}
+                  // 不级联：勾校区和勾个人是两种不同的指派，父子联动会把这个区别抹平。
+                  checkStrictly
+                  defaultExpandAll
+                  treeData={treeData}
+                  checkedKeys={checkedKeys}
+                  onCheck={onCheck} />
+                : <Typography.Text type="secondary">还没有校区，请先在系统管理里添加。</Typography.Text>}
+            </div>
+            <Typography.Text type="secondary" className="featured-assign-summary">
+              {describeSelection({ campusIds, userIds }, managers)}
+            </Typography.Text>
           </Form.Item>
         </>}
       </Form>
     </Modal>
   </div>
+}
+
+/** 把纯数据节点转成 antd 需要的形状；被校区覆盖的人显示为已包含且不可再单独勾选。 */
+function toTreeNode(node: AssignmentNode, covered: Set<string>): {
+  key: string; title: React.ReactNode; disabled?: boolean; checkable?: boolean;
+  children?: ReturnType<typeof toTreeNode>[]
+} {
+  if (node.kind === 'USER') {
+    const included = node.userId != null && covered.has(String(node.userId))
+    return {
+      key: node.key,
+      // 已由校区带进来的人禁用勾选：让"为什么勾了校区还要再勾人"这个疑问不出现。
+      disabled: included,
+      title: <Space size={6}>
+        <span>{node.label}</span>
+        {node.caption && <Typography.Text type="secondary">{node.caption}</Typography.Text>}
+        {included && <Tag color="green">已由校区包含</Tag>}
+      </Space>,
+    }
+  }
+  const children = (node.children ?? []).map(child => toTreeNode(child, covered))
+  if (node.kind === 'GROUP') {
+    return {
+      key: node.key,
+      // 「未分配校区」只是一个容器，勾它没有对应的后端语义。
+      checkable: false,
+      title: <Space size={6}>
+        <Typography.Text type="secondary">{node.label}</Typography.Text>
+        <Typography.Text type="secondary">（{children.length} 人，只能单独点名）</Typography.Text>
+      </Space>,
+      children,
+    }
+  }
+  return {
+    key: node.key,
+    title: <Space size={6}>
+      <strong>{node.label}</strong>
+      <Typography.Text type="secondary">
+        {children.length ? `全部负责人 · 当前 ${children.length} 人` : '全部负责人 · 当前暂无成员'}
+      </Typography.Text>
+    </Space>,
+    children,
+  }
 }
