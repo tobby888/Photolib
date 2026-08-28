@@ -1,7 +1,7 @@
 # PhotoLib API 接口文档
 
 > 本文依据当前后端控制器、Service、实体、安全配置以及现有 Web 客户端逐项核对，描述的是**已经实现的接口契约**，不是规划稿。
-> 核对日期：2026-07-27
+> 核对日期：2026-08-28
 > API 版本：v1
 > Base URL：`/api/v1`
 
@@ -1821,16 +1821,90 @@ operatorId? action? resourceType? keyword? from? to? page=1 pageSize=20
 - 下载响应是 `{ "url": "...", "fileName": "...", "expiresAt": "..." }`，`url` 是短期签名地址，直接跳转下载，不要加 Bearer 头。
 - **导入备份文件**：`POST /database-backups/upload` 是 `multipart/form-data`，字段名固定为 `file`，只接受本系统导出的 `.jsonl.gz`。该接口**同步**完成校验和入库，成功返回一条 `status=SUCCEEDED` 的 `UPLOADED` 备份，随后按普通备份调用 `/restore` 回滚；导入本身不会改动数据库。校验不通过时不会留下任何记录，按错误码区分：`413 FILE_TOO_LARGE`（体积或解压体积超限）、`415 UNSUPPORTED_FILE_TYPE`（不是 gzip 文件）、`409 RESOURCE_STATE_CONFLICT`（当前库缺少备份里的表，或结构版本不一致）、`400 VALIDATION_ERROR`（归档损坏、格式无法识别、表或字段与当前表结构对不上、行结构非法），`message` 会指出具体是哪张表、哪个字段。
 
-## 17. 客户端实现检查清单
+## 17. 好图精选
 
-### 17.1 登录与会话
+部长发布征集要求，被指派的校区负责人从图库选图并补充拍摄思路与地点；到达截止时间（或部长手动截止）后，服务端生成一份按校区分章的 Word 文档。
+
+**权限分三层**：发布、编辑、删除、手动截止、重新生成文档需要 `FEATURED_MANAGE`（默认 A、M）；查看与下载只要求登录，不对应任何权限码；填报条目不看权限码，只看这份精选有没有指派到当前用户（`assignedToMe`）。
+
+| 方法 | 路径 | 权限 | 说明 |
+| --- | --- | --- | --- |
+| GET | `/featured-collections?page&pageSize&keyword&status` | 登录 | 列表，按创建时间倒序 |
+| GET | `/featured-collections/{id}` | 登录 | 详情 |
+| GET | `/featured-collections/{id}/entries` | 登录 | 全部条目，已按校区、填报顺序排好 |
+| GET | `/featured-collections/{id}/document` | 登录 | 取 Word 文档的短期签名下载地址 |
+| GET | `/featured-collections/assignable-managers` | `FEATURED_MANAGE` | 可指派的校区负责人 |
+| POST | `/featured-collections` | `FEATURED_MANAGE` | 新建，落到 `DRAFT` |
+| PUT | `/featured-collections/{id}` | `FEATURED_MANAGE` | 编辑（`DRAFT` 全字段；`PUBLISHED` 不能改开始时间） |
+| POST | `/featured-collections/{id}/publish` | `FEATURED_MANAGE` | 发布并通知被指派的负责人 |
+| POST | `/featured-collections/{id}/close` | `FEATURED_MANAGE` | 手动截止并开始生成文档 |
+| POST | `/featured-collections/{id}/document` | `FEATURED_MANAGE` | 重新生成文档（仅 `CLOSED` 且当前不在生成中） |
+| DELETE | `/featured-collections/{id}?version` | `FEATURED_MANAGE` | 逻辑删除 |
+| POST | `/featured-collections/{id}/entries` | 被指派 | 新增条目 |
+| PUT | `/featured-collections/{id}/entries/{entryId}` | 条目提交人 | 改拍摄思路与地点 |
+| DELETE | `/featured-collections/{id}/entries/{entryId}` | 条目提交人 | 撤下条目（物理删除） |
+
+枚举：
+
+```ts
+type FeaturedCollectionStatus = 'DRAFT' | 'PUBLISHED' | 'CLOSED'
+type FeaturedDocumentStatus = 'PENDING' | 'GENERATING' | 'READY' | 'FAILED'
+type FeaturedCloseReason = 'MANUAL' | 'DEADLINE'
+```
+
+创建/编辑请求体（编辑时额外带 `version`）：
+
+```json
+{
+  "title": "2026 年春季好图精选",
+  "requirementHtml": "<p>要求正文</p>",
+  "startsAt": "2026-05-01T09:00:00",
+  "endsAt": "2026-05-10T18:00:00",
+  "assignAll": false,
+  "entryLimit": 5,
+  "campusIds": [1, 2],
+  "userIds": [17]
+}
+```
+
+- `assignAll=true` 表示全部校区负责人，此时忽略 `campusIds` / `userIds`；为 `false` 时两者至少填一个。`campusIds` 指该校区的全部负责人，`userIds` 是单独点名。"负责人"= 权限组数据范围为 `CAMPUS` 的启用账号。
+- `requirementHtml` 是受控富文本，服务端会再清洗一次，并且**只保留 `src` 形如 `/api/v1/description-images/{26 位 id}` 的图片**。配图请上传到 `POST /description-images`（见 §14），不要用消息图片接口——那类图片只对消息收件人可读。
+- `entryLimit` 是**每人**的提交上限，范围 1～50。
+
+条目请求体：`{ "photoId": 12, "idea": "拍摄思路", "location": "拍摄地点" }`（`PUT` 额外带 `version`，且 `photoId` 必须与原条目一致，换图请撤下后重选）。**拍摄人和拍摄时间不接受输入**，服务端从图库记录快照写入。选图沿用图库可见范围：校区范围账号只能选自己上传、且在授权校区内的 `AVAILABLE`/`ARCHIVED` 图片。
+
+精选实体的客户端相关字段：
+
+```json
+{
+  "id": 3, "title": "…", "requirementHtml": "<p>…</p>", "requirementText": "…",
+  "startsAt": "2026-05-01T09:00:00", "endsAt": "2026-05-10T18:00:00",
+  "status": "PUBLISHED", "assignAll": false, "entryLimit": 5,
+  "campusIds": [1], "userIds": [17],
+  "documentStatus": "PENDING", "documentGeneratedAt": null, "documentSize": null,
+  "documentError": null, "createdBy": 2, "creatorDisplayName": "部长",
+  "publishedAt": "2026-04-28T10:00:00", "closedAt": null, "closedReason": null,
+  "entryCount": 12, "assignedToMe": true, "submissionOpen": true,
+  "myEntryCount": 2, "canManage": false, "createdAt": "…", "version": 3
+}
+```
+
+- `submissionOpen` 已经综合了状态、指派关系和时间窗口，客户端直接用它决定要不要显示填报入口，不要自己再算一遍。
+- 时间边界：**开始时间含，截止时间不含**。到点后即使定时任务还没扫到（`status` 仍是 `PUBLISHED`），写接口也会返回 `409`，界面此时应显示"待生成文档"而不是"征集中"。
+- 条目实体带 `campusId`/`campusName`（图片所属校区，决定它进文档的哪一章，不是填报人的校区）、`previewUrl`（短期签名地址，可能为空）、`photoAvailable`（图片是否还在图库里；为 `false` 时条目只剩提交时的文字快照）、`mine`。
+- 条目返回顺序已经按"校区编码 → 填报顺序 → id"排好，与 Word 文档章节一致，**客户端不要再排序**。
+- 文档在截止后异步生成，`documentStatus` 从 `GENERATING` 变为 `READY` 或 `FAILED`；界面应轮询或提供刷新。`READY` 之前调用下载接口返回 `409`。下载响应是 `{ "downloadUrl", "expiresAt", "fileName" }`，`downloadUrl` 是短期签名地址，直接下载，不要加 Bearer 头；`fileName` 含中文。
+
+## 18. 客户端实现检查清单
+
+### 18.1 登录与会话
 
 - 请求实例开启 Cookie credentials，并在业务请求中添加 Bearer token。
 - 并发 `401` 只触发一次 refresh；刷新失败清理本地和内存登录状态。
 - `mustChangePassword=true` 立即进入首次改密页，不提前请求其他业务接口。
 - 修改密码、停用、删除或密码重置后，旧会话可能立即失效。
 
-### 17.2 数据解析
+### 18.2 数据解析
 
 - 所有 Long ID 在进入状态管理前执行 `String(id)`。
 - 不把业务 `LocalDateTime` 当 UTC；签名 URL 的 `Instant` 则按标准 UTC 解析。
@@ -1838,7 +1912,7 @@ operatorId? action? resourceType? keyword? from? to? page=1 pageSize=20
 - 忽略实体中的 `deleted` 和批次中的对象存储 key，不据此构造 URL。
 - 只使用服务端返回的 `thumbnailUrl`、`downloadUrl`、图片 `url`。
 
-### 17.3 上传与异步任务
+### 18.3 上传与异步任务
 
 - 客户端计算 64 位小写 SHA-256，创建票据后再直传。
 - 直传的 `Content-Type` 与票据完全一致，不使用 API 客户端的 base URL 或 Bearer 拦截器改写签名请求。
@@ -1847,7 +1921,7 @@ operatorId? action? resourceType? keyword? from? to? page=1 pageSize=20
 - 导出任务从 `data.id` 取 job ID，从查询响应的 `data.job.status` 取状态，从 `data.downloadUrl` 取下载地址。
 - Blob URL 用完后释放。
 
-### 17.4 业务状态与并发
+### 18.4 业务状态与并发
 
 - 更新项目、需求、图片元数据、校区、用户、通讯录成员、工时等时提交最近响应的 `version`。
 - 收到 `409 RESOURCE_STATE_CONFLICT` 后重新拉取资源，不在客户端盲目增加 version 重试。
@@ -1856,14 +1930,14 @@ operatorId? action? resourceType? keyword? from? to? page=1 pageSize=20
 - 允许需求零图片提交，`requiredCount` 可空。
 - 工时拍摄者和照片拍摄者都提交通讯录 contact ID，不提交自由文本姓名/学号。
 
-### 17.5 权限界面
+### 18.5 权限界面
 
 - A：全部后台和业务能力。
 - M：项目/需求创建与审核、图库管理、采用、工时审核、统计导出、消息发送；部分写操作仍受“资源创建者”约束。
 - C：本人校区接单、本人图片、本人填报工时；可把本人图片加入本人可见项目并采用。
 - 对 `403` 做正常权限反馈，不把它统一当成登录过期；只有 `401` 才进入 refresh 流程。
 
-## 18. 当前契约中容易误读的点
+## 19. 当前契约中容易误读的点
 
 1. 所有普通业务成功目前是 HTTP 200，不是创建 201/删除 204。
 2. ID 可能是 JSON 字符串，也可能是小整数；统一按字符串处理。

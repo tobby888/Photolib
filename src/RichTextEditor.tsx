@@ -5,9 +5,20 @@ import {
 import { useEffect, useRef } from 'react'
 import { api } from './api'
 
-export default function RichTextEditor({ value, onChange }: {
+/**
+ * 受控富文本编辑器。
+ *
+ * 图片上传地址可切换，因为不同业务的图片鉴权模型不同：管理消息的图片只对收件人可读，
+ * 而说明图片（`/description-images`）对任何登录用户可读。选错地址会让读者看到裂图，
+ * 所以调用方必须按内容的可见范围挑选，默认保持消息图片不变。
+ */
+export default function RichTextEditor({
+  value, onChange, uploadUrl = '/notifications/images', placeholder = '输入消息正文……',
+}: {
   value: string
   onChange: (value: string) => void
+  uploadUrl?: string
+  placeholder?: string
 }) {
   const { message } = App.useApp()
   const editor = useRef<HTMLDivElement>(null)
@@ -25,7 +36,7 @@ export default function RichTextEditor({ value, onChange }: {
     try {
       const data = new FormData()
       data.append('file', file)
-      const result = await api<{ url: string }>({ method: 'POST', url: '/notifications/images', data })
+      const result = await api<{ url: string }>({ method: 'POST', url: uploadUrl, data })
       editor.current?.focus()
       document.execCommand('insertHTML', false,
         `<p><img src="${result.url}" alt="${file.name.replace(/[<>"]/g, '')}"></p>`)
@@ -47,7 +58,7 @@ export default function RichTextEditor({ value, onChange }: {
         onChange={(event) => void uploadImage(event.target.files?.[0])} />
     </Space>
     <div ref={editor} className="rich-editor-content" contentEditable suppressContentEditableWarning
-      data-placeholder="输入消息正文……"
+      data-placeholder={placeholder}
       onInput={(event) => onChange(event.currentTarget.innerHTML)} />
   </div>
 }

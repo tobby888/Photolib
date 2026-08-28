@@ -4,7 +4,7 @@ import {
 import {
   BarChartOutlined, BellOutlined, BookOutlined, CameraOutlined, ContactsOutlined,
   DashboardOutlined, EnvironmentOutlined, FolderOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SettingOutlined,
-  MessageOutlined, StarOutlined, TeamOutlined, UnorderedListOutlined, UserOutlined,
+  MessageOutlined, StarOutlined, TeamOutlined, TrophyOutlined, UnorderedListOutlined, UserOutlined,
 } from '@ant-design/icons'
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
@@ -34,6 +34,8 @@ const AdminPage = lazy(() => import('./pages/AdminPage'))
 const NotificationsPage = lazy(() => import('./pages/NotificationsPage'))
 const NotificationDetailPage = lazy(() => import('./pages/NotificationDetailPage'))
 const PublicRecruitmentPage = lazy(() => import('./pages/PublicRecruitmentPage'))
+const FeaturedCollectionsPage = lazy(() => import('./pages/FeaturedCollectionsPage'))
+const FeaturedCollectionDetailPage = lazy(() => import('./pages/FeaturedCollectionDetailPage'))
 const RecruitmentsPage = lazy(() => import('./pages/RecruitmentsPage'))
 const RecruitmentDetailPage = lazy(() => import('./pages/RecruitmentDetailPage'))
 const RecruitmentApplicationDetailPage = lazy(() => import('./pages/RecruitmentApplicationDetailPage'))
@@ -177,6 +179,9 @@ function Shell() {
       { key: '/worklogs', icon: <BookOutlined />, label: '工时记录' })
     if (hasAnyPermission(user, 'DIRECTORY_VIEW', 'DIRECTORY_MANAGE')) common.push(
       { key: '/directory', icon: <ContactsOutlined />, label: '通讯录' })
+    // 好图精选的查看与下载不设限，所以入口对每个能进系统的账号都显示；
+    // 发布、删除和手动截止在页面内按 FEATURED_MANAGE 收起。
+    common.push({ key: '/featured', icon: <TrophyOutlined />, label: '好图精选' })
     if (hasPermission(user, 'RECRUITMENT_VIEW')) common.push(
       { key: '/recruitments', icon: <TeamOutlined />, label: '成员招募' })
     common.push({ key: '/notifications', icon: <MessageOutlined />, label: '消息中心' })
@@ -293,6 +298,8 @@ function Shell() {
             <Route path="/favorites/:photoId" element={hasPermission(user, 'PHOTO_VIEW') ? <PhotoDetailPage favoritesOnly /> : <Navigate to="/" />} />
             <Route path="/worklogs" element={hasAnyPermission(user, 'WORKLOG_SUBMIT', 'WORKLOG_CONFIRM', 'WORKLOG_EXPORT') ? <WorklogsPage /> : <Navigate to="/" />} />
             <Route path="/directory" element={hasAnyPermission(user, 'DIRECTORY_VIEW', 'DIRECTORY_MANAGE') ? <DirectoryPage /> : <Navigate to="/" />} />
+            <Route path="/featured" element={<FeaturedCollectionsPage />} />
+            <Route path="/featured/:collectionId" element={<FeaturedCollectionDetailPage />} />
             <Route path="/notifications" element={<NotificationsPage />} />
             <Route path="/notifications/:notificationId" element={<NotificationDetailPage />} />
             <Route path="/statistics" element={hasPermission(user, 'STATISTICS_DOWNLOAD') ? <StatisticsPage /> : <Navigate to="/" />} />
