@@ -300,7 +300,7 @@ type BatchItemStatus = 'UPLOADING' | 'WAITING_METADATA' | 'PROCESSING' | 'SUCCEE
 
 `avatarUrl` 可空。非空值指向受鉴权的头像读取接口，并带有用于缓存更新的 `v` revision 查询参数；它不会暴露对象存储 key。值为 `null` 时表示用户没有自定义头像，现有 Web 客户端使用 Ant Design 的 `UserOutlined` 作为默认头像。
 
-`/auth/me` 返回的是面向当前会话的 `AuthenticatedUser`：包含 `id`、`username`、`displayName`、`role`、`campusId`、`mustChangePassword`、权限组字段（`permissionGroupId`、`permissionGroupCode`、`permissionGroupName`）、`dataScope`、`permissions`、`campusIds` 和 `avatarUrl`，不包含联系方式及实体审计字段。
+`/auth/me` 返回的是面向当前会话的 `AuthenticatedUser`：包含 `id`、`username`、`displayName`、`role`、`campusId`、`mustChangePassword`、权限组字段（`permissionGroupId`、`permissionGroupCode`、`permissionGroupName`）、`dataScope`、`photoVisibility`、`permissions`、`campusIds` 和 `avatarUrl`，不包含联系方式及实体审计字段。
 
 ### 4.2 基础实体字段
 
@@ -925,9 +925,17 @@ GET /photos?page=1&pageSize=30
   &campusId=...
   &status=AVAILABLE
   &includeAllStatuses=false
+  &favoritesOnly=false
+  &selectableOnly=false
 ```
 
 实际支持的查询参数只有上表这些；当前不支持 `tag`、`takenFrom`、`takenTo`、`adopted` 或 `sort`。`keyword` 模糊匹配标题、说明和 `tagsJson`。
+
+可见范围：
+
+- 默认按调用方权限组的**图库可见范围**（`photoVisibility`）过滤：`SELF` 只返回本人上传的图片，`CAMPUS` 返回授权校区内的全部图片，`GLOBAL` 不受校区授权限制。数据范围为 `CAMPUS` 的账号只有在 `GLOBAL` 档才能跨校区，也只有这时 `campusId` 筛选对它生效。
+- `favoritesOnly=true` 在上述范围上再叠加"当前用户收藏过"，需要 `PHOTO_VIEW`。
+- `selectableOnly=true` 改用**好图精选选图范围**（授权校区内的全部图片，与 `photoVisibility` 无关），需要 `PHOTO_VIEW`。选图弹窗用它保证列出的图片都能真正提交。
 
 状态规则：
 

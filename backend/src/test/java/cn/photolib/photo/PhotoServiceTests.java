@@ -6,6 +6,7 @@ import cn.photolib.campus.model.CampusEntity;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.permission.DataScope;
 import cn.photolib.permission.PermissionCode;
+import cn.photolib.permission.PhotoVisibility;
 import cn.photolib.photo.model.PhotoStatus;
 import cn.photolib.project.ProjectService;
 import cn.photolib.project.model.ProjectEntity;
@@ -339,7 +340,7 @@ class PhotoServiceTests {
         linkPhotosToProjects();
         var result = photoService.list(
                 1, 20, null, testProject.getId(), null, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, false, managerUser);
+                null, null, PhotoStatus.AVAILABLE, false, false, false, managerUser);
 
         // Then: 应该只看到自己上传的照片
         assertThat(result.items()).hasSize(1);
@@ -370,7 +371,7 @@ class PhotoServiceTests {
         linkPhotosToProjects();
         var result = photoService.list(
                 1, 20, null, testProject.getId(), null, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, false, adminUser);
+                null, null, PhotoStatus.AVAILABLE, false, false, false, adminUser);
 
         // Then: 应该看到所有照片
         assertThat(result.items()).hasSizeGreaterThanOrEqualTo(2);
@@ -403,16 +404,16 @@ class PhotoServiceTests {
         assertThat(photoService.get(1600L, ministerUser).favorited()).isFalse();
 
         var adminList = photoService.list(1, 20, null, null, null, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, false, adminUser);
+                null, null, PhotoStatus.AVAILABLE, false, false, false, adminUser);
         assertThat(adminList.items()).filteredOn(photo -> photo.id().equals(1600L))
                 .singleElement().extracting(PhotoService.PhotoView::favorited).isEqualTo(true);
 
         var adminFavorites = photoService.list(1, 20, null, null, null, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, true, adminUser);
+                null, null, PhotoStatus.AVAILABLE, false, true, false, adminUser);
         assertThat(adminFavorites.items()).extracting(PhotoService.PhotoView::id)
                 .containsExactly(1600L);
         var ministerFavorites = photoService.list(1, 20, null, null, null, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, true, ministerUser);
+                null, null, PhotoStatus.AVAILABLE, false, true, false, ministerUser);
         assertThat(ministerFavorites.items()).isEmpty();
 
         photoService.favorite(1600L, ministerUser);
@@ -476,7 +477,7 @@ class PhotoServiceTests {
                 .hasMessageContaining("无权收藏其他成员");
 
         var favorites = photoService.list(1, 20, null, null, null, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, true, managerUser);
+                null, null, PhotoStatus.AVAILABLE, false, true, false, managerUser);
         assertThat(favorites.items()).extracting(PhotoService.PhotoView::id)
                 .containsExactly(1601L);
         assertThat(jdbc.sql("SELECT COUNT(*) FROM photo_favorite WHERE user_id=:userId")
@@ -488,7 +489,7 @@ class PhotoServiceTests {
         jdbc.sql("INSERT INTO photo_favorite(user_id, photo_id) VALUES (:userId, 1603)")
                 .param("userId", managerUser.id()).update();
         var requestFavorites = photoService.list(1, 20, null, null, 2960L, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, true, managerUser);
+                null, null, PhotoStatus.AVAILABLE, false, true, false, managerUser);
         assertThat(requestFavorites.items()).isEmpty();
 
         // A favorite relationship may outlive the photo's logical visibility.
@@ -498,7 +499,7 @@ class PhotoServiceTests {
         // Use a keyword to force a fresh MyBatis query after the out-of-band JDBC
         // update instead of reusing the transaction-local first-level cache.
         var favoritesAfterDelete = photoService.list(1, 20, "本人图片", null, null, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, true, managerUser);
+                null, null, PhotoStatus.AVAILABLE, false, true, false, managerUser);
         assertThat(favoritesAfterDelete.items()).isEmpty();
         assertThat(favoritesAfterDelete.total()).isZero();
     }
@@ -512,7 +513,7 @@ class PhotoServiceTests {
 
         assertThatThrownBy(() -> photoService.list(
                 1, 20, null, testProject.getId(), null, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, true, projectOnly))
+                null, null, PhotoStatus.AVAILABLE, false, true, false, projectOnly))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("无权访问收藏图片列表");
     }
@@ -654,7 +655,7 @@ class PhotoServiceTests {
         linkPhotosToProjects();
         var listed = photoService.list(
                 1, 20, null, testProject.getId(), null, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, false, adminUser);
+                null, null, PhotoStatus.AVAILABLE, false, false, false, adminUser);
 
         assertThat(listed.items()).filteredOn(photo -> photo.id().equals(1012L))
                 .singleElement()
@@ -749,6 +750,182 @@ class PhotoServiceTests {
         assertThatThrownBy(() -> photoService.get(1003L, managerUser))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("图片不存在");
+    }
+
+
+    /**
+     * 图库可见范围（权限组的 photo_visibility）的三档行为。校区范围账号的历史行为是
+     * "只看自己上传的"，现在由权限组决定；放宽可见范围不得连带放开写操作。
+     */
+    private AuthenticatedUser campusReader(PhotoVisibility visibility, CampusEntity... campuses) {
+        Set<Long> campusIds = java.util.Arrays.stream(campuses)
+                .map(CampusEntity::getId).collect(java.util.stream.Collectors.toSet());
+        return new AuthenticatedUser(managerUser.id(), "test-manager", "测试负责人",
+                UserRole.CAMPUS_MANAGER, testCampus.getId(), false, 77L, "CAMPUS_READER",
+                "校区图库组", DataScope.CAMPUS, visibility,
+                Set.of(PermissionCode.PHOTO_VIEW, PermissionCode.PHOTO_DOWNLOAD,
+                        PermissionCode.PHOTO_DELETE, PermissionCode.PHOTO_UPLOAD),
+                campusIds, null);
+    }
+
+    /** 本校区两张（本人 1801 / 同事 1802）+ 外校区一张（1803）。 */
+    private CampusEntity seedVisibilityFixture() {
+        CampusEntity otherCampus = campusService.create("VIS-OTHER", "可见范围外校区");
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, project_id, title, photographer_student_id, photographer_name,
+                     uploaded_by, campus_id, taken_at, size, content_type, object_key, sha256, status)
+                VALUES
+                    (1801, null, '本人图片', '20230001', '张三', :managerId, :campusId,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/vis-mine.jpg', :mine, 'AVAILABLE'),
+                    (1802, null, '同校区同事图片', '20230001', '张三', :adminId, :campusId,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/vis-peer.jpg', :peer, 'AVAILABLE'),
+                    (1803, null, '外校区图片', '20230001', '张三', :adminId, :otherCampusId,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/vis-other.jpg', :other, 'AVAILABLE')
+                """)
+                .param("managerId", managerUser.id())
+                .param("adminId", adminUser.id())
+                .param("campusId", testCampus.getId())
+                .param("otherCampusId", otherCampus.getId())
+                .param("mine", "d".repeat(64))
+                .param("peer", "e".repeat(64))
+                .param("other", "f".repeat(64))
+                .update();
+        return otherCampus;
+    }
+
+    private List<Long> galleryIds(AuthenticatedUser user, boolean selectableOnly) {
+        return photoService.list(1, 50, null, null, null, null, null, null, null,
+                        PhotoStatus.AVAILABLE, false, false, selectableOnly, user)
+                .items().stream().map(PhotoService.PhotoView::id).toList();
+    }
+
+    @Test
+    void galleryVisibilityFollowsThePermissionGroupSettingInsteadOfAlwaysBeingSelfOnly() {
+        CampusEntity otherCampus = seedVisibilityFixture();
+
+        assertThat(galleryIds(campusReader(PhotoVisibility.SELF, testCampus), false))
+                .containsExactly(1801L);
+        assertThat(galleryIds(campusReader(PhotoVisibility.CAMPUS, testCampus), false))
+                .containsExactlyInAnyOrder(1801L, 1802L);
+        assertThat(galleryIds(campusReader(PhotoVisibility.GLOBAL, testCampus), false))
+                .containsExactlyInAnyOrder(1801L, 1802L, 1803L);
+
+        // 授权了两个校区的账号，CAMPUS 档就能看到两个校区的全部图片。
+        assertThat(galleryIds(campusReader(PhotoVisibility.CAMPUS, testCampus, otherCampus), false))
+                .containsExactlyInAnyOrder(1801L, 1802L, 1803L);
+    }
+
+    @Test
+    void wideningGalleryVisibilityAlsoOpensDetailAndDownloadButNeverWriteOperations() {
+        seedVisibilityFixture();
+        var selfOnly = campusReader(PhotoVisibility.SELF, testCampus);
+        var campusWide = campusReader(PhotoVisibility.CAMPUS, testCampus);
+
+        assertThatThrownBy(() -> photoService.get(1802L, selfOnly))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("无权查看其他成员");
+        assertThatThrownBy(() -> photoService.download(1802L, selfOnly))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("无权下载");
+
+        assertThat(photoService.get(1802L, campusWide).id()).isEqualTo(1802L);
+        assertThat(photoService.download(1802L, campusWide).downloadUrl()).isNotEmpty();
+
+        // 只放开"看"和"下载"：同事的图片仍然不能改、不能归档、不能删。
+        assertThatThrownBy(() -> photoService.update(1802L, new PhotoService.Metadata(
+                "改标题", null, photographerContactId, LocalDateTime.now(), List.of(), 1), campusWide))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("无权编辑");
+        assertThatThrownBy(() -> photoService.changeArchive(1802L, true, campusWide))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("无权归档");
+        assertThatThrownBy(() -> photoService.delete(1802L, campusWide))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("无权删除");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM photo WHERE id=1802 AND deleted=FALSE")
+                .query(Long.class).single()).isEqualTo(1);
+    }
+
+    @Test
+    void featuredSelectionListStaysInsideAuthorizedCampusesEvenWhenTheGalleryShowsEverything() {
+        seedVisibilityFixture();
+        var globalReader = campusReader(PhotoVisibility.GLOBAL, testCampus);
+
+        // 图库看得到外校区的图片，选图弹窗却不该列出它——列出来点下去必然 403。
+        assertThat(galleryIds(globalReader, true)).containsExactlyInAnyOrder(1801L, 1802L);
+        assertThat(photoService.requireGallerySelectable(1802L, globalReader).getId()).isEqualTo(1802L);
+        assertThatThrownBy(() -> photoService.requireGallerySelectable(1803L, globalReader))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("无权选用其他校区");
+
+        // 反过来，可见范围收到"仅本人"也不该缩小选图范围：同校区同事的图片仍可选。
+        var selfOnly = campusReader(PhotoVisibility.SELF, testCampus);
+        assertThat(galleryIds(selfOnly, true)).containsExactlyInAnyOrder(1801L, 1802L);
+        assertThat(photoService.requireGallerySelectable(1802L, selfOnly).getId()).isEqualTo(1802L);
+    }
+
+    @Test
+    void selectableOnlyListingStillRequiresGalleryAccess() {
+        seedVisibilityFixture();
+        var noGallery = new AuthenticatedUser(managerUser.id(), "no-gallery", "无图库权限账号",
+                UserRole.CAMPUS_MANAGER, testCampus.getId(), false, 78L, "NO_GALLERY",
+                "无图库组", DataScope.CAMPUS, PhotoVisibility.GLOBAL,
+                Set.of(PermissionCode.PROJECT_VIEW), Set.of(testCampus.getId()), null);
+
+        assertThatThrownBy(() -> galleryIds(noGallery, true))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("无权访问图库图片");
+    }
+
+
+    /** 需求 2955 的图片 1804，`accepted` 决定当前负责人是否已接单。 */
+    private void seedRequestPhoto(boolean accepted) {
+        jdbc.sql("""
+                INSERT INTO photo_request(id, project_id, title, campus_id, deadline, status, created_by)
+                VALUES (2955, :projectId, '别人接的需求', :campusId,
+                        DATEADD('DAY', 1, CURRENT_TIMESTAMP), 'ACCEPTED', :adminId)
+                """).param("projectId", testProject.getId()).param("campusId", testCampus.getId())
+                .param("adminId", adminUser.id()).update();
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, request_id, title, photographer_student_id, photographer_name,
+                     uploaded_by, campus_id, taken_at, size, content_type, object_key, sha256, status)
+                VALUES (1804, 2955, '别人接的需求图', '20230001', '张三', :adminId, :campusId,
+                        NOW(), 1000, 'image/jpeg', 'photos/2026/vis-req.jpg', :sha256, 'AVAILABLE')
+                """).param("adminId", adminUser.id()).param("campusId", testCampus.getId())
+                .param("sha256", "g".repeat(64)).update();
+        if (accepted) {
+            jdbc.sql("""
+                    INSERT INTO request_participant(request_id, user_id, accepted_at)
+                    VALUES (2955, :userId, CURRENT_TIMESTAMP)
+                    """).param("userId", managerUser.id()).update();
+        }
+    }
+
+    /**
+     * 需求图片只对该需求的参与人可见，这条规则不随图库可见范围放宽。以前"只看本人上传"
+     * 顺带满足了它（往需求里传图本来就得先接单），现在必须在列表里显式过滤——列表和详情
+     * 必须一致，否则列表会摆出点进去必然 403 的图片。
+     *
+     * <p>接单后的正向用例拆成了单独一个测试：同一个事务里 MyBatis 的一级缓存会把第一次
+     * 列表查询的结果缓存住，而参与人是用裸 SQL 插的（不经过 MyBatis，不会刷新缓存），
+     * 在同一个测试里"先查再插再查"只会读回缓存，测不出真实行为。</p>
+     */
+    @Test
+    void wideGalleryVisibilityStillHidesRequestPhotosOfRequestsTheAccountNeverAccepted() {
+        seedVisibilityFixture();
+        seedRequestPhoto(false);
+        var campusWide = campusReader(PhotoVisibility.CAMPUS, testCampus);
+
+        assertThat(galleryIds(campusWide, false)).doesNotContain(1804L).contains(1801L, 1802L);
+        assertThatThrownBy(() -> photoService.get(1804L, campusWide))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("仅已接受需求的参与人");
+        assertThatThrownBy(() -> photoService.favorite(1804L, campusWide))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("仅已接受需求的参与人");
+    }
+
+    @Test
+    void acceptedRequestPhotosStayVisibleToCampusScopedParticipants() {
+        seedVisibilityFixture();
+        seedRequestPhoto(true);
+        var campusWide = campusReader(PhotoVisibility.CAMPUS, testCampus);
+
+        assertThat(galleryIds(campusWide, false)).contains(1801L, 1802L, 1804L);
+        assertThat(photoService.get(1804L, campusWide).id()).isEqualTo(1804L);
     }
 
     @Test
@@ -859,9 +1036,9 @@ class PhotoServiceTests {
 
         // When & Then: 两个项目的相册都能查到这张照片
         var inA = photoService.list(1, 20, null, testProject.getId(), null, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, false, adminUser);
+                null, null, PhotoStatus.AVAILABLE, false, false, false, adminUser);
         var inB = photoService.list(1, 20, null, projectB.getId(), null, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, false, adminUser);
+                null, null, PhotoStatus.AVAILABLE, false, false, false, adminUser);
         assertThat(inA.items()).extracting(PhotoService.PhotoView::id).contains(1500L);
         assertThat(inB.items()).extracting(PhotoService.PhotoView::id).contains(1500L);
     }

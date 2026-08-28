@@ -3,6 +3,7 @@ package cn.photolib.auth;
 import cn.photolib.user.model.UserRole;
 import cn.photolib.permission.DataScope;
 import cn.photolib.permission.PermissionCode;
+import cn.photolib.permission.PhotoVisibility;
 
 import java.util.Set;
 
@@ -17,6 +18,7 @@ public record AuthenticatedUser(
         String permissionGroupCode,
         String permissionGroupName,
         DataScope dataScope,
+        PhotoVisibility photoVisibility,
         Set<PermissionCode> permissions,
         Set<Long> campusIds,
         String avatarUrl
@@ -41,6 +43,22 @@ public record AuthenticatedUser(
                              Set<Long> campusIds) {
         this(id, username, displayName, role, campusId, mustChangePassword, permissionGroupId,
                 permissionGroupCode, permissionGroupName, dataScope, permissions, campusIds, null);
+    }
+
+    /**
+     * 未显式给出图库可见范围时按数据范围回退，与 Flyway V36 给存量权限组补值的规则一致：
+     * 全局数据范围看全站，其余仅看本人上传。保留这个重载是为了让不关心可见范围的调用方
+     * （历史构造点、绝大多数测试）继续沿用改动前的行为。
+     */
+    public AuthenticatedUser(Long id, String username, String displayName, UserRole role,
+                             Long campusId, boolean mustChangePassword, Long permissionGroupId,
+                             String permissionGroupCode, String permissionGroupName,
+                             DataScope dataScope, Set<PermissionCode> permissions,
+                             Set<Long> campusIds, String avatarUrl) {
+        this(id, username, displayName, role, campusId, mustChangePassword, permissionGroupId,
+                permissionGroupCode, permissionGroupName, dataScope,
+                dataScope == DataScope.GLOBAL ? PhotoVisibility.GLOBAL : PhotoVisibility.SELF,
+                permissions, campusIds, avatarUrl);
     }
 
     private static Set<PermissionCode> legacyPermissions(UserRole role) {
@@ -87,6 +105,31 @@ public record AuthenticatedUser(
 
     public boolean isCampusScoped() {
         return dataScope == DataScope.CAMPUS;
+    }
+
+    /**
+     * 图库列表/详情/下载是否只放行本人上传的图片。写操作（编辑、归档、删除、标记被引）
+     * 不看这个方法，它们一律保持"仅限本人上传"。
+     */
+    public boolean seesOnlyOwnPhotos() {
+        return photoVisibility == PhotoVisibility.SELF;
+    }
+
+    /**
+     * 图库可见范围是否跨越校区授权。只有 {@link PhotoVisibility#GLOBAL} 才跨校区，
+     * 因此这里不能写成 {@code !isCampusScoped()}——全局数据范围的账号也可能被设成
+     * 仅看本人上传。
+     */
+    public boolean seesPhotosAcrossCampuses() {
+        return photoVisibility == PhotoVisibility.GLOBAL;
+    }
+
+    /**
+     * 图库可见范围下能否看到该校区的图片。除全站可见外，等同于 {@link #canAccessCampus}。
+     * 好图精选选图不用这个方法：那里永远按 {@link #canAccessCampus} 限制在授权校区内。
+     */
+    public boolean canViewPhotoCampus(Long targetCampusId) {
+        return seesPhotosAcrossCampuses() || canAccessCampus(targetCampusId);
     }
 
     public boolean canAccessCampus(Long targetCampusId) {

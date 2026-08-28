@@ -13,6 +13,7 @@ public class PermissionGroupEntity extends BaseEntity {
     private String name;
     private String description;
     private DataScope dataScope;
+    private PhotoVisibility photoVisibility;
     private Boolean builtIn;
     private Boolean lowest;
 }

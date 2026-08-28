@@ -46,14 +46,16 @@ public class PermissionGroupController {
     @PostMapping
     ApiResponse<PermissionGroupService.GroupView> create(@Valid @RequestBody CreateRequest request) {
         return ApiResponse.ok(service.create(new PermissionGroupService.CreateCommand(
-                request.code(), request.name(), request.description(), request.dataScope(), request.permissions())));
+                request.code(), request.name(), request.description(), request.dataScope(),
+                request.photoVisibility(), request.permissions())));
     }
 
     @PutMapping("/{id}")
     ApiResponse<PermissionGroupService.GroupView> update(@PathVariable Long id,
                                                          @Valid @RequestBody UpdateRequest request) {
         return ApiResponse.ok(service.update(id, new PermissionGroupService.UpdateCommand(
-                request.name(), request.description(), request.dataScope(), request.permissions(), request.version())));
+                request.name(), request.description(), request.dataScope(), request.photoVisibility(),
+                request.permissions(), request.version())));
     }
 
     @DeleteMapping("/{id}")
@@ -67,12 +69,14 @@ public class PermissionGroupController {
             @NotBlank @Size(max = 100) String name,
             @Size(max = 500) String description,
             @NotNull DataScope dataScope,
+            @NotNull PhotoVisibility photoVisibility,
             @NotNull Set<PermissionCode> permissions) {}
 
     record UpdateRequest(
             @NotBlank @Size(max = 100) String name,
             @Size(max = 500) String description,
             @NotNull DataScope dataScope,
+            @NotNull PhotoVisibility photoVisibility,
             @NotNull Set<PermissionCode> permissions,
             @Min(1) int version) {}
 }

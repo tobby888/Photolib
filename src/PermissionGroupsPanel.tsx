@@ -16,14 +16,24 @@ import {
 } from './tableActionWidths'
 import type {
   Campus, DataScope, EntityId, PageData, PermissionCategoryDefinition, PermissionCode,
-  PermissionGroup, User,
+  PermissionGroup, PhotoVisibility, User,
 } from './types'
+
+const PHOTO_VISIBILITY_OPTIONS: { value: PhotoVisibility; label: string }[] = [
+  { value: 'SELF', label: '仅本人上传' },
+  { value: 'CAMPUS', label: '授权校区内全部' },
+  { value: 'GLOBAL', label: '全站全部' },
+]
+
+const photoVisibilityLabel = (visibility: PhotoVisibility) =>
+  PHOTO_VISIBILITY_OPTIONS.find(option => option.value === visibility)?.label || visibility
 
 type GroupFormValues = {
   code: string
   name: string
   description?: string
   dataScope: Exclude<DataScope, 'NONE'>
+  photoVisibility: PhotoVisibility
 }
 
 type AuthorizationDraft = { permissionGroupId: EntityId; campusIds: EntityId[] }
@@ -79,7 +89,7 @@ export default function PermissionGroupsPanel() {
     setEditing(null)
     setPermissions([])
     form.resetFields()
-    form.setFieldsValue({ dataScope: 'CAMPUS' })
+    form.setFieldsValue({ dataScope: 'CAMPUS', photoVisibility: 'SELF' })
     setGroupOpen(true)
   }
 
@@ -91,6 +101,7 @@ export default function PermissionGroupsPanel() {
       name: group.name,
       description: group.description || undefined,
       dataScope: group.dataScope === 'GLOBAL' ? 'GLOBAL' : 'CAMPUS',
+      photoVisibility: group.photoVisibility,
     })
     setGroupOpen(true)
   }
@@ -116,6 +127,7 @@ export default function PermissionGroupsPanel() {
           name: values.name,
           description: values.description?.trim() || null,
           dataScope: values.dataScope,
+          photoVisibility: values.photoVisibility,
           permissions,
           version: editing.version,
         } })
@@ -208,6 +220,11 @@ export default function PermissionGroupsPanel() {
             <Tag color={scope === 'GLOBAL' ? 'blue' : scope === 'CAMPUS' ? 'cyan' : 'default'}>
               {scope === 'GLOBAL' ? '全局' : scope === 'CAMPUS' ? '授权校区' : '不可访问'}
             </Tag> },
+          { title: '图库可见范围', dataIndex: 'photoVisibility',
+            render: (visibility: PhotoVisibility) =>
+              <Tag color={visibility === 'GLOBAL' ? 'blue' : visibility === 'CAMPUS' ? 'cyan' : 'default'}>
+                {photoVisibilityLabel(visibility)}
+              </Tag> },
           { title: '权限数', render: (_: unknown, group: PermissionGroup) => group.permissions.length },
           { title: '账号数', dataIndex: 'memberCount' },
           { title: '属性', render: (_: unknown, group: PermissionGroup) => <Space>
@@ -294,6 +311,15 @@ export default function PermissionGroupsPanel() {
               { value: 'CAMPUS', label: '按账户授权校区' }, { value: 'GLOBAL', label: '全局数据' },
             ]} /></Form.Item></Col>
         </Row>
+        <Row gutter={16}>
+          {/* 图库可见范围对内置权限组同样可改：「校区负责人只能看自己上传的图片」正是内置组的
+              默认值，锁住它这个开关就对最需要它的账号失效了。系统管理员组固定为全站可见。 */}
+          <Col xs={24} md={12}><Form.Item label="图库可见范围" name="photoVisibility"
+            rules={[{ required: true }]}
+            extra="决定账号在图库里能看到谁的图片，以及能下载哪些图片。编辑、归档、删除他人图片始终不放开；好图精选选图也始终只限授权校区。">
+            <Select disabled={editing?.code === 'ADMIN'} options={PHOTO_VISIBILITY_OPTIONS} />
+          </Form.Item></Col>
+        </Row>
         <Form.Item label="说明" name="description" rules={[{ max: 500 }]}><Input.TextArea rows={2} disabled={editing?.builtIn} /></Form.Item>
         <Typography.Title level={5}>权限明细</Typography.Title>
         <Row gutter={[12, 12]}>
@@ -332,6 +358,9 @@ export default function PermissionGroupsPanel() {
             <Descriptions.Item label="数据范围">
               {detailGroupState.data.dataScope === 'GLOBAL' ? '全局数据'
                 : detailGroupState.data.dataScope === 'CAMPUS' ? '按账户授权校区' : '不可访问'}
+            </Descriptions.Item>
+            <Descriptions.Item label="图库可见范围">
+              {photoVisibilityLabel(detailGroupState.data.photoVisibility)}
             </Descriptions.Item>
             <Descriptions.Item label="成员数">{detailGroupState.data.memberCount}</Descriptions.Item>
             <Descriptions.Item label="说明" span={2}>{detailGroupState.data.description || '-'}</Descriptions.Item>
