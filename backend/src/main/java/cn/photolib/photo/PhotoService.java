@@ -425,6 +425,40 @@ public class PhotoService {
         if (!allowed) throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问图片列表");
     }
 
+    /**
+     * 好图精选选图沿用图库的可见范围：必须有图库访问权限、图片在授权校区内，
+     * 且校区范围账号只能选自己上传的图片。规则与 {@link #requireFavoriteAccess}
+     * 完全一致——那里解释了为什么"参与某个需求"不能扩大这个范围：接口放行、
+     * 图库却看不到的话，用户会得到一份自己无法核对的选图。两处的判断顺序也保持一致，
+     * 只有面向用户的文案不同，改动可见范围时必须同时修改。
+     */
+    public PhotoEntity requireGallerySelectable(Long id, AuthenticatedUser user) {
+        if (!user.hasPermission(PermissionCode.PHOTO_VIEW)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问图库图片");
+        }
+        PhotoEntity photo = require(id);
+        if (!user.canAccessCampus(photo.getCampusId())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该图片");
+        }
+        if (user.isCampusScoped() && !photo.getUploadedBy().equals(user.id())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权选用其他成员的图库图片");
+        }
+        return photo;
+    }
+
+    /**
+     * 展示用的短期签名预览地址，照片不可展示时返回 null。
+     * 与图库列表用的是同一份回退规则（见 {@link #renderableObjectKey}）。
+     */
+    public String previewUrl(PhotoEntity photo) {
+        if (photo.getStatus() != PhotoStatus.AVAILABLE && photo.getStatus() != PhotoStatus.ARCHIVED) {
+            return null;
+        }
+        String previewKey = renderableObjectKey(photo);
+        if (previewKey == null) return null;
+        return storage.presignGet(previewKey, null, properties.downloadUrlTtl()).url().toString();
+    }
+
     private PhotoEntity requireFavoriteAccess(Long id, AuthenticatedUser user) {
         if (!user.hasPermission(PermissionCode.PHOTO_VIEW)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权收藏图库图片");
@@ -499,14 +533,7 @@ public class PhotoService {
     }
 
     private PhotoView toView(PhotoEntity p, boolean favorited) {
-        String thumbnailUrl = null;
-        if (p.getStatus() == PhotoStatus.AVAILABLE || p.getStatus() == PhotoStatus.ARCHIVED) {
-            String previewKey = renderableObjectKey(p);
-            if (previewKey != null) {
-                thumbnailUrl = storage.presignGet(previewKey, null,
-                        properties.downloadUrlTtl()).url().toString();
-            }
-        }
+        String thumbnailUrl = previewUrl(p);
         // 获取图片关联的所有项目
         List<ProjectLink> projects = jdbc.sql("""
                 SELECT DISTINCT pr.id, pr.title
@@ -539,7 +566,7 @@ public class PhotoService {
      * <p>Never falls back to {@code original_object_key}: {@code
      * OriginalCleanupJob} deletes it once the retention window passes.</p>
      */
-    private String renderableObjectKey(PhotoEntity p) {
+    public String renderableObjectKey(PhotoEntity p) {
         boolean previewUsable = StringUtils.hasText(p.getThumbnailObjectKey())
                 && p.getThumbnailSize() != null && p.getThumbnailSize() > 0;
         if (previewUsable) return p.getThumbnailObjectKey();

@@ -297,6 +297,107 @@ class DatabaseBackupServiceTests {
         }
     }
 
+    /**
+     * 好图精选的三张表没有出现在 {@code EXCLUDED_TABLES} 里，因此必须随整库一起
+     * 备份和回滚——这是新模块与备份能力唯一真正相交的地方。用例覆盖到条目表，
+     * 因为它是三张表里唯一带外键指向 photo / campus / app_user 的，
+     * 回滚时的外键顺序问题只会在这种表上暴露出来。
+     */
+    @Test
+    void featuredCollectionsAreBackedUpAndRestoredWithTheRestOfTheDatabase() throws Exception {
+        long campusId = System.nanoTime() & Long.MAX_VALUE;
+        insertCampus(campusId, "featured");
+        long collectionId = insertFeaturedCollection(campusId);
+
+        service.runScheduledBackup();
+        String backupId = latestBackup().getId();
+
+        // 精选、指派和条目一起被删掉，模拟一次误操作。
+        jdbc.sql("DELETE FROM featured_entry WHERE collection_id = :id")
+                .param("id", collectionId).update();
+        jdbc.sql("DELETE FROM featured_collection_assignment WHERE collection_id = :id")
+                .param("id", collectionId).update();
+        jdbc.sql("DELETE FROM featured_collection WHERE id = :id").param("id", collectionId).update();
+        assertThat(featuredCount("featured_collection", collectionId)).isZero();
+
+        DatabaseRestoreEntity restore = awaitRestore(service.startRestore(backupId, ADMIN).id());
+        assertThat(restore.getStatus()).isEqualTo(DatabaseBackupService.STATUS_SUCCEEDED);
+
+        assertThat(featuredCount("featured_collection", collectionId)).isEqualTo(1);
+        assertThat(featuredCount("featured_collection_assignment", collectionId)).isEqualTo(1);
+        assertThat(featuredCount("featured_entry", collectionId)).isEqualTo(1);
+        // 条目的文字快照必须原样回来，Word 文档正是照着它出的。
+        assertThat(jdbc.sql("SELECT idea FROM featured_entry WHERE collection_id = :id")
+                .param("id", collectionId).query(String.class).single())
+                .isEqualTo("备份回滚后仍应保留的拍摄思路");
+    }
+
+    /** 建一份已截止的精选，连带一条校区指派和一条带图片的条目。 */
+    private long insertFeaturedCollection(long campusId) {
+        // 这个上下文用的是独立空库，bootstrap 也关着，外键需要的账号得自己建。
+        long userId = insertUser();
+        long photoId = insertPhoto(campusId, userId);
+        jdbc.sql("""
+                INSERT INTO featured_collection
+                    (title, requirement_html, requirement_text, starts_at, ends_at, status,
+                     assign_all, entry_limit, document_status, created_by)
+                VALUES ('备份测试精选', '<p>要求</p>', '要求', :start, :end, 'CLOSED',
+                        FALSE, 10, 'PENDING', :userId)
+                """).param("start", LocalDateTime.now().minusDays(2))
+                .param("end", LocalDateTime.now().minusDays(1)).param("userId", userId).update();
+        long collectionId = jdbc.sql(
+                "SELECT id FROM featured_collection WHERE title = '备份测试精选' ORDER BY id DESC LIMIT 1")
+                .query(Long.class).single();
+        jdbc.sql("""
+                INSERT INTO featured_collection_assignment (collection_id, campus_id)
+                VALUES (:collectionId, :campusId)
+                """).param("collectionId", collectionId).param("campusId", campusId).update();
+        jdbc.sql("""
+                INSERT INTO featured_entry
+                    (collection_id, photo_id, campus_id, submitted_by, idea, location,
+                     photographer_name, photographer_student_id, taken_at, photo_title, sort_order)
+                VALUES (:collectionId, :photoId, :campusId, :userId, '备份回滚后仍应保留的拍摄思路',
+                        '东校区', '拍摄者', 'S001', :takenAt, '备份测试作品', 1)
+                """).param("collectionId", collectionId).param("photoId", photoId)
+                .param("campusId", campusId).param("userId", userId)
+                .param("takenAt", LocalDateTime.now().minusDays(3))
+                .update();
+        return collectionId;
+    }
+
+    private long insertUser() {
+        String username = "featured-backup-" + System.nanoTime();
+        jdbc.sql("""
+                INSERT INTO app_user
+                    (username, password_hash, display_name, role, enabled, must_change_password)
+                VALUES (:username, 'hash', '精选备份测试账号', 'MINISTER', TRUE, FALSE)
+                """).param("username", username).update();
+        return jdbc.sql("SELECT id FROM app_user WHERE username = :username")
+                .param("username", username).query(Long.class).single();
+    }
+
+    private long insertPhoto(long campusId, long userId) {
+        String objectKey = "photos/backup-featured-" + System.nanoTime() + ".jpg";
+        jdbc.sql("""
+                INSERT INTO photo
+                    (photographer_student_id, photographer_name, uploaded_by, campus_id, taken_at,
+                     size, content_type, object_key, sha256, status, title)
+                VALUES ('S001', '拍摄者', :userId, :campusId, :takenAt, 1024, 'image/jpeg', :objectKey,
+                        '0000000000000000000000000000000000000000000000000000000000000000',
+                        'AVAILABLE', '备份测试作品')
+                """).param("userId", userId).param("campusId", campusId)
+                .param("takenAt", LocalDateTime.now().minusDays(3))
+                .param("objectKey", objectKey).update();
+        return jdbc.sql("SELECT id FROM photo WHERE object_key = :objectKey")
+                .param("objectKey", objectKey).query(Long.class).single();
+    }
+
+    private long featuredCount(String table, long collectionId) {
+        String column = "featured_collection".equals(table) ? "id" : "collection_id";
+        return jdbc.sql("SELECT COUNT(*) FROM " + table + " WHERE " + column + " = :id")
+                .param("id", collectionId).query(Long.class).single();
+    }
+
     private void insertCampus(long id, String prefix) {
         jdbc.sql("INSERT INTO campus (id, code, name) VALUES (:id, :code, '备份测试校区')")
                 .param("id", id).param("code", prefix + "-" + id).update();

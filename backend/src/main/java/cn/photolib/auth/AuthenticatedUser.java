@@ -57,7 +57,7 @@ public record AuthenticatedUser(
                     PermissionCode.WORKLOG_CONFIRM, PermissionCode.WORKLOG_EXPORT,
                     PermissionCode.DIRECTORY_VIEW, PermissionCode.DIRECTORY_MANAGE,
                     PermissionCode.MESSAGE_SEND, PermissionCode.RECRUITMENT_VIEW,
-                    PermissionCode.RECRUITMENT_PUBLISH,
+                    PermissionCode.RECRUITMENT_PUBLISH, PermissionCode.FEATURED_MANAGE,
                     PermissionCode.STATISTICS_DOWNLOAD, PermissionCode.MANAGER_CAMPUS_ASSIGN);
             case CAMPUS_MANAGER -> Set.of(
                     PermissionCode.PROJECT_VIEW, PermissionCode.PROJECT_ADOPT,

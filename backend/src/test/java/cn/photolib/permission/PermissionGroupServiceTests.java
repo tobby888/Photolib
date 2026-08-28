@@ -46,8 +46,8 @@ class PermissionGroupServiceTests {
                 PermissionCode.WORKLOG_CONFIRM, PermissionCode.WORKLOG_EXPORT,
                 PermissionCode.DIRECTORY_VIEW, PermissionCode.DIRECTORY_MANAGE,
                 PermissionCode.MESSAGE_SEND, PermissionCode.RECRUITMENT_VIEW,
-                PermissionCode.RECRUITMENT_PUBLISH, PermissionCode.STATISTICS_DOWNLOAD,
-                PermissionCode.MANAGER_CAMPUS_ASSIGN);
+                PermissionCode.RECRUITMENT_PUBLISH, PermissionCode.FEATURED_MANAGE,
+                PermissionCode.STATISTICS_DOWNLOAD, PermissionCode.MANAGER_CAMPUS_ASSIGN);
         assertThat(manager.dataScope()).isEqualTo(DataScope.CAMPUS);
         assertThat(manager.permissions()).containsExactlyInAnyOrder(
                 PermissionCode.PROJECT_VIEW, PermissionCode.PROJECT_ADOPT,

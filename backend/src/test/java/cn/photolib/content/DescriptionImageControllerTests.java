@@ -72,6 +72,44 @@ class DescriptionImageControllerTests {
     }
 
     @Test
+    void imageReferencedByAPublishedFeaturedCollection_shouldBeReadableByAnyCampusManager()
+            throws Exception {
+        // 好图精选的查看不设限，所以要求正文里的插图必须对所有人可读——
+        // 否则负责人打开征集要求会看到一堆裂图。草稿仍然只有上传者本人可见。
+        byte[] png = {(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3};
+        String id = controller.upload(
+                new MockMultipartFile("file", "requirement.png", "image/png", png), minister)
+                .data().url().replaceFirst(".*/", "");
+        AuthenticatedUser manager = new AuthenticatedUser(
+                998L, "featured-reader", "校区负责人", UserRole.CAMPUS_MANAGER, 100L, false);
+
+        try {
+            insertFeaturedCollection("DRAFT", id);
+            assertThatThrownBy(() -> controller.get(id, manager))
+                    .as("草稿里的插图还不该外泄")
+                    .isInstanceOf(BusinessException.class).hasMessageContaining("无权读取");
+
+            jdbc.sql("UPDATE featured_collection SET status='PUBLISHED' WHERE created_by=814").update();
+            assertThat(controller.get(id, manager).getBody().getInputStream().readAllBytes())
+                    .isEqualTo(png);
+        } finally {
+            storage.delete(mapper.selectById(id).getObjectKey());
+        }
+    }
+
+    private void insertFeaturedCollection(String status, String imageId) {
+        jdbc.sql("""
+                INSERT INTO featured_collection
+                    (title, requirement_html, requirement_text, starts_at, ends_at, status,
+                     assign_all, entry_limit, document_status, created_by)
+                VALUES ('说明图片可见性', :html, '要求', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+                        :status, TRUE, 10, 'PENDING', 814)
+                """)
+                .param("html", "<p>要求</p><img src=\"/api/v1/description-images/" + imageId + "\">")
+                .param("status", status).update();
+    }
+
+    @Test
     void unreferencedImage_shouldNotBeReadableByCampusManager() throws Exception {
         byte[] png = {(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3};
         String id = controller.upload(

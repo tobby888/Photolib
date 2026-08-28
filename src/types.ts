@@ -7,7 +7,7 @@ export type PermissionCode =
   | 'PHOTO_VIEW' | 'PHOTO_DELETE' | 'PHOTO_UPLOAD' | 'PHOTO_DOWNLOAD'
   | 'WORKLOG_SUBMIT' | 'WORKLOG_CONFIRM' | 'WORKLOG_EXPORT'
   | 'DIRECTORY_VIEW' | 'DIRECTORY_MANAGE' | 'MESSAGE_SEND'
-  | 'RECRUITMENT_VIEW' | 'RECRUITMENT_PUBLISH'
+  | 'RECRUITMENT_VIEW' | 'RECRUITMENT_PUBLISH' | 'FEATURED_MANAGE'
   | 'STATISTICS_DOWNLOAD' | 'MANAGER_CAMPUS_ASSIGN'
 
 export interface User {
@@ -323,4 +323,69 @@ export interface DatabaseBackupDownload {
   url: string
   fileName: string
   expiresAt: string
+}
+
+export type FeaturedCollectionStatus = 'DRAFT' | 'PUBLISHED' | 'CLOSED'
+export type FeaturedDocumentStatus = 'PENDING' | 'GENERATING' | 'READY' | 'FAILED'
+export type FeaturedCloseReason = 'MANUAL' | 'DEADLINE'
+
+export interface FeaturedCollection {
+  id: EntityId
+  title: string
+  /** 已由服务端清洗过的要求正文，仍须经 RichTextContent 渲染，不要直接注入 DOM。 */
+  requirementHtml?: string | null
+  requirementText?: string | null
+  startsAt: string
+  endsAt: string
+  status: FeaturedCollectionStatus
+  assignAll: boolean
+  entryLimit: number
+  campusIds: EntityId[]
+  userIds: EntityId[]
+  documentStatus: FeaturedDocumentStatus
+  documentGeneratedAt?: string | null
+  documentSize?: number | null
+  documentError?: string | null
+  createdBy: EntityId
+  creatorDisplayName?: string | null
+  publishedAt?: string | null
+  closedAt?: string | null
+  closedReason?: FeaturedCloseReason | null
+  entryCount: number
+  /** 这份精选是否要求当前用户提交。 */
+  assignedToMe: boolean
+  /** 指派给我且正处在开始/截止时间之间——只有这时才能增删改条目。 */
+  submissionOpen: boolean
+  myEntryCount: number
+  canManage: boolean
+  createdAt: string
+  version: number
+}
+
+export interface FeaturedEntry {
+  id: EntityId
+  collectionId: EntityId
+  photoId: EntityId
+  campusId?: EntityId | null
+  campusName?: string | null
+  photoTitle?: string | null
+  previewUrl?: string | null
+  /** 图片是否还在图库里。为 false 时条目只剩提交时的文字快照。 */
+  photoAvailable: boolean
+  idea: string
+  location: string
+  photographerName?: string | null
+  photographerStudentId?: string | null
+  takenAt?: string | null
+  submittedBy: EntityId
+  submitterDisplayName?: string | null
+  sortOrder: number
+  mine: boolean
+  version: number
+}
+
+export interface FeaturedDocumentDownload {
+  downloadUrl: string
+  expiresAt: string
+  fileName: string
 }

@@ -43,6 +43,14 @@ public class DescriptionImageAuthorizationService {
                               WHERE r.project_id=p.id AND r.deleted=FALSE AND rp.user_id=:userId)
                 """).param("needle", needle).param("userId", user.id())
                 .query(Long.class).single();
-        return projectReferences > 0;
+        if (projectReferences > 0) return true;
+        // 好图精选的查看不设限，所以只要图片被一份已发布（或已截止）的精选引用，
+        // 任何登录用户都能读到它——否则校区负责人会看到一份缺图的征集要求。
+        // 草稿仍然只有上传者本人可见，这一点与项目/需求说明一致。
+        return jdbc.sql("""
+                SELECT COUNT(*) FROM featured_collection c
+                WHERE c.deleted=FALSE AND c.status <> 'DRAFT'
+                  AND c.requirement_html LIKE :needle
+                """).param("needle", needle).query(Long.class).single() > 0;
     }
 }
