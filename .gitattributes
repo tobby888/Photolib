@@ -1,0 +1,2 @@
+# 原生构建脚本会按 SHA-256 校验随仓库分发的许可证正文，任何换行符转换都会让校验失败。
+backend/native/licenses/*.txt -text

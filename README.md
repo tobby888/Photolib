@@ -69,7 +69,7 @@ native/linux-x86_64/libphotolib-image.so
 native/linux-x86_64/libvips-cpp.so.8.18.3
 ```
 
-应用启动后按系统和架构加载对应组件。当前仅支持 Windows x86-64 和 Linux x86-64；Linux 运行环境需要 glibc 2.28+、`libstdc++.so.6`（至少提供 `GLIBCXX_3.4.22`）与 `libgcc_s.so.1`。首次原生构建需要联网下载并校验锁定版本的 libjpeg-turbo、stb 与 libvips 依赖包及许可文本，后续可复用本地缓存。Windows/Linux 发布流水线应分别在目标系统实际加载组件并运行图片处理测试，不能只检查另一平台资源是否存在。
+应用启动后按系统和架构加载对应组件。当前仅支持 Windows x86-64 和 Linux x86-64；Linux 运行环境需要 glibc 2.28+、`libstdc++.so.6`（至少提供 `GLIBCXX_3.4.22`）与 `libgcc_s.so.1`。首次原生构建需要联网下载并校验锁定版本的 libjpeg-turbo、stb 与 libvips 依赖包，后续可复用本地缓存；GPL/LGPL/MPL 许可正文改为随仓库分发在 `backend/native/licenses/`，构建时只按 SHA-256 校验、不再联网取回（gnu.org、mozilla.org 在部分构建网络上不可达，会让原生构建卡在连接超时）。Windows/Linux 发布流水线应分别在目标系统实际加载组件并运行图片处理测试，不能只检查另一平台资源是否存在。
 
 `PHOTO_PROCESSING_THREADS` 的取值范围是 1～32，默认 1。每个线程都可能持有一张高像素图片的原生像素缓冲，提高线程数前应先评估内存峰值并使用真实相机图片压测。
 
