@@ -14,6 +14,11 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
+  # 整个应用按 Asia/Shanghai 运作（recruitmentClock、Jackson time-zone、
+  # @Scheduled 的 zone、MySQL serverTimezone 都写死了这个时区），开发机和生产也都在
+  # 该时区。runner 默认 UTC，会让依赖「库里的当前时间」的测试夹具与固定时区的业务
+  # 时钟差 8 小时，所以这里显式对齐。
+  TZ: Asia/Shanghai
   # 与 backend/pom.xml 的 node.version 对齐，保证 CI 与打包用的是同一个 Node。
   BUILD_NODE_VERSION: 20.19.4
   # README「环境要求」要求 Zig 0.16.x；校验值取自 https://ziglang.org/download/index.json。
@@ -99,6 +104,7 @@ jobs:
 
       - name: 校验工具链
         run: |
+          date
           zig version
           cmake --version | head -n 1
           ninja --version
