@@ -164,11 +164,17 @@ build_target() {
     wrapper_build_directory="$target_build_directory/wrapper"
     native_output="$OUTPUT_DIRECTORY/$relative_output"
 
+    # libjpeg-turbo 在 CMAKE_SYSTEM_NAME=Windows 时把安装前缀强制成
+    # "c:/libjpeg-turbo-gcc64"。在 Linux 主机上交叉编译 Windows 目标时，
+    # configure_package_config_file 里的 file(RELATIVE_PATH) 不认这种带盘符的
+    # 路径，配置阶段就会失败。我们只 build turbojpeg-static、从不 install，
+    # 所以显式给一个构建目录下的绝对路径即可，对产物没有影响。
     CC="zig cc -target $zig_target" cmake \
         -S "$LIBJPEG_SOURCE" \
         -B "$libjpeg_build_directory" \
         -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX="$libjpeg_build_directory/install" \
         -DCMAKE_SYSTEM_NAME="$system_name" \
         -DCMAKE_SYSTEM_PROCESSOR=x86_64 \
         -DENABLE_SHARED=OFF \
