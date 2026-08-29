@@ -154,12 +154,24 @@ backend/target/photolib-backend-0.1.0-SNAPSHOT.jar
 
 ### GitHub Actions 自动打包
 
-`.github/workflows/build.yml` 在推送 `master`、提交 PR 或手动触发（workflow_dispatch）时运行两个任务：
+`.github/workflows/build.yml` 在推送 `master`、推送 `v*` tag、提交 PR 或手动触发（workflow_dispatch）时运行：
 
 - **前端检查**：`npm ci` + `npm run lint` + `npm run build`，再切到 Node 22 跑 `npm test`（前端单测用 `--experimental-strip-types` 直接执行 `.ts`，Node 20 不支持该开关）。
 - **打包 JAR**：安装 JDK 21 与原生工具链（Zig、Ninja、NASM，CMake 由 runner 自带），执行 `./mvnw clean package`。该命令同时跑后端测试（H2 内存库，不连 MySQL/OSS）、构建 React 前端并编译 Windows/Linux 两套原生图片组件；随后校验 JAR 内确实含有前端资源和两套原生库，最后把 JAR 和 Surefire 报告作为 workflow artifact 上传。
+- **发布 Release**：只在推送 `v*` tag 时执行，且 `needs: package`——附件一定来自跑通测试和产物校验的那次构建。
+  它直接取上一步的 workflow artifact（不重新构建），把附件按 tag 改名为 `photolib-backend-<tag>.jar` 后，
+  用 `gh release create --generate-notes` 发布。带连字符的 tag（如 `v1.2.0-rc.1`）按预发布处理。
 
-工作流固定了 Zig 版本与 SHA-256 校验值，升级 Zig 时需同步修改 `ZIG_VERSION` 与 `ZIG_SHA256`；Node 版本 `BUILD_NODE_VERSION` 应与 `backend/pom.xml` 的 `node.version` 保持一致。CI 只用 workflow artifact 分发 JAR，不会自动发布 Release。
+发布一个版本只需推 tag：
+
+```bash
+git tag v1.0.0 && git push origin v1.0.0
+```
+
+工作流固定了 Zig 版本与 SHA-256 校验值，升级 Zig 时需同步修改 `ZIG_VERSION` 与 `ZIG_SHA256`；
+Node 版本 `BUILD_NODE_VERSION` 应与 `backend/pom.xml` 的 `node.version` 保持一致。
+`TZ` 固定为 `Asia/Shanghai`：应用的业务时钟写死在该时区，runner 默认 UTC 会让依赖当前时间的测试失败。
+附件名里的 tag 只是给下载者看的，JAR 内部版本号仍来自 `backend/pom.xml`。
 
 ### Linux systemd 示例
 

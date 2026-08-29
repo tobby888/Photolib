@@ -3,6 +3,8 @@ name: Build
 on:
   push:
     branches: [master]
+    # 推 v* tag 时同样跑完整流水线，通过后由 release job 发布 Release。
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -147,3 +149,46 @@ jobs:
           path: backend/target/photolib-backend-*.jar
           if-no-files-found: error
           retention-days: 14
+
+  release:
+    name: 发布 Release
+    # needs: package 保证附件一定来自跑通了测试和产物校验的那次构建；
+    # 非 tag 的推送里这个 job 不会执行。
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: 下载打包产物
+        uses: actions/download-artifact@v4
+        with:
+          name: photolib-backend-jar
+          path: release
+
+      # JAR 里的版本号来自 pom（0.1.0-SNAPSHOT），与 tag 无关。附件按 tag 改名，
+      # 下载的人才能一眼看出对应哪个版本；JAR 内容本身不变。
+      - name: 按 tag 命名附件
+        run: |
+          set -euo pipefail
+          jar=$(ls release/photolib-backend-*.jar)
+          mv "$jar" "release/photolib-backend-$GITHUB_REF_NAME.jar"
+          ls -l release
+
+      - name: 创建 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # 带连字符的 tag（v1.2.0-rc.1 之类）按预发布处理。
+          prerelease=""
+          case "$GITHUB_REF_NAME" in
+            *-*) prerelease="--prerelease" ;;
+          esac
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            $prerelease \
+            "release/photolib-backend-$GITHUB_REF_NAME.jar"
