@@ -33,7 +33,25 @@ get_verified_archive() {
         fi
     fi
     if [ ! -f "$path" ]; then
-        curl -fsSL --retry 5 --retry-all-errors -o "$path" "$url"
+        curl -fsSL --connect-timeout 30 --retry 5 --retry-all-errors \
+            -o "$path" "$url"
+    fi
+    actual_sha256=$(sha256sum "$path" | awk '{print $1}')
+    if [ "$actual_sha256" != "$expected_sha256" ]; then
+        echo "checksum mismatch for $path" >&2
+        exit 1
+    fi
+}
+
+# 许可证正文随仓库一起分发。它们是固定文档，联网取回也只会得到同样的字节，而
+# www.gnu.org / www.mozilla.org 在部分构建网络（含 GitHub Actions runner）上
+# 不可达，会让整个原生构建卡在连接超时里。校验和照旧核对，防止仓库副本被改动。
+verify_bundled_file() {
+    path=$1
+    expected_sha256=$2
+    if [ ! -f "$path" ]; then
+        echo "missing bundled file $path" >&2
+        exit 1
     fi
     actual_sha256=$(sha256sum "$path" | awk '{print $1}')
     if [ "$actual_sha256" != "$expected_sha256" ]; then
@@ -63,19 +81,17 @@ if [ ! -f "$STB_SOURCE/stb_image.h" ]; then
     tar -xzf "$STB_ARCHIVE" -C "$DEPENDENCY_SOURCE_DIRECTORY"
 fi
 
-GPL_LICENSE="$ARCHIVE_DIRECTORY/GPL-3.0.txt"
-LGPL_LICENSE="$ARCHIVE_DIRECTORY/LGPL-3.0.txt"
-MPL_LICENSE="$ARCHIVE_DIRECTORY/MPL-2.0.txt"
-get_verified_archive \
-    https://www.gnu.org/licenses/gpl-3.0.txt \
+BUNDLED_LICENSE_DIRECTORY="$SOURCE_DIRECTORY/licenses"
+GPL_LICENSE="$BUNDLED_LICENSE_DIRECTORY/GPL-3.0.txt"
+LGPL_LICENSE="$BUNDLED_LICENSE_DIRECTORY/LGPL-3.0.txt"
+MPL_LICENSE="$BUNDLED_LICENSE_DIRECTORY/MPL-2.0.txt"
+verify_bundled_file \
     "$GPL_LICENSE" \
     3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986
-get_verified_archive \
-    https://www.gnu.org/licenses/lgpl-3.0.txt \
+verify_bundled_file \
     "$LGPL_LICENSE" \
     e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118
-get_verified_archive \
-    https://www.mozilla.org/media/MPL/2.0/index.815ca599c9df.txt \
+verify_bundled_file \
     "$MPL_LICENSE" \
     fab3dd6bdab226f1c08630b1dd917e11fcb4ec5e1e020e2c16f83a0a13863e85
 
@@ -148,11 +164,17 @@ build_target() {
     wrapper_build_directory="$target_build_directory/wrapper"
     native_output="$OUTPUT_DIRECTORY/$relative_output"
 
+    # libjpeg-turbo 在 CMAKE_SYSTEM_NAME=Windows 时把安装前缀强制成
+    # "c:/libjpeg-turbo-gcc64"。在 Linux 主机上交叉编译 Windows 目标时，
+    # configure_package_config_file 里的 file(RELATIVE_PATH) 不认这种带盘符的
+    # 路径，配置阶段就会失败。我们只 build turbojpeg-static、从不 install，
+    # 所以显式给一个构建目录下的绝对路径即可，对产物没有影响。
     CC="zig cc -target $zig_target" cmake \
         -S "$LIBJPEG_SOURCE" \
         -B "$libjpeg_build_directory" \
         -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX="$libjpeg_build_directory/install" \
         -DCMAKE_SYSTEM_NAME="$system_name" \
         -DCMAKE_SYSTEM_PROCESSOR=x86_64 \
         -DENABLE_SHARED=OFF \

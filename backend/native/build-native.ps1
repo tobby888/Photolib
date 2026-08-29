@@ -62,8 +62,26 @@ function Get-VerifiedArchive {
         }
     }
     if (-not (Test-Path -LiteralPath $Path)) {
-        & curl.exe -fsSL --ssl-no-revoke --retry 5 --retry-all-errors -o $Path $Url
+        & curl.exe -fsSL --ssl-no-revoke --connect-timeout 30 --retry 5 --retry-all-errors -o $Path $Url
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
+    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
+    if ($actual -ne $Sha256) {
+        throw "Checksum mismatch for $Path (expected $Sha256, got $actual)"
+    }
+}
+
+# 许可证正文随仓库一起分发。它们是固定文档，联网取回也只会得到同样的字节，而
+# www.gnu.org / www.mozilla.org 在部分构建网络（含 GitHub Actions runner）上
+# 不可达，会让整个原生构建卡在连接超时里。校验和照旧核对，防止仓库副本被改动。
+function Assert-BundledFile {
+    param(
+        [string]$Path,
+        [string]$Sha256
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "Missing bundled file $Path"
     }
     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
     if ($actual -ne $Sha256) {
@@ -92,19 +110,17 @@ if (-not (Test-Path -LiteralPath (Join-Path $stbSource "stb_image.h"))) {
     Expand-TarArchive -Archive $stbArchive -Destination $dependencySourceDirectory
 }
 
-$gplLicense = Join-Path $archiveDirectory "GPL-3.0.txt"
-$lgplLicense = Join-Path $archiveDirectory "LGPL-3.0.txt"
-$mplLicense = Join-Path $archiveDirectory "MPL-2.0.txt"
-Get-VerifiedArchive `
-    -Url "https://www.gnu.org/licenses/gpl-3.0.txt" `
+$bundledLicenseDirectory = Join-Path $sourceDirectory "licenses"
+$gplLicense = Join-Path $bundledLicenseDirectory "GPL-3.0.txt"
+$lgplLicense = Join-Path $bundledLicenseDirectory "LGPL-3.0.txt"
+$mplLicense = Join-Path $bundledLicenseDirectory "MPL-2.0.txt"
+Assert-BundledFile `
     -Path $gplLicense `
     -Sha256 "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
-Get-VerifiedArchive `
-    -Url "https://www.gnu.org/licenses/lgpl-3.0.txt" `
+Assert-BundledFile `
     -Path $lgplLicense `
     -Sha256 "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
-Get-VerifiedArchive `
-    -Url "https://www.mozilla.org/media/MPL/2.0/index.815ca599c9df.txt" `
+Assert-BundledFile `
     -Path $mplLicense `
     -Sha256 "fab3dd6bdab226f1c08630b1dd917e11fcb4ec5e1e020e2c16f83a0a13863e85"
 

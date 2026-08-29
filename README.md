@@ -69,7 +69,7 @@ native/linux-x86_64/libphotolib-image.so
 native/linux-x86_64/libvips-cpp.so.8.18.3
 ```
 
-应用启动后按系统和架构加载对应组件。当前仅支持 Windows x86-64 和 Linux x86-64；Linux 运行环境需要 glibc 2.28+、`libstdc++.so.6`（至少提供 `GLIBCXX_3.4.22`）与 `libgcc_s.so.1`。首次原生构建需要联网下载并校验锁定版本的 libjpeg-turbo、stb 与 libvips 依赖包及许可文本，后续可复用本地缓存。Windows/Linux 发布流水线应分别在目标系统实际加载组件并运行图片处理测试，不能只检查另一平台资源是否存在。
+应用启动后按系统和架构加载对应组件。当前仅支持 Windows x86-64 和 Linux x86-64；Linux 运行环境需要 glibc 2.28+、`libstdc++.so.6`（至少提供 `GLIBCXX_3.4.22`）与 `libgcc_s.so.1`。首次原生构建需要联网下载并校验锁定版本的 libjpeg-turbo、stb 与 libvips 依赖包，后续可复用本地缓存；GPL/LGPL/MPL 许可正文改为随仓库分发在 `backend/native/licenses/`，构建时只按 SHA-256 校验、不再联网取回（gnu.org、mozilla.org 在部分构建网络上不可达，会让原生构建卡在连接超时）。Windows/Linux 发布流水线应分别在目标系统实际加载组件并运行图片处理测试，不能只检查另一平台资源是否存在。
 
 `PHOTO_PROCESSING_THREADS` 的取值范围是 1～32，默认 1。每个线程都可能持有一张高像素图片的原生像素缓冲，提高线程数前应先评估内存峰值并使用真实相机图片压测。
 
@@ -151,6 +151,15 @@ backend/target/photolib-backend-0.1.0-SNAPSHOT.jar
 ```
 
 该 JAR 已包含后端、前端和两套原生图片组件。部署服务器不需要 Node.js、Maven、Zig 或单独的前端服务，但除 Java 21 外，Linux 仍须提供上文列出的 glibc、`libstdc++` 与 `libgcc_s` 运行库。
+
+### GitHub Actions 自动打包
+
+`.github/workflows/build.yml` 在推送 `master`、提交 PR 或手动触发（workflow_dispatch）时运行两个任务：
+
+- **前端检查**：`npm ci` + `npm run lint` + `npm run build`，再切到 Node 22 跑 `npm test`（前端单测用 `--experimental-strip-types` 直接执行 `.ts`，Node 20 不支持该开关）。
+- **打包 JAR**：安装 JDK 21 与原生工具链（Zig、Ninja、NASM，CMake 由 runner 自带），执行 `./mvnw clean package`。该命令同时跑后端测试（H2 内存库，不连 MySQL/OSS）、构建 React 前端并编译 Windows/Linux 两套原生图片组件；随后校验 JAR 内确实含有前端资源和两套原生库，最后把 JAR 和 Surefire 报告作为 workflow artifact 上传。
+
+工作流固定了 Zig 版本与 SHA-256 校验值，升级 Zig 时需同步修改 `ZIG_VERSION` 与 `ZIG_SHA256`；Node 版本 `BUILD_NODE_VERSION` 应与 `backend/pom.xml` 的 `node.version` 保持一致。CI 只用 workflow artifact 分发 JAR，不会自动发布 Release。
 
 ### Linux systemd 示例
 

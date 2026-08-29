@@ -1,0 +1,149 @@
+name: Build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # 整个应用按 Asia/Shanghai 运作（recruitmentClock、Jackson time-zone、
+  # @Scheduled 的 zone、MySQL serverTimezone 都写死了这个时区），开发机和生产也都在
+  # 该时区。runner 默认 UTC，会让依赖「库里的当前时间」的测试夹具与固定时区的业务
+  # 时钟差 8 小时，所以这里显式对齐。
+  TZ: Asia/Shanghai
+  # 与 backend/pom.xml 的 node.version 对齐，保证 CI 与打包用的是同一个 Node。
+  BUILD_NODE_VERSION: 20.19.4
+  # README「环境要求」要求 Zig 0.16.x；校验值取自 https://ziglang.org/download/index.json。
+  ZIG_VERSION: 0.16.0
+  ZIG_SHA256: 70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00
+
+jobs:
+  frontend:
+    name: 前端检查
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.BUILD_NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run lint
+
+      # tsc -b && vite build，等价于前端的「类型检查 + 构建」。
+      - run: npm run build
+
+      # 前端单测用 node --experimental-strip-types 直接跑 .ts 源码，需要 Node 22+；
+      # 打包所用的 Node 20 不支持该开关，所以只在这一步临时切换版本。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+
+      - run: npm test
+
+  package:
+    name: 打包 JAR
+    runs-on: ubuntu-latest
+    # 原生组件要现编译 libjpeg-turbo + zig 包装层（Windows/Linux 两个目标），
+    # 再加上前端构建和后端测试，冷缓存时耗时较长。
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # frontend-maven-plugin 会自行下载隔离的 Node/npm，这里只缓存 ~/.npm，
+      # 让 pom 里的 `npm ci` 不必每次都走网络。
+      - name: 缓存 npm 下载
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-
+
+      - name: 安装原生构建工具链
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build nasm
+
+      - name: 缓存 Zig
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/zig
+          key: zig-${{ runner.os }}-${{ env.ZIG_VERSION }}
+
+      - name: 安装 Zig ${{ env.ZIG_VERSION }}
+        run: |
+          set -euo pipefail
+          if [ ! -x "$HOME/.local/zig/zig" ]; then
+            mkdir -p "$HOME/.local/zig"
+            curl -fsSL --retry 5 --retry-all-errors \
+              -o "$RUNNER_TEMP/zig.tar.xz" \
+              "https://ziglang.org/download/$ZIG_VERSION/zig-x86_64-linux-$ZIG_VERSION.tar.xz"
+            echo "$ZIG_SHA256  $RUNNER_TEMP/zig.tar.xz" | sha256sum -c -
+            tar -xJf "$RUNNER_TEMP/zig.tar.xz" -C "$HOME/.local/zig" --strip-components=1
+          fi
+          echo "$HOME/.local/zig" >> "$GITHUB_PATH"
+
+      - name: 校验工具链
+        run: |
+          date
+          zig version
+          cmake --version | head -n 1
+          ninja --version
+          nasm -v
+
+      # clean package 会顺带跑后端测试（H2 内存库，不连 MySQL/OSS）、
+      # 构建 React 前端并写入 JAR 的 static 目录、编译两套原生图片组件。
+      - name: 构建并测试
+        working-directory: backend
+        run: ./mvnw --batch-mode --no-transfer-progress clean package
+
+      - name: 校验 JAR 内容
+        run: |
+          set -euo pipefail
+          jar=$(ls backend/target/photolib-backend-*.jar)
+          echo "jar: $jar"
+          for entry in \
+            BOOT-INF/classes/static/index.html \
+            BOOT-INF/classes/native/linux-x86_64/libphotolib-image.so \
+            BOOT-INF/classes/native/windows-x86_64/photolib-image.dll; do
+            unzip -l "$jar" "$entry" | grep -q "$entry" || {
+              echo "JAR 缺少 $entry" >&2
+              exit 1
+            }
+          done
+
+      - name: 上传测试报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: backend/target/surefire-reports/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: 上传 JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: photolib-backend-jar
+          path: backend/target/photolib-backend-*.jar
+          if-no-files-found: error
+          retention-days: 14
