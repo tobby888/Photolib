@@ -152,6 +152,15 @@ backend/target/photolib-backend-0.1.0-SNAPSHOT.jar
 
 该 JAR 已包含后端、前端和两套原生图片组件。部署服务器不需要 Node.js、Maven、Zig 或单独的前端服务，但除 Java 21 外，Linux 仍须提供上文列出的 glibc、`libstdc++` 与 `libgcc_s` 运行库。
 
+### GitHub Actions 自动打包
+
+`.github/workflows/build.yml` 在推送 `master`、提交 PR 或手动触发（workflow_dispatch）时运行两个任务：
+
+- **前端检查**：`npm ci` + `npm run lint` + `npm run build`，再切到 Node 22 跑 `npm test`（前端单测用 `--experimental-strip-types` 直接执行 `.ts`，Node 20 不支持该开关）。
+- **打包 JAR**：安装 JDK 21 与原生工具链（Zig、Ninja、NASM，CMake 由 runner 自带），执行 `./mvnw clean package`。该命令同时跑后端测试（H2 内存库，不连 MySQL/OSS）、构建 React 前端并编译 Windows/Linux 两套原生图片组件；随后校验 JAR 内确实含有前端资源和两套原生库，最后把 JAR 和 Surefire 报告作为 workflow artifact 上传。
+
+工作流固定了 Zig 版本与 SHA-256 校验值，升级 Zig 时需同步修改 `ZIG_VERSION` 与 `ZIG_SHA256`；Node 版本 `BUILD_NODE_VERSION` 应与 `backend/pom.xml` 的 `node.version` 保持一致。CI 只用 workflow artifact 分发 JAR，不会自动发布 Release。
+
 ### Linux systemd 示例
 
 建议使用专用用户和 `/opt/photolib` 部署目录，将 JAR 与生产 `.env` 放入该目录，并确保服务账号对图片处理临时目录具有读写权限。
