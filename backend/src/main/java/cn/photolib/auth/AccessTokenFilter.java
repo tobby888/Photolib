@@ -28,6 +28,16 @@ public class AccessTokenFilter extends OncePerRequestFilter {
                     authService.authenticate(authorization.substring(7));
             if (authenticated != null) {
                 AuthenticatedUser user = authenticated.user();
+                // 受限会话（未改初始密码，或权限组已被移除）在"登出的人也能读"的接口上
+                // 退回匿名继续，而不是拿到 403——否则它比一个登出的访客还差，
+                // 浏览器里存着令牌反而打不开公开文档。同时也不能把它当成正常成员：
+                // 这两种账号都不该看到仅限成员的内容，所以是"不设置 principal"，
+                // 而不是"放行并认证"。
+                if ((user.mustChangePassword() || !user.hasSystemAccess())
+                        && isAnonymousReadableDocs(request)) {
+                    chain.doFilter(request, response);
+                    return;
+                }
                 if (user.mustChangePassword() && !isAllowedBeforePasswordChange(request.getServletPath())) {
                     response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                     response.setContentType("application/json;charset=UTF-8");
@@ -78,5 +88,14 @@ public class AccessTokenFilter extends OncePerRequestFilter {
     // off than a logged-out visitor: these screens still show the product identity.
     private boolean isPublicBranding(String path) {
         return path.equals("/api/v1/branding") || path.equals("/api/v1/branding/icon");
+    }
+
+    /**
+     * 文档中心的阅读接口，未登录也能调。只认 GET：写接口在 {@code /docs/**} 下，
+     * 要 {@code DOC_MANAGE}，绝不能因为这条降级而被受限会话摸到。
+     */
+    private boolean isAnonymousReadableDocs(HttpServletRequest request) {
+        return "GET".equals(request.getMethod())
+                && request.getServletPath().startsWith("/api/v1/public/docs");
     }
 }

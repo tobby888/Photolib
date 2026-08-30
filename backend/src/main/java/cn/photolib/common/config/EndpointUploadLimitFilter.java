@@ -1,5 +1,6 @@
 package cn.photolib.common.config;
 
+import cn.photolib.common.upload.InlineImageUpload;
 import cn.photolib.common.util.UploadSizeLimitExceededException;
 import jakarta.servlet.ReadListener;
 import jakarta.servlet.ServletException;
@@ -61,9 +62,13 @@ public class EndpointUploadLimitFilter extends OncePerRequestFilter {
         if ("PUT".equals(request.getMethod()) && path.endsWith("/users/me/avatar")) {
             return AVATAR_MAX_BYTES + MULTIPART_OVERHEAD;
         }
+        // 三个正文插图端点共用 InlineImageUpload.MAX_BYTES 这一个上限；
+        // 文档插图的路径形如 /api/v1/docs/{id}/assets，所以要连 /docs/ 一起判，
+        // 否则将来任何以 /assets 结尾的端点都会悄悄套上这条 5 MiB 限制。
         if ("POST".equals(request.getMethod())
-                && (path.endsWith("/description-images") || path.endsWith("/notifications/images"))) {
-            return 5L * 1024 * 1024 + MULTIPART_OVERHEAD;
+                && (path.endsWith("/description-images") || path.endsWith("/notifications/images")
+                    || (path.contains("/docs/") && path.endsWith("/assets")))) {
+            return InlineImageUpload.MAX_BYTES + MULTIPART_OVERHEAD;
         }
         if ("POST".equals(request.getMethod()) && path.endsWith("/database-backups/upload")) {
             return DATABASE_BACKUP_MAX_BYTES + MULTIPART_OVERHEAD;

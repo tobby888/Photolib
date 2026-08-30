@@ -9,6 +9,7 @@ public enum PermissionCategory {
     MESSAGE("消息"),
     RECRUITMENT("成员招募"),
     FEATURED("好图精选"),
+    DOC("文档中心"),
     STATISTICS("数据统计"),
     MANAGER_CAMPUS("负责人校区编辑");
 

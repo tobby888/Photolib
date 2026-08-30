@@ -9,11 +9,19 @@ import MarkdownRenderer from './MarkdownRenderer'
 
 export default function MarkdownEditor({
   value = '', onChange, placeholder = '使用 Markdown 编写说明……', allowImageUpload = true,
+  uploadUrl = '/description-images', maxLength = 5000,
 }: {
   value?: string
   onChange?: (value: string) => void
   placeholder?: string
   allowImageUpload?: boolean
+  /**
+   * 插图上传接口。默认是全站通用的说明图片；文档中心传自己的
+   * /docs/{id}/assets，因为文档插图的可见范围要跟着所属文档走，
+   * 而说明图片一律要求登录才能读。
+   */
+  uploadUrl?: string
+  maxLength?: number
 }) {
   const { message } = App.useApp()
   const root = useRef<HTMLDivElement>(null)
@@ -42,10 +50,10 @@ export default function MarkdownEditor({
     try {
       const data = new FormData()
       data.append('file', file)
-      const result = await api<{ url: string }>({ method: 'POST', url: '/description-images', data })
+      const result = await api<{ url: string }>({ method: 'POST', url: uploadUrl, data })
       const safeName = file.name.replace(/[\]\\]/g, '') || '说明图片'
       insert(`![${safeName}](${result.url})\n`)
-      message.success('图片已上传到对象存储并插入说明')
+      message.success('图片已上传到对象存储并插入正文')
     } catch (error) {
       message.error((error as Error).message)
     } finally {
@@ -75,7 +83,7 @@ export default function MarkdownEditor({
     </div>
     {mode === 'edit'
       ? <Input.TextArea value={value} onChange={event => onChange?.(event.target.value)}
-          placeholder={placeholder} autoSize={{ minRows: 8, maxRows: 18 }} maxLength={5000} showCount />
+          placeholder={placeholder} autoSize={{ minRows: 8, maxRows: 18 }} maxLength={maxLength} showCount />
       : <div className="markdown-editor-preview">
           {value.trim() ? <MarkdownRenderer value={value} /> : <span>暂无可预览内容</span>}
         </div>}
