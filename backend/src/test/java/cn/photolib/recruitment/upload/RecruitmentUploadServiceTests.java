@@ -21,6 +21,7 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.security.MessageDigest;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HexFormat;
@@ -60,6 +61,11 @@ class RecruitmentUploadServiceTests {
     private ObjectStorageService storage;
     @Autowired
     private JdbcClient jdbc;
+    // The production code reads time from this fixed-zone clock (Asia/Shanghai), which is
+    // independent of the host time zone. Fixtures must use the same clock instead of the
+    // database's CURRENT_TIMESTAMP, or the window they write is off by the host's offset.
+    @Autowired
+    private Clock recruitmentClock;
 
     private String publicId;
 
@@ -67,6 +73,7 @@ class RecruitmentUploadServiceTests {
     void setUp() {
         cleanFixture();
         publicId = PublicId.next();
+        LocalDateTime now = now();
         jdbc.sql("""
                 INSERT INTO app_user
                     (id, username, password_hash, display_name, role, permission_group_id,
@@ -81,10 +88,11 @@ class RecruitmentUploadServiceTests {
                      student_id_label, upload_label, upload_required, starts_at, ends_at,
                      status, created_by, published_by, published_at, version, deleted)
                 VALUES (:id, :publicId, '招募上传测试', '', '{"fields":[]}',
-                    '学号', '附件', FALSE, DATEADD('HOUR', -1, CURRENT_TIMESTAMP),
-                    DATEADD('HOUR', 2, CURRENT_TIMESTAMP), 'PUBLISHED', :userId, :userId,
-                    CURRENT_TIMESTAMP, 1, FALSE)
+                    '学号', '附件', FALSE, :startsAt, :endsAt, 'PUBLISHED', :userId, :userId,
+                    :publishedAt, 1, FALSE)
                 """).param("id", TASK_ID).param("publicId", publicId)
+                .param("startsAt", now.minusHours(1)).param("endsAt", now.plusHours(2))
+                .param("publishedAt", now)
                 .param("userId", USER_ID).update();
     }
 
@@ -276,8 +284,8 @@ class RecruitmentUploadServiceTests {
                 expiredDraft.draftToken());
         awaitBatch(cleanupTicket.batchId(), "SUCCEEDED");
         String expiredObject = objectKey(cleanupTicket.batchId());
-        jdbc.sql("UPDATE recruitment_draft SET expires_at=DATEADD('SECOND', -1, CURRENT_TIMESTAMP) WHERE id=:id")
-                .param("id", expiredDraft.draftId()).update();
+        jdbc.sql("UPDATE recruitment_draft SET expires_at=:expiredAt WHERE id=:id")
+                .param("expiredAt", justExpired()).param("id", expiredDraft.draftId()).update();
 
         var submittedDraft = draftService.create(publicId, "20260006");
         var submittedTicket = createAndUploadFile(submittedDraft, "keep.jpg", "image/jpeg", valid);
@@ -286,9 +294,10 @@ class RecruitmentUploadServiceTests {
         awaitBatch(submittedTicket.batchId(), "SUCCEEDED");
         String submittedObject = objectKey(submittedTicket.batchId());
         jdbc.sql("""
-                UPDATE recruitment_draft SET status='SUBMITTED',
-                    expires_at=DATEADD('SECOND', -1, CURRENT_TIMESTAMP) WHERE id=:id
-                """).param("id", submittedDraft.draftId()).update();
+                UPDATE recruitment_draft SET status='SUBMITTED', expires_at=:expiredAt
+                WHERE id=:id
+                """).param("expiredAt", justExpired())
+                .param("id", submittedDraft.draftId()).update();
 
         cleanupJob.cleanupExpiredDrafts();
 
@@ -368,9 +377,9 @@ class RecruitmentUploadServiceTests {
         // Simulate replay of the still-valid presigned PUT, then the later expiry reaper.
         storage.put(tempKey, new ByteArrayInputStream(original), original.length, "image/png");
         jdbc.sql("""
-                UPDATE recruitment_upload_item SET upload_url_expires_at=DATEADD('SECOND', -1,
-                    CURRENT_TIMESTAMP) WHERE batch_id=:id
-                """).param("id", ticket.batchId()).update();
+                UPDATE recruitment_upload_item SET upload_url_expires_at=:expiredAt
+                WHERE batch_id=:id
+                """).param("expiredAt", justExpired()).param("id", ticket.batchId()).update();
         jdbc.sql("UPDATE recruitment_draft SET status='SUBMITTED' WHERE id=:id")
                 .param("id", draft.draftId()).update();
 
@@ -393,9 +402,9 @@ class RecruitmentUploadServiceTests {
                 .param("id", ticket.batchId()).update();
         jdbc.sql("""
                 UPDATE recruitment_upload_item SET status='PROCESSING',
-                    upload_url_expires_at=DATEADD('SECOND', -1, CURRENT_TIMESTAMP)
+                    upload_url_expires_at=:expiredAt
                 WHERE batch_id=:id
-                """).param("id", ticket.batchId()).update();
+                """).param("expiredAt", justExpired()).param("id", ticket.batchId()).update();
 
         temporaryCleanupJob.cleanupExpiredTargets();
 
@@ -443,9 +452,9 @@ class RecruitmentUploadServiceTests {
                     (batch_id, original_file_name, content_type, size, sha256, status,
                      created_at, updated_at)
                 VALUES (:batchId, 'recover.png', 'image/png', :size, :sha, 'PROCESSING',
-                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    :now, :now)
                 """).param("batchId", zipTicket.batchId()).param("size", png.length)
-                .param("sha", sha256(png)).update();
+                .param("now", now()).param("sha", sha256(png)).update();
 
         processor.process(zipTicket.batchId());
 
@@ -454,6 +463,16 @@ class RecruitmentUploadServiceTests {
         assertThat(jdbc.sql("SELECT status FROM recruitment_upload_batch WHERE id=:id")
                 .param("id", zipTicket.batchId()).query(String.class).single()).isEqualTo("SUCCEEDED");
         assertThat(storage.open(objectKey(zipTicket.batchId())).readAllBytes()).isEqualTo(png);
+    }
+
+    /** The same instant the service and the cleanup jobs read, whatever the host time zone is. */
+    private LocalDateTime now() {
+        return LocalDateTime.now(recruitmentClock);
+    }
+
+    /** A deadline that has just passed for the code under test. */
+    private LocalDateTime justExpired() {
+        return now().minusSeconds(1);
     }
 
     private RecruitmentUploadService.BatchTicket createAndUploadFile(
