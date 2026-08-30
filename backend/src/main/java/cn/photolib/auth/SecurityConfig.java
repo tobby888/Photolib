@@ -31,7 +31,7 @@ public class SecurityConfig {
                                 "/login", "/initial-password", "/projects/**", "/requests/**",
                                 "/photos", "/worklogs", "/notifications/**", "/statistics", "/admin",
                                 "/recruitment", "/recruitments/**", "/recruitment-applications/**",
-                                "/docs", "/docs/**", "/documents",
+                                "/docs", "/docs/**", "/documents", "/documents/**",
                                 "/api", "/api/",
                                 "/api/v1/auth/login", "/api/v1/auth/refresh",
                                 "/api/v1/actuator/health",

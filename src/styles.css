@@ -2362,6 +2362,16 @@ body {
   padding: clamp(20px, 4vw, 40px) 0 56px;
   align-items: start;
 }
+/* 工作台里的文档中心已经有外层留白和滚动容器，读者布局在这里去掉自己的一套。 */
+.documents-page .docs-body { width: 100%; padding: 0; }
+.documents-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
 .docs-sidebar,
 .docs-content {
   padding: 18px;

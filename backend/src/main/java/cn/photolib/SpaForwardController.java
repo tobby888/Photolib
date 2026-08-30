@@ -29,7 +29,8 @@ public class SpaForwardController {
             "/recruitment-applications/{id}",
             "/docs",
             "/docs/{publicId}",
-            "/documents"
+            "/documents",
+            "/documents/{publicId}"
     })
     String forwardToApplication() {
         return "forward:/index.html";

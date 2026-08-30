@@ -50,7 +50,10 @@ function toTreeData(nodes: DocManageNode[]): DataNode[] {
   }))
 }
 
-export default function DocsManagePage() {
+export default function DocsManagePage({ onPreview }: {
+  /** 由外层决定"查看读者视角"去哪；缺省时跳到登录页前面的独立阅读页。 */
+  onPreview?: (publicId: string) => void
+} = {}) {
   const { message, modal } = App.useApp()
   const navigate = useNavigate()
   const [tree, setTree] = useState<DocManageNode[]>([])
@@ -292,7 +295,9 @@ export default function DocsManagePage() {
                 ]} />
             </Space>
             {selected.published && <Button icon={<EyeOutlined />}
-              onClick={() => navigate(`/docs/${selected.publicId}`)}>查看读者视角</Button>}
+              onClick={() => onPreview
+                ? onPreview(selected.publicId)
+                : navigate(`/docs/${selected.publicId}`)}>查看读者视角</Button>}
           </Space>
 
           {selected.visibility === 'MEMBERS' && selected.published && <Alert type="warning" showIcon

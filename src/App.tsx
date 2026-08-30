@@ -36,7 +36,7 @@ const NotificationsPage = lazy(() => import('./pages/NotificationsPage'))
 const NotificationDetailPage = lazy(() => import('./pages/NotificationDetailPage'))
 const PublicRecruitmentPage = lazy(() => import('./pages/PublicRecruitmentPage'))
 const DocsPage = lazy(() => import('./pages/DocsPage'))
-const DocsManagePage = lazy(() => import('./pages/DocsManagePage'))
+const DocumentsPage = lazy(() => import('./pages/DocumentsPage'))
 const FeaturedCollectionsPage = lazy(() => import('./pages/FeaturedCollectionsPage'))
 const FeaturedCollectionDetailPage = lazy(() => import('./pages/FeaturedCollectionDetailPage'))
 const RecruitmentsPage = lazy(() => import('./pages/RecruitmentsPage'))
@@ -187,8 +187,10 @@ function Shell() {
     common.push({ key: '/featured', icon: <TrophyOutlined />, label: '好图精选' })
     if (hasPermission(user, 'RECRUITMENT_VIEW')) common.push(
       { key: '/recruitments', icon: <TeamOutlined />, label: '成员招募' })
-    if (hasPermission(user, 'DOC_MANAGE')) common.push(
-      { key: '/documents', icon: <ReadOutlined />, label: '文档中心' })
+    // 文档中心对每个能进系统的账号都显示，不按 DOC_MANAGE 收起：
+    // "需要登录才能看"的文档正是给普通成员准备的，按编辑权限藏入口
+    // 等于让唯一能看到它们的人找不到入口。编辑器在页面内按权限收起。
+    common.push({ key: '/documents', icon: <ReadOutlined />, label: '文档中心' })
     common.push({ key: '/notifications', icon: <MessageOutlined />, label: '消息中心' })
     if (hasPermission(user, 'STATISTICS_DOWNLOAD')) common.push(
       { key: '/statistics', icon: <BarChartOutlined />, label: '数据统计' })
@@ -312,7 +314,8 @@ function Shell() {
             <Route path="/recruitments" element={hasPermission(user, 'RECRUITMENT_VIEW') ? <RecruitmentsPage /> : <Navigate to="/" />} />
             <Route path="/recruitments/:taskId" element={hasPermission(user, 'RECRUITMENT_VIEW') ? <RecruitmentDetailPage /> : <Navigate to="/" />} />
             <Route path="/recruitment-applications/:applicationId" element={hasPermission(user, 'RECRUITMENT_VIEW') ? <RecruitmentApplicationDetailPage /> : <Navigate to="/" />} />
-            <Route path="/documents" element={hasPermission(user, 'DOC_MANAGE') ? <DocsManagePage /> : <Navigate to="/" />} />
+            <Route path="/documents" element={<DocumentsPage />} />
+            <Route path="/documents/:publicId" element={<DocumentsPage />} />
             <Route path="/admin" element={user.permissionGroupCode === 'ADMIN' ? <AdminPage /> : <Navigate to="/" />} />
             <Route path="*" element={<NotFound />} />
           </Routes></Suspense>
