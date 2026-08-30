@@ -3,12 +3,23 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { http } from './api'
 
-const DESCRIPTION_IMAGE_PREFIX = '/api/v1/description-images/'
+/**
+ * 正文里允许出现的图片来源，只有这两处，都是本站上传接口回吐的地址。
+ * 任意外链一律拒绝渲染：Markdown 正文由人手写，放行外链等于允许在页面上
+ * 引用第三方资源，既泄漏访客 IP，也让内容随对方站点变化。
+ */
+const IMAGE_PREFIXES = ['/api/v1/description-images/', '/api/v1/public/docs/assets/']
 
+/**
+ * 图片一律通过 axios 取 blob，而不是直接交给 <img src>。
+ * 说明图片需要 Authorization 头；文档插图虽然挂在 /public/ 下，
+ * 但"仅限成员"的文档里的插图同样要带令牌才拿得到——
+ * <img> 标签不会带上 localStorage 里的令牌，直接用会让成员看到一片碎图。
+ */
 function MarkdownImage({ src, alt, ...props }: ComponentPropsWithoutRef<'img'>) {
   const [objectUrl, setObjectUrl] = useState<string>()
   const [failed, setFailed] = useState(false)
-  const protectedImage = typeof src === 'string' && src.startsWith(DESCRIPTION_IMAGE_PREFIX)
+  const protectedImage = typeof src === 'string' && IMAGE_PREFIXES.some(prefix => src.startsWith(prefix))
   const unsupportedImage = !!src && !protectedImage
 
   useEffect(() => {
@@ -29,7 +40,7 @@ function MarkdownImage({ src, alt, ...props }: ComponentPropsWithoutRef<'img'>) 
     }
   }, [protectedImage, src])
 
-  if (unsupportedImage) return <span className="markdown-image-error">仅支持通过编辑器上传的说明图片</span>
+  if (unsupportedImage) return <span className="markdown-image-error">仅支持通过编辑器上传的图片</span>
   if (failed) return <span className="markdown-image-error">图片加载失败：{alt || '未命名图片'}</span>
   return <img {...props} src={objectUrl} alt={alt || ''} />
 }

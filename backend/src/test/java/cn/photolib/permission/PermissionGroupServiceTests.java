@@ -47,6 +47,8 @@ class PermissionGroupServiceTests {
                 PermissionCode.DIRECTORY_VIEW, PermissionCode.DIRECTORY_MANAGE,
                 PermissionCode.MESSAGE_SEND, PermissionCode.RECRUITMENT_VIEW,
                 PermissionCode.RECRUITMENT_PUBLISH, PermissionCode.FEATURED_MANAGE,
+                // 文档中心由管理员和部长负责编写，所以 V37 把 DOC_MANAGE 也发给了部长。
+                PermissionCode.DOC_MANAGE,
                 PermissionCode.STATISTICS_DOWNLOAD, PermissionCode.MANAGER_CAMPUS_ASSIGN);
         assertThat(manager.dataScope()).isEqualTo(DataScope.CAMPUS);
         assertThat(manager.permissions()).containsExactlyInAnyOrder(

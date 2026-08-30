@@ -4,7 +4,8 @@ import {
 import {
   BarChartOutlined, BellOutlined, BookOutlined, CameraOutlined, ContactsOutlined,
   DashboardOutlined, EnvironmentOutlined, FolderOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SettingOutlined,
-  MessageOutlined, StarOutlined, TeamOutlined, TrophyOutlined, UnorderedListOutlined, UserOutlined,
+  MessageOutlined, ReadOutlined, StarOutlined, TeamOutlined, TrophyOutlined,
+  UnorderedListOutlined, UserOutlined,
 } from '@ant-design/icons'
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
@@ -34,6 +35,8 @@ const AdminPage = lazy(() => import('./pages/AdminPage'))
 const NotificationsPage = lazy(() => import('./pages/NotificationsPage'))
 const NotificationDetailPage = lazy(() => import('./pages/NotificationDetailPage'))
 const PublicRecruitmentPage = lazy(() => import('./pages/PublicRecruitmentPage'))
+const DocsPage = lazy(() => import('./pages/DocsPage'))
+const DocsManagePage = lazy(() => import('./pages/DocsManagePage'))
 const FeaturedCollectionsPage = lazy(() => import('./pages/FeaturedCollectionsPage'))
 const FeaturedCollectionDetailPage = lazy(() => import('./pages/FeaturedCollectionDetailPage'))
 const RecruitmentsPage = lazy(() => import('./pages/RecruitmentsPage'))
@@ -184,6 +187,8 @@ function Shell() {
     common.push({ key: '/featured', icon: <TrophyOutlined />, label: '好图精选' })
     if (hasPermission(user, 'RECRUITMENT_VIEW')) common.push(
       { key: '/recruitments', icon: <TeamOutlined />, label: '成员招募' })
+    if (hasPermission(user, 'DOC_MANAGE')) common.push(
+      { key: '/documents', icon: <ReadOutlined />, label: '文档中心' })
     common.push({ key: '/notifications', icon: <MessageOutlined />, label: '消息中心' })
     if (hasPermission(user, 'STATISTICS_DOWNLOAD')) common.push(
       { key: '/statistics', icon: <BarChartOutlined />, label: '数据统计' })
@@ -307,6 +312,7 @@ function Shell() {
             <Route path="/recruitments" element={hasPermission(user, 'RECRUITMENT_VIEW') ? <RecruitmentsPage /> : <Navigate to="/" />} />
             <Route path="/recruitments/:taskId" element={hasPermission(user, 'RECRUITMENT_VIEW') ? <RecruitmentDetailPage /> : <Navigate to="/" />} />
             <Route path="/recruitment-applications/:applicationId" element={hasPermission(user, 'RECRUITMENT_VIEW') ? <RecruitmentApplicationDetailPage /> : <Navigate to="/" />} />
+            <Route path="/documents" element={hasPermission(user, 'DOC_MANAGE') ? <DocsManagePage /> : <Navigate to="/" />} />
             <Route path="/admin" element={user.permissionGroupCode === 'ADMIN' ? <AdminPage /> : <Navigate to="/" />} />
             <Route path="*" element={<NotFound />} />
           </Routes></Suspense>
@@ -327,6 +333,12 @@ export default function App() {
     <Route path="/recruitment" element={user
       ? <Navigate to={user.mustChangePassword ? '/initial-password' : '/'} replace />
       : <PublicRecruitmentPage />} />
+    {/*
+      文档中心和招募页不同，登录用户不会被弹回工作台：文档对所有人都是要读的东西，
+      而且登录之后能多看到"仅成员可见"的那部分，把登录用户挡在外面反而没道理。
+    */}
+    <Route path="/docs" element={<DocsPage />} />
+    <Route path="/docs/:publicId" element={<DocsPage />} />
     <Route path="/initial-password" element={!user ? <Navigate to="/login" replace /> :
       user.mustChangePassword ? <InitialPasswordPage /> : <Navigate to="/" replace />} />
     <Route path="/*" element={<Shell />} />

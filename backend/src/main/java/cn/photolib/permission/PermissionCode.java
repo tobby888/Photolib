@@ -29,6 +29,7 @@ public enum PermissionCode {
     RECRUITMENT_VIEW(PermissionCategory.RECRUITMENT, "查看招募任务和报名详情"),
     RECRUITMENT_PUBLISH(PermissionCategory.RECRUITMENT, "创建、编辑、发布和关闭招募任务"),
     FEATURED_MANAGE(PermissionCategory.FEATURED, "发布、删除和手动截止好图精选"),
+    DOC_MANAGE(PermissionCategory.DOC, "编写文档、拖拽整理目录、发布并指定是否需要登录查看"),
     STATISTICS_DOWNLOAD(PermissionCategory.STATISTICS, "统计数据查看和下载"),
     MANAGER_CAMPUS_ASSIGN(PermissionCategory.MANAGER_CAMPUS, "负责人校区重新指定");
 

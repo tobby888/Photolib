@@ -1,5 +1,7 @@
-import { App, Button, Card, Checkbox, Divider, Form, Input, Typography } from 'antd'
-import { ArrowRightOutlined, LockOutlined, TeamOutlined, UserOutlined } from '@ant-design/icons'
+import { App, Button, Card, Checkbox, Divider, Form, Input, Space, Typography } from 'antd'
+import {
+  ArrowRightOutlined, LockOutlined, ReadOutlined, TeamOutlined, UserOutlined,
+} from '@ant-design/icons'
 import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth'
@@ -52,10 +54,13 @@ export default function LoginPage() {
           <div className="form-between"><Checkbox>记住账号</Checkbox><Typography.Text type="secondary">忘记密码请联系管理员</Typography.Text></div>
           <Button block type="primary" htmlType="submit" loading={loading}>登录 <ArrowRightOutlined /></Button>
         </Form>
-        <Divider plain>想加入摄影部？</Divider>
-        <Button block size="large" icon={<TeamOutlined />} onClick={() => navigate('/recruitment')}>
-          我要报名
-        </Button>
+        <Divider plain>不用登录也能看</Divider>
+        <Space.Compact block>
+          <Button size="large" style={{ width: '50%' }} icon={<TeamOutlined />}
+            onClick={() => navigate('/recruitment')}>我要报名</Button>
+          <Button size="large" style={{ width: '50%' }} icon={<ReadOutlined />}
+            onClick={() => navigate('/docs')}>查看文档</Button>
+        </Space.Compact>
         <Typography.Text className="login-help">首次登录后，系统会引导你修改初始密码</Typography.Text>
       </Card>
     </section>

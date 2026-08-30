@@ -1903,16 +1903,104 @@ type FeaturedCloseReason = 'MANUAL' | 'DEADLINE'
 - 条目返回顺序已经按"校区编码 → 填报顺序 → id"排好，与 Word 文档章节一致，**客户端不要再排序**。
 - 文档在截止后异步生成，`documentStatus` 从 `GENERATING` 变为 `READY` 或 `FAILED`；界面应轮询或提供刷新。`READY` 之前调用下载接口返回 `409`。下载响应是 `{ "downloadUrl", "expiresAt", "fileName" }`，`downloadUrl` 是短期签名地址，直接下载，不要加 Bearer 头；`fileName` 含中文。
 
-## 18. 客户端实现检查清单
+## 18. 文档中心
 
-### 18.1 登录与会话
+管理员和部长写文档，读者在登录页前面就能读。结构是一棵 Obsidian 式的树：`FOLDER` 只是容器，`DOCUMENT` 才有 Markdown 正文；正文和插图都存在对象存储里，接口返回的是正文文本本身，不是签名地址。
+
+**两条访问路径，授权模型不同**：`/docs/**` 是编辑接口，整组要 `DOC_MANAGE`（默认 A、M）；`/public/docs/**` 是阅读接口，不带令牌也能调用。注意路径里的 `public` 指的是"不需要登录就能调用"，**不是"返回的都是公开内容"**——同一个接口带令牌调用会多返回仅限成员的文档。
+
+| 方法 | 路径 | 权限 | 说明 |
+| --- | --- | --- | --- |
+| GET | `/public/docs` | 无 | 读者目录树；未登录只含公开文档，带令牌则含仅成员文档 |
+| GET | `/public/docs/{publicId}` | 无 | 打开一篇已发布文档，返回 Markdown 正文 |
+| GET | `/public/docs/assets/{assetId}` | 无 | 正文插图的二进制，可见范围跟随所属文档 |
+| GET | `/docs/tree` | `DOC_MANAGE` | 编辑视角的整棵树，含草稿 |
+| GET | `/docs/{id}` | `DOC_MANAGE` | 单个节点的元数据 + 正文 + 面包屑 |
+| POST | `/docs` | `DOC_MANAGE` | 新建文件夹或文档 |
+| PUT | `/docs/{id}/title` | `DOC_MANAGE` | 重命名 |
+| PUT | `/docs/{id}/content` | `DOC_MANAGE` | 保存 Markdown 正文 |
+| POST | `/docs/{id}/publication` | `DOC_MANAGE` | 发布 / 退回草稿 |
+| POST | `/docs/{id}/visibility` | `DOC_MANAGE` | 设定是否需要登录才能查看 |
+| POST | `/docs/{id}/move` | `DOC_MANAGE` | 拖拽移动 + 同级排序 |
+| DELETE | `/docs/{id}?version` | `DOC_MANAGE` | 逻辑删除，连同整棵子树 |
+| POST | `/docs/{id}/assets` | `DOC_MANAGE` | 上传正文插图（multipart，字段名 `file`） |
+
+枚举：
+
+```ts
+type DocNodeType = 'FOLDER' | 'DOCUMENT'
+type DocVisibility = 'PUBLIC' | 'MEMBERS'   // PUBLIC=未登录可读，MEMBERS=必须登录
+```
+
+### 18.1 可见性
+
+一篇文档要被读者看到，`published` 和 `visibility` **两个条件都要满足**，它们是正交的两个开关，各有独立接口：
+
+- `published=false`：草稿。对所有读者（包括已登录的普通成员）都是 `404`。
+- `published=true` + `visibility='PUBLIC'`：任何人都能读。
+- `published=true` + `visibility='MEMBERS'`：**未登录看不到**。目录里整条隐藏（连标题都不返回），直链打开返回 `403`，正文里的插图匿名请求同样被拒。
+
+新建文档默认 `MEMBERS`，需要一次显式的"设为公开"才会对匿名访客可见。
+
+**未登录直链打开仅成员文档返回 `403` 而不是 `404`**，这是刻意的：成员把链接分享给还没登录的同学时，客户端应据此提示"请先登录"。区分 `403`（要登录）与 `404`（不存在或未发布）来决定提示语。文件夹没有这两个开关——它在子树里有读者可见的文档时自动出现，否则整个不返回。
+
+### 18.2 请求与响应
+
+新建：`{ "parentId": null, "nodeType": "DOCUMENT", "title": "快速上手" }`（`parentId=null` 表示根目录，非空时必须是文件夹）。
+
+保存正文：`{ "content": "# 标题\n正文", "version": 3 }`，正文上限 100,000 字符。
+
+发布：`{ "published": true, "version": 3 }`；可见范围：`{ "visibility": "PUBLIC", "version": 3 }`。**没有正文的文档不能发布**，会返回 `409`。
+
+移动：`{ "parentId": 7, "index": 2, "version": 3 }`。`index` 是在目标父节点下的落点，**语义是"把被移动的节点从兄弟列表里摘掉之后的序号"**。同层往后拖时如果按摘除前的序号发，落点会整体偏一位——这个偏差不会报错，只会让文档悄悄排到别处。
+
+写操作统一返回整棵新树，客户端直接替换即可，不要逐节点打补丁：
+
+```json
+{ "tree": [ /* ManageNode[] */ ], "focusId": 12 }
+```
+
+编辑视角的节点（`ManageNode`，`children` 递归嵌套）：
+
+```json
+{
+  "id": 12, "publicId": "XK54YN0XKN1E657AHQZZ3TQDQ9", "parentId": 7,
+  "nodeType": "DOCUMENT", "title": "快速上手", "sortOrder": 0,
+  "published": true, "visibility": "MEMBERS", "hasContent": true,
+  "contentSize": 480, "summary": "目录里显示的一句话摘要",
+  "updaterDisplayName": "部长", "updatedAt": "2026-08-30T10:00:00",
+  "version": 3, "children": []
+}
+```
+
+读者视角的节点（`ReaderNode`）只有 `publicId`、`nodeType`、`title`、`summary`、`requiresLogin`、`updatedAt`、`children`——**没有数字 id**，读者路径一律用 `publicId` 寻址。`requiresLogin` 只对已登录读者有意义（未登录时这类文档根本不返回），用来显示一把锁。
+
+打开文档返回 `{ "publicId", "title", "content", "requiresLogin", "updatedAt", "updaterDisplayName", "breadcrumb" }`，`breadcrumb` 是从根到本篇的名称链（含自身）。
+
+### 18.3 插图
+
+`POST /docs/{id}/assets` 接受 JPEG / PNG / WebP，单张最大 5 MiB，声明的 `Content-Type` 必须与文件魔数一致。返回 `{ "id", "url" }`，`url` 形如 `/api/v1/public/docs/assets/{assetId}`，把它写进 Markdown 的 `![](...)` 即可。
+
+插图必须挂在一篇已存在的文档上（所以是 `POST /docs/{id}/assets` 而不是一个全局上传接口）：图片的可见范围完全跟随所属文档，没有归属就无从判定。
+
+**客户端不要用 `<img src>` 直接加载插图**：仅限成员的文档里的插图需要带 Bearer 头，`<img>` 标签不会带上令牌，会显示成一片碎图。统一用带鉴权头的请求取 Blob 再渲染，并在卸载时 `URL.revokeObjectURL`。
+
+### 18.4 限速
+
+三个公开阅读接口按客户端地址分别计数，**只对未登录请求生效**（带有效令牌的请求直接放行）：目录 60 次 / 10 分钟，正文 120 次 / 10 分钟，插图 600 次 / 10 分钟。超出返回 `429 RATE_LIMITED`。
+
+正常阅读不会触碰到这些额度；会撞上的是遍历式抓取。限速基于服务端进程内的固定窗口，反向代理后面无法区分真实客户端时会放行，由网关限流负责。
+
+## 19. 客户端实现检查清单
+
+### 19.1 登录与会话
 
 - 请求实例开启 Cookie credentials，并在业务请求中添加 Bearer token。
 - 并发 `401` 只触发一次 refresh；刷新失败清理本地和内存登录状态。
 - `mustChangePassword=true` 立即进入首次改密页，不提前请求其他业务接口。
 - 修改密码、停用、删除或密码重置后，旧会话可能立即失效。
 
-### 18.2 数据解析
+### 19.2 数据解析
 
 - 所有 Long ID 在进入状态管理前执行 `String(id)`。
 - 不把业务 `LocalDateTime` 当 UTC；签名 URL 的 `Instant` 则按标准 UTC 解析。
@@ -1920,7 +2008,7 @@ type FeaturedCloseReason = 'MANUAL' | 'DEADLINE'
 - 忽略实体中的 `deleted` 和批次中的对象存储 key，不据此构造 URL。
 - 只使用服务端返回的 `thumbnailUrl`、`downloadUrl`、图片 `url`。
 
-### 18.3 上传与异步任务
+### 19.3 上传与异步任务
 
 - 客户端计算 64 位小写 SHA-256，创建票据后再直传。
 - 直传的 `Content-Type` 与票据完全一致，不使用 API 客户端的 base URL 或 Bearer 拦截器改写签名请求。
@@ -1929,7 +2017,7 @@ type FeaturedCloseReason = 'MANUAL' | 'DEADLINE'
 - 导出任务从 `data.id` 取 job ID，从查询响应的 `data.job.status` 取状态，从 `data.downloadUrl` 取下载地址。
 - Blob URL 用完后释放。
 
-### 18.4 业务状态与并发
+### 19.4 业务状态与并发
 
 - 更新项目、需求、图片元数据、校区、用户、通讯录成员、工时等时提交最近响应的 `version`。
 - 收到 `409 RESOURCE_STATE_CONFLICT` 后重新拉取资源，不在客户端盲目增加 version 重试。
@@ -1938,14 +2026,14 @@ type FeaturedCloseReason = 'MANUAL' | 'DEADLINE'
 - 允许需求零图片提交，`requiredCount` 可空。
 - 工时拍摄者和照片拍摄者都提交通讯录 contact ID，不提交自由文本姓名/学号。
 
-### 18.5 权限界面
+### 19.5 权限界面
 
 - A：全部后台和业务能力。
 - M：项目/需求创建与审核、图库管理、采用、工时审核、统计导出、消息发送；部分写操作仍受“资源创建者”约束。
 - C：本人校区接单、本人图片、本人填报工时；可把本人图片加入本人可见项目并采用。
 - 对 `403` 做正常权限反馈，不把它统一当成登录过期；只有 `401` 才进入 refresh 流程。
 
-## 19. 当前契约中容易误读的点
+## 20. 当前契约中容易误读的点
 
 1. 所有普通业务成功目前是 HTTP 200，不是创建 201/删除 204。
 2. ID 可能是 JSON 字符串，也可能是小整数；统一按字符串处理。

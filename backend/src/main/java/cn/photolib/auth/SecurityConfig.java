@@ -31,6 +31,7 @@ public class SecurityConfig {
                                 "/login", "/initial-password", "/projects/**", "/requests/**",
                                 "/photos", "/worklogs", "/notifications/**", "/statistics", "/admin",
                                 "/recruitment", "/recruitments/**", "/recruitment-applications/**",
+                                "/docs", "/docs/**", "/documents",
                                 "/api", "/api/",
                                 "/api/v1/auth/login", "/api/v1/auth/refresh",
                                 "/api/v1/actuator/health",
@@ -44,6 +45,14 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET,
                                 "/api/v1/public/recruitments",
                                 "/api/v1/public/recruitments/*/drafts/*/batches/*").permitAll()
+                        // 文档中心的阅读接口。permitAll 只表示"不带令牌也能调用"，
+                        // 而不是"返回的都是公开内容"：需要登录的文档由 DocService
+                        // 按 principal 是否为空再判一次，带令牌来的请求这里同样放行，
+                        // AccessTokenFilter 会照常把 principal 填好。
+                        .requestMatchers(HttpMethod.GET,
+                                "/api/v1/public/docs",
+                                "/api/v1/public/docs/*",
+                                "/api/v1/public/docs/assets/*").permitAll()
                         .requestMatchers(HttpMethod.POST,
                                 "/api/v1/public/recruitments/*/drafts",
                                 "/api/v1/public/recruitments/*/drafts/*/submit",

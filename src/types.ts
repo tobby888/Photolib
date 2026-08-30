@@ -9,7 +9,7 @@ export type PermissionCode =
   | 'PHOTO_VIEW' | 'PHOTO_DELETE' | 'PHOTO_UPLOAD' | 'PHOTO_DOWNLOAD'
   | 'WORKLOG_SUBMIT' | 'WORKLOG_CONFIRM' | 'WORKLOG_EXPORT'
   | 'DIRECTORY_VIEW' | 'DIRECTORY_MANAGE' | 'MESSAGE_SEND'
-  | 'RECRUITMENT_VIEW' | 'RECRUITMENT_PUBLISH' | 'FEATURED_MANAGE'
+  | 'RECRUITMENT_VIEW' | 'RECRUITMENT_PUBLISH' | 'FEATURED_MANAGE' | 'DOC_MANAGE'
   | 'STATISTICS_DOWNLOAD' | 'MANAGER_CAMPUS_ASSIGN'
 
 export interface User {
@@ -391,4 +391,68 @@ export interface FeaturedDocumentDownload {
   downloadUrl: string
   expiresAt: string
   fileName: string
+}
+
+// ---------------------------------------------------------------------------
+// 文档中心
+// ---------------------------------------------------------------------------
+
+export type DocNodeType = 'FOLDER' | 'DOCUMENT'
+/** PUBLIC：未登录也能看；MEMBERS：必须登录。与 published 正交，两个条件都要满足。 */
+export type DocVisibility = 'PUBLIC' | 'MEMBERS'
+
+/** 编辑视角的节点，包含草稿和仅限成员的文档。只有 DOC_MANAGE 拿得到。 */
+export interface DocManageNode {
+  id: EntityId
+  publicId: string
+  parentId?: EntityId | null
+  nodeType: DocNodeType
+  title: string
+  sortOrder: number
+  published: boolean
+  visibility: DocVisibility
+  /** 是否已经写过正文。没有正文的文档不允许发布。 */
+  hasContent: boolean
+  contentSize?: number | null
+  summary?: string | null
+  updaterDisplayName?: string | null
+  updatedAt?: string | null
+  version: number
+  children: DocManageNode[]
+}
+
+/** 写操作统一返回整棵新树，前端直接替换，不做局部打补丁。 */
+export interface DocTreeMutation {
+  tree: DocManageNode[]
+  focusId?: EntityId | null
+}
+
+export interface DocDocumentDetail {
+  node: DocManageNode
+  content: string
+  breadcrumb: string[]
+}
+
+/**
+ * 读者视角的节点。未登录时需要登录的文档根本不会出现在树里，
+ * 所以 requiresLogin 只在已登录的读者那里才会为 true（用来显示一把锁）。
+ */
+export interface DocReaderNode {
+  publicId: string
+  nodeType: DocNodeType
+  title: string
+  summary?: string | null
+  requiresLogin: boolean
+  updatedAt?: string | null
+  children: DocReaderNode[]
+}
+
+export interface DocReaderDocument {
+  publicId: string
+  title: string
+  content: string
+  requiresLogin: boolean
+  updatedAt?: string | null
+  updaterDisplayName?: string | null
+  breadcrumb: string[]
 }
