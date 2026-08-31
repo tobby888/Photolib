@@ -16,10 +16,34 @@ import java.util.regex.Pattern;
  * and object metadata can be compared without floating-point ambiguity.
  */
 public record PreviewProfile(BigDecimal compressionRatio, String generatorFingerprint) {
+    /**
+     * The umbrella identity stored in {@code preview_setting}. Bump it whenever
+     * <em>any</em> preview encoder changes; the startup audit compares it to
+     * decide that a generation switch is due at all.
+     */
     public static final String CURRENT_GENERATOR_FINGERPRINT =
-            "hybrid-v4/max480/legacy-le128m-orient1/"
-                    + "vips8.18.3-ge100mp-ge30k-bufgt128m-orientne1-down-ar-"
-                    + "j420optstrip-pngc9strip";
+            "hybrid-v6/max480/webp-q-effort6-smartsubsample-strip";
+
+    /**
+     * The one container every preview is encoded into. It is part of the profile
+     * identity: a preview object whose own MIME is anything else belongs to an
+     * older generation, however well the rest of its metadata matches.
+     */
+    public static final String PREVIEW_CONTENT_TYPE = ImageCompressor.PREVIEW_CONTENT_TYPE;
+
+    /**
+     * The encoder identity recorded on each preview object.
+     *
+     * <p>Deliberately a separate constant from the umbrella above. An encoder
+     * change usually touches one format at a time, and every object whose
+     * recorded identity still matches is already the new generation — keeping
+     * the two apart is what lets a single-format change leave the rest of the
+     * library in place instead of re-encoding and re-uploading all of it. There
+     * is one preview format today, so there is one constant; add a sibling
+     * rather than making this one derive from the umbrella.</p>
+     */
+    static final String WEBP_OBJECT_GENERATOR =
+            "hybrid-v6/max480/vips8.18.3-down-ar-webp-q-effort6-smartsubsample-strip";
 
     public static final String METADATA_RATIO = "photolib-preview-ratio";
     public static final String METADATA_EFFECTIVE_QUALITY = "photolib-preview-effective-quality";
@@ -72,14 +96,25 @@ public record PreviewProfile(BigDecimal compressionRatio, String generatorFinger
         return compressionRatio.toPlainString();
     }
 
+    /**
+     * The encoder identity recorded on, and expected from, one preview object.
+     * See {@link #WEBP_OBJECT_GENERATOR} for why this is format-scoped.
+     */
+    public String objectGenerator(String contentType) {
+        requirePreviewContentType(contentType);
+        return WEBP_OBJECT_GENERATOR;
+    }
+
+    /** The ratio as the encoder consumes it: libwebp's Q. */
     public String effectiveQuality(String contentType) {
-        if ("image/png".equals(contentType)) {
-            return "lossless";
+        requirePreviewContentType(contentType);
+        return Long.toString(Math.round(compressionRatio.doubleValue() * 100.0d));
+    }
+
+    private static void requirePreviewContentType(String contentType) {
+        if (!PREVIEW_CONTENT_TYPE.equals(contentType)) {
+            throw new IllegalArgumentException("不支持的预览图类型: " + contentType);
         }
-        if ("image/jpeg".equals(contentType)) {
-            return Long.toString(Math.round(compressionRatio.doubleValue() * 100.0d));
-        }
-        throw new IllegalArgumentException("不支持的预览图类型: " + contentType);
     }
 
     public String fingerprint() {
@@ -91,7 +126,7 @@ public record PreviewProfile(BigDecimal compressionRatio, String generatorFinger
         Map<String, String> metadata = new LinkedHashMap<>();
         metadata.put(METADATA_RATIO, ratioText());
         metadata.put(METADATA_EFFECTIVE_QUALITY, effectiveQuality(contentType));
-        metadata.put(METADATA_GENERATOR, generatorFingerprint);
+        metadata.put(METADATA_GENERATOR, objectGenerator(contentType));
         metadata.put(METADATA_SHA256, normalizedSha256);
         return Map.copyOf(metadata);
     }
@@ -106,11 +141,15 @@ public record PreviewProfile(BigDecimal compressionRatio, String generatorFinger
                 || !Objects.equals(expectedContentType, object.contentType())) {
             return false;
         }
+        // A preview in any other container is from an older generation, no
+        // matter how well its remaining metadata lines up.
+        if (!PREVIEW_CONTENT_TYPE.equals(expectedContentType)) return false;
         Map<String, String> metadata = object.userMetadata();
         return ratioText().equals(metadata.get(METADATA_RATIO))
                 && effectiveQuality(expectedContentType).equals(
                 metadata.get(METADATA_EFFECTIVE_QUALITY))
-                && generatorFingerprint.equals(metadata.get(METADATA_GENERATOR))
+                && objectGenerator(expectedContentType).equals(
+                metadata.get(METADATA_GENERATOR))
                 && isValidSha256(metadata.get(METADATA_SHA256));
     }
 

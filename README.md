@@ -225,7 +225,8 @@ curl --fail http://127.0.0.1:8080/api/v1/actuator/health
 | `OSS_BUCKET`、`OSS_ENDPOINT`、`OSS_PUBLIC_ENDPOINT` | 私有 Bucket、服务端 Endpoint 和浏览器访问 Endpoint |
 | `OSS_ACCESS_KEY_ID`、`OSS_ACCESS_KEY_SECRET` | 最小权限 RAM 用户凭据 |
 | `OSS_CORS_ALLOWED_ORIGINS` | 允许浏览器直传的站点来源；生产环境应显式配置 |
-| `PREVIEW_COMPRESSION_RATIO` | JPEG 预览图质量，取值 `(0, 1]`，默认 `0.6` |
+| `OSS_SIGNATURE_WINDOW` | 预签名 GET 的签发时刻取整窗口，默认 `5m`，必须小于下载链接 TTL。同一窗口内同一对象签出的 URL 完全相同，浏览器缓存才能命中；设为 `0` 恢复逐次签名 |
+| `PREVIEW_COMPRESSION_RATIO` | 预览图质量，取值 `(0, 1]`，默认 `0.6`，映射为 WebP 的编码质量。预览图一律输出 WebP，与源格式无关 |
 | `PREVIEW_BOOTSTRAP_RETRY_DELAY` | 启动三方 profile 核对失败后的后台重试间隔，默认 `30s` |
 | `STARTUP_MISSING_OBJECT_CLEANUP_ENABLED` | 每次启动是否清理"成品图已在对象存储中丢失"的图片记录，默认 `true`；设为 `false` 完全关闭 |
 | `STARTUP_MISSING_OBJECT_CLEANUP_MAX_RATIO` | 上述清理的缺失占比熔断阈值，默认 `0.2` |
@@ -285,7 +286,7 @@ curl --fail http://127.0.0.1:8080/api/v1/actuator/health
 - CORS 至少允许站点来源发起 `PUT`、`GET`、`HEAD`，并允许上传所需请求头。
 - 浏览器上传的 `Content-Type` 必须与后端生成预签名 URL 时返回的值完全一致。
 
-预览维护采用环境、数据库、对象存储三方 profile。应用刚启动处于 `BOOTSTRAPPING`：规范化为四位小数的 `PREVIEW_COMPRESSION_RATIO` 与当前生成器指纹是标准；数据库缺失或不同则先完整生成新代际，再原子切换照片引用和数据库 profile。数据库相同时仍会对每张预览执行精确 HEAD，核对数据库 size、实际 MIME，以及 OSS user metadata 中的四位倍率、JPEG 有效质量（`round(ratio * 100)`，PNG 为 `lossless`）、生成器指纹和 SHA-256；缺失、非法或不匹配的对象会定向重编码。无论全量还是定向生成，新 PUT 的对象都必须再次通过 HEAD、完整 profile metadata 与实际流式 SHA-256 复验后才能切换引用。全部成功后进入 `RUNNING`；启动核对失败不会阻塞应用启动，并按 `PREVIEW_BOOTSTRAP_RETRY_DELAY` 在独立执行器中自动重试。此后的新上传、定时巡检和定向修复每次都重新读取数据库 profile，绝不回退到 `.env`；数据库 profile 缺失或非法时运行期调用会失败、巡检会写管理员告警，并发变化则由 CAS 拒绝，均不清空既有引用。
+预览维护采用环境、数据库、对象存储三方 profile。应用刚启动处于 `BOOTSTRAPPING`：规范化为四位小数的 `PREVIEW_COMPRESSION_RATIO` 与当前生成器指纹是标准；数据库缺失或不同则先完整生成新代际，再原子切换照片引用和数据库 profile。数据库相同时仍会对每张预览执行精确 HEAD，核对数据库 size、实际 MIME（预览必须是 `image/webp`）、以及 OSS user metadata 中的四位倍率、有效质量（`round(ratio * 100)`）、生成器指纹和 SHA-256；缺失、非法或不匹配的对象会定向重编码。切换代际前先对每张照片做一次 HEAD，元数据已符合新 profile 的照片原样保留，不重新下载、编码或上传。无论全量还是定向生成，新 PUT 的对象都必须再次通过 HEAD、完整 profile metadata 与实际流式 SHA-256 复验后才能切换引用。全部成功后进入 `RUNNING`；启动核对失败不会阻塞应用启动，并按 `PREVIEW_BOOTSTRAP_RETRY_DELAY` 在独立执行器中自动重试。此后的新上传、定时巡检和定向修复每次都重新读取数据库 profile，绝不回退到 `.env`；数据库 profile 缺失或非法时运行期调用会失败、巡检会写管理员告警，并发变化则由 CAS 拒绝，均不清空既有引用。
 
 运行期巡检不会因为对象大小碰巧一致而跳过 HEAD。明确确认对象缺失或 profile 不匹配时，才会在照片 version/key/size 与数据库 profile 都未变化的前提下 CAS 清空引用并提交修复；权限、网络或服务端 HEAD 异常会记录错误、写入管理员告警并保留旧引用。CAS 清空后的旧预览对象不承诺自动删除，需要由独立的孤儿对象维护流程处理。启动重建、巡检和定向修复共用进程内互斥维护锁；跨实例的新上传由 profile 行 CAS 保护，滚动切换还会核对 eligible 照片集合。V23 会把无法确定历史编码器的已有数据标为 `legacy/unknown`，因此升级后的首次后台核对会执行一次安全重建；V24 会逐图持久化暂存检查点，所有检查点（包括本轮刚生成的对象）在切换前都必须验证 MIME、大小、SHA-256 和完整 profile 元数据；V25 为清理增加可恢复 claim，并在原子切换中用行锁核对未被其他实例认领的精确检查点，防止复验后的对象被另一实例删除。调整压缩倍率或部署 V23～V25 前，应确认对象存储权限、磁盘空间和服务器资源充足。
 

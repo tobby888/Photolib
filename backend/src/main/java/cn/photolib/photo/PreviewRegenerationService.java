@@ -105,16 +105,35 @@ public class PreviewRegenerationService {
     private Result regenerateChangedProfile(PreviewProfile configured,
                                             PreviewProfileRepository.StoredProfile stored,
                                             List<PreviewPhoto> photos, ProgressListener listener) {
-        listener.started(photos.size());
+        // An encoder change normally touches one preview format, and the object
+        // metadata records the encoder identity per format. Every preview whose
+        // object already matches the new profile IS the new generation, so
+        // re-encoding it would spend CPU, bandwidth and object-store writes to
+        // produce the same bytes. One HEAD per photo separates the two groups;
+        // an ambiguous HEAD aborts the round (auditPreviewObjects throws)
+        // instead of quietly promoting the photo into a full rebuild.
+        List<PreviewPhoto> affected =
+                auditPreviewObjects(photos, configured, ProgressListener.NONE);
+        Set<Long> affectedIds = new LinkedHashSet<>();
+        for (PreviewPhoto photo : affected) affectedIds.add(photo.id());
+        List<PreviewPhoto> unchanged = photos.stream()
+                .filter(photo -> !affectedIds.contains(photo.id()))
+                .toList();
+        if (!unchanged.isEmpty()) {
+            log.info("预览图代际切换跳过 {} 张已符合新 profile 的照片（无需重新编码与上传），"
+                    + "仅重建 {} 张", unchanged.size(), affected.size());
+        }
+
+        listener.started(affected.size());
         String profile = configured.fingerprint();
         String generation = generationId(configured);
-        StageReconciliation reconciliation = reconcileStages(profile, photos);
-        List<GeneratedPreview> staged = new ArrayList<>(photos.size());
+        StageReconciliation reconciliation = reconcileStages(profile, affected);
+        List<GeneratedPreview> staged = new ArrayList<>(affected.size());
         List<PreviewPhoto> unusable = new ArrayList<>();
         RuntimeException firstFailure = null;
 
-        for (int index = 0; index < photos.size(); index++) {
-            PreviewPhoto photo = photos.get(index);
+        for (int index = 0; index < affected.size(); index++) {
+            PreviewPhoto photo = affected.get(index);
             StagedPreview checkpoint = reconciliation.reusable().get(photo.id());
             try {
                 if (checkpoint != null) {
@@ -136,7 +155,7 @@ public class PreviewRegenerationService {
                 log.error("暂存新一代预览图失败，继续保存其他照片的检查点：photoId={}",
                         photo.id(), exception);
             } finally {
-                listener.progressed(index + 1, photos.size());
+                listener.progressed(index + 1, affected.size());
             }
         }
         if (firstFailure != null) {
@@ -152,7 +171,8 @@ public class PreviewRegenerationService {
         List<GeneratedPreview> ready = List.copyOf(staged);
         List<PreviewPhoto> cleared = List.copyOf(unusable);
         List<GeneratedPreview> activated = executeAtomic(
-                status -> switchGeneration(configured, stored, profile, ready, cleared));
+                status -> switchGeneration(configured, stored, profile, ready, cleared,
+                        unchanged));
         if (activated == null) {
             throw new IllegalStateException("预览图数据库切换未返回结果；暂存检查点已保留");
         }
@@ -162,8 +182,10 @@ public class PreviewRegenerationService {
         int deleted = reconciliation.deletedCount() + cleanupReplacedPreviews(replaced,
                 activated.stream().map(GeneratedPreview::objectKey)
                         .collect(java.util.stream.Collectors.toSet()));
-        log.info("预览图已原子切换到新版本 {}：压缩比率 {}，激活 {} 张，回退成品图 {} 张，清理对象 {} 个",
-                generation, configured.ratioText(), activated.size(), cleared.size(), deleted);
+        log.info("预览图已原子切换到新版本 {}：压缩比率 {}，激活 {} 张，沿用 {} 张，"
+                        + "回退成品图 {} 张，清理对象 {} 个",
+                generation, configured.ratioText(), activated.size(), unchanged.size(),
+                cleared.size(), deleted);
         return new Result(true, deleted, activated.size(), cleared.size());
     }
 
@@ -526,9 +548,9 @@ public class PreviewRegenerationService {
         return true;
     }
 
-    /** The only two formats the preview encoder can emit. */
+    /** The only format the preview encoder emits. */
     private boolean supportedPreviewContentType(String contentType) {
-        return "image/jpeg".equals(contentType) || "image/png".equals(contentType);
+        return PreviewProfile.PREVIEW_CONTENT_TYPE.equals(contentType);
     }
 
     private StagedPreview toCheckpoint(PreviewProfile expected, GeneratedPreview preview) {
@@ -814,9 +836,12 @@ public class PreviewRegenerationService {
             String contentType;
             ImageCompressor.FileResult preview;
             try {
+                // The sniffed type describes the SOURCE and decides how it is
+                // decoded; the preview is always re-encoded into
+                // PreviewProfile.PREVIEW_CONTENT_TYPE.
                 contentType = normalizedContentType(source, photo.contentType());
                 Path output = workspace.taskFile(taskDirectory,
-                        "preview" + ("image/png".equals(contentType) ? ".png" : ".jpg"));
+                        "preview" + ImageCompressor.PREVIEW_EXTENSION);
                 preview = compressor.thumbnail(source, output, contentType, MAX_DIMENSION,
                         expected.compressionRatio().doubleValue());
                 if (preview.size() <= 0 || preview.size() > MAX_STAGED_PREVIEW_BYTES) {
@@ -827,7 +852,7 @@ public class PreviewRegenerationService {
             }
 
             String previewSha256 = sha256(preview.path());
-            String previewKey = previewKey(generation, photo.id(), contentType);
+            String previewKey = previewKey(generation, photo.id());
             GeneratedPreview generated = new GeneratedPreview(photo, previewKey, preview.size(),
                     preview.contentType(), previewSha256);
             if (beforeUpload != null) beforeUpload.accept(generated);
@@ -858,7 +883,8 @@ public class PreviewRegenerationService {
                                                     PreviewProfileRepository.StoredProfile stored,
                                                     String profile,
                                                     List<GeneratedPreview> generated,
-                                                    List<PreviewPhoto> cleared) {
+                                                    List<PreviewPhoto> cleared,
+                                                    List<PreviewPhoto> unchanged) {
         // Lock/CAS the singleton profile row before inspecting the live photo
         // set. A RUNNING instance that still holds the old profile must now
         // wait and its upload-completion guard will fail after this transaction
@@ -866,7 +892,7 @@ public class PreviewRegenerationService {
         // check below detects the newly eligible photo and rolls this switch
         // back so the next checkpointed retry includes it.
         profiles.save(configured, stored);
-        requireSameEligiblePhotoSet(generated, cleared);
+        requireSameEligiblePhotoSet(generated, cleared, unchanged);
         lockAndValidateSwitchStages(configured, profile, generated);
 
         List<GeneratedPreview> activated = new ArrayList<>();
@@ -899,11 +925,20 @@ public class PreviewRegenerationService {
         return List.copyOf(activated);
     }
 
+    /**
+     * Every live photo must be accounted for before the switch, so the library
+     * can never end up straddling two generations. A photo counts as accounted
+     * when this round regenerated it, cleared it, or verified by HEAD that its
+     * existing object already carries the new profile ({@code unchanged}).
+     */
     private void requireSameEligiblePhotoSet(List<GeneratedPreview> generated,
-                                             List<PreviewPhoto> cleared) {
+                                             List<PreviewPhoto> cleared,
+                                             List<PreviewPhoto> unchanged) {
         List<Long> accountedPhotoIds = Stream.concat(
-                        generated.stream().map(preview -> preview.photo().id()),
-                        cleared.stream().map(PreviewPhoto::id))
+                        Stream.concat(
+                                generated.stream().map(preview -> preview.photo().id()),
+                                cleared.stream().map(PreviewPhoto::id)),
+                        unchanged.stream().map(PreviewPhoto::id))
                 .sorted()
                 .toList();
         List<Long> livePhotoIds = jdbc.sql("""
@@ -1209,9 +1244,9 @@ public class PreviewRegenerationService {
                 + UUID.randomUUID().toString().substring(0, 8);
     }
 
-    private String previewKey(String generation, long photoId, String contentType) {
+    private String previewKey(String generation, long photoId) {
         return "thumbnails/generations/" + generation + "/" + photoId
-                + ("image/png".equals(contentType) ? ".png" : ".jpg");
+                + ImageCompressor.PREVIEW_EXTENSION;
     }
 
     /**

@@ -262,15 +262,16 @@ public class PhotoStorageReconciliationService {
     }
 
     /**
-     * The preview format follows the finished object's real bytes, so a preview is
-     * judged by its own MIME rather than by {@code photo.content_type}. That column
-     * describes the source and is not trustworthy — legacy migration copies the old
-     * system's {@code mime_type} verbatim and falls back to
+     * A preview is judged by its own MIME rather than by {@code photo.content_type}.
+     * That column describes the source and is not trustworthy — legacy migration
+     * copies the old system's {@code mime_type} verbatim and falls back to
      * {@code application/octet-stream} — so deriving the expectation from it would
-     * clear a perfectly good preview reference on every hourly pass.
+     * clear a perfectly good preview reference on every hourly pass. Previews are
+     * re-encoded into one container regardless of the source, so the only MIME a
+     * current preview can have is {@link PreviewProfile#PREVIEW_CONTENT_TYPE}.
      */
     private boolean supportedPreviewContentType(String contentType) {
-        return "image/jpeg".equals(contentType) || "image/png".equals(contentType);
+        return PreviewProfile.PREVIEW_CONTENT_TYPE.equals(contentType);
     }
 
     private void synchronizePreviewProfileAlert(String error) {

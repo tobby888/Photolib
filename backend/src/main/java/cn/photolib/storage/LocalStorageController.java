@@ -59,6 +59,11 @@ public class LocalStorageController {
         ResponseEntity.BodyBuilder response = ResponseEntity.ok()
                 .contentLength(info.size())
                 .contentType(MediaType.parseMediaType(info.contentType()));
+        if (resolved.cacheControl() != null) {
+            // Mirrors OSS's response-cache-control override so the local profile
+            // exercises the same caching behaviour the deployed bucket does.
+            response.header(HttpHeaders.CACHE_CONTROL, resolved.cacheControl());
+        }
         if (resolved.downloadName() != null) {
             response.header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
                     .filename(resolved.downloadName(), StandardCharsets.UTF_8).build().toString());

@@ -41,11 +41,13 @@ extern int vips_thumbnail(const char *filename, VipsImage **output,
                           int width, ...);
 extern int vips_jpegsave(VipsImage *input, const char *filename, ...);
 extern int vips_pngsave(VipsImage *input, const char *filename, ...);
+extern int vips_webpsave(VipsImage *input, const char *filename, ...);
 extern void g_object_unref(void *object);
 
 enum {
     PL_FORMAT_JPEG = 1,
     PL_FORMAT_PNG = 2,
+    PL_FORMAT_WEBP = 3,
     PL_OPERATION_COMPRESS = 1,
     PL_OPERATION_THUMBNAIL = 2,
     PL_VIPS_ACCESS_SEQUENTIAL = 1,
@@ -277,6 +279,23 @@ int pl_vips_dimensions_file(const char *input_path,
     return result;
 }
 
+/*
+ * Preview encoder. `format` is the OUTPUT format, which for a preview is always
+ * WebP regardless of what the source was.
+ *
+ * WebP replaced a pair of bad options. PNG previews were written losslessly, so
+ * a 480px photo cost ~305 KB and the compression ratio had nothing to act on —
+ * every ratio produced byte-identical files. Quantising them to a palette did
+ * make the ratio bite, but at a visible cost in banding and dither noise. On the
+ * same 480px photo WebP Q80 is 19.8 KB: 15x smaller than the lossless PNG, 3x
+ * smaller than the palette PNG, and visually far closer to the lossless one.
+ * It also beats the JPEG preview it replaces by ~30% at matched quality, and it
+ * carries alpha, so transparent sources no longer need a separate format.
+ *
+ * PNG and JPEG stay here for the finished object (PL_OPERATION_COMPRESS), whose
+ * bytes existing checksums and objects depend on. Those two branches must keep
+ * emitting exactly what they emitted before.
+ */
 static int save_image(VipsImage *image, const char *output_path,
                       int format, int quality,
                       char *error_message, size_t error_capacity) {
@@ -297,6 +316,17 @@ static int save_image(VipsImage *image, const char *output_path,
             "strip", 1,
             "interlace", 0,
             NULL);
+    } else if (format == PL_FORMAT_WEBP) {
+        // effort 6 of 6: previews are encoded once and served many times, and at
+        // 480px the extra CPU is a few milliseconds. smart_subsample keeps
+        // saturated edges (uniforms, banners) from bleeding at 4:2:0.
+        result = vips_webpsave(
+            image, output_path,
+            "Q", quality,
+            "strip", 1,
+            "effort", 6,
+            "smart_subsample", 1,
+            NULL);
     } else {
         copy_error(error_message, error_capacity, "unsupported output format");
         return 0;
@@ -305,6 +335,7 @@ static int save_image(VipsImage *image, const char *output_path,
     return 1;
 }
 
+/* `format` is the OUTPUT format; the input format is whatever the file holds. */
 static int render_file(const char *input_path, const char *output_path,
                        int format, int maximum_dimension, int quality,
                        uint64_t maximum_output_bytes,
@@ -422,6 +453,7 @@ static int maximize_jpeg_quality(const char *input_path,
 static int process_file_unlocked(const char *input_path,
                                  const char *output_path,
                                  int format,
+                                 int output_format,
                                  int operation,
                                  uint64_t target_bytes,
                                  int maximum_dimension,
@@ -440,9 +472,19 @@ static int process_file_unlocked(const char *input_path,
     if (input_path == NULL || output_path == NULL || output_length == NULL ||
         output_width == NULL || output_height == NULL ||
         (format != PL_FORMAT_JPEG && format != PL_FORMAT_PNG) ||
+        (output_format != PL_FORMAT_JPEG && output_format != PL_FORMAT_PNG &&
+         output_format != PL_FORMAT_WEBP) ||
         (operation != PL_OPERATION_COMPRESS &&
          operation != PL_OPERATION_THUMBNAIL)) {
         copy_error(error_message, error_capacity, "invalid libvips process arguments");
+        return 0;
+    }
+    // The finished object keeps its source format: its bytes are already
+    // referenced by stored checksums and object keys. Only previews re-encode
+    // into a different container.
+    if (operation == PL_OPERATION_COMPRESS && output_format != format) {
+        copy_error(error_message, error_capacity,
+                   "libvips compression cannot change the output format");
         return 0;
     }
     if (!ensure_vips(error_message, error_capacity)) return 0;
@@ -471,11 +513,11 @@ static int process_file_unlocked(const char *input_path,
                        "invalid libvips thumbnail arguments");
             return 0;
         }
-        int jpeg_quality = (int)floor(quality * 100.0 + 0.5);
-        if (jpeg_quality < 1) jpeg_quality = 1;
-        if (jpeg_quality > 100) jpeg_quality = 100;
-        return render_file(input_path, output_path, format,
-                           maximum_dimension, jpeg_quality,
+        int encode_quality = (int)floor(quality * 100.0 + 0.5);
+        if (encode_quality < 1) encode_quality = 1;
+        if (encode_quality > 100) encode_quality = 100;
+        return render_file(input_path, output_path, output_format,
+                           maximum_dimension, encode_quality,
                            maximum_output_bytes, output_length,
                            output_width, output_height,
                            error_message, error_capacity);
@@ -565,6 +607,7 @@ static int process_file_unlocked(const char *input_path,
 int pl_vips_process_file(const char *input_path,
                          const char *output_path,
                          int format,
+                         int output_format,
                          int operation,
                          uint64_t target_bytes,
                          int maximum_dimension,
@@ -582,7 +625,7 @@ int pl_vips_process_file(const char *input_path,
                          size_t error_capacity) {
     lock_vips();
     int result = process_file_unlocked(
-        input_path, output_path, format, operation, target_bytes,
+        input_path, output_path, format, output_format, operation, target_bytes,
         maximum_dimension, quality, safety_maximum_dimension,
         safety_maximum_pixels, streaming_threshold_dimension,
         streaming_threshold_pixels, streaming_threshold_decoded_bytes,

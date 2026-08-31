@@ -481,7 +481,11 @@ public class PhotoService {
         }
         String previewKey = renderableObjectKey(photo);
         if (previewKey == null) return null;
-        return storage.presignGet(previewKey, null, properties.downloadUrlTtl()).url().toString();
+        // Previews are immutable and re-rendered on every gallery view, so this
+        // is the one URL worth making cacheable: the signature is quantised to a
+        // window and the response carries a matching Cache-Control.
+        return storage.presignGet(previewKey, null, properties.downloadUrlTtl(),
+                properties.previewCacheControl()).url().toString();
     }
 
     private PhotoEntity requireFavoriteAccess(Long id, AuthenticatedUser user) {

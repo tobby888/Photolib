@@ -29,7 +29,8 @@ public class StorageConfig {
             public void initialize() { throw unavailable(); }
             public java.util.List<StoredObject> list(String prefix) { throw unavailable(); }
             public SignedUrl presignPut(String key, String type, Duration ttl) { throw unavailable(); }
-            public SignedUrl presignGet(String key, String name, Duration ttl) { throw unavailable(); }
+            public SignedUrl presignGet(String key, String name, Duration ttl,
+                                        String cacheControl) { throw unavailable(); }
             public ObjectInfo stat(String key) { throw unavailable(); }
             public java.util.Optional<ObjectInfo> find(String key) { throw unavailable(); }
             public InputStream open(String key) { throw unavailable(); }

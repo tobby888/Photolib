@@ -10,6 +10,7 @@ const c = @cImport({
 
 const FORMAT_JPEG: i32 = 1;
 const FORMAT_PNG: i32 = 2;
+const FORMAT_WEBP: i32 = 3;
 const OP_COMPRESS: i32 = 1;
 const OP_THUMBNAIL: i32 = 2;
 const LEGACY_MAX_DIMENSION: i32 = 30_000;
@@ -107,13 +108,18 @@ export fn photolib_dimensions_file(input_path: ?[*:0]const u8, format: i32, outp
     return status;
 }
 
-export fn photolib_process_file(input_path: ?[*:0]const u8, output_path: ?[*:0]const u8, format: i32, operation: i32, target_bytes: u64, max_dimension: i32, quality: f64, output: ?*PlFileResult) callconv(.c) i32 {
+export fn photolib_process_file(input_path: ?[*:0]const u8, output_path: ?[*:0]const u8, format: i32, output_format: i32, operation: i32, target_bytes: u64, max_dimension: i32, quality: f64, output: ?*PlFileResult) callconv(.c) i32 {
     const out = output orelse return 1;
     out.* = std.mem.zeroes(PlFileResult);
     const source_path = input_path orelse return fail(&out.error_message, NativeError.InvalidInput);
     const destination_path = output_path orelse return fail(&out.error_message, NativeError.InvalidInput);
     if (!supportedFormat(format)) return fail(&out.error_message, NativeError.UnsupportedFormat);
+    if (!supportedOutputFormat(output_format)) return fail(&out.error_message, NativeError.UnsupportedFormat);
     if (operation != OP_COMPRESS and operation != OP_THUMBNAIL)
+        return fail(&out.error_message, NativeError.InvalidInput);
+    // The finished object must keep the source container; only previews
+    // re-encode into a different one.
+    if (operation == OP_COMPRESS and output_format != format)
         return fail(&out.error_message, NativeError.InvalidInput);
     if (operation == OP_COMPRESS and target_bytes == 0)
         return fail(&out.error_message, NativeError.InvalidInput);
@@ -134,8 +140,8 @@ export fn photolib_process_file(input_path: ?[*:0]const u8, output_path: ?[*:0]c
         .height = dimensions_result.height,
         .channels = dimensions_result.channels,
     };
-    if (requiresVips(dimensions, format, orientation)) {
-        return vipsProcess(source_path, destination_path, format, operation, target_bytes, max_dimension, quality, out);
+    if (requiresVips(dimensions, format, output_format, orientation)) {
+        return vipsProcess(source_path, destination_path, format, output_format, operation, target_bytes, max_dimension, quality, out);
     }
 
     const source = readFile(source_path) catch |err|
@@ -157,7 +163,19 @@ fn supportedFormat(format: i32) bool {
     return format == FORMAT_JPEG or format == FORMAT_PNG;
 }
 
-fn requiresVips(dimensions: Dimensions, format: i32, orientation: i32) bool {
+/// Previews may leave the source container. WebP is preview-only: nothing
+/// decodes it here, so it can never be an input format.
+fn supportedOutputFormat(format: i32) bool {
+    return supportedFormat(format) or format == FORMAT_WEBP;
+}
+
+fn requiresVips(dimensions: Dimensions, format: i32, output_format: i32, orientation: i32) bool {
+    // Anything the legacy encoders cannot write has to go to libvips. That is
+    // every preview now: turbojpeg and stb only emit JPEG and PNG, and previews
+    // are WebP. The finished object (OP_COMPRESS) keeps the split below, so its
+    // bytes stay exactly what they were.
+    if (output_format != format) return true;
+
     const pixels = @as(u64, @intCast(dimensions.width)) *
         @as(u64, @intCast(dimensions.height));
     const decoded_channels: u64 = if (format == FORMAT_JPEG)
@@ -193,11 +211,12 @@ fn vipsDimensions(path: [*:0]const u8, format: i32, out: *PlDimensions, orientat
     return 0;
 }
 
-fn vipsProcess(input_path: [*:0]const u8, output_path: [*:0]const u8, format: i32, operation: i32, target_bytes: u64, max_dimension: i32, quality: f64, out: *PlFileResult) i32 {
+fn vipsProcess(input_path: [*:0]const u8, output_path: [*:0]const u8, format: i32, output_format: i32, operation: i32, target_bytes: u64, max_dimension: i32, quality: f64, out: *PlFileResult) i32 {
     if (c.pl_vips_process_file(
         input_path,
         output_path,
         format,
+        output_format,
         operation,
         target_bytes,
         max_dimension,
@@ -268,6 +287,10 @@ fn thumbnail(source: []const u8, format: i32, max_dimension: i32, quality: f64) 
         pixels = resized;
     }
 
+    // Previews never reach here through photolib_process_file: they are WebP,
+    // which requiresVips() routes to libvips because neither turbojpeg nor stb
+    // can write it. These branches remain for the in-memory helpers; the PNG one
+    // is lossless and deliberately ignores `quality`.
     const encoded = if (format == FORMAT_JPEG)
         try encodeJpeg(pixels, @intFromFloat(@round(quality * 100.0)))
     else
