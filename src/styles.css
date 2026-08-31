@@ -2391,11 +2391,37 @@ body {
 .docs-title { display: flex; align-items: center; gap: 10px; margin-top: 0 !important; }
 .docs-meta { display: block; margin-bottom: 18px; font-size: 13px; }
 
-.docs-tree-label { display: inline-flex; align-items: center; gap: 6px; }
-/* 标题可以被挤窄，标签不行——否则长标题会把"需登录"顶出可视区域。 */
-.docs-tree-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 长标题在树里换行，不裁切也不外溢。
+   antd 的 treenode 本身就是 flex + align-items:flex-start，多行标题它是支持的；
+   会撑破侧栏和卡片边界，是因为标题这里锁了 nowrap：nowrap 文本的 min-content
+   宽度就是整行字宽，flex 项的 min-width:auto 于是拒绝收缩，ellipsis 永远轮不到
+   生效，整个标签直接顶出容器。
+   overflow-wrap 用 anywhere 而不是 break-word：只有 anywhere 会同时把 min-content
+   宽度算成单个字符，否则"不换行就放不下"的长文件名（无空格的英文名、时间戳串）
+   仍会把 288px 的目录列撑宽。 */
+.docs-tree-label {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  vertical-align: top;
+}
+.docs-tree-title { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 .docs-tree-label .ant-tag { margin-inline-end: 0; font-size: 11px; line-height: 17px; }
 .docs-tree-lock { color: var(--studio-amber, #e9ba70); font-size: 12px; }
+
+/* 图标与标题排一行，标题吃掉剩余宽度后再换行。
+   antd 的 node-content-wrapper 是块级的，图标是 inline-block；标题若还按
+   inline-flex 收缩，宽度是按"整个 wrapper 的可用宽度"算的，于是永远挤不进
+   图标所在那一行，整块被顶到下一行去。改成 flex 行，标题拿到的才是真正的
+   剩余宽度。作用域限定在文档中心的两棵树上，不动全站的 Tree。 */
+.docs-sidebar .ant-tree-node-content-wrapper,
+.docs-manage-tree .ant-tree-node-content-wrapper { display: flex; align-items: flex-start; }
+.docs-sidebar .ant-tree-node-content-wrapper .ant-tree-iconEle,
+.docs-manage-tree .ant-tree-node-content-wrapper .ant-tree-iconEle { flex: none; }
+.docs-sidebar .ant-tree-node-content-wrapper .ant-tree-title,
+.docs-manage-tree .ant-tree-node-content-wrapper .ant-tree-title { flex: 1; min-width: 0; }
 
 /* PDF 内嵌阅读器。iframe 必须有显式高度，否则默认的 150px 只能看到一条边。 */
 .docs-pdf { display: flex; flex-direction: column; gap: 12px; }
