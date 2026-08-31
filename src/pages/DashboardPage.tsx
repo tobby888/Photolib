@@ -11,6 +11,7 @@ import type { PageData, Photo, PhotoRequest, Project } from '../types'
 import { DataState, StatusTag } from '../components'
 import { useLoad } from '../hooks'
 import { hasPermission } from '../permissions'
+import { PREVIEW_CROSS_ORIGIN } from '../previewImage'
 
 const requestProgress: Record<PhotoRequest['status'], number> = {
   DRAFT: 10, PUBLISHED: 20, ACCEPTED: 45, SUBMITTED: 80, COMPLETED: 100, CANCELLED: 0,
@@ -69,7 +70,8 @@ export default function DashboardPage() {
               {data.photos.items.slice(0, 8).map((photo) =>
                 <button key={photo.id} className="contact-frame" onClick={() => navigate('/photos')} aria-label={`查看图片：${photo.title}`}>
                   {photo.thumbnailUrl
-                    ? <Image preview={false} src={photo.thumbnailUrl} alt={photo.title} />
+                    ? <Image preview={false} crossOrigin={PREVIEW_CROSS_ORIGIN}
+                        src={photo.thumbnailUrl} alt={photo.title} />
                     : <div className="contact-placeholder"><CameraOutlined /><span>{photo.title || '未命名图片'}</span></div>}
                   <span className="contact-caption">{photo.title || '未命名图片'}</span>
                 </button>)}
