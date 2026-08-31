@@ -31,6 +31,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.clearInvocations;
@@ -94,7 +95,7 @@ class PreviewRegenerationServiceTests {
         ObjectStorageService observedStorage = mock(ObjectStorageService.class);
         when(observedStorage.find("thumbnails/preview-regeneration/fast-path.jpg"))
                 .thenReturn(java.util.Optional.of(new ObjectStorageService.ObjectInfo(
-                        123L, "image/jpeg", previewMetadata("a".repeat(64)))));
+                        123L, PreviewProfile.PREVIEW_CONTENT_TYPE, previewMetadata("a".repeat(64)))));
         PreviewRegenerationService isolated = new PreviewRegenerationService(
                 jdbc, observedStorage, properties, compressor, workspace, transactions);
 
@@ -145,8 +146,8 @@ class PreviewRegenerationServiceTests {
         byte[] oldPreview = new byte[321];
         storage.put(sourceKey, new ByteArrayInputStream(image), image.length, "image/jpeg");
         storage.put(oldPreviewKey, new ByteArrayInputStream(oldPreview), oldPreview.length,
-                "image/jpeg", PreviewProfile.configured(0.7)
-                        .objectMetadata("image/jpeg", sha256(oldPreview)));
+                PreviewProfile.PREVIEW_CONTENT_TYPE, PreviewProfile.configured(0.7)
+                        .objectMetadata(PreviewProfile.PREVIEW_CONTENT_TYPE, sha256(oldPreview)));
         insertUserAndPhoto(userId, photoId, sourceKey, image.length,
                 oldPreviewKey, (long) oldPreview.length, "preview-oss-profile-user");
         setStoredRatio("0.6000");
@@ -161,7 +162,7 @@ class PreviewRegenerationServiceTests {
                 .containsEntry(PreviewProfile.METADATA_RATIO, "0.6000")
                 .containsEntry(PreviewProfile.METADATA_EFFECTIVE_QUALITY, "60")
                 .containsEntry(PreviewProfile.METADATA_GENERATOR,
-                        PreviewProfile.CURRENT_GENERATOR_FINGERPRINT);
+                        PreviewProfile.WEBP_OBJECT_GENERATOR);
 
         storage.delete(sourceKey);
         storage.delete(generatedKey);
@@ -177,8 +178,8 @@ class PreviewRegenerationServiceTests {
         byte[] oldPreview = new byte[123];
         storage.put(sourceKey, new ByteArrayInputStream(image), image.length, "image/jpeg");
         storage.put(oldPreviewKey, new ByteArrayInputStream(oldPreview), oldPreview.length,
-                "image/jpeg", PreviewProfile.configured(0.7)
-                        .objectMetadata("image/jpeg", sha256(oldPreview)));
+                PreviewProfile.PREVIEW_CONTENT_TYPE, PreviewProfile.configured(0.7)
+                        .objectMetadata(PreviewProfile.PREVIEW_CONTENT_TYPE, sha256(oldPreview)));
         insertUserAndPhoto(userId, photoId, sourceKey, image.length,
                 oldPreviewKey, (long) oldPreview.length, "preview-targeted-metadata-user");
         setStoredRatio("0.6000");
@@ -227,8 +228,8 @@ class PreviewRegenerationServiceTests {
         byte[] oldPreview = new byte[123];
         storage.put(sourceKey, new ByteArrayInputStream(image), image.length, "image/jpeg");
         storage.put(oldPreviewKey, new ByteArrayInputStream(oldPreview), oldPreview.length,
-                "image/jpeg", PreviewProfile.configured(0.7)
-                        .objectMetadata("image/jpeg", sha256(oldPreview)));
+                PreviewProfile.PREVIEW_CONTENT_TYPE, PreviewProfile.configured(0.7)
+                        .objectMetadata(PreviewProfile.PREVIEW_CONTENT_TYPE, sha256(oldPreview)));
         insertUserAndPhoto(userId, photoId, sourceKey, image.length,
                 oldPreviewKey, (long) oldPreview.length, "preview-targeted-content-user");
         setStoredRatio("0.6000");
@@ -290,7 +291,7 @@ class PreviewRegenerationServiceTests {
                      staged_sha256)
                 VALUES
                     (:photoId, :profile, :sourceKey, :stagedKey, :size,
-                     'image/jpeg', :sha256)
+                     'image/webp', :sha256)
                 """)
                 .param("photoId", photoId)
                 .param("profile", PreviewRegenerationService.GENERATOR_FINGERPRINT + "|ratio=0.7000")
@@ -326,7 +327,7 @@ class PreviewRegenerationServiceTests {
                      staged_sha256)
                 VALUES
                     (:photoId, :profile, :sourceKey, :stagedKey, 4,
-                     'image/jpeg', :sha256)
+                     'image/webp', :sha256)
                 """)
                 .param("photoId", photoId)
                 .param("profile", PreviewRegenerationService.GENERATOR_FINGERPRINT + "|ratio=0.7000")
@@ -337,7 +338,7 @@ class PreviewRegenerationServiceTests {
         ObjectStorageService failingStorage = mock(ObjectStorageService.class);
         when(failingStorage.find("thumbnails/preview-regeneration/delete-retry-active.jpg"))
                 .thenReturn(java.util.Optional.of(new ObjectStorageService.ObjectInfo(
-                        123L, "image/jpeg", previewMetadata("a".repeat(64)))));
+                        123L, PreviewProfile.PREVIEW_CONTENT_TYPE, previewMetadata("a".repeat(64)))));
         doThrow(new IllegalStateException("temporary storage failure"))
                 .when(failingStorage).delete(staleStageKey);
         PreviewRegenerationService isolated = new PreviewRegenerationService(
@@ -413,7 +414,8 @@ class PreviewRegenerationServiceTests {
                 .single();
         assertThat(result.regenerated()).isTrue();
         assertThat(result.regeneratedCount()).isEqualTo(1);
-        assertThat(row[0].toString()).startsWith("thumbnails/generations/").endsWith("/" + photoId + ".jpg");
+        assertThat(row[0].toString()).startsWith("thumbnails/generations/")
+                .endsWith("/" + photoId + ".webp");
         assertThat(row[1]).isEqualTo(storage.stat((String) row[0]).size());
         assertThat(jdbc.sql("SELECT compression_ratio FROM preview_setting WHERE id=1")
                 .query(BigDecimal.class).single()).isEqualByComparingTo("0.6000");
@@ -441,7 +443,7 @@ class PreviewRegenerationServiceTests {
                 healthyPreviewKey, 321L, "preview-healthy-user");
         byte[] healthyPreview = new byte[321];
         storage.put(healthyPreviewKey, new ByteArrayInputStream(healthyPreview),
-                healthyPreview.length, "image/jpeg", previewMetadata("d".repeat(64)));
+                healthyPreview.length, PreviewProfile.PREVIEW_CONTENT_TYPE, previewMetadata("d".repeat(64)));
         setStoredRatio("0.6000");
 
         PreviewRegenerationService.Result result = previews.synchronizeCompressionRatio();
@@ -706,7 +708,7 @@ class PreviewRegenerationServiceTests {
                      staged_sha256)
                 VALUES
                     (:photoId, :profile, :sourceKey, :stagedKey, 456,
-                     'image/jpeg', :sha256)
+                     'image/webp', :sha256)
                 """)
                 .param("photoId", photoId)
                 .param("profile", PreviewRegenerationService.GENERATOR_FINGERPRINT + "|ratio=0.6000")
@@ -747,7 +749,7 @@ class PreviewRegenerationServiceTests {
         storage.put(sourceKey, new ByteArrayInputStream(image), image.length, "image/jpeg");
         storage.put(corruptStage, new ByteArrayInputStream(corrupt), corrupt.length, "image/jpeg",
                 PreviewProfile.configured(0.7)
-                        .objectMetadata("image/jpeg", stagedSha256));
+                        .objectMetadata(PreviewProfile.PREVIEW_CONTENT_TYPE, stagedSha256));
         insertUserAndPhoto(userId, photoId, sourceKey, image.length,
                 oldPreview, 123L, "preview-checkpoint-checksum-user");
         setStoredRatio("0.7000");
@@ -758,7 +760,7 @@ class PreviewRegenerationServiceTests {
                      staged_sha256)
                 VALUES
                     (:photoId, :profile, :sourceKey, :stagedKey, :size,
-                     'image/jpeg', :sha256)
+                     'image/webp', :sha256)
                 """)
                 .param("photoId", photoId)
                 .param("profile", PreviewRegenerationService.GENERATOR_FINGERPRINT + "|ratio=0.6000")
@@ -1047,7 +1049,7 @@ class PreviewRegenerationServiceTests {
             String key = invocation.getArgument(0);
             storage.put(key, invocation.getArgument(1), invocation.getArgument(2),
                     invocation.getArgument(3), invocation.getArgument(4));
-            if (key.endsWith("/" + secondPhotoId + ".jpg")) {
+            if (key.endsWith("/" + secondPhotoId + ImageCompressor.PREVIEW_EXTENSION)) {
                 jdbc.sql("""
                         UPDATE photo
                         SET thumbnail_object_key=:key, thumbnail_size=333, version=version+1
@@ -1162,8 +1164,8 @@ class PreviewRegenerationServiceTests {
         byte[] oldPreview = new byte[123];
         storage.put(sourceKey, new ByteArrayInputStream(image), image.length, "image/jpeg");
         storage.put(oldPreviewKey, new ByteArrayInputStream(oldPreview), oldPreview.length,
-                "image/jpeg", PreviewProfile.configured(0.7)
-                        .objectMetadata("image/jpeg", sha256(oldPreview)));
+                PreviewProfile.PREVIEW_CONTENT_TYPE, PreviewProfile.configured(0.7)
+                        .objectMetadata(PreviewProfile.PREVIEW_CONTENT_TYPE, sha256(oldPreview)));
         insertUserAndPhoto(userId, photoId, sourceKey, image.length,
                 oldPreviewKey, (long) oldPreview.length, "preview-cross-cleanup-user");
         setStoredRatio("0.7000");
@@ -1230,7 +1232,7 @@ class PreviewRegenerationServiceTests {
                      staged_sha256, cleanup_token, cleanup_claimed_at)
                 VALUES
                     (:photoId, :profile, :sourceKey, :stagedKey, :size,
-                     'image/jpeg', :sha256, 'other-instance', CURRENT_TIMESTAMP)
+                     'image/webp', :sha256, 'other-instance', CURRENT_TIMESTAMP)
                 """)
                 .param("photoId", cleanupPhotoId)
                 .param("profile", PreviewProfile.configured(0.6).fingerprint())
@@ -1296,7 +1298,7 @@ class PreviewRegenerationServiceTests {
         storage.put(stalePreviewKey, new ByteArrayInputStream(stalePreview), stalePreview.length,
                 "image/jpeg", new PreviewProfile(new BigDecimal("0.9000"),
                         PreviewProfile.CURRENT_GENERATOR_FINGERPRINT)
-                        .objectMetadata("image/jpeg", sha256(stalePreview)));
+                        .objectMetadata(PreviewProfile.PREVIEW_CONTENT_TYPE, sha256(stalePreview)));
         insertUserAndPhoto(userId, photoId, objectKey, invalidImage.length,
                 stalePreviewKey, (long) stalePreview.length, "preview-repair-stale-user");
         setStoredRatio("0.6000");
@@ -1341,7 +1343,8 @@ class PreviewRegenerationServiceTests {
                         rs.getString("thumbnail_object_key"),
                         rs.getObject("thumbnail_size", Long.class)})
                 .single();
-        assertThat((String) row[0]).startsWith("thumbnails/generations/").endsWith(".png");
+        // The source is really PNG, but every preview is encoded as WebP.
+        assertThat((String) row[0]).startsWith("thumbnails/generations/").endsWith(".webp");
         assertThat((Long) row[1]).isPositive();
         assertThat(jdbc.sql("SELECT compression_ratio FROM preview_setting WHERE id=1")
                 .query(BigDecimal.class).single()).isEqualByComparingTo("0.6000");
@@ -1352,6 +1355,101 @@ class PreviewRegenerationServiceTests {
 
         storage.delete(objectKey);
         storage.delete((String) row[0]);
+    }
+
+    /**
+     * A generation switch must re-encode only the previews that are actually
+     * out of date. The whole library used to be rebuilt whenever the umbrella
+     * fingerprint moved, which meant downloading, decoding and re-uploading
+     * every finished object just to produce previews that were already correct.
+     *
+     * <p>The migration to WebP is exactly this shape: leftover JPEG/PNG
+     * previews must go, previews already written by the current encoder must
+     * stay untouched.</p>
+     */
+    @Test
+    void changedProfileOnlyReplacesPreviewsThatAreActuallyOutOfDate() throws Exception {
+        long userId = 93895L;
+        long currentPhotoId = 93896L;
+        long stalePhotoId = 93897L;
+        String currentSourceKey = "photos/preview-regeneration/format-scope-current.jpg";
+        String staleSourceKey = "photos/preview-regeneration/format-scope-stale.jpg";
+        String currentPreviewKey =
+                "thumbnails/generations/preview-regeneration/format-scope-current.webp";
+        String stalePreviewKey =
+                "thumbnails/generations/preview-regeneration/format-scope-stale.jpg";
+        byte[] source = jpegImage();
+        byte[] currentPreview = new byte[257];
+        byte[] stalePreview = new byte[311];
+
+        storage.put(currentSourceKey, new ByteArrayInputStream(source), source.length,
+                "image/jpeg");
+        storage.put(staleSourceKey, new ByteArrayInputStream(source), source.length,
+                "image/jpeg");
+        // Already carries the current preview identity: nothing about it changed.
+        storage.put(currentPreviewKey, new ByteArrayInputStream(currentPreview),
+                currentPreview.length, PreviewProfile.PREVIEW_CONTENT_TYPE,
+                PreviewProfile.configured(0.6)
+                        .objectMetadata(PreviewProfile.PREVIEW_CONTENT_TYPE,
+                                sha256(currentPreview)));
+        // A pre-WebP preview: plausible ratio metadata, wrong container.
+        storage.put(stalePreviewKey, new ByteArrayInputStream(stalePreview),
+                stalePreview.length, "image/jpeg", Map.of(
+                        PreviewProfile.METADATA_RATIO, "0.6000",
+                        PreviewProfile.METADATA_EFFECTIVE_QUALITY, "60",
+                        PreviewProfile.METADATA_GENERATOR, PreviewProfile.WEBP_OBJECT_GENERATOR,
+                        PreviewProfile.METADATA_SHA256, sha256(stalePreview)));
+
+        insertUserAndPhotoWithContentType(userId, currentPhotoId, currentSourceKey, source.length,
+                currentPreviewKey, (long) currentPreview.length, "preview-format-scope-user",
+                "image/jpeg");
+        insertPhotoWithContentType(stalePhotoId, userId, staleSourceKey, source.length,
+                stalePreviewKey, (long) stalePreview.length, "image/jpeg");
+        setStoredProfile("0.6000", "hybrid-v5/superseded-by-the-webp-encoder");
+
+        ObjectStorageService trackedStorage = spy(storage);
+        PreviewRegenerationService isolated = new PreviewRegenerationService(
+                jdbc, trackedStorage, properties, compressor, workspace, transactions);
+
+        PreviewRegenerationService.Result result = isolated.synchronizeCompressionRatio();
+
+        assertThat(result.regeneratedCount()).isOne();
+        // The up-to-date preview keeps its object, its row and its version, and
+        // was never re-uploaded or deleted.
+        var currentRow = jdbc.sql("""
+                SELECT thumbnail_object_key, thumbnail_size, version
+                FROM photo WHERE id=:id
+                """).param("id", currentPhotoId)
+                .query((rs, rowNum) -> new Object[]{
+                        rs.getString("thumbnail_object_key"),
+                        rs.getLong("thumbnail_size"), rs.getInt("version")})
+                .single();
+        assertThat(currentRow)
+                .containsExactly(currentPreviewKey, (long) currentPreview.length, 1);
+        assertThat(storage.find(currentPreviewKey)).isPresent();
+        verify(trackedStorage, never()).put(eq(currentPreviewKey), any(InputStream.class),
+                anyLong(), anyString(), anyMap());
+        verify(trackedStorage, never()).delete(currentPreviewKey);
+
+        // The stale one is re-encoded onto a new WebP key.
+        String regeneratedKey = jdbc.sql("SELECT thumbnail_object_key FROM photo WHERE id=:id")
+                .param("id", stalePhotoId).query(String.class).single();
+        assertThat(regeneratedKey).isNotEqualTo(stalePreviewKey).endsWith(".webp");
+        assertThat(storage.stat(regeneratedKey).contentType())
+                .isEqualTo(PreviewProfile.PREVIEW_CONTENT_TYPE);
+        assertThat(storage.stat(regeneratedKey).userMetadata())
+                .containsEntry(PreviewProfile.METADATA_RATIO, "0.6000")
+                .containsEntry(PreviewProfile.METADATA_EFFECTIVE_QUALITY, "60")
+                .containsEntry(PreviewProfile.METADATA_GENERATOR,
+                        PreviewProfile.WEBP_OBJECT_GENERATOR);
+        assertThat(jdbc.sql("SELECT generator_fingerprint FROM preview_setting WHERE id=1")
+                .query(String.class).single())
+                .isEqualTo(PreviewProfile.CURRENT_GENERATOR_FINGERPRINT);
+
+        storage.delete(currentSourceKey);
+        storage.delete(staleSourceKey);
+        storage.delete(currentPreviewKey);
+        storage.delete(regeneratedKey);
     }
 
     private void insertUserAndPhoto(long userId, long photoId, String objectKey, long sourceSize,
@@ -1391,6 +1489,38 @@ class PreviewRegenerationServiceTests {
                 .update();
     }
 
+    /** A second photo for an already-inserted uploader. */
+    private void insertPhotoWithContentType(long photoId, long userId, String objectKey,
+                                            long sourceSize, String previewKey,
+                                            Long previewSize, String contentType) {
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, title, photographer_student_id, photographer_name, uploaded_by,
+                     taken_at, size, content_type, object_key, thumbnail_object_key,
+                     thumbnail_size, sha256, status, version, deleted)
+                VALUES
+                    (:id, 'preview test', 'test', 'test', :userId, CURRENT_TIMESTAMP,
+                     :size, :contentType, :objectKey, :previewKey, :previewSize, :sha256,
+                     'AVAILABLE', 1, false)
+                """)
+                .param("id", photoId)
+                .param("userId", userId)
+                .param("size", sourceSize)
+                .param("contentType", contentType)
+                .param("objectKey", objectKey)
+                .param("previewKey", previewKey)
+                .param("previewSize", previewSize)
+                .param("sha256", "d".repeat(64))
+                .update();
+    }
+
+    private void setStoredProfile(String ratio, String fingerprint) {
+        setStoredRatio(ratio);
+        jdbc.sql("UPDATE preview_setting SET generator_fingerprint=:fingerprint WHERE id=1")
+                .param("fingerprint", fingerprint)
+                .update();
+    }
+
     private void setStoredRatio(String value) {
         BigDecimal ratio = new BigDecimal(value);
         int updated = jdbc.sql("""
@@ -1414,7 +1544,7 @@ class PreviewRegenerationServiceTests {
 
     private java.util.Map<String, String> previewMetadata(String sha256) {
         return PreviewProfile.configured(properties.previewCompressionRatio())
-                .objectMetadata("image/jpeg", sha256);
+                .objectMetadata(PreviewProfile.PREVIEW_CONTENT_TYPE, sha256);
     }
 
     private String sha256(byte[] bytes) throws Exception {

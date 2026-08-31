@@ -15,6 +15,7 @@ import java.util.Locale;
 final class NativeImageProcessor {
     private static final int FORMAT_JPEG = 1;
     private static final int FORMAT_PNG = 2;
+    private static final int FORMAT_WEBP = 3;
     private static final int OP_COMPRESS = 1;
     private static final int OP_THUMBNAIL = 2;
     private static final int ERROR_CAPACITY = 256;
@@ -41,22 +42,28 @@ final class NativeImageProcessor {
 
     ProcessedFile compress(Path source, Path destination, String contentType,
                            long targetBytes) throws IOException {
-        return processFile(source, destination, contentType, OP_COMPRESS,
+        return processFile(source, destination, contentType, contentType, OP_COMPRESS,
                 targetBytes, 0, 0);
     }
 
+    /**
+     * @param previewContentType the container to encode into, which for a
+     *                           preview need not match the source
+     */
     ProcessedFile thumbnail(Path source, Path destination, String contentType,
-                            int maxDimension, double quality) throws IOException {
-        return processFile(source, destination, contentType, OP_THUMBNAIL,
+                            String previewContentType, int maxDimension,
+                            double quality) throws IOException {
+        return processFile(source, destination, contentType, previewContentType, OP_THUMBNAIL,
                 0, maxDimension, quality);
     }
 
     private ProcessedFile processFile(Path source, Path destination, String contentType,
-                                      int operation, long targetBytes,
+                                      String outputContentType, int operation, long targetBytes,
                                       int maxDimension, double quality) throws IOException {
         NativeFileResult result = new NativeFileResult();
         int status = library.photolib_process_file(nativePath(source), nativePath(destination),
-                format(contentType), operation, targetBytes, maxDimension, quality, result);
+                format(contentType), format(outputContentType), operation, targetBytes,
+                maxDimension, quality, result);
         result.read();
         if (status != 0) {
             throw failure(result.errorMessage);
@@ -82,6 +89,7 @@ final class NativeImageProcessor {
         return switch (contentType) {
             case "image/jpeg" -> FORMAT_JPEG;
             case "image/png" -> FORMAT_PNG;
+            case "image/webp" -> FORMAT_WEBP;
             default -> throw new IllegalArgumentException("不支持的图片类型: " + contentType);
         };
     }
@@ -150,9 +158,9 @@ final class NativeImageProcessor {
     private interface NativeLibrary extends Library {
         int photolib_dimensions_file(byte[] inputPath, int format, NativeDimensions output);
 
-        int photolib_process_file(byte[] inputPath, byte[] outputPath, int format, int operation,
-                                  long targetBytes, int maxDimension, double quality,
-                                  NativeFileResult output);
+        int photolib_process_file(byte[] inputPath, byte[] outputPath, int format,
+                                  int outputFormat, int operation, long targetBytes,
+                                  int maxDimension, double quality, NativeFileResult output);
     }
 
     private record PlatformResource(String wrapperResourcePath, String wrapperFileName,

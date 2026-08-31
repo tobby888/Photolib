@@ -15,20 +15,52 @@ import static org.mockito.Mockito.when;
 
 class PreviewProfileTests {
     @Test
-    void normalizesRatioAndBuildsFormatSpecificObjectMetadata() {
+    void normalizesRatioAndStampsPreviewObjectMetadata() {
         PreviewProfile profile = PreviewProfile.configured(0.6000001d);
 
         assertThat(profile.ratioText()).isEqualTo("0.6000");
-        assertThat(profile.objectMetadata("image/jpeg", "a".repeat(64)))
+        assertThat(profile.objectMetadata(PreviewProfile.PREVIEW_CONTENT_TYPE, "a".repeat(64)))
                 .containsEntry(PreviewProfile.METADATA_RATIO, "0.6000")
                 .containsEntry(PreviewProfile.METADATA_EFFECTIVE_QUALITY, "60")
                 .containsEntry(PreviewProfile.METADATA_GENERATOR,
-                        PreviewProfile.CURRENT_GENERATOR_FINGERPRINT)
+                        PreviewProfile.WEBP_OBJECT_GENERATOR)
                 .containsEntry(PreviewProfile.METADATA_SHA256, "a".repeat(64));
-        assertThat(profile.objectMetadata("image/png", "b".repeat(64)))
-                .containsEntry(PreviewProfile.METADATA_EFFECTIVE_QUALITY, "lossless");
         assertThat(PreviewProfile.CURRENT_GENERATOR_FINGERPRINT.length())
                 .isLessThanOrEqualTo(128);
+    }
+
+    @Test
+    void previewsAreWebp() {
+        assertThat(PreviewProfile.PREVIEW_CONTENT_TYPE).isEqualTo("image/webp");
+        assertThat(ImageCompressor.PREVIEW_EXTENSION).isEqualTo(".webp");
+        assertThatThrownBy(() -> PreviewProfile.configured(0.6)
+                .objectMetadata("image/jpeg", "a".repeat(64)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("不支持的预览图类型");
+    }
+
+    /**
+     * Previews encoded before the WebP switch are a different generation even
+     * when their ratio and SHA metadata still look plausible, so the audit has
+     * to reject them on their container alone.
+     */
+    @Test
+    void rejectsPreviewsLeftOverFromTheJpegAndPngGenerations() {
+        PreviewProfile expected = PreviewProfile.configured(0.6);
+        String sha256 = "a".repeat(64);
+        Map<String, String> plausibleMetadata = Map.of(
+                PreviewProfile.METADATA_RATIO, "0.6000",
+                PreviewProfile.METADATA_EFFECTIVE_QUALITY, "60",
+                PreviewProfile.METADATA_GENERATOR, PreviewProfile.WEBP_OBJECT_GENERATOR,
+                PreviewProfile.METADATA_SHA256, sha256);
+
+        assertThat(expected.matches(new ObjectStorageService.ObjectInfo(
+                10, "image/jpeg", plausibleMetadata), "image/jpeg")).isFalse();
+        assertThat(expected.matches(new ObjectStorageService.ObjectInfo(
+                10, "image/png", plausibleMetadata), "image/png")).isFalse();
+        assertThat(expected.matches(new ObjectStorageService.ObjectInfo(
+                        10, PreviewProfile.PREVIEW_CONTENT_TYPE, plausibleMetadata),
+                PreviewProfile.PREVIEW_CONTENT_TYPE)).isTrue();
     }
 
     @Test
@@ -46,18 +78,19 @@ class PreviewProfileTests {
     @Test
     void rejectsMissingOrDifferentOssProfileMetadata() {
         PreviewProfile expected = PreviewProfile.configured(0.6);
+        String previewType = PreviewProfile.PREVIEW_CONTENT_TYPE;
         ObjectStorageService.ObjectInfo missing =
-                new ObjectStorageService.ObjectInfo(10, "image/jpeg", Map.of());
+                new ObjectStorageService.ObjectInfo(10, previewType, Map.of());
         ObjectStorageService.ObjectInfo otherRatio = new ObjectStorageService.ObjectInfo(
-                10, "image/jpeg",
-                PreviewProfile.configured(0.7).objectMetadata("image/jpeg", "a".repeat(64)));
+                10, previewType,
+                PreviewProfile.configured(0.7).objectMetadata(previewType, "a".repeat(64)));
 
-        assertThat(expected.matches(missing, "image/jpeg")).isFalse();
-        assertThat(expected.matches(otherRatio, "image/jpeg")).isFalse();
+        assertThat(expected.matches(missing, previewType)).isFalse();
+        assertThat(expected.matches(otherRatio, previewType)).isFalse();
         assertThat(expected.matches(new ObjectStorageService.ObjectInfo(
-                        10, "image/jpeg",
-                        expected.objectMetadata("image/jpeg", "a".repeat(64))),
-                "image/jpeg", "a".repeat(64))).isTrue();
+                        10, previewType,
+                        expected.objectMetadata(previewType, "a".repeat(64))),
+                previewType, "a".repeat(64))).isTrue();
     }
 
     @Test

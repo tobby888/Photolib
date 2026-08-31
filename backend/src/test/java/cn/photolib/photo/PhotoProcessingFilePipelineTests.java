@@ -39,7 +39,7 @@ class PhotoProcessingFilePipelineTests {
     private static final String BATCH_ID = "batch-file-pipeline";
     private static final String ORIGINAL_KEY = "temporary/batches/batch-file-pipeline/original.jpg";
     private static final String PHOTO_KEY = "photos/2026/file-pipeline.jpg";
-    private static final String THUMBNAIL_KEY = "thumbnails/generations/uploads/93902.jpg";
+    private static final String THUMBNAIL_KEY = "thumbnails/generations/uploads/93902.webp";
 
     @Autowired
     private PhotoProcessingService processing;
@@ -98,13 +98,14 @@ class PhotoProcessingFilePipelineTests {
                     .containsEntry(PreviewProfile.METADATA_RATIO, "0.6000")
                     .containsEntry(PreviewProfile.METADATA_EFFECTIVE_QUALITY, "60")
                     .containsEntry(PreviewProfile.METADATA_GENERATOR,
-                            PreviewProfile.CURRENT_GENERATOR_FINGERPRINT);
+                            PreviewProfile.WEBP_OBJECT_GENERATOR);
             assertThat(thumbnail.userMetadata().get(PreviewProfile.METADATA_SHA256))
                     .matches("[0-9a-f]{64}");
             assertThat(photo[5]).isNotNull();
             assertThat(storage.stat(ORIGINAL_KEY).size()).isEqualTo(sourceSize);
             assertJpeg(PHOTO_KEY);
-            assertJpeg(THUMBNAIL_KEY);
+            // The finished object keeps the source format; the preview is WebP.
+            assertWebp(THUMBNAIL_KEY);
 
             var item = jdbc.sql("""
                     SELECT status, temp_local_path FROM photo_upload_item
@@ -249,6 +250,17 @@ class PhotoProcessingFilePipelineTests {
         try (InputStream input = storage.open(objectKey)) {
             byte[] magic = input.readNBytes(3);
             assertThat(magic).containsExactly((byte) 0xff, (byte) 0xd8, (byte) 0xff);
+        }
+    }
+
+    /** RIFF container with a WEBP fourcc at offset 8. */
+    private void assertWebp(String objectKey) throws Exception {
+        try (InputStream input = storage.open(objectKey)) {
+            byte[] header = input.readNBytes(12);
+            assertThat(new String(header, 0, 4, java.nio.charset.StandardCharsets.US_ASCII))
+                    .isEqualTo("RIFF");
+            assertThat(new String(header, 8, 4, java.nio.charset.StandardCharsets.US_ASCII))
+                    .isEqualTo("WEBP");
         }
     }
 

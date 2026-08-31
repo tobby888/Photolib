@@ -162,9 +162,10 @@ class PhotoStorageReconciliationServiceTests {
         when(observedStorage.find(key)).thenReturn(Optional.of(
                 new ObjectStorageService.ObjectInfo(10, "image/jpeg")));
         var metadata = previewProfiles.requireRunningProfile().objectMetadata(
-                "image/jpeg", "a".repeat(64));
+                PreviewProfile.PREVIEW_CONTENT_TYPE, "a".repeat(64));
         when(observedStorage.find(thumbnailKey)).thenReturn(Optional.of(
-                new ObjectStorageService.ObjectInfo(4, "image/jpeg", metadata)));
+                new ObjectStorageService.ObjectInfo(
+                        4, PreviewProfile.PREVIEW_CONTENT_TYPE, metadata)));
         PhotoStorageReconciliationService isolated = new PhotoStorageReconciliationService(
                 observedStorage, jdbc, publisher, previewProfiles, previewMaintenanceLock);
 
@@ -298,9 +299,9 @@ class PhotoStorageReconciliationServiceTests {
         when(observedStorage.find(key)).thenReturn(Optional.of(
                 new ObjectStorageService.ObjectInfo(10, "image/jpeg")));
         when(observedStorage.find(thumbnailKey)).thenReturn(Optional.of(
-                new ObjectStorageService.ObjectInfo(oversized, "image/jpeg",
+                new ObjectStorageService.ObjectInfo(oversized, PreviewProfile.PREVIEW_CONTENT_TYPE,
                         previewProfiles.requireRunningProfile().objectMetadata(
-                                "image/jpeg", "a".repeat(64)))));
+                                PreviewProfile.PREVIEW_CONTENT_TYPE, "a".repeat(64)))));
         PhotoStorageReconciliationService isolated = new PhotoStorageReconciliationService(
                 observedStorage, jdbc, publisher, previewProfiles, previewMaintenanceLock);
 
@@ -333,9 +334,9 @@ class PhotoStorageReconciliationServiceTests {
         when(observedStorage.find(key)).thenReturn(Optional.of(
                 new ObjectStorageService.ObjectInfo(10, "image/jpeg")));
         when(observedStorage.find(thumbnailKey)).thenReturn(Optional.of(
-                new ObjectStorageService.ObjectInfo(4, "image/jpeg",
+                new ObjectStorageService.ObjectInfo(4, PreviewProfile.PREVIEW_CONTENT_TYPE,
                         PreviewProfile.configured(0.7).objectMetadata(
-                                "image/jpeg", "a".repeat(64)))));
+                                PreviewProfile.PREVIEW_CONTENT_TYPE, "a".repeat(64)))));
         PhotoStorageReconciliationService isolated = new PhotoStorageReconciliationService(
                 observedStorage, jdbc, publisher, previewProfiles, previewMaintenanceLock);
 

@@ -97,7 +97,7 @@ public class PhotoProcessingService {
             upload(photo.getObjectKey(), result.path(), result.size(), result.contentType());
 
             Path thumbnailPath = workspace.taskFile(taskDirectory,
-                    "thumbnail" + extension(photo.getContentType()));
+                    "thumbnail" + ImageCompressor.PREVIEW_EXTENSION);
             PreviewProfilePolicy.CommitPermit previewPermit =
                     previewProfiles.permitForNewPreview();
             PreviewProfile previewProfile = previewPermit.profile();
@@ -108,7 +108,7 @@ public class PhotoProcessingService {
                         result.path(), thumbnailPath, result.contentType(), 480,
                         previewProfile.compressionRatio().doubleValue());
                 String candidateKey = "thumbnails/generations/uploads/" + photo.getId()
-                        + (photo.getContentType().equals("image/png") ? ".png" : ".jpg");
+                        + ImageCompressor.PREVIEW_EXTENSION;
                 String thumbnailSha256 = sha256(thumbnail.path());
                 upload(candidateKey, thumbnail.path(), thumbnail.size(), thumbnail.contentType(),
                         previewProfile.objectMetadata(thumbnail.contentType(), thumbnailSha256));

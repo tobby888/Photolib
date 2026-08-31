@@ -61,11 +61,12 @@ class ImageCompressorTests {
 
     @Test
     void slightlyOversizedJpegKeepsOriginalDimensions() throws Exception {
-        Path original = writeSource(encode(noisyImage(1200, 800), "jpg"), ".jpg");
-        ImageCompressor.FileResult source = thumbnail(original, "image/jpeg", 1200, 0.82);
-        long target = thumbnail(source.path(), "image/jpeg", 1200, 0.82).size();
+        // Previews are WebP now, so the JPEG under test is encoded directly
+        // rather than round-tripped through thumbnail().
+        Path source = writeSource(encodeJpegAtQuality(noisyImage(1200, 800), 0.82f), ".jpg");
+        long target = Files.size(source) - 1;
 
-        ImageCompressor.FileResult result = compress(source.path(), "image/jpeg", target);
+        ImageCompressor.FileResult result = compress(source, "image/jpeg", target);
 
         assertThat(result.size()).isLessThanOrEqualTo(target);
         assertThat(result.width()).isEqualTo(1200);
@@ -84,6 +85,27 @@ class ImageCompressorTests {
         assertThat(lowerQuality.height()).isEqualTo(360);
     }
 
+    /**
+     * The regression this locks in: PNG previews were written by a lossless
+     * encoder that had no quality knob at all, so every ratio produced a
+     * byte-identical file and PREVIEW_COMPRESSION_RATIO looked broken. They now
+     * go through libvips' palette quantiser, where the ratio picks the palette
+     * bit depth and the dither level.
+     */
+    @Test
+    void usesConfiguredRatioForPngSourcePreview() throws Exception {
+        Path source = writeSource(encode(noisyImage(800, 600), "png"), ".png");
+
+        ImageCompressor.FileResult lowerQuality = thumbnail(source, "image/png", 480, 0.4);
+        ImageCompressor.FileResult higherQuality = thumbnail(source, "image/png", 480, 0.9);
+
+        assertThat(lowerQuality.size()).isLessThan(higherQuality.size());
+        assertThat(lowerQuality.width()).isEqualTo(480);
+        assertThat(lowerQuality.height()).isEqualTo(360);
+        assertThat(lowerQuality.contentType()).isEqualTo(ImageCompressor.PREVIEW_CONTENT_TYPE);
+        assertWebp(lowerQuality.path());
+    }
+
     @Test
     void resizesPngPreviewAndPreservesAlpha() throws Exception {
         BufferedImage image = new BufferedImage(800, 600, BufferedImage.TYPE_INT_ARGB);
@@ -96,13 +118,11 @@ class ImageCompressorTests {
         Path source = writeSource(encode(image, "png"), ".png");
 
         ImageCompressor.FileResult result = thumbnail(source, "image/png", 200, 0.6);
-        byte[] output = Files.readAllBytes(result.path());
-        BufferedImage decoded = ImageIO.read(result.path().toFile());
 
-        assertThat(output).startsWith((byte) 0x89, (byte) 0x50, (byte) 0x4e, (byte) 0x47);
+        assertWebp(result.path());
         assertThat(result.width()).isEqualTo(200);
         assertThat(result.height()).isEqualTo(150);
-        assertThat(decoded.getColorModel().hasAlpha()).isTrue();
+        assertHasAlpha(result.path());
     }
 
     @Test
@@ -129,7 +149,7 @@ class ImageCompressorTests {
         assertThat(result.height()).isGreaterThan(320).isLessThanOrEqualTo(3000);
         assertThat(preview.width()).isEqualTo(480);
         assertThat(preview.height()).isBetween(1, 480);
-        assertThat(ImageIO.read(preview.path().toFile())).isNotNull();
+        assertWebp(preview.path());
     }
 
     @Test
@@ -189,14 +209,13 @@ class ImageCompressorTests {
 
         ImageCompressor.FileResult result = thumbnail(
                 source, "image/png", 480, 0.6);
-        BufferedImage decoded = ImageIO.read(result.path().toFile());
 
         assertThat((long) width * height).isLessThan(100_000_000L);
         assertThat((long) width * height * 4).isGreaterThan(128L * 1024 * 1024);
         assertThat(width).isLessThan(30_000);
         assertThat(result.width()).isEqualTo(480);
         assertThat(result.height()).isEqualTo(480);
-        assertThat(decoded.getColorModel().hasAlpha()).isTrue();
+        assertHasAlpha(result.path());
     }
 
     @Test
@@ -243,8 +262,7 @@ class ImageCompressorTests {
         assertThat(result.width()).isEqualTo(480);
         assertThat(result.height()).isEqualTo(1);
         assertThat(result.size()).isPositive();
-        assertThat(Files.readAllBytes(result.path()))
-                .startsWith((byte) 0xff, (byte) 0xd8);
+        assertWebp(result.path());
     }
 
     @Test
@@ -268,8 +286,10 @@ class ImageCompressorTests {
                     .isEqualTo(40);
             assertThat(thumbnail.height()).as("thumbnail height, orientation " + orientation)
                     .isEqualTo(60);
+            // Pixel-level rotation is asserted on the finished object, which is
+            // still JPEG. The preview is WebP and this JDK has no WebP reader,
+            // so its rotation is covered by the swapped dimensions above.
             assertRotatedQuadrants(ImageIO.read(compressed.path().toFile()), orientation);
-            assertRotatedQuadrants(ImageIO.read(thumbnail.path().toFile()), orientation);
         }
     }
 
@@ -343,12 +363,21 @@ class ImageCompressorTests {
                 + "oooooooooooooooooooooooooooooooooooooooooooooooooooooooor/2Q==");
         Path source = writeSource(cmykJpeg, ".jpg");
 
-        ImageCompressor.FileResult compressed = compress(source, "image/jpeg", 10_000_000);
+        // The target must be below the source size, otherwise compress() takes
+        // its copy shortcut and the finished object is still CMYK — ImageIO
+        // decodes those to visibly wrong colours, which is exactly what this
+        // test would then be asserting against.
+        ImageCompressor.FileResult compressed = compress(
+                source, "image/jpeg", Files.size(source) - 1);
         ImageCompressor.FileResult preview = thumbnail(compressed.path(), "image/jpeg", 480, 0.85);
 
         assertThat(compressed.width()).isEqualTo(64);
         assertThat(compressed.height()).isEqualTo(64);
-        BufferedImage decoded = ImageIO.read(preview.path().toFile());
+        assertWebp(preview.path());
+        // The colour check reads the finished object: it went through the same
+        // CMYK->RGB conversion and, unlike the WebP preview, this JDK can decode
+        // it. The preview is only checked for being a well-formed WebP.
+        BufferedImage decoded = ImageIO.read(compressed.path().toFile());
         assertThat(decoded).isNotNull();
         // Expected via libjpeg-turbo's own cmyk_to_rgb reference formula:
         // R=C*K/255≈173, G=M*K/255≈129, B=Y*K/255≈86.
@@ -373,7 +402,7 @@ class ImageCompressorTests {
         assertThat(thumbnail.path()).isEqualTo(preview);
         assertThat(thumbnail.size()).isEqualTo(Files.size(preview));
         assertThat(thumbnail.width()).isEqualTo(480);
-        assertThat(ImageIO.read(preview.toFile())).isNotNull();
+        assertWebp(preview);
     }
 
     private ImageCompressor.FileResult compress(Path source, String contentType,
@@ -381,6 +410,29 @@ class ImageCompressorTests {
         Path destination = temporaryDirectory.resolve(UUID.randomUUID()
                 + ("image/png".equals(contentType) ? ".png" : ".jpg"));
         return compressor.compress(source, destination, contentType, targetBytes);
+    }
+
+    /** RIFF container with a WEBP fourcc at offset 8. */
+    private void assertWebp(Path path) throws Exception {
+        byte[] header = Files.readAllBytes(path);
+        assertThat(new String(header, 0, 4, java.nio.charset.StandardCharsets.US_ASCII))
+                .isEqualTo("RIFF");
+        assertThat(new String(header, 8, 4, java.nio.charset.StandardCharsets.US_ASCII))
+                .isEqualTo("WEBP");
+    }
+
+    /**
+     * There is no WebP reader on this JDK, so transparency is asserted from the
+     * container: a lossy WebP carrying alpha is an extended (VP8X) file with an
+     * ALPH chunk, and a lossless one (VP8L) stores alpha inline.
+     */
+    private void assertHasAlpha(Path path) throws Exception {
+        assertWebp(path);
+        String body = new String(Files.readAllBytes(path),
+                java.nio.charset.StandardCharsets.ISO_8859_1);
+        assertThat(body.contains("ALPH") || body.contains("VP8L"))
+                .as("WebP preview carries an alpha channel")
+                .isTrue();
     }
 
     private ImageCompressor.FileResult thumbnail(Path source, String contentType,
