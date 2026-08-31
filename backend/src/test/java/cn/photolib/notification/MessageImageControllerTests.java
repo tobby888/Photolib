@@ -15,6 +15,7 @@ import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.security.access.prepost.PreAuthorize;
 
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -116,23 +117,35 @@ class MessageImageControllerTests {
     }
 
     @Test
-    void underscoreInAnIdCannotWildcardIntoSomeoneElsesDelivery() throws Exception {
-        String id = uploadImage();
-        MessageImageEntity image = mapper.selectById(id);
+    void underscoreInAnIdCannotWildcardIntoSomeoneElsesDelivery() {
+        // The id is written by hand: PublicId never emits '_', so an id drawn from it
+        // could never exercise the ESCAPE clause the lookup relies on. Nor may the
+        // neighbour be derived by rewriting one character of a random id — the draw
+        // sometimes returns that very character and the two ids come out equal, at
+        // which point the delivery below is legitimately the caller's and the test
+        // fails for a reason it was never about.
+        String id = "MESSAGEIMAGE_UNDERSCORE01";
+        String neighbour = id.replace('_', 'X');
+        MessageImageEntity image = new MessageImageEntity();
+        image.setId(id);
+        image.setObjectKey("messages/" + id + ".png");
+        image.setContentType("image/png");
+        image.setSize(11L);
+        image.setUploadedBy(minister.id());
+        image.setCreatedAt(LocalDateTime.now());
+        mapper.insert(image);
         // A delivery for a *different* image must not match through a LIKE wildcard.
-        String neighbour = id.substring(0, id.length() - 1) + "Z";
         jdbc.sql("""
                 INSERT INTO user_notification
                     (user_id, event_type, title, content, content_html, sender_id, created_at)
                 VALUES (805, 'DIRECT_MESSAGE', '通知', '正文', :html, 804, CURRENT_TIMESTAMP)
                 """).param("html", "<img src=\"/api/v1/notifications/images/" + neighbour + "\">")
                 .update();
-        try {
-            assertThatThrownBy(() -> controller.get(id, other))
-                    .isInstanceOf(BusinessException.class);
-        } finally {
-            storage.delete(image.getObjectKey());
-        }
+
+        // Denial is decided before the object is opened, so nothing reaches storage.
+        assertThatThrownBy(() -> controller.get(id, other))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("无权读取该消息图片");
     }
 
     private String uploadImage() throws java.io.IOException {
