@@ -174,7 +174,8 @@ class RecruitmentUploadProcessorRaceTests {
                 "local", null, null, null, null, null,
                 temporaryDirectory.resolve("objects").toString(),
                 "http://localhost/objects", "test-signing-secret", List.of(),
-                Duration.ofMinutes(10), Duration.ofMinutes(10), Duration.ofDays(1),
+                Duration.ofMinutes(10), Duration.ofMinutes(10), Duration.ofMinutes(5),
+                Duration.ofDays(1),
                 10 * 1024 * 1024L, 100 * 1024 * 1024L, 0.6);
         return new LocalObjectStorageService(properties);
     }

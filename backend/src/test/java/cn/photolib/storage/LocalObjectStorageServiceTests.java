@@ -19,13 +19,49 @@ class LocalObjectStorageServiceTests {
     @TempDir
     Path directory;
 
+    /**
+     * Repeat gallery views must reuse one URL, or the browser cache is bypassed
+     * and every render re-downloads every preview from the object store.
+     */
+    @Test
+    void repeatsTheSameSignedGetUrlInsideOneWindowAndCarriesCacheControl() throws Exception {
+        StorageProperties properties = new StorageProperties(
+                "local", null, null, null, null, null, directory.toString(),
+                "http://localhost:8080/api/v1/local-storage/objects", "test-secret",
+                java.util.List.of("*"),
+                Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofMinutes(5),
+                Duration.ofDays(30),
+                10_485_760, 104_857_600, 0.6);
+        LocalObjectStorageService storage = new LocalObjectStorageService(properties);
+        byte[] content = "preview-content".getBytes(StandardCharsets.UTF_8);
+        storage.put("thumbnails/generations/g/1.webp", new ByteArrayInputStream(content),
+                content.length, "image/webp");
+
+        String cacheControl = properties.previewCacheControl();
+        assertThat(cacheControl).isEqualTo("private, max-age=600");
+
+        ObjectStorageService.SignedUrl first = storage.presignGet(
+                "thumbnails/generations/g/1.webp", null, properties.downloadUrlTtl(), cacheControl);
+        ObjectStorageService.SignedUrl second = storage.presignGet(
+                "thumbnails/generations/g/1.webp", null, properties.downloadUrlTtl(), cacheControl);
+
+        assertThat(second.url().toString()).isEqualTo(first.url().toString());
+        String token = first.url().getPath().substring(first.url().getPath().lastIndexOf('/') + 1);
+        assertThat(storage.resolveToken(token, "GET").cacheControl()).isEqualTo(cacheControl);
+
+        // Uploads stay one-shot: a repeatable PUT signature has no upside.
+        assertThat(storage.presignPut("photos/x.jpg", "image/jpeg", Duration.ofMinutes(15))
+                .expiresAt()).isAfter(first.expiresAt().minus(Duration.ofMinutes(15)));
+    }
+
     @Test
     void storesReadsSignsAndDeletesObjects() throws Exception {
         StorageProperties properties = new StorageProperties(
                 "local", null, null, null, null, null, directory.toString(),
                 "http://localhost:8080/api/v1/local-storage/objects", "test-secret",
                 java.util.List.of("*"),
-                Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofDays(30),
+                Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofMinutes(5),
+                Duration.ofDays(30),
                 10_485_760, 104_857_600, 0.6);
         LocalObjectStorageService storage = new LocalObjectStorageService(properties);
         byte[] content = "photo-content".getBytes(StandardCharsets.UTF_8);
@@ -57,7 +93,8 @@ class LocalObjectStorageServiceTests {
                 "local", null, null, null, null, null, directory.toString(),
                 "http://localhost:8080/api/v1/local-storage/objects", "test-secret",
                 java.util.List.of("*"),
-                Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofDays(30),
+                Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofMinutes(5),
+                Duration.ofDays(30),
                 10_485_760, 104_857_600, 0.6);
         LocalObjectStorageService storage = new LocalObjectStorageService(properties);
         String key = "thumbnails/profile.jpg";
@@ -101,7 +138,8 @@ class LocalObjectStorageServiceTests {
                 "local", null, null, null, null, null, directory.toString(),
                 "http://localhost:8080/api/v1/local-storage/objects", "test-secret",
                 java.util.List.of("*"),
-                Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofDays(30),
+                Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofMinutes(5),
+                Duration.ofDays(30),
                 10_485_760, 104_857_600, 0.6);
         LocalObjectStorageService storage = new LocalObjectStorageService(properties);
 
@@ -117,7 +155,8 @@ class LocalObjectStorageServiceTests {
                 "local", null, null, null, null, null, directory.toString(),
                 "http://localhost:8080/api/v1/local-storage/objects", "test-secret",
                 java.util.List.of("*"),
-                Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofDays(30),
+                Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofMinutes(5),
+                Duration.ofDays(30),
                 10_485_760, 104_857_600, 0.6);
         LocalObjectStorageService storage = new LocalObjectStorageService(properties);
         byte[] thumbnail = "thumbnail".getBytes(StandardCharsets.UTF_8);
@@ -145,7 +184,8 @@ class LocalObjectStorageServiceTests {
                 "local", null, null, null, null, null, directory.toString(),
                 "http://localhost:8080/api/v1/local-storage/objects", "test-secret",
                 java.util.List.of("*"),
-                Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofDays(30),
+                Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofMinutes(5),
+                Duration.ofDays(30),
                 10_485_760, 104_857_600, 0.6);
         LocalObjectStorageService storage = new LocalObjectStorageService(properties);
         Path generation = Files.createDirectories(directory.resolve("thumbnails/generations"));
@@ -160,7 +200,8 @@ class LocalObjectStorageServiceTests {
                 "local", null, null, null, null, null, directory.toString(),
                 "http://localhost:8080/api/v1/local-storage/objects", "test-secret",
                 java.util.List.of("*"),
-                Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofDays(30),
+                Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofMinutes(5),
+                Duration.ofDays(30),
                 10_485_760, 104_857_600, 0.6);
         LocalObjectStorageService storage = new LocalObjectStorageService(properties);
         byte[] jpeg = new byte[]{(byte) 0xff, (byte) 0xd8, (byte) 0xff, (byte) 0xd9};
@@ -183,7 +224,8 @@ class LocalObjectStorageServiceTests {
                 "local", null, null, null, null, null, directory.toString(),
                 "http://localhost:8080/api/v1/local-storage/objects", "test-secret",
                 java.util.List.of("*"),
-                Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofDays(30),
+                Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofMinutes(5),
+                Duration.ofDays(30),
                 10_485_760, 104_857_600, 0.6);
         LocalObjectStorageService storage = new LocalObjectStorageService(properties);
         String key = "legacy/note.txt";
@@ -219,7 +261,8 @@ class LocalObjectStorageServiceTests {
                 "local", null, null, null, null, null, directory.toString(),
                 "http://localhost:8080/api/v1/local-storage/objects",
                 "photolib-local-development-secret", java.util.List.of("*"),
-                Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofDays(30),
+                Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofMinutes(5),
+                Duration.ofDays(30),
                 10_485_760, 104_857_600, 0.6);
 
         assertThatThrownBy(() -> new StorageConfigValidator(properties).validateConfig())

@@ -158,11 +158,18 @@ public class AliyunObjectStorageService implements ObjectStorageService {
     }
 
     @Override
-    public SignedUrl presignGet(String objectKey, String downloadName, Duration ttl) {
-        Instant expires = Instant.now().plus(ttl);
+    public SignedUrl presignGet(String objectKey, String downloadName, Duration ttl,
+                                String cacheControl) {
+        // Quantised so repeat views of the same object produce the same URL and
+        // can be served from the browser cache; see SignatureWindow.
+        Instant expires = SignatureWindow.expiryFor(
+                Instant.now(), ttl, properties.signatureWindow());
         GeneratePresignedUrlRequest request = new GeneratePresignedUrlRequest(
                 properties.bucket(), objectKey, HttpMethod.GET);
         request.setExpiration(Date.from(expires));
+        if (cacheControl != null && !cacheControl.isBlank()) {
+            request.addQueryParameter("response-cache-control", cacheControl);
+        }
         if (downloadName != null && !downloadName.isBlank()) {
             request.addQueryParameter("response-content-disposition",
                     "attachment; filename*=UTF-8''" + java.net.URLEncoder.encode(

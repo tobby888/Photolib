@@ -36,7 +36,8 @@ class AliyunObjectStorageServiceIntegrationTests {
                 dotEnv.getProperty("OSS_ACCESS_KEY_ID"),
                 dotEnv.getProperty("OSS_ACCESS_KEY_SECRET"),
                 null, null, "unused", java.util.List.of("*"),
-                Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofDays(30),
+                Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofMinutes(5),
+                Duration.ofDays(30),
                 10_485_760, 104_857_600, 0.6);
         AliyunObjectStorageService storage = new AliyunObjectStorageService(properties);
         try {

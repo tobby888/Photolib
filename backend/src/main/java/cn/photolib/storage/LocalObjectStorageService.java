@@ -36,11 +36,13 @@ public class LocalObjectStorageService implements ObjectStorageService {
     private final Path root;
     private final String publicBaseUrl;
     private final byte[] signingSecret;
+    private final Duration signatureWindow;
 
     public LocalObjectStorageService(StorageProperties properties) {
         root = Path.of(properties.localDirectory()).toAbsolutePath().normalize();
         publicBaseUrl = stripTrailingSlash(properties.publicBaseUrl());
         signingSecret = properties.signingSecret().getBytes(StandardCharsets.UTF_8);
+        signatureWindow = properties.signatureWindow();
         try {
             Files.createDirectories(root);
         } catch (IOException ex) {
@@ -92,12 +94,13 @@ public class LocalObjectStorageService implements ObjectStorageService {
 
     @Override
     public SignedUrl presignPut(String objectKey, String contentType, Duration ttl) {
-        return signed(objectKey, null, "PUT", contentType, ttl);
+        return signed(objectKey, null, "PUT", contentType, ttl, null);
     }
 
     @Override
-    public SignedUrl presignGet(String objectKey, String downloadName, Duration ttl) {
-        return signed(objectKey, downloadName, "GET", null, ttl);
+    public SignedUrl presignGet(String objectKey, String downloadName, Duration ttl,
+                                String cacheControl) {
+        return signed(objectKey, downloadName, "GET", null, ttl, cacheControl);
     }
 
     @Override
@@ -197,16 +200,18 @@ public class LocalObjectStorageService implements ObjectStorageService {
         try {
             String decoded = new String(Base64.getUrlDecoder().decode(token), StandardCharsets.UTF_8);
             String[] parts = decoded.split("\n", -1);
-            if (parts.length != 6) throw new IllegalArgumentException("无效的本地对象签名");
-            String payload = String.join("\n", parts[0], parts[1], parts[2], parts[3], parts[4]);
-            if (!constantTimeEquals(sign(payload), parts[5])) {
+            if (parts.length != 7) throw new IllegalArgumentException("无效的本地对象签名");
+            String payload = String.join("\n", parts[0], parts[1], parts[2], parts[3], parts[4],
+                    parts[5]);
+            if (!constantTimeEquals(sign(payload), parts[6])) {
                 throw new IllegalArgumentException("本地对象签名校验失败");
             }
             Instant expiresAt = Instant.ofEpochSecond(Long.parseLong(parts[0]));
             if (expiresAt.isBefore(Instant.now())) throw new IllegalArgumentException("本地对象签名已过期");
             if (!expectedMethod.equals(parts[1])) throw new IllegalArgumentException("本地对象请求方法不匹配");
             return new Token(parts[2], parts[3].isBlank() ? null : parts[3],
-                           parts[4].isBlank() ? null : parts[4], expiresAt);
+                           parts[4].isBlank() ? null : parts[4],
+                           parts[5].isBlank() ? null : parts[5], expiresAt);
         } catch (IllegalArgumentException ex) {
             throw ex;
         } catch (Exception ex) {
@@ -214,12 +219,19 @@ public class LocalObjectStorageService implements ObjectStorageService {
         }
     }
 
-    private SignedUrl signed(String objectKey, String downloadName, String method, String contentType, Duration ttl) {
-        Instant expiresAt = Instant.now().plus(ttl);
+    private SignedUrl signed(String objectKey, String downloadName, String method,
+                             String contentType, Duration ttl, String cacheControl) {
+        // GET signatures are quantised so repeat views of the same object produce
+        // the same URL and the browser cache can hit; uploads stay one-shot.
+        Instant expiresAt = "GET".equals(method)
+                ? SignatureWindow.expiryFor(Instant.now(), ttl, signatureWindow)
+                : Instant.now().plus(ttl);
         String name = downloadName == null ? "" : downloadName.replace("\n", "_");
         String safeKey = objectKey.replace("\n", "_");
         String safeContentType = contentType == null ? "" : contentType.replace("\n", "_");
-        String payload = expiresAt.getEpochSecond() + "\n" + method + "\n" + safeKey + "\n" + name + "\n" + safeContentType;
+        String safeCacheControl = cacheControl == null ? "" : cacheControl.replace("\n", "_");
+        String payload = expiresAt.getEpochSecond() + "\n" + method + "\n" + safeKey + "\n" + name
+                + "\n" + safeContentType + "\n" + safeCacheControl;
         String token = Base64.getUrlEncoder().withoutPadding().encodeToString(
                 (payload + "\n" + sign(payload)).getBytes(StandardCharsets.UTF_8));
         try {
@@ -375,7 +387,8 @@ public class LocalObjectStorageService implements ObjectStorageService {
         return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
     }
 
-    public record Token(String objectKey, String downloadName, String contentType, Instant expiresAt) {
+    public record Token(String objectKey, String downloadName, String contentType,
+                        String cacheControl, Instant expiresAt) {
     }
 
     private record LocalObjectPath(Path path, String objectKey) {

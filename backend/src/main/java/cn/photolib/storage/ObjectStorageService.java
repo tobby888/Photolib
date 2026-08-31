@@ -24,7 +24,19 @@ public interface ObjectStorageService {
 
     SignedUrl presignPut(String objectKey, String contentType, Duration ttl);
 
-    SignedUrl presignGet(String objectKey, String downloadName, Duration ttl);
+    default SignedUrl presignGet(String objectKey, String downloadName, Duration ttl) {
+        return presignGet(objectKey, downloadName, ttl, null);
+    }
+
+    /**
+     * @param cacheControl when non-null, the {@code Cache-Control} the response
+     *                     must carry. It is applied at signing time rather than
+     *                     at upload time so it also reaches objects that are
+     *                     already in the bucket, and so it always reflects the
+     *                     current TTL instead of whatever was configured when
+     *                     the object happened to be written.
+     */
+    SignedUrl presignGet(String objectKey, String downloadName, Duration ttl, String cacheControl);
 
     ObjectInfo stat(String objectKey);
 
