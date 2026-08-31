@@ -18,6 +18,11 @@ const resources = new Map<string, SharedImageResource>()
 
 function createResource(remoteUrl: string): SharedImageResource {
   const controller = new AbortController()
+  // `mode: 'cors'` is what makes the pixels readable (an <img> without it taints
+  // the histogram's canvas), and it is why every other element rendering the same
+  // preview URL must request it as `crossOrigin="anonymous"` — a no-CORS response
+  // for this URL sitting in the HTTP cache is served back here without
+  // Access-Control-Allow-Origin and fails. See src/previewImage.ts.
   const promise = fetch(remoteUrl, { signal: controller.signal, mode: 'cors' })
     .then(response => {
       if (!response.ok) {

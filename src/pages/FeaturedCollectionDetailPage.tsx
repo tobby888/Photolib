@@ -16,6 +16,7 @@ import {
 } from '../featuredCollections'
 import { useLoad } from '../hooks'
 import RichTextContent from '../RichTextContent'
+import { PREVIEW_CROSS_ORIGIN } from '../previewImage'
 import type {
   FeaturedCollection, FeaturedDocumentDownload, FeaturedEntry, PageData, Photo,
 } from '../types'
@@ -305,7 +306,8 @@ export default function FeaturedCollectionDetailPage() {
                 className={pickedPhoto?.id === photo.id ? 'featured-photo-picked' : undefined}
                 onClick={() => setPickedPhoto(photo)}
                 cover={photo.thumbnailUrl
-                  ? <img src={photo.thumbnailUrl} alt={photo.title} className="featured-photo-thumb" />
+                  ? <img src={photo.thumbnailUrl} alt={photo.title} className="featured-photo-thumb"
+                      crossOrigin={PREVIEW_CROSS_ORIGIN} />
                   : <div className="image-placeholder"><PictureOutlined /></div>}>
                 <Card.Meta title={photo.title || '未命名'}
                   description={photo.photographerName} />

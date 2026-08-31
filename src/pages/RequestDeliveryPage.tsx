@@ -19,6 +19,7 @@ import type { Campus, CampusMember, EntityId, PageData, Photo, PhotoRequest, Pro
 import MarkdownRenderer from '../MarkdownRenderer'
 import { photoTitleFromFileName } from '../photoTitle'
 import { hasPermission } from '../permissions'
+import { PREVIEW_CROSS_ORIGIN } from '../previewImage'
 import { preparePhotoBatchDownload } from '../photoBatchDownload'
 
 type UploadValues = {
@@ -273,7 +274,8 @@ export default function RequestDeliveryPage() {
                           ? [...new Set([...current, photo.id])].slice(0, 200)
                           : current.filter(id => id !== photo.id))} />}
                     {photo.thumbnailUrl
-                      ? <Image preview src={photo.thumbnailUrl} alt={photo.title} />
+                      ? <Image preview crossOrigin={PREVIEW_CROSS_ORIGIN}
+                          src={photo.thumbnailUrl} alt={photo.title} />
                       : <div className="delivery-placeholder"><PictureOutlined /></div>}
                     <StatusTag value={photo.status} />
                   </div>

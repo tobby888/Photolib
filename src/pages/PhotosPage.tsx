@@ -20,6 +20,7 @@ import { useAuth } from '../auth'
 import { preparePhotoBatchDownload } from '../photoBatchDownload'
 import { photoTitleFromFileName } from '../photoTitle'
 import { hasPermission } from '../permissions'
+import { PREVIEW_CROSS_ORIGIN } from '../previewImage'
 import {
   readPhotoLibraryFilters, writePhotoLibraryFilters, withPhotoLibrarySearch,
 } from '../photoLibrarySearch'
@@ -321,7 +322,8 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
               if (event.key === 'Enter' && event.target === event.currentTarget) navigate(withPhotoLibrarySearch(
                 `${libraryRoot}/${photo.id}`, location.search))
             }}>
-            {photo.thumbnailUrl ? <Image preview={false} src={photo.thumbnailUrl} alt={photo.title} /> : <div className="image-placeholder"><span>{photo.title?.slice(0, 1) || '图'}</span></div>}
+            {photo.thumbnailUrl ? <Image preview={false} crossOrigin={PREVIEW_CROSS_ORIGIN}
+              src={photo.thumbnailUrl} alt={photo.title} /> : <div className="image-placeholder"><span>{photo.title?.slice(0, 1) || '图'}</span></div>}
             <div className="photo-overlay" onClick={event => event.stopPropagation()}
               onKeyDown={event => event.stopPropagation()}>
               {(canAddToProject || canDownload || canDelete) && (photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED') && <Checkbox

@@ -19,6 +19,7 @@ import MarkdownEditor from '../MarkdownEditor'
 import MarkdownRenderer, { markdownExcerpt } from '../MarkdownRenderer'
 import { preparePhotoBatchDownload } from '../photoBatchDownload'
 import { hasPermission } from '../permissions'
+import { PREVIEW_CROSS_ORIGIN } from '../previewImage'
 
 const projectStateCopy = {
   DRAFT: {
@@ -423,7 +424,8 @@ export default function ProjectDetailPage() {
                 className={`photo-card${selectedDownloadPhotoIds.includes(photo.id) ? ' photo-card-selected' : ''}`}
                 cover={<div className="photo-cover">
                   {photo.thumbnailUrl
-                    ? <Image src={photo.thumbnailUrl} alt={photo.title || '需求图片'} />
+                    ? <Image src={photo.thumbnailUrl} alt={photo.title || '需求图片'}
+                        crossOrigin={PREVIEW_CROSS_ORIGIN} />
                     : <div className="image-placeholder"><span>{photo.title?.slice(0, 1) || '图'}</span></div>}
                   <div className="photo-overlay">
                     {canBatchDownload && (photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED') &&
@@ -532,7 +534,7 @@ export default function ProjectDetailPage() {
             columns={[
               { title: '预览', width: 92, render: (_, photo) =>
                 photo.thumbnailUrl ? <Image width={68} height={48} style={{ objectFit: 'contain' }}
-                  preview={false} src={photo.thumbnailUrl} /> : '-' },
+                  preview={false} crossOrigin={PREVIEW_CROSS_ORIGIN} src={photo.thumbnailUrl} /> : '-' },
               { title: '图片', dataIndex: 'title', render: (value, photo) =>
                 <div className="table-title"><strong>{value || '未命名图片'}</strong>
                   <span>{photo.photographerName} · {dayjs(photo.takenAt).format('YYYY-MM-DD')}</span></div> },
