@@ -1,16 +1,18 @@
 import {
-  DeleteOutlined, EyeOutlined, FileAddOutlined, FileTextOutlined, FolderAddOutlined,
-  FolderOpenOutlined, FolderOutlined, GlobalOutlined, LockOutlined, ReloadOutlined, SaveOutlined,
+  DeleteOutlined, EyeOutlined, FileAddOutlined, FilePdfOutlined, FileTextOutlined,
+  FolderAddOutlined, FolderOpenOutlined, FolderOutlined, GlobalOutlined, LockOutlined,
+  ReloadOutlined, SaveOutlined, SwapOutlined, UploadOutlined,
 } from '@ant-design/icons'
 import {
   Alert, App, Button, Card, Empty, Input, Popconfirm, Segmented, Skeleton, Space, Switch,
-  Tag, Tree, Typography,
+  Tag, Tree, Typography, Upload,
 } from 'antd'
 import type { DataNode } from 'antd/es/tree'
 import dayjs from 'dayjs'
 import { useEffect, useMemo, useState, type Key } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
+import DocPdfViewer from '../DocPdfViewer'
 import {
   ancestorKeysOf, findManageNode, manageNodesToTree, relativeDropPosition, resolveDrop,
 } from '../docsTree'
@@ -19,6 +21,9 @@ import MarkdownEditor from '../MarkdownEditor'
 import type {
   DocDocumentDetail, DocManageNode, DocNodeType, DocTreeMutation, DocVisibility,
 } from '../types'
+
+/** PDF 上限，与后端 PdfUpload.MAX_BYTES 是同一个数，改一处必须改另一处。 */
+const PDF_MAX_BYTES = 50 * 1024 * 1024
 
 /**
  * 文档中心的编写页（需要 DOC_MANAGE）。
@@ -32,22 +37,28 @@ import type {
  * 变成一次会丢掉可见范围设置的操作。</p>
  */
 function toTreeData(nodes: DocManageNode[]): DataNode[] {
-  return nodes.map(node => ({
-    key: String(node.id),
-    title: <span className="docs-tree-label">
-      <span className="docs-tree-title">{node.title}</span>
-      {node.nodeType === 'DOCUMENT' && !node.published && <Tag color="default">草稿</Tag>}
-      {node.nodeType === 'DOCUMENT' && node.published && node.visibility === 'PUBLIC' &&
-        <Tag color="green" icon={<GlobalOutlined />}>公开</Tag>}
-      {node.nodeType === 'DOCUMENT' && node.published && node.visibility === 'MEMBERS' &&
-        <Tag color="gold" icon={<LockOutlined />}>需登录</Tag>}
-    </span>,
-    icon: node.nodeType === 'FOLDER'
-      ? (({ expanded }: { expanded?: boolean }) => expanded ? <FolderOpenOutlined /> : <FolderOutlined />)
-      : <FileTextOutlined />,
-    isLeaf: node.nodeType === 'DOCUMENT',
-    children: node.nodeType === 'FOLDER' ? toTreeData(node.children || []) : undefined,
-  }))
+  return nodes.map(node => {
+    // 状态标签按"是不是文件夹"判，不按 DOCUMENT：PDF 文档一样有发布和可见范围
+    // 两个开关，漏掉它的标签会让人以为 PDF 传上去就已经发布了。
+    const leaf = node.nodeType !== 'FOLDER'
+    return {
+      key: String(node.id),
+      title: <span className="docs-tree-label">
+        <span className="docs-tree-title">{node.title}</span>
+        {node.nodeType === 'PDF' && <Tag color="blue">PDF</Tag>}
+        {leaf && !node.published && <Tag color="default">草稿</Tag>}
+        {leaf && node.published && node.visibility === 'PUBLIC' &&
+          <Tag color="green" icon={<GlobalOutlined />}>公开</Tag>}
+        {leaf && node.published && node.visibility === 'MEMBERS' &&
+          <Tag color="gold" icon={<LockOutlined />}>需登录</Tag>}
+      </span>,
+      icon: node.nodeType === 'FOLDER'
+        ? (({ expanded }: { expanded?: boolean }) => expanded ? <FolderOpenOutlined /> : <FolderOutlined />)
+        : node.nodeType === 'PDF' ? <FilePdfOutlined /> : <FileTextOutlined />,
+      isLeaf: leaf,
+      children: node.nodeType === 'FOLDER' ? toTreeData(node.children || []) : undefined,
+    }
+  })
 }
 
 export default function DocsManagePage({ onPreview }: {
@@ -64,6 +75,8 @@ export default function DocsManagePage({ onPreview }: {
   const [detailLoading, setDetailLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [renaming, setRenaming] = useState('')
+  // 替换文件后强制重新取一遍预览：地址没变，不加这个的话看到的还是旧文件。
+  const [pdfToken, setPdfToken] = useState(0)
 
   const loaded = useLoad(() => api<DocManageNode[]>({ url: '/docs/tree' }), [] as DocManageNode[], [])
   useEffect(() => { setTree(loaded.data) }, [loaded.data])
@@ -123,12 +136,14 @@ export default function DocsManagePage({ onPreview }: {
     }
   }
 
+  /** 新建落点：选中文件夹就放进去，选中文档就放到它旁边（同一个父节点）。 */
+  const parentForNew = () => (selected
+    ? (selected.nodeType === 'FOLDER' ? String(selected.id)
+      : selected.parentId != null ? String(selected.parentId) : null)
+    : null)
+
   const create = (nodeType: DocNodeType) => {
-    // 新建的落点：选中文件夹就放进去，选中文档就放到它旁边（同一个父节点）。
-    const parentId = selected
-      ? (selected.nodeType === 'FOLDER' ? String(selected.id)
-        : selected.parentId != null ? String(selected.parentId) : null)
-      : null
+    const parentId = parentForNew()
     let title = ''
     modal.confirm({
       title: nodeType === 'FOLDER' ? '新建文件夹' : '新建文档',
@@ -148,6 +163,46 @@ export default function DocsManagePage({ onPreview }: {
         if (parentId) setExpandedKeys(current => Array.from(new Set([...current, parentId])))
       },
     })
+  }
+
+  /**
+   * 上传一份 PDF 作为新文档。标题默认取文件名（去掉扩展名），传完可以直接改名——
+   * 先弹一个填标题的框会让"把手头这份 PDF 放上去"多一步，而这一步本来可有可无。
+   */
+  const uploadPdf = async (file: File) => {
+    if (file.size > PDF_MAX_BYTES) {
+      message.error('PDF 不能超过 50 MiB')
+      return
+    }
+    const parentId = parentForNew()
+    const title = (file.name.replace(/\.pdf$/i, '').trim() || 'PDF 文档').slice(0, 200)
+    const form = new FormData()
+    form.append('file', file)
+    form.append('title', title)
+    if (parentId) form.append('parentId', parentId)
+    const created = await mutate(
+      () => api<DocTreeMutation>({ method: 'POST', url: '/docs/pdf', data: form }),
+      'PDF 已上传，可以设置发布与可见范围了')
+    if (created && parentId) {
+      setExpandedKeys(current => Array.from(new Set([...current, parentId])))
+    }
+  }
+
+  /** 换掉已有 PDF 的文件。对象键跟着 publicId 走，读者手上的链接继续有效。 */
+  const replacePdf = async (file: File) => {
+    if (!selected) return
+    if (file.size > PDF_MAX_BYTES) {
+      message.error('PDF 不能超过 50 MiB')
+      return
+    }
+    const form = new FormData()
+    form.append('file', file)
+    await mutate(() => api<DocTreeMutation>({
+      method: 'PUT', url: `/docs/${selected.id}/pdf`,
+      params: { version: selected.version }, data: form,
+    }), 'PDF 已替换')
+    // 版本变了，预览要重新取一遍文件。
+    setPdfToken(token => token + 1)
   }
 
   const saveContent = async () => {
@@ -230,6 +285,10 @@ export default function DocsManagePage({ onPreview }: {
       extra={<Space size={4}>
         <Button size="small" icon={<FolderAddOutlined />} onClick={() => create('FOLDER')}>文件夹</Button>
         <Button size="small" type="primary" icon={<FileAddOutlined />} onClick={() => create('DOCUMENT')}>文档</Button>
+        <Upload accept="application/pdf,.pdf" showUploadList={false} disabled={busy}
+          beforeUpload={file => { void uploadPdf(file); return false }}>
+          <Button size="small" icon={<UploadOutlined />} disabled={busy}>PDF</Button>
+        </Upload>
         <Button size="small" icon={<ReloadOutlined />} onClick={() => void loaded.reload()} />
       </Space>}>
       <Alert type="info" showIcon className="docs-manage-hint"
@@ -276,7 +335,7 @@ export default function DocsManagePage({ onPreview }: {
           message="文件夹本身没有发布开关"
           description="它会在下面有读者能看到的文档时，自动出现在读者目录里。" />}
 
-        {selected.nodeType === 'DOCUMENT' && <>
+        {selected.nodeType !== 'FOLDER' && <>
           <Space wrap size={24}>
             <Space>
               <Typography.Text strong>发布</Typography.Text>
@@ -302,10 +361,28 @@ export default function DocsManagePage({ onPreview }: {
 
           {selected.visibility === 'MEMBERS' && selected.published && <Alert type="warning" showIcon
             message="这篇文档需要登录才能查看"
-            description="未登录的访客在目录里看不到它，直接打开链接也会被要求先登录，文档里的插图同样拒绝匿名访问。" />}
+            description={selected.nodeType === 'PDF'
+              ? '未登录的访客在目录里看不到它，直接打开链接也会被要求先登录，PDF 文件的直链同样拒绝匿名访问。'
+              : '未登录的访客在目录里看不到它，直接打开链接也会被要求先登录，文档里的插图同样拒绝匿名访问。'} />}
 
-          {detailLoading && <Skeleton active paragraph={{ rows: 8 }} />}
-          {!detailLoading && detail && <>
+          {selected.nodeType === 'PDF' && <>
+            <Space wrap>
+              <Upload accept="application/pdf,.pdf" showUploadList={false} disabled={busy}
+                beforeUpload={file => { void replacePdf(file); return false }}>
+                <Button icon={<SwapOutlined />} disabled={busy}>替换 PDF 文件</Button>
+              </Upload>
+              <Typography.Text type="secondary">
+                {selected.contentSize ? `${(selected.contentSize / 1024 / 1024).toFixed(1)} MiB · ` : ''}
+                最多 50 MiB；替换后读者手上的链接继续有效。
+              </Typography.Text>
+            </Space>
+            <DocPdfViewer key={pdfToken} path={`/docs/${selected.id}/file`}
+              title={selected.title} height="60vh" />
+          </>}
+
+          {selected.nodeType === 'DOCUMENT' && detailLoading &&
+            <Skeleton active paragraph={{ rows: 8 }} />}
+          {selected.nodeType === 'DOCUMENT' && !detailLoading && detail && <>
             <MarkdownEditor value={draft} onChange={setDraft} maxLength={100000}
               uploadUrl={`/docs/${detail.node.id}/assets`}
               placeholder="使用 Markdown 编写文档；可以直接上传插图" />

@@ -3,6 +3,7 @@ package cn.photolib.doc;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.doc.model.DocAssetEntity;
+import cn.photolib.doc.model.DocNodeEntity;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.InputStreamResource;
@@ -60,6 +61,20 @@ public class DocReaderController {
                 .contentType(MediaType.parseMediaType(asset.getContentType()))
                 .contentLength(asset.getSize())
                 .body(new InputStreamResource(service.openAsset(asset)));
+    }
+
+    /**
+     * PDF 文档本身。可见性判定和正文接口是同一套（{@code DocService.readerPdf}）：
+     * 这个直链就是 PDF 文档的正文，判松一格等于把仅限成员的文件放上公网。
+     * 缓存同样必须是 private——同一个 URL 对匿名访客可能是 403、对成员是文件。
+     */
+    @GetMapping("/{publicId}/file")
+    ResponseEntity<InputStreamResource> file(@PathVariable String publicId,
+                                             @AuthenticationPrincipal AuthenticatedUser user,
+                                             HttpServletRequest request) {
+        limit(DocRateLimiter.Action.PUBLIC_FILE, user, request);
+        DocNodeEntity node = service.readerPdf(publicId, user != null);
+        return DocPdfResponse.of(node, service.openNode(node));
     }
 
     @GetMapping("/{publicId}")

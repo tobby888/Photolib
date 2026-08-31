@@ -1,6 +1,7 @@
 package cn.photolib.common.config;
 
 import cn.photolib.common.upload.InlineImageUpload;
+import cn.photolib.common.upload.PdfUpload;
 import cn.photolib.common.util.UploadSizeLimitExceededException;
 import jakarta.servlet.ReadListener;
 import jakarta.servlet.ServletException;
@@ -69,6 +70,12 @@ public class EndpointUploadLimitFilter extends OncePerRequestFilter {
                 && (path.endsWith("/description-images") || path.endsWith("/notifications/images")
                     || (path.contains("/docs/") && path.endsWith("/assets")))) {
             return InlineImageUpload.MAX_BYTES + MULTIPART_OVERHEAD;
+        }
+        // 直接作为文档上传的 PDF。POST /api/v1/docs/pdf 建新的，PUT /api/v1/docs/{id}/pdf 换文件。
+        if (("POST".equals(request.getMethod()) && path.endsWith("/docs/pdf"))
+                || ("PUT".equals(request.getMethod()) && path.contains("/docs/")
+                    && path.endsWith("/pdf"))) {
+            return PdfUpload.MAX_BYTES + MULTIPART_OVERHEAD;
         }
         if ("POST".equals(request.getMethod()) && path.endsWith("/database-backups/upload")) {
             return DATABASE_BACKUP_MAX_BYTES + MULTIPART_OVERHEAD;

@@ -1,6 +1,7 @@
 package cn.photolib.doc;
 
 import cn.photolib.auth.AuthenticatedUser;
+import cn.photolib.doc.model.DocNodeEntity;
 import cn.photolib.doc.model.DocNodeType;
 import cn.photolib.doc.model.DocVisibility;
 import cn.photolib.user.model.UserRole;
@@ -13,9 +14,15 @@ import org.springframework.security.test.context.support.WithAnonymousUser;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
+import java.io.ByteArrayInputStream;
+
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 /**
  * 接口层的权限边界。
@@ -61,6 +68,13 @@ class DocControllerSecurityTests {
                 .isInstanceOf(AccessDeniedException.class);
         assertThatThrownBy(() -> controller.uploadAsset(7L, null, principal))
                 .isInstanceOf(AccessDeniedException.class);
+        // PDF 的三个端点和其余编辑接口同一条规则：整个控制器要 DOC_MANAGE。
+        // 预览接口尤其不能漏——它连草稿的 PDF 都给。
+        assertThatThrownBy(() -> controller.createPdf(null, "标题", null, principal))
+                .isInstanceOf(AccessDeniedException.class);
+        assertThatThrownBy(() -> controller.replacePdf(7L, 1, null, principal))
+                .isInstanceOf(AccessDeniedException.class);
+        assertThatThrownBy(() -> controller.file(7L)).isInstanceOf(AccessDeniedException.class);
 
         // 方法安全必须在解引用参数、调用 Service 之前就拒绝。
         verifyNoInteractions(service);
@@ -84,13 +98,18 @@ class DocControllerSecurityTests {
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setRemoteAddr("203.0.113.9");
 
+        when(service.readerPdf(anyString(), anyBoolean())).thenReturn(pdfNode());
+        when(service.openNode(any())).thenReturn(new ByteArrayInputStream(new byte[0]));
+
         readerController.tree(null, request);
         readerController.document("XK54YN0XKN1E657AHQZZ3TQDQ9", null, request);
+        readerController.file("XK54YN0XKN1E657AHQZZ3TQDQ9", null, request);
 
         // principal 为 null 必须原样传成 authenticated=false——
-        // 这个布尔值是"仅成员文档不外泄"的唯一依据。
+        // 这个布尔值是"仅成员文档不外泄"的唯一依据，PDF 直链也不例外。
         verify(service).readerTree(false);
         verify(service).readerDocument("XK54YN0XKN1E657AHQZZ3TQDQ9", false);
+        verify(service).readerPdf("XK54YN0XKN1E657AHQZZ3TQDQ9", false);
     }
 
     @Test
@@ -99,10 +118,24 @@ class DocControllerSecurityTests {
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setRemoteAddr("203.0.113.9");
 
+        when(service.readerPdf(anyString(), anyBoolean())).thenReturn(pdfNode());
+        when(service.openNode(any())).thenReturn(new ByteArrayInputStream(new byte[0]));
+
         readerController.tree(principal, request);
         readerController.document("XK54YN0XKN1E657AHQZZ3TQDQ9", principal, request);
+        readerController.file("XK54YN0XKN1E657AHQZZ3TQDQ9", principal, request);
 
         verify(service).readerTree(true);
         verify(service).readerDocument("XK54YN0XKN1E657AHQZZ3TQDQ9", true);
+        verify(service).readerPdf("XK54YN0XKN1E657AHQZZ3TQDQ9", true);
+    }
+
+    private DocNodeEntity pdfNode() {
+        DocNodeEntity node = new DocNodeEntity();
+        node.setPublicId("XK54YN0XKN1E657AHQZZ3TQDQ9");
+        node.setNodeType(DocNodeType.PDF);
+        node.setTitle("入部须知");
+        node.setContentSize(12L);
+        return node;
     }
 }

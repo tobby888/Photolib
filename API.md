@@ -1905,14 +1905,17 @@ type FeaturedCloseReason = 'MANUAL' | 'DEADLINE'
 
 ## 18. 文档中心
 
-管理员和部长写文档，读者在登录页前面就能读。结构是一棵 Obsidian 式的树：`FOLDER` 只是容器，`DOCUMENT` 才有 Markdown 正文；正文和插图都存在对象存储里，接口返回的是正文文本本身，不是签名地址。
+管理员和部长写文档，读者在登录页前面就能读。结构是一棵 Obsidian 式的树：`FOLDER` 只是容器，`DOCUMENT`（Markdown 正文）和 `PDF`（直接上传的 PDF 文件）都是叶子。正文、插图和 PDF 都存在对象存储里；Markdown 接口返回正文文本本身，PDF 则给一个仍需鉴权的接口地址，两者都不是签名地址。
+
+**读文档不需要任何权限码，也不需要已分配权限组**：只要账号登录成功（初始密码已改），它读到的就是"已登录成员"能看到的那份目录，包括 `MEMBERS` 文档。还没被管理员分配权限组的账号进不了系统的其他部分，但文档中心照常可读——要求登录才能看的入部材料正是给这类账号准备的。
 
 **两条访问路径，授权模型不同**：`/docs/**` 是编辑接口，整组要 `DOC_MANAGE`（默认 A、M）；`/public/docs/**` 是阅读接口，不带令牌也能调用。注意路径里的 `public` 指的是"不需要登录就能调用"，**不是"返回的都是公开内容"**——同一个接口带令牌调用会多返回仅限成员的文档。
 
 | 方法 | 路径 | 权限 | 说明 |
 | --- | --- | --- | --- |
 | GET | `/public/docs` | 无 | 读者目录树；未登录只含公开文档，带令牌则含仅成员文档 |
-| GET | `/public/docs/{publicId}` | 无 | 打开一篇已发布文档，返回 Markdown 正文 |
+| GET | `/public/docs/{publicId}` | 无 | 打开一篇已发布文档；Markdown 给正文，PDF 给 `fileUrl` |
+| GET | `/public/docs/{publicId}/file` | 无 | PDF 文档的二进制，可见范围与正文接口完全一致 |
 | GET | `/public/docs/assets/{assetId}` | 无 | 正文插图的二进制，可见范围跟随所属文档 |
 | GET | `/docs/tree` | `DOC_MANAGE` | 编辑视角的整棵树，含草稿 |
 | GET | `/docs/{id}` | `DOC_MANAGE` | 单个节点的元数据 + 正文 + 面包屑 |
@@ -1924,11 +1927,14 @@ type FeaturedCloseReason = 'MANUAL' | 'DEADLINE'
 | POST | `/docs/{id}/move` | `DOC_MANAGE` | 拖拽移动 + 同级排序 |
 | DELETE | `/docs/{id}?version` | `DOC_MANAGE` | 逻辑删除，连同整棵子树 |
 | POST | `/docs/{id}/assets` | `DOC_MANAGE` | 上传正文插图（multipart，字段名 `file`） |
+| POST | `/docs/pdf` | `DOC_MANAGE` | 上传一份 PDF 作为新文档（multipart：`file`、`title`、可选 `parentId`） |
+| PUT | `/docs/{id}/pdf?version` | `DOC_MANAGE` | 换掉这份 PDF 的文件（multipart，字段名 `file`） |
+| GET | `/docs/{id}/file` | `DOC_MANAGE` | 编辑器预览 PDF，草稿也给 |
 
 枚举：
 
 ```ts
-type DocNodeType = 'FOLDER' | 'DOCUMENT'
+type DocNodeType = 'FOLDER' | 'DOCUMENT' | 'PDF'
 type DocVisibility = 'PUBLIC' | 'MEMBERS'   // PUBLIC=未登录可读，MEMBERS=必须登录
 ```
 
@@ -1946,7 +1952,7 @@ type DocVisibility = 'PUBLIC' | 'MEMBERS'   // PUBLIC=未登录可读，MEMBERS=
 
 ### 18.2 请求与响应
 
-新建：`{ "parentId": null, "nodeType": "DOCUMENT", "title": "快速上手" }`（`parentId=null` 表示根目录，非空时必须是文件夹）。
+新建：`{ "parentId": null, "nodeType": "DOCUMENT", "title": "快速上手" }`（`parentId=null` 表示根目录，非空时必须是文件夹）。**`nodeType` 只能是 `FOLDER` 或 `DOCUMENT`**：PDF 必须带着文件走 `POST /docs/pdf`，一个没有文件的 PDF 节点既发布不了也预览不了。同一目录下两个叶子不能重名（Markdown 和 PDF 之间也算），但文件夹可以和叶子同名。
 
 保存正文：`{ "content": "# 标题\n正文", "version": 3 }`，正文上限 100,000 字符。
 
@@ -1975,9 +1981,17 @@ type DocVisibility = 'PUBLIC' | 'MEMBERS'   // PUBLIC=未登录可读，MEMBERS=
 
 读者视角的节点（`ReaderNode`）只有 `publicId`、`nodeType`、`title`、`summary`、`requiresLogin`、`updatedAt`、`children`——**没有数字 id**，读者路径一律用 `publicId` 寻址。`requiresLogin` 只对已登录读者有意义（未登录时这类文档根本不返回），用来显示一把锁。
 
-打开文档返回 `{ "publicId", "title", "content", "requiresLogin", "updatedAt", "updaterDisplayName", "breadcrumb" }`，`breadcrumb` 是从根到本篇的名称链（含自身）。
+打开文档返回 `{ "publicId", "nodeType", "title", "content", "fileUrl", "fileSize", "requiresLogin", "updatedAt", "updaterDisplayName", "breadcrumb" }`，`breadcrumb` 是从根到本篇的名称链（含自身）。两种叶子共用这一个结构：`DOCUMENT` 带 `content`、`fileUrl` 为 `null`；`PDF` 的 `content` 是空串，`fileUrl` 形如 `/api/v1/public/docs/{publicId}/file`。按 `nodeType` 决定渲染方式，不要靠 `content` 是否为空来猜。
 
-### 18.3 插图
+### 18.3 PDF 文档
+
+`POST /docs/pdf` 只接受 `application/pdf`，单份最大 50 MiB，文件头必须真的是 `%PDF-`（声明的 `Content-Type` 一律不可信）。上传后的节点**仍然是草稿、仍然默认仅成员可见**——发布和可见范围走的还是原来那两个开关，和 Markdown 文档完全一致。
+
+替换文件用 `PUT /docs/{id}/pdf?version=3`，对象键跟着 `publicId` 走，所以读者手上的链接在替换后继续有效。
+
+**客户端不要把 `fileUrl` 直接塞给 `<iframe src>`**：和插图同理，仅成员的 PDF 需要 Bearer 头，`<iframe>` 不会带令牌，只会显示一个 403 白框；编辑器预览草稿用的 `/docs/{id}/file` 更是要 `DOC_MANAGE`。统一用带鉴权头的请求取 Blob 再渲染，并在切换文档和卸载时 `URL.revokeObjectURL`——一份几十 MiB 的 PDF 留在内存里，点几篇就能把标签页撑爆。
+
+### 18.4 插图
 
 `POST /docs/{id}/assets` 接受 JPEG / PNG / WebP，单张最大 5 MiB，声明的 `Content-Type` 必须与文件魔数一致。返回 `{ "id", "url" }`，`url` 形如 `/api/v1/public/docs/assets/{assetId}`，把它写进 Markdown 的 `![](...)` 即可。
 
@@ -1985,9 +1999,9 @@ type DocVisibility = 'PUBLIC' | 'MEMBERS'   // PUBLIC=未登录可读，MEMBERS=
 
 **客户端不要用 `<img src>` 直接加载插图**：仅限成员的文档里的插图需要带 Bearer 头，`<img>` 标签不会带上令牌，会显示成一片碎图。统一用带鉴权头的请求取 Blob 再渲染，并在卸载时 `URL.revokeObjectURL`。
 
-### 18.4 限速
+### 18.5 限速
 
-三个公开阅读接口按客户端地址分别计数，**只对未登录请求生效**（带有效令牌的请求直接放行）：目录 60 次 / 10 分钟，正文 120 次 / 10 分钟，插图 600 次 / 10 分钟。超出返回 `429 RATE_LIMITED`。
+四个公开阅读接口按客户端地址分别计数，**只对未登录请求生效**（带有效令牌的请求直接放行）：目录 60 次 / 10 分钟，正文 120 次 / 10 分钟，插图 600 次 / 10 分钟，PDF 文件 60 次 / 10 分钟。超出返回 `429 RATE_LIMITED`。
 
 正常阅读不会触碰到这些额度；会撞上的是遍历式抓取。限速基于服务端进程内的固定窗口，反向代理后面无法区分真实客户端时会放行，由网关限流负责。
 

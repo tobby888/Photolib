@@ -1,5 +1,6 @@
 import {
-  FileTextOutlined, FolderOpenOutlined, FolderOutlined, LockOutlined, LoginOutlined,
+  FilePdfOutlined, FileTextOutlined, FolderOpenOutlined, FolderOutlined, LockOutlined,
+  LoginOutlined,
 } from '@ant-design/icons'
 import { Alert, Button, Empty, Result, Skeleton, Tag, Tree, Typography } from 'antd'
 import type { DataNode } from 'antd/es/tree'
@@ -8,6 +9,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ApiError, api } from './api'
 import { useAuth } from './auth'
+import DocPdfViewer from './DocPdfViewer'
 import { ancestorKeysOf, documentKeysInOrder, readerNodesToTree } from './docsTree'
 import { useLoad } from './hooks'
 import MarkdownRenderer from './MarkdownRenderer'
@@ -34,11 +36,14 @@ function toTreeData(nodes: DocReaderNode[]): DataNode[] {
     </span>,
     icon: node.nodeType === 'FOLDER'
       ? (({ expanded }: { expanded?: boolean }) => expanded ? <FolderOpenOutlined /> : <FolderOutlined />)
-      : <FileTextOutlined />,
-    isLeaf: node.nodeType === 'DOCUMENT',
+      : node.nodeType === 'PDF' ? <FilePdfOutlined /> : <FileTextOutlined />,
+    isLeaf: node.nodeType !== 'FOLDER',
     children: node.nodeType === 'FOLDER' ? toTreeData(node.children || []) : undefined,
   }))
 }
+
+/** 服务端给的是带 /api/v1 前缀的绝对地址，axios 实例的 baseURL 已经含它。 */
+const apiPath = (url: string) => (url.startsWith('/api/v1') ? url.slice('/api/v1'.length) : url)
 
 export default function DocsReader({ basePath, publicId, reloadToken = 0 }: {
   /** 目录里的链接落到哪个路由前缀下，例如 `/docs` 或 `/documents`。 */
@@ -152,9 +157,11 @@ export default function DocsReader({ basePath, publicId, reloadToken = 0 }: {
           {document.updaterDisplayName && <>{document.updaterDisplayName} · </>}
           {document.updatedAt && <>更新于 {dayjs(document.updatedAt).format('YYYY-MM-DD HH:mm')}</>}
         </Typography.Text>
-        {document.content.trim()
+        {document.nodeType === 'PDF' && document.fileUrl &&
+          <DocPdfViewer path={apiPath(document.fileUrl)} title={document.title} />}
+        {document.nodeType !== 'PDF' && (document.content.trim()
           ? <MarkdownRenderer value={document.content} />
-          : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="这篇文档还没有内容" />}
+          : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="这篇文档还没有内容" />)}
       </article>}
       {!documentLoading && !documentError && !document && !empty &&
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="从左边选一篇文档开始阅读" />}

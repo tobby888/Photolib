@@ -13,6 +13,8 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
 
 @Component
 @RequiredArgsConstructor
@@ -28,13 +30,24 @@ public class AccessTokenFilter extends OncePerRequestFilter {
                     authService.authenticate(authorization.substring(7));
             if (authenticated != null) {
                 AuthenticatedUser user = authenticated.user();
-                // 受限会话（未改初始密码，或权限组已被移除）在"登出的人也能读"的接口上
-                // 退回匿名继续，而不是拿到 403——否则它比一个登出的访客还差，
-                // 浏览器里存着令牌反而打不开公开文档。同时也不能把它当成正常成员：
-                // 这两种账号都不该看到仅限成员的内容，所以是"不设置 principal"，
+                // 未改初始密码的会话在"登出的人也能读"的接口上退回匿名继续，
+                // 而不是拿到 403——否则它比一个登出的访客还差，浏览器里存着令牌
+                // 反而打不开公开文档。但它也不算成员：初始密码还没换掉的账号
+                // 不该看到仅限成员的内容，所以是"不设置 principal"，
                 // 而不是"放行并认证"。
-                if ((user.mustChangePassword() || !user.hasSystemAccess())
-                        && isAnonymousReadableDocs(request)) {
+                if (user.mustChangePassword() && isAnonymousReadableDocs(request)) {
+                    chain.doFilter(request, response);
+                    return;
+                }
+                // 尚未分配权限组（或权限组被移除）的账号读文档时算“已登录的成员”：
+                // 它确实登录成功了，"要求登录才能看"的文档正是给这类刚入部、还没被
+                // 分配权限的同学准备的。放行的方式是设置一个不带任何 authority 的
+                // principal——身份足以让 DocService 收到 authenticated=true，
+                // 而空权限保证它碰不到任何要权限码的接口（这里只对文档读接口生效，
+                // 其余路径照旧在下面被 403 挡住）。
+                if (!user.hasSystemAccess() && isAnonymousReadableDocs(request)) {
+                    authenticate(user, List.of());
+                    authService.touch(authenticated.sessionId());
                     chain.doFilter(request, response);
                     return;
                 }
@@ -60,13 +73,17 @@ public class AccessTokenFilter extends OncePerRequestFilter {
                 }
                 user.permissions().forEach(permission ->
                         authorities.add(new SimpleGrantedAuthority(permission.name())));
-                var authentication = new UsernamePasswordAuthenticationToken(
-                        user, null, authorities);
-                SecurityContextHolder.getContext().setAuthentication(authentication);
+                authenticate(user, authorities);
                 authService.touch(authenticated.sessionId());
             }
         }
         chain.doFilter(request, response);
+    }
+
+    private void authenticate(AuthenticatedUser user,
+                              Collection<? extends SimpleGrantedAuthority> authorities) {
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(user, null, authorities));
     }
 
     private boolean isAllowedBeforePasswordChange(String path) {
