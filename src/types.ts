@@ -397,7 +397,8 @@ export interface FeaturedDocumentDownload {
 // 文档中心
 // ---------------------------------------------------------------------------
 
-export type DocNodeType = 'FOLDER' | 'DOCUMENT'
+/** FOLDER 是容器；DOCUMENT 的正文是 Markdown，PDF 的正文就是上传的那份文件。 */
+export type DocNodeType = 'FOLDER' | 'DOCUMENT' | 'PDF'
 /** PUBLIC：未登录也能看；MEMBERS：必须登录。与 published 正交，两个条件都要满足。 */
 export type DocVisibility = 'PUBLIC' | 'MEMBERS'
 
@@ -447,10 +448,18 @@ export interface DocReaderNode {
   children: DocReaderNode[]
 }
 
+/**
+ * 一篇打开的文档。两种叶子共用这一个结构：Markdown 文档带 content，
+ * PDF 文档带 fileUrl（要带令牌取 Blob，不能直接塞给 iframe），另一个为空。
+ */
 export interface DocReaderDocument {
   publicId: string
+  nodeType: DocNodeType
   title: string
   content: string
+  /** 形如 `/api/v1/public/docs/{publicId}/file`，只有 PDF 文档有。 */
+  fileUrl?: string | null
+  fileSize?: number | null
   requiresLogin: boolean
   updatedAt?: string | null
   updaterDisplayName?: string | null

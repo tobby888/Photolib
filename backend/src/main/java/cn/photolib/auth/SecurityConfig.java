@@ -52,7 +52,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET,
                                 "/api/v1/public/docs",
                                 "/api/v1/public/docs/*",
-                                "/api/v1/public/docs/assets/*").permitAll()
+                                "/api/v1/public/docs/assets/*",
+                                "/api/v1/public/docs/*/file").permitAll()
                         .requestMatchers(HttpMethod.POST,
                                 "/api/v1/public/recruitments/*/drafts",
                                 "/api/v1/public/recruitments/*/drafts/*/submit",

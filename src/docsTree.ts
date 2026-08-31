@@ -93,9 +93,13 @@ export function findManageNode(nodes: DocManageNode[], id: string): DocManageNod
   return undefined
 }
 
-/** 按目录顺序展开所有文档节点的 key，用于"默认打开第一篇"。 */
+/**
+ * 按目录顺序展开所有文档节点的 key，用于"默认打开第一篇"。
+ * 判据是"不是文件夹"而不是"等于 DOCUMENT"：PDF 文档同样是能打开的叶子，
+ * 漏掉它的话一个只放了 PDF 的目录开局会是一片空白。
+ */
 export function documentKeysInOrder(tree: DocTreeNodeLike[]): string[] {
-  return tree.flatMap(node => node.nodeType === 'DOCUMENT'
+  return tree.flatMap(node => node.nodeType !== 'FOLDER'
     ? [node.key]
     : documentKeysInOrder(node.children))
 }

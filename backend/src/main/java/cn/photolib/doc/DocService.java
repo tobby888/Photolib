@@ -4,6 +4,7 @@ import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.common.upload.InlineImageUpload;
+import cn.photolib.common.upload.PdfUpload;
 import cn.photolib.common.util.PublicId;
 import cn.photolib.doc.mapper.DocAssetMapper;
 import cn.photolib.doc.mapper.DocNodeMapper;
@@ -51,8 +52,16 @@ import java.util.Objects;
  * （见 {@code DocAssetMapper.findReadable}）。三处判定必须同时成立才算真正挡住，
  * 少一处就等于把内容从另一个门放了出去。</p>
  *
- * <p><b>正文不在数据库里。</b>Markdown 正文和插图都在对象存储：
- * {@code docs/{publicId}/content.md} 与 {@code docs/assets/{assetId}.{ext}}。
+ * <p><b>叶子有两种，规则完全一样。</b>{@code DOCUMENT} 的正文是 Markdown，
+ * {@code PDF} 的"正文"就是上传的那份文件；发布、可见范围、目录剪枝、限速
+ * 全部共用同一套判定。因此凡是判断"是不是叶子"的地方都写
+ * {@code !nodeType.isFolder()}——写死 {@code == DOCUMENT} 会让 PDF 悄悄漏出目录，
+ * 或者永远发布不了。反过来，读写 Markdown 正文的两处（{@link #saveContent}、
+ * {@link #readContent}）必须收紧到 {@code DOCUMENT}：PDF 的 object_key 指向二进制。</p>
+ *
+ * <p><b>正文不在数据库里。</b>Markdown 正文、插图和 PDF 都在对象存储：
+ * {@code docs/{publicId}/content.md}、{@code docs/assets/{assetId}.{ext}}
+ * 与 {@code docs/{publicId}/document.pdf}。
  * 数据库只存 object_key 和用于列表的摘要。由此产生一条必须记住的运维事实：
  * 数据库备份/回滚不会同步对象存储，回滚之后正文可能比元数据新或旧。
  * 因此 {@link #readContent} 读不到对象时返回空正文并告警，绝不抛 500——
@@ -78,6 +87,10 @@ public class DocService {
     private static final String CONTENT_TYPE = "text/markdown; charset=UTF-8";
     /** 插图的公开地址前缀；写进正文的 Markdown 里，必须和公开控制器的映射一致。 */
     public static final String ASSET_URL_PREFIX = "/api/v1/public/docs/assets/";
+    /** PDF 文档的公开地址前后缀，拼出来必须和 {@code DocReaderController} 的映射一致。 */
+    public static final String FILE_URL_PREFIX = "/api/v1/public/docs/";
+    public static final String FILE_URL_SUFFIX = "/file";
+    private static final String PDF_CONTENT_TYPE = "application/pdf";
 
     private final DocNodeMapper nodeMapper;
     private final DocAssetMapper assetMapper;
@@ -122,16 +135,50 @@ public class DocService {
      */
     public ReaderDocument readerDocument(String publicId, boolean authenticated) {
         DocNodeEntity node = publicId == null ? null : nodeMapper.findByPublicId(publicId.trim());
-        if (node == null || node.getNodeType() != DocNodeType.DOCUMENT
+        if (node == null || node.getNodeType().isFolder()
                 || !Boolean.TRUE.equals(node.getPublished())) {
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "文档不存在或尚未发布");
         }
         if (!visibleTo(node, authenticated)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "该文档需要登录后查看，请先登录");
         }
-        return new ReaderDocument(node.getPublicId(), node.getTitle(), readContent(node),
+        boolean pdf = node.getNodeType() == DocNodeType.PDF;
+        return new ReaderDocument(node.getPublicId(), node.getNodeType(), node.getTitle(),
+                pdf ? "" : readContent(node), pdf ? fileUrl(node) : null,
+                pdf ? node.getContentSize() : null,
                 requiresLogin(node), node.getUpdatedAt(), node.getUpdaterDisplayName(),
                 breadcrumb(node));
+    }
+
+    /**
+     * 取一份 PDF 文档本身，供读者接口按流回吐。可见性判定和 {@link #readerDocument}
+     * 完全一样，而且必须一样：PDF 的直链就是它的正文，判松一格等于把仅限成员的
+     * 文件放到了公网上。
+     */
+    public DocNodeEntity readerPdf(String publicId, boolean authenticated) {
+        DocNodeEntity node = publicId == null ? null : nodeMapper.findByPublicId(publicId.trim());
+        if (node == null || node.getNodeType() != DocNodeType.PDF
+                || !Boolean.TRUE.equals(node.getPublished())
+                || !StringUtils.hasText(node.getObjectKey())) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "文档不存在或尚未发布");
+        }
+        if (!visibleTo(node, authenticated)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "该文档需要登录后查看，请先登录");
+        }
+        return node;
+    }
+
+    /** 编辑视角取 PDF：草稿也要能预览，所以这里不看发布状态，授权由控制器的 DOC_MANAGE 兜底。 */
+    public DocNodeEntity managedPdf(long id) {
+        DocNodeEntity node = requireNode(id);
+        if (node.getNodeType() != DocNodeType.PDF || !StringUtils.hasText(node.getObjectKey())) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "这个节点没有 PDF 文件");
+        }
+        return node;
+    }
+
+    public InputStream openNode(DocNodeEntity node) {
+        return storage.open(node.getObjectKey());
     }
 
     /**
@@ -156,6 +203,12 @@ public class DocService {
     @Transactional
     public TreeMutation create(Long parentId, DocNodeType nodeType, String title,
                                AuthenticatedUser user) {
+        // PDF 节点没有"先建个空的、回头再写"这一步：它的正文就是那份文件，
+        // 一个没有文件的 PDF 节点既发布不了也预览不了，只会挂在目录里当死链，
+        // 所以它只能由 createPdf 带着文件一起建出来。
+        if (nodeType == DocNodeType.PDF) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "PDF 文档请通过上传文件创建");
+        }
         if (nodeMapper.countAll() >= MAX_NODES) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
                     "文档数量已达上限（" + MAX_NODES + "），请先清理不再需要的内容");
@@ -210,7 +263,10 @@ public class DocService {
     public DocumentDetail saveContent(long id, String content, int version, AuthenticatedUser user) {
         DocNodeEntity node = requireNode(id);
         if (node.getNodeType() != DocNodeType.DOCUMENT) {
-            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "文件夹没有正文");
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                    node.getNodeType() == DocNodeType.PDF
+                            ? "PDF 文档没有可编辑的正文，请直接替换文件"
+                            : "文件夹没有正文");
         }
         String text = content == null ? "" : content;
         if (text.length() > MAX_CONTENT_CHARS) {
@@ -229,7 +285,7 @@ public class DocService {
     @Transactional
     public TreeMutation setPublished(long id, boolean published, int version, AuthenticatedUser user) {
         DocNodeEntity node = requireNode(id);
-        if (node.getNodeType() != DocNodeType.DOCUMENT) {
+        if (node.getNodeType().isFolder()) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR,
                     "只有文档需要发布；文件夹会在它下面有已发布文档时自动出现在公开目录里");
         }
@@ -254,7 +310,7 @@ public class DocService {
     public TreeMutation setVisibility(long id, DocVisibility visibility, int version,
                                       AuthenticatedUser user) {
         DocNodeEntity node = requireNode(id);
-        if (node.getNodeType() != DocNodeType.DOCUMENT) {
+        if (node.getNodeType().isFolder()) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR,
                     "只有文档能设置可见范围；文件夹跟随它下面的文档");
         }
@@ -337,6 +393,87 @@ public class DocService {
     }
 
     /**
+     * 直接上传一份 PDF 作为文档。
+     *
+     * <p>和 Markdown 文档的区别只在正文放在哪：这里的"正文"就是上传的文件本身，
+     * 所以节点和文件必须一次建出来（{@link #create} 因此拒绝 PDF 类型）。
+     * 建出来的节点仍是草稿、仍默认 {@code MEMBERS}，发布和可见范围走的还是
+     * 原来那两个开关——读者那边不该因为格式不同就多出一套规则。</p>
+     *
+     * <p>顺序是"先插数据库、再写对象"：写对象失败会让事务回滚，不留下一个
+     * 指向空对象的节点。反过来（先写对象再插）则要靠 catch 里的补偿删除，
+     * 而那次删除本身也可能失败。已知的窄窗口和 {@link #saveContent} 相同——
+     * 对象写成功但提交失败会留下一个孤儿对象，它不被任何接口引用。</p>
+     *
+     * <p>文件不读进内存：{@link MultipartFile#getInputStream()} 原样交给对象存储，
+     * 校验只看文件头（见 {@link PdfUpload}）。一份 50 MiB 的 byte[] 乘上几个
+     * 并发上传就足以把后端打挂。</p>
+     */
+    @Transactional
+    public TreeMutation createPdf(Long parentId, String title, MultipartFile file,
+                                  AuthenticatedUser user) throws IOException {
+        PdfUpload.validate(file);
+        if (nodeMapper.countAll() >= MAX_NODES) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
+                    "文档数量已达上限（" + MAX_NODES + "），请先清理不再需要的内容");
+        }
+        String cleanTitle = normalizeTitle(title);
+        if (parentId != null) {
+            DocNodeEntity parent = requireNode(parentId);
+            requireFolder(parent);
+            if (depthOf(parent) + 1 > MAX_DEPTH) {
+                throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                        "目录层级最多 " + MAX_DEPTH + " 层");
+            }
+        }
+        requireUniqueTitle(parentId, cleanTitle, DocNodeType.PDF, null);
+        DocNodeEntity node = new DocNodeEntity();
+        node.setPublicId(PublicId.next());
+        node.setParentId(parentId);
+        node.setNodeType(DocNodeType.PDF);
+        node.setTitle(cleanTitle);
+        node.setSortOrder(nodeMapper.maxSortOrder(parentId) + 1);
+        node.setPublished(false);
+        node.setVisibility(DocVisibility.MEMBERS);
+        node.setObjectKey(pdfObjectKey(node.getPublicId()));
+        node.setContentSize(file.getSize());
+        node.setCreatedBy(user.id());
+        node.setUpdatedBy(user.id());
+        nodeMapper.insert(node);
+        storePdf(node.getObjectKey(), file);
+        return new TreeMutation(tree(), node.getId());
+    }
+
+    /**
+     * 换掉一份已有 PDF 文档的文件。对象键不变（跟着 publicId 走），所以读者手上的
+     * 链接继续有效，刷新一下就是新版本。顺序同样是先过乐观锁再写对象。
+     */
+    @Transactional
+    public TreeMutation replacePdf(long id, MultipartFile file, int version, AuthenticatedUser user)
+            throws IOException {
+        PdfUpload.validate(file);
+        DocNodeEntity node = requireNode(id);
+        if (node.getNodeType() != DocNodeType.PDF) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "只有 PDF 文档能替换文件");
+        }
+        String objectKey = pdfObjectKey(node.getPublicId());
+        requireUpdated(nodeMapper.updatePdf(id, objectKey, file.getSize(), user.id(), version,
+                LocalDateTime.now()));
+        storePdf(objectKey, file);
+        return new TreeMutation(tree(), id);
+    }
+
+    private String pdfObjectKey(String publicId) {
+        return "docs/" + publicId + "/document.pdf";
+    }
+
+    private void storePdf(String objectKey, MultipartFile file) throws IOException {
+        try (InputStream input = file.getInputStream()) {
+            storage.put(objectKey, input, file.getSize(), PDF_CONTENT_TYPE);
+        }
+    }
+
+    /**
      * 正文插图。必须挂在一篇已存在的文档上——图片的公开可见性完全跟随所属文档的
      * 发布状态，没有归属就无从判定，那样的图片只能一律拒绝，等于上传了个死链。
      */
@@ -401,9 +538,9 @@ public class DocService {
     }
 
     private void requireUniqueTitle(Long parentId, String title, DocNodeType nodeType, Long excludeId) {
-        if (nodeMapper.countSiblingTitle(parentId, title, nodeType.name(), excludeId) > 0) {
+        if (nodeMapper.countSiblingTitle(parentId, title, nodeType.isFolder(), excludeId) > 0) {
             throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE,
-                    "同一目录下已经有同名的" + (nodeType == DocNodeType.FOLDER ? "文件夹" : "文档"));
+                    "同一目录下已经有同名的" + (nodeType.isFolder() ? "文件夹" : "文档"));
         }
     }
 
@@ -443,7 +580,7 @@ public class DocService {
         if (depth > MAX_DEPTH) return List.of();
         List<ReaderNode> result = new ArrayList<>();
         for (DocNodeEntity node : children.getOrDefault(parentId, List.of())) {
-            if (node.getNodeType() == DocNodeType.DOCUMENT) {
+            if (!node.getNodeType().isFolder()) {
                 if (Boolean.TRUE.equals(node.getPublished()) && visibleTo(node, authenticated)) {
                     result.add(toReader(node, List.of()));
                 }
@@ -532,6 +669,8 @@ public class DocService {
      * 桶迁移这类运维事故不应该把公开文档站变成一片 500。
      */
     private String readContent(DocNodeEntity node) {
+        // PDF 的 object_key 指向二进制文件，绝不能按 UTF-8 读出来当正文。
+        if (node.getNodeType() != DocNodeType.DOCUMENT) return "";
         if (!StringUtils.hasText(node.getObjectKey())) return "";
         try (InputStream input = storage.open(node.getObjectKey())) {
             return new String(input.readNBytes(MAX_CONTENT_BYTES), StandardCharsets.UTF_8);
@@ -556,6 +695,10 @@ public class DocService {
     private ReaderNode toReader(DocNodeEntity node, List<ReaderNode> children) {
         return new ReaderNode(node.getPublicId(), node.getNodeType(), node.getTitle(),
                 node.getSummary(), requiresLogin(node), node.getUpdatedAt(), children);
+    }
+
+    private String fileUrl(DocNodeEntity node) {
+        return FILE_URL_PREFIX + node.getPublicId() + FILE_URL_SUFFIX;
     }
 
     // ------------------------------------------------------------------
@@ -585,7 +728,13 @@ public class DocService {
                              List<ReaderNode> children) {
     }
 
-    public record ReaderDocument(String publicId, String title, String content,
+    /**
+     * 一篇打开的文档。两种叶子共用这一个视图：Markdown 文档带 {@code content}，
+     * PDF 文档带 {@code fileUrl}（前端要带令牌取 Blob，不能直接塞给 iframe），
+     * 另一个字段为空。刻意不拆成两个接口——拆开就有两处可见性判定。
+     */
+    public record ReaderDocument(String publicId, DocNodeType nodeType, String title,
+                                 String content, String fileUrl, Long fileSize,
                                  boolean requiresLogin, LocalDateTime updatedAt,
                                  String updaterDisplayName, List<String> breadcrumb) {
     }

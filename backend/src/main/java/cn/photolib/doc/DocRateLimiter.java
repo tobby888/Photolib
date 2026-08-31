@@ -52,7 +52,9 @@ public class DocRateLimiter {
         /** 正文。人正常读文档十分钟内点不满 120 篇，脚本遍历会立刻撞上。 */
         PUBLIC_DOCUMENT(120, Duration.ofMinutes(10)),
         /** 图片。一篇图多的文档就可能有几十张，所以额度必须比正文宽得多。 */
-        PUBLIC_ASSET(600, Duration.ofMinutes(10));
+        PUBLIC_ASSET(600, Duration.ofMinutes(10)),
+        /** PDF 文件。单个响应可能有几十 MiB，所以额度比正文还紧。 */
+        PUBLIC_FILE(60, Duration.ofMinutes(10));
 
         private final int limit;
         private final Duration window;

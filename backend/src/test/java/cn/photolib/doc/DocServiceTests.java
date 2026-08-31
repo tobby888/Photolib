@@ -4,6 +4,7 @@ import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.doc.mapper.DocNodeMapper;
+import cn.photolib.doc.model.DocNodeEntity;
 import cn.photolib.doc.model.DocNodeType;
 import cn.photolib.doc.model.DocVisibility;
 import cn.photolib.storage.ObjectStorageService;
@@ -35,6 +36,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Transactional
 class DocServiceTests {
     private static final long MINISTER_ID = 9_901L;
+    private static final byte[] PDF_BYTES = "%PDF-1.4 假装这是一份手册".getBytes(StandardCharsets.UTF_8);
 
     @Autowired private DocService service;
     @Autowired private DocNodeMapper nodeMapper;
@@ -268,6 +270,120 @@ class DocServiceTests {
         assertThat(service.readerAsset(asset.id(), false).getNodeId()).isEqualTo(id);
     }
 
+    // ------------------------------------------------------------------
+    // PDF 文档
+    // ------------------------------------------------------------------
+
+    @Test
+    void aPdfBecomesADraftDocumentWithItsFileInObjectStorage() throws IOException {
+        long id = service.createPdf(null, "入部须知.pdf", pdfUpload(), minister).focusId();
+        DocNodeEntity node = nodeMapper.selectById(id);
+
+        assertThat(node.getNodeType()).isEqualTo(DocNodeType.PDF);
+        // 传上来就是草稿、就是仅成员可见：和 Markdown 文档同一条安全默认值。
+        assertThat(node.getPublished()).isFalse();
+        assertThat(node.getVisibility()).isEqualTo(DocVisibility.MEMBERS);
+        assertThat(node.getObjectKey()).isEqualTo("docs/" + node.getPublicId() + "/document.pdf");
+        assertThat(read(node.getObjectKey())).startsWith("%PDF-");
+        assertThat(node.getContentSize()).isEqualTo(PDF_BYTES.length);
+    }
+
+    @Test
+    void aPdfNodeCannotBeCreatedWithoutItsFile() {
+        // 没有文件的 PDF 节点既发布不了也预览不了，只会挂在目录里当死链。
+        assertThatThrownBy(() -> service.create(null, DocNodeType.PDF, "空壳", minister))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo(ErrorCode.VALIDATION_ERROR);
+    }
+
+    @Test
+    void bytesThatAreNotAPdfAreRejectedNoMatterWhatTheContentTypeClaims() {
+        MockMultipartFile disguised = new MockMultipartFile(
+                "file", "伪装.pdf", "application/pdf", "GIF89a not a pdf".getBytes(StandardCharsets.UTF_8));
+        assertThatThrownBy(() -> service.createPdf(null, "伪装", disguised, minister))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo(ErrorCode.UNSUPPORTED_FILE_TYPE);
+        // 被拒的上传不能留下节点。
+        assertThat(service.tree()).isEmpty();
+    }
+
+    @Test
+    void aPdfDocumentObeysTheSamePublishAndVisibilitySwitchesAsMarkdown() throws IOException {
+        long id = service.createPdf(null, "内部流程", pdfUpload(), minister).focusId();
+        String publicId = nodeMapper.selectById(id).getPublicId();
+
+        // 草稿：所有读者都看不到，包括已登录的。
+        assertThat(service.readerTree(true)).isEmpty();
+        assertThatThrownBy(() -> service.readerPdf(publicId, true))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
+
+        service.setPublished(id, true, version(id), minister);
+
+        // 已发布但仅限成员：目录里对匿名访客整条隐藏，文件直链同样被拒——
+        // PDF 的直链就是它的正文，判松一格等于把内部文件放上公网。
+        assertThat(service.readerTree(false)).isEmpty();
+        assertThatThrownBy(() -> service.readerPdf(publicId, false))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo(ErrorCode.FORBIDDEN);
+        assertThat(service.readerTree(true)).extracting(DocService.ReaderNode::nodeType)
+                .containsExactly(DocNodeType.PDF);
+        assertThat(service.readerPdf(publicId, true).getId()).isEqualTo(id);
+
+        service.setVisibility(id, DocVisibility.PUBLIC, version(id), minister);
+        assertThat(service.readerPdf(publicId, false).getId()).isEqualTo(id);
+    }
+
+    @Test
+    void openingAPdfDocumentGivesAFileLinkInsteadOfMarkdownContent() throws IOException {
+        long id = service.createPdf(null, "手册", pdfUpload(), minister).focusId();
+        service.setPublished(id, true, version(id), minister);
+        String publicId = nodeMapper.selectById(id).getPublicId();
+
+        DocService.ReaderDocument opened = service.readerDocument(publicId, true);
+
+        assertThat(opened.nodeType()).isEqualTo(DocNodeType.PDF);
+        // 正文必须是空串而不是把 PDF 字节按 UTF-8 读出来的一堆乱码。
+        assertThat(opened.content()).isEmpty();
+        assertThat(opened.fileUrl()).isEqualTo("/api/v1/public/docs/" + publicId + "/file");
+        assertThat(opened.requiresLogin()).isTrue();
+    }
+
+    @Test
+    void replacingThePdfKeepsTheLinkAndRejectsAStaleVersion() throws IOException {
+        long id = service.createPdf(null, "会更新的手册", pdfUpload(), minister).focusId();
+        String objectKey = nodeMapper.selectById(id).getObjectKey();
+
+        service.replacePdf(id, pdfUpload("%PDF-1.7 第二版"), version(id), minister);
+
+        // 对象键跟着 publicId 走，所以读者手上的链接继续有效。
+        assertThat(nodeMapper.selectById(id).getObjectKey()).isEqualTo(objectKey);
+        assertThat(read(objectKey)).contains("第二版");
+        assertThatThrownBy(() -> service.replacePdf(id, pdfUpload(), 1, minister))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo(ErrorCode.RESOURCE_STATE_CONFLICT);
+    }
+
+    @Test
+    void aPdfHasNoMarkdownBodyToEdit() throws IOException {
+        long id = service.createPdf(null, "只读的手册", pdfUpload(), minister).focusId();
+        assertThatThrownBy(() -> service.saveContent(id, "试图写正文", version(id), minister))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo(ErrorCode.VALIDATION_ERROR);
+    }
+
+    @Test
+    void aPdfAndAMarkdownDocumentCannotShareANameInTheSameFolder() throws IOException {
+        document(null, "同名的东西");
+        // 两种叶子在目录里长得一样，同名的话读者分不出点开的是哪个。
+        MockMultipartFile file = pdfUpload();
+        assertThatThrownBy(() -> service.createPdf(null, "同名的东西", file, minister))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo(ErrorCode.DUPLICATE_RESOURCE);
+        // 文件夹仍然可以同名，Obsidian 式的手感没变。
+        assertThat(service.create(null, DocNodeType.FOLDER, "同名的东西", minister).focusId()).isNotNull();
+    }
+
     @Test
     void staleVersionsAreRejectedInsteadOfOverwritingSomeoneElsesEdit() {
         long id = document(null, "并发编辑");
@@ -309,6 +425,16 @@ class DocServiceTests {
         } catch (IOException failure) {
             throw new IllegalStateException(failure);
         }
+    }
+
+    /** 最小的合法 PDF：够通过文件头校验即可——这里验的是规则，不是 PDF 解析。 */
+    private MockMultipartFile pdfUpload() {
+        return pdfUpload(new String(PDF_BYTES, StandardCharsets.UTF_8));
+    }
+
+    private MockMultipartFile pdfUpload(String content) {
+        return new MockMultipartFile("file", "文档.pdf", "application/pdf",
+                content.getBytes(StandardCharsets.UTF_8));
     }
 
     /** 最小的合法 PNG 头，够通过魔数校验即可——这里验的是授权，不是图像解码。 */

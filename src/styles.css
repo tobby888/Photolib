@@ -2397,6 +2397,17 @@ body {
 .docs-tree-label .ant-tag { margin-inline-end: 0; font-size: 11px; line-height: 17px; }
 .docs-tree-lock { color: var(--studio-amber, #e9ba70); font-size: 12px; }
 
+/* PDF 内嵌阅读器。iframe 必须有显式高度，否则默认的 150px 只能看到一条边。 */
+.docs-pdf { display: flex; flex-direction: column; gap: 12px; }
+.docs-pdf-actions { flex-wrap: wrap; }
+.docs-pdf-frame {
+  width: 100%;
+  min-height: 320px;
+  border: 1px solid var(--studio-rule, #e4e3dc);
+  border-radius: 10px;
+  background: var(--studio-surface, #fffefa);
+}
+
 .docs-manage-page {
   display: grid;
   grid-template-columns: minmax(0, 320px) minmax(0, 1fr);

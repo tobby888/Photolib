@@ -204,12 +204,19 @@ function Shell() {
 
   if (!user) return <Navigate to="/login" replace state={{ from: location }} />
   if (user.mustChangePassword) return <Navigate to="/initial-password" replace />
+  // 还没分配权限组的账号进不了工作台，但文档中心要留一个入口：新同学登录后
+  // 第一件事往往就是读"要求登录才能看"的入部须知，而后端已经把这类会话当成
+  // 已登录的成员来判可见范围（见 AccessTokenFilter）。
   if (!hasSystemAccess(user)) return <div className="access-pending-page">
     <Result status="403" title="账号暂未分配可用权限"
-      subTitle="原权限组可能已被删除。您仍可登录账号，但暂时无法进入系统，请联系管理员重新分配权限组。"
-      extra={<Button type="primary" onClick={async () => {
-        await logout(); navigate('/login')
-      }}>退出登录</Button>} />
+      subTitle="原权限组可能已被删除。您仍可登录账号，但暂时无法进入系统，请联系管理员重新分配权限组。文档中心仍然可以正常查看。"
+      extra={<Space>
+        <Button type="primary" icon={<ReadOutlined />}
+          onClick={() => navigate('/docs')}>查看文档中心</Button>
+        <Button onClick={async () => {
+          await logout(); navigate('/login')
+        }}>退出登录</Button>
+      </Space>} />
   </div>
   const selected = location.pathname.startsWith('/recruitment-applications/')
     ? '/recruitments'

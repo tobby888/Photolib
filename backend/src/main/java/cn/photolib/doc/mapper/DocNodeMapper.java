@@ -47,13 +47,19 @@ public interface DocNodeMapper extends BaseMapper<DocNodeEntity> {
     DocNodeEntity findByPublicId(@Param("publicId") String publicId);
 
     /**
-     * 同级重名检查。按 node_type 分开判：Obsidian 里同名的文件夹和笔记可以共存，
-     * 这里保持同样的手感。根目录的 parent_id 是 NULL，所以不能直接写 {@code =}。
+     * 同级重名检查。只按"文件夹还是叶子"分开判，不按 node_type：Obsidian 里
+     * 同名的文件夹和笔记可以共存，这里保持同样的手感；但一篇 Markdown 文档和
+     * 一份 PDF 在目录里长得一模一样，同名的话读者根本分不出点开的是哪个，
+     * 所以两种叶子之间必须查重。根目录的 parent_id 是 NULL，不能直接写 {@code =}。
      */
     @Select("""
             <script>
             SELECT COUNT(*) FROM doc_node
-            WHERE deleted=FALSE AND node_type=#{nodeType} AND LOWER(title)=LOWER(#{title})
+            WHERE deleted=FALSE AND LOWER(title)=LOWER(#{title})
+            <choose>
+              <when test="folder">AND node_type='FOLDER'</when>
+              <otherwise>AND node_type &lt;&gt; 'FOLDER'</otherwise>
+            </choose>
             <choose>
               <when test="parentId == null">AND parent_id IS NULL</when>
               <otherwise>AND parent_id=#{parentId}</otherwise>
@@ -62,7 +68,7 @@ public interface DocNodeMapper extends BaseMapper<DocNodeEntity> {
             </script>
             """)
     long countSiblingTitle(@Param("parentId") Long parentId, @Param("title") String title,
-                           @Param("nodeType") String nodeType, @Param("excludeId") Long excludeId);
+                           @Param("folder") boolean folder, @Param("excludeId") Long excludeId);
 
     @Select("SELECT COUNT(*) FROM doc_node WHERE deleted=FALSE")
     long countAll();
@@ -98,11 +104,28 @@ public interface DocNodeMapper extends BaseMapper<DocNodeEntity> {
                       @Param("updatedBy") long updatedBy, @Param("version") int version,
                       @Param("now") LocalDateTime now);
 
+    /**
+     * 替换 PDF 文件本身。和 {@link #updateContent} 分开写而不是复用：那条语句
+     * 会一并写 summary（Markdown 正文的纯文本投影），PDF 没有这样的投影，
+     * 复用只会把摘要覆盖成 null 或一段猜出来的文字。node_type 条件同样必须
+     * 收紧到 PDF——把一份 PDF 的 object_key 写到 Markdown 文档上，
+     * 读正文时会得到一堆二进制乱码。
+     */
+    @Update("""
+            UPDATE doc_node
+            SET object_key=#{objectKey}, content_size=#{contentSize},
+                updated_by=#{updatedBy}, version=version+1, updated_at=#{now}
+            WHERE id=#{id} AND deleted=FALSE AND version=#{version} AND node_type='PDF'
+            """)
+    int updatePdf(@Param("id") long id, @Param("objectKey") String objectKey,
+                  @Param("contentSize") long contentSize, @Param("updatedBy") long updatedBy,
+                  @Param("version") int version, @Param("now") LocalDateTime now);
+
     @Update("""
             UPDATE doc_node
             SET published=#{published}, published_at=#{publishedAt}, updated_by=#{updatedBy},
                 version=version+1, updated_at=#{now}
-            WHERE id=#{id} AND deleted=FALSE AND version=#{version} AND node_type='DOCUMENT'
+            WHERE id=#{id} AND deleted=FALSE AND version=#{version} AND node_type <> 'FOLDER'
             """)
     int updatePublished(@Param("id") long id, @Param("published") boolean published,
                         @Param("publishedAt") LocalDateTime publishedAt,
@@ -114,7 +137,7 @@ public interface DocNodeMapper extends BaseMapper<DocNodeEntity> {
             UPDATE doc_node
             SET visibility=#{visibility}, updated_by=#{updatedBy},
                 version=version+1, updated_at=#{now}
-            WHERE id=#{id} AND deleted=FALSE AND version=#{version} AND node_type='DOCUMENT'
+            WHERE id=#{id} AND deleted=FALSE AND version=#{version} AND node_type <> 'FOLDER'
             """)
     int updateVisibility(@Param("id") long id, @Param("visibility") String visibility,
                          @Param("updatedBy") long updatedBy, @Param("version") int version,
