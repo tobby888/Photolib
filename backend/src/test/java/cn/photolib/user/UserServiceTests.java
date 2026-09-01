@@ -139,6 +139,60 @@ class UserServiceTests {
     }
 
     @Test
+    void createUser_shouldTrimAndKeepTheCaseOfTheWecomUserid() {
+        UserService.CreatedUser created = userService.create(new UserService.CreateUser(
+                "wecom-bound", "企微绑定账号", UserRole.MINISTER, null, null, null,
+                "  ZhangSan  ", null, null));
+
+        // 大小写按管理员在企微后台看到的写法保留，只去空白。
+        assertThat(created.user().wecomUserid()).isEqualTo("ZhangSan");
+    }
+
+    @Test
+    void createUser_withAnotherUsersWecomUserid_shouldThrowException() {
+        userService.create(new UserService.CreateUser(
+                "wecom-owner", "企微所有者", UserRole.MINISTER, null, null, null,
+                "ZhangSan", null, null));
+
+        assertThatThrownBy(() -> userService.create(new UserService.CreateUser(
+                "wecom-duplicate", "重复绑定", UserRole.MINISTER, null, null, null,
+                "ZhangSan", null, null)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("企业微信 UserID 已被其他用户使用");
+    }
+
+    @Test
+    void updateUser_shouldBindAndClearTheWecomUserid() {
+        UserService.CreatedUser created = userService.create(new UserService.CreateUser(
+                "wecom-editable", "可改绑账号", UserRole.MINISTER, null, null, null));
+
+        UserService.UserView bound = userService.update(created.user().id(),
+                new UserService.UpdateUser("可改绑账号", UserRole.MINISTER, null, null, null,
+                        "LiSi", true, 1, null, null));
+        UserService.UserView cleared = userService.update(created.user().id(),
+                new UserService.UpdateUser("可改绑账号", UserRole.MINISTER, null, null, null,
+                        null, true, bound.version(), null, null));
+
+        assertThat(bound.wecomUserid()).isEqualTo("LiSi");
+        assertThat(cleared.wecomUserid()).isNull();
+    }
+
+    /** 软删除后唯一索引仍然占位，不清掉的话这个人换账号回来就绑不上同一个 userid。 */
+    @Test
+    void deleteUser_shouldReleaseTheWecomUseridForRebinding() {
+        UserService.CreatedUser leaving = userService.create(new UserService.CreateUser(
+                "wecom-leaving", "离职账号", UserRole.MINISTER, null, null, null,
+                "ZhangSan", null, null));
+
+        userService.delete(leaving.user().id(), null);
+
+        UserService.CreatedUser rejoining = userService.create(new UserService.CreateUser(
+                "wecom-rejoining", "重新入职", UserRole.MINISTER, null, null, null,
+                "ZhangSan", null, null));
+        assertThat(rejoining.user().wecomUserid()).isEqualTo("ZhangSan");
+    }
+
+    @Test
     void updateCampus_shouldAssignCampusToLegacyManagerWithoutCampus() {
         UserService.CreatedUser created = userService.create(new UserService.CreateUser(
                 "legacy-manager", "历史负责人", UserRole.CAMPUS_MANAGER,

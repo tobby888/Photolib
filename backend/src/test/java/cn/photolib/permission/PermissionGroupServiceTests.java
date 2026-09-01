@@ -71,7 +71,7 @@ class PermissionGroupServiceTests {
                 "PHOTO_READER", "双校区图库查看", "只允许查看图库",
                 DataScope.CAMPUS, PhotoVisibility.SELF, Set.of(PermissionCode.PHOTO_VIEW)));
         var created = users.create(new UserService.CreateUser(
-                "permission-reader", "权限测试账号", null, null, null, null,
+                "permission-reader", "权限测试账号", null, null, null, null, null,
                 group.id(), Set.of(north.getId(), south.getId())));
 
         var login = auth.login("permission-reader", created.initialPassword());
@@ -99,7 +99,7 @@ class PermissionGroupServiceTests {
         assertThat(group.photoVisibility()).isEqualTo(PhotoVisibility.CAMPUS);
 
         var created = users.create(new UserService.CreateUser(
-                "permission-gallery", "图库范围账号", null, null, null, null,
+                "permission-gallery", "图库范围账号", null, null, null, null, null,
                 group.id(), Set.of(campus.getId())));
         var login = auth.login("permission-gallery", created.initialPassword());
         assertThat(login.user().photoVisibility()).isEqualTo(PhotoVisibility.CAMPUS);
@@ -144,7 +144,7 @@ class PermissionGroupServiceTests {
                 "SCOPE_SWITCH", "范围切换组", null, DataScope.CAMPUS, PhotoVisibility.SELF,
                 Set.of(PermissionCode.PHOTO_VIEW)));
         var member = users.create(new UserService.CreateUser(
-                "permission-scope-member", "范围切换成员", null, null, null, null,
+                "permission-scope-member", "范围切换成员", null, null, null, null, null,
                 campusGroup.id(), Set.of(campus.getId())));
 
         assertThat(users.list(1, 20, null, null, campusGroup.id(), null, null).items())
@@ -173,7 +173,7 @@ class PermissionGroupServiceTests {
                 "GLOBAL_SWITCH", "全局切换组", null, DataScope.GLOBAL, PhotoVisibility.GLOBAL,
                 Set.of(PermissionCode.PHOTO_VIEW)));
         var member = users.create(new UserService.CreateUser(
-                "global-scope-member", "全局范围成员", null, null, null, null,
+                "global-scope-member", "全局范围成员", null, null, null, null, null,
                 globalGroup.id(), Set.of()));
 
         assertThatThrownBy(() -> groups.update(globalGroup.id(),
@@ -199,10 +199,10 @@ class PermissionGroupServiceTests {
                 "TEMP_UPLOAD", "临时上传组", null, DataScope.CAMPUS, PhotoVisibility.SELF,
                 Set.of(PermissionCode.PHOTO_UPLOAD)));
         var created = users.create(new UserService.CreateUser(
-                "permission-demoted", "待降级账号", null, null, null, null,
+                "permission-demoted", "待降级账号", null, null, null, null, null,
                 group.id(), Set.of(campus.getId())));
         var archived = users.create(new UserService.CreateUser(
-                "permission-archived", "已删除的历史账号", null, null, null, null,
+                "permission-archived", "已删除的历史账号", null, null, null, null, null,
                 group.id(), Set.of(campus.getId())));
         users.delete(archived.user().id(), -1L);
         var activeSession = auth.login("permission-demoted", created.initialPassword());

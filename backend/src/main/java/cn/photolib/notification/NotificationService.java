@@ -4,6 +4,7 @@ import cn.photolib.admin.AdminAlertEntity;
 import cn.photolib.admin.AdminAlertMapper;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
+import cn.photolib.notification.wecom.WeComGateway;
 import cn.photolib.user.mapper.UserMapper;
 import cn.photolib.user.model.UserEntity;
 import cn.photolib.user.model.UserRole;
@@ -29,12 +30,15 @@ import java.util.List;
 @RequiredArgsConstructor
 public class NotificationService {
     private static final Logger log = LoggerFactory.getLogger(NotificationService.class);
-    private static final String PAYLOAD_SEPARATOR = "\n\u0000MAIL_BODY\u0000\n";
+    static final String PAYLOAD_SEPARATOR = "\n\u0000MAIL_BODY\u0000\n";
+    /** V38 起新通知只走这条通道；历史记录里的 {@code EMAIL} 见 {@link #deliver}。 */
+    static final String CHANNEL_WECOM = "WECOM";
     private final NotificationLogMapper mapper;
     private final UserNotificationMapper userNotificationMapper;
     private final UserMapper userMapper;
     private final AdminAlertMapper alertMapper;
     private final MailGateway gateway;
+    private final WeComGateway wecom;
     private final ApplicationEventPublisher events;
 
     private static final Safelist MESSAGE_HTML = Safelist.basic()
@@ -81,10 +85,13 @@ public class NotificationService {
         notification.setCreatedAt(LocalDateTime.now());
         userNotificationMapper.insert(notification);
 
-        if (user.getEmail() == null || user.getEmail().isBlank()) return;
+        // 站内信对所有人落库，外发只对绑定了企业微信的账号发生——和从前"没填邮箱就只有站内信"
+        // 是同一条规则，换了收件标识而已。
+        if (user.getWecomUserid() == null || user.getWecomUserid().isBlank()) return;
         NotificationLogEntity log = new NotificationLogEntity();
         log.setUserId(userId);
-        log.setEmail(user.getEmail());
+        log.setChannel(CHANNEL_WECOM);
+        log.setRecipient(user.getWecomUserid());
         log.setEventType(event);
         log.setStatus("PENDING");
         log.setRetryCount(0);
@@ -105,7 +112,15 @@ public class NotificationService {
     public void deliver(NotificationLogEntity log) {
         try {
             MailPayload payload = parsePayload(log.getPayloadJson());
-            gateway.send(log.getEmail(), payload.subject(), payload.html());
+            // 判定按"是不是企微"而不是"是不是邮件"：channel 只有 notifyUser 会写成 WECOM，
+            // 任何来路不明的值（含 null）都当作 V38 之前的邮件记录处理。反过来写的话，
+            // 一条旧记录会被当成企微消息，发到一个"userid"其实是邮箱的收件人上。
+            if (CHANNEL_WECOM.equals(log.getChannel())) {
+                wecom.send(recipientOf(log), payload.subject(), payload.html(),
+                        actionUrl(log.getEventType()));
+            } else {
+                gateway.send(recipientOf(log), payload.subject(), payload.html());
+            }
             log.setStatus("SENT");
             log.setLastError(null);
         } catch (Exception ex) {
@@ -251,9 +266,15 @@ public class NotificationService {
     }
 
     private String actionUrl(String event) {
+        if (event == null) return null;
         if (event.startsWith("REQUEST_")) return "/requests";
         if (event.startsWith("WORKLOG_")) return "/worklogs";
         return null;
+    }
+
+    /** 历史记录的收件人可能只填了 {@code email}（V38 回填之前写入的行）。 */
+    private String recipientOf(NotificationLogEntity log) {
+        return log.getRecipient() != null ? log.getRecipient() : log.getEmail();
     }
 
     private String toPlainText(String html) {
@@ -263,18 +284,22 @@ public class NotificationService {
 
     private void createAlert(NotificationLogEntity log) {
         AdminAlertEntity alert = new AdminAlertEntity();
-        alert.setType("MAIL_DELIVERY_FAILED");
-        alert.setMessage("邮件连续投递失败：" + log.getEmail());
+        alert.setType("NOTIFICATION_DELIVERY_FAILED");
+        alert.setMessage("通知连续投递失败：" + recipientOf(log));
         alert.setResourceType("NOTIFICATION");
         alert.setResourceId(log.getId().toString());
         alert.setResolved(false);
         alert.setCreatedAt(LocalDateTime.now());
         alertMapper.insert(alert);
+        // 告警本身也走企业微信。这里不再落 notification_log：告警是投递失败的产物，
+        // 给它建一条会失败的投递记录只会再触发一次告警。
         userMapper.selectList(Wrappers.<UserEntity>lambdaQuery()
                 .eq(UserEntity::getRole, UserRole.ADMIN).eq(UserEntity::getEnabled, true)
-                .isNotNull(UserEntity::getEmail)).forEach(admin -> {
-            try { gateway.send(admin.getEmail(), "PhotoLib 邮件投递告警", alert.getMessage()); }
-            catch (Exception e) { NotificationService.log.warn("管理员告警邮件发送失败: {}", admin.getEmail(), e); }
+                .isNotNull(UserEntity::getWecomUserid)).forEach(admin -> {
+            try { wecom.send(admin.getWecomUserid(), "PhotoLib 通知投递告警", alert.getMessage(), null); }
+            catch (Exception e) {
+                NotificationService.log.warn("管理员告警消息发送失败: {}", admin.getWecomUserid(), e);
+            }
         });
     }
 

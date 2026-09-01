@@ -12,6 +12,11 @@ import java.time.LocalDateTime;
 public class NotificationLogEntity {
     @TableId private Long id;
     private Long userId;
+    /** 投递通道：{@code WECOM} 是当前通道，{@code EMAIL} 只存在于 V38 之前的历史记录。 */
+    private String channel;
+    /** 该通道下的收件标识：企业微信 userid，或历史邮件记录里的邮箱。 */
+    private String recipient;
+    /** 历史邮件记录的收件邮箱，V38 起不再写入，仅供旧数据展示与重试。 */
     private String email;
     private String eventType;
     private String status;

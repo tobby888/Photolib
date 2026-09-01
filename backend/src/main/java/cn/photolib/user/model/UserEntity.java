@@ -19,6 +19,9 @@ public class UserEntity extends BaseEntity {
     private Long campusId;
     private String phone;
     private String email;
+    /** 企业微信通讯录里的 userid，通知投递的收件标识；未绑定时该用户只收站内信。 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String wecomUserid;
     @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String avatarObjectKey;
     @TableField(updateStrategy = FieldStrategy.ALWAYS)

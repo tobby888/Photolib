@@ -32,6 +32,11 @@ import java.util.Set;
 @RequestMapping("/users")
 @RequiredArgsConstructor
 public class UserController {
+    /** 企业微信通讯录对 userid 的约束：数字、字母和 {@code _-@.} 四种半角符号，1~64 字节。 */
+    private static final String WECOM_USERID_PATTERN = "^[A-Za-z0-9_@.-]{0,64}$";
+    private static final String WECOM_USERID_MESSAGE =
+            "企业微信 UserID 只能包含字母、数字和 _-@. ，且不超过 64 个字符";
+
     private final UserService userService;
 
     @PostMapping
@@ -39,7 +44,8 @@ public class UserController {
     ApiResponse<UserService.CreatedUser> create(@Valid @RequestBody CreateRequest request) {
         return ApiResponse.ok(userService.create(new UserService.CreateUser(
                 request.username(), request.displayName(), request.role(), request.campusId(),
-                request.phone(), request.email(), request.permissionGroupId(), request.campusIds())));
+                request.phone(), request.email(), request.wecomUserid(),
+                request.permissionGroupId(), request.campusIds())));
     }
 
     @GetMapping
@@ -80,7 +86,7 @@ public class UserController {
     ApiResponse<UserService.UserView> update(@PathVariable Long id, @Valid @RequestBody UpdateRequest request) {
         return ApiResponse.ok(userService.update(id, new UserService.UpdateUser(
                 request.displayName(), request.role(), request.campusId(), request.phone(),
-                request.email(), request.enabled(), request.version(),
+                request.email(), request.wecomUserid(), request.enabled(), request.version(),
                 request.permissionGroupId(), request.campusIds())));
     }
 
@@ -133,7 +139,9 @@ public class UserController {
             Long permissionGroupId,
             Set<@NotNull Long> campusIds,
             @Size(max = 32) String phone,
-            @Email @Size(max = 255) String email) {
+            @Email @Size(max = 255) String email,
+            @Pattern(regexp = WECOM_USERID_PATTERN, message = WECOM_USERID_MESSAGE)
+            String wecomUserid) {
     }
 
     record UpdateRequest(
@@ -144,6 +152,8 @@ public class UserController {
             Set<@NotNull Long> campusIds,
             @Size(max = 32) String phone,
             @Email @Size(max = 255) String email,
+            @Pattern(regexp = WECOM_USERID_PATTERN, message = WECOM_USERID_MESSAGE)
+            String wecomUserid,
             boolean enabled,
             @Min(1) int version) {
     }
