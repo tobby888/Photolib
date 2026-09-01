@@ -17,7 +17,8 @@ import java.time.Duration;
  */
 @ConfigurationProperties(prefix = "photolib.wecom")
 public record WeComProperties(String baseUrl, String corpId, Long agentId, String secret,
-                              String siteBaseUrl, Duration tokenRefreshAhead,
+                              String siteBaseUrl, WeComMessageType messageType,
+                              Duration tokenRefreshAhead,
                               Duration connectTimeout, Duration readTimeout) {
 
     public WeComProperties {
@@ -25,6 +26,7 @@ public record WeComProperties(String baseUrl, String corpId, Long agentId, Strin
         siteBaseUrl = normalizeUrl(siteBaseUrl, null);
         corpId = trimToNull(corpId);
         secret = trimToNull(secret);
+        messageType = messageType == null ? WeComMessageType.MARKDOWN : messageType;
         tokenRefreshAhead = tokenRefreshAhead == null ? Duration.ofMinutes(5) : tokenRefreshAhead;
         connectTimeout = connectTimeout == null ? Duration.ofSeconds(5) : connectTimeout;
         readTimeout = readTimeout == null ? Duration.ofSeconds(10) : readTimeout;
@@ -34,12 +36,23 @@ public record WeComProperties(String baseUrl, String corpId, Long agentId, Strin
         return corpId != null && secret != null && agentId != null;
     }
 
+    /**
+     * 去掉结尾斜杠，并在缺少协议头时补上 {@code https://}。
+     *
+     * <p>补协议是必要的：{@code WECOM_SITE_BASE_URL=photowarehouse.cn} 是很自然的写法，
+     * 但拼出来的 {@code photowarehouse.cn/#/notifications} 在企业微信里点不开——它需要
+     * 一个绝对 URL 才会渲染成链接。
+     */
     private static String normalizeUrl(String value, String fallback) {
         String trimmed = trimToNull(value);
         if (trimmed == null) return fallback;
         int end = trimmed.length();
         while (end > 0 && trimmed.charAt(end - 1) == '/') end--;
-        return end == 0 ? fallback : trimmed.substring(0, end);
+        if (end == 0) return fallback;
+        String withoutTrailingSlash = trimmed.substring(0, end);
+        return withoutTrailingSlash.contains("://")
+                ? withoutTrailingSlash
+                : "https://" + withoutTrailingSlash;
     }
 
     private static String trimToNull(String value) {

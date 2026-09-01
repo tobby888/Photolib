@@ -85,17 +85,28 @@ public class NotificationService {
         notification.setCreatedAt(LocalDateTime.now());
         userNotificationMapper.insert(notification);
 
-        // 站内信对所有人落库，外发只对绑定了企业微信的账号发生——和从前"没填邮箱就只有站内信"
-        // 是同一条规则，换了收件标识而已。
+        queueDelivery(user, event, safeSubject, safeHtml, actionUrl(event));
+    }
+
+    /**
+     * 为一条已经落库的站内信排一次外发。
+     *
+     * <p>系统通知和管理消息共用这一条路径，两边的收件规则、投递日志和重试因此不会走偏。
+     * 外发只对绑定了企业微信的账号发生——和从前"没填邮箱就只有站内信"是同一条规则，
+     * 换了收件标识而已。
+     */
+    private void queueDelivery(UserEntity user, String event, String subject,
+                               String html, String actionPath) {
         if (user.getWecomUserid() == null || user.getWecomUserid().isBlank()) return;
         NotificationLogEntity log = new NotificationLogEntity();
-        log.setUserId(userId);
+        log.setUserId(user.getId());
         log.setChannel(CHANNEL_WECOM);
         log.setRecipient(user.getWecomUserid());
         log.setEventType(event);
+        log.setActionPath(actionPath);
         log.setStatus("PENDING");
         log.setRetryCount(0);
-        log.setPayloadJson(safeSubject + PAYLOAD_SEPARATOR + safeHtml);
+        log.setPayloadJson(subject + PAYLOAD_SEPARATOR + html);
         log.setCreatedAt(LocalDateTime.now());
         log.setUpdatedAt(LocalDateTime.now());
         mapper.insert(log);
@@ -117,7 +128,7 @@ public class NotificationService {
             // 一条旧记录会被当成企微消息，发到一个"userid"其实是邮箱的收件人上。
             if (CHANNEL_WECOM.equals(log.getChannel())) {
                 wecom.send(recipientOf(log), payload.subject(), payload.html(),
-                        actionUrl(log.getEventType()));
+                        log.getActionPath());
             } else {
                 gateway.send(recipientOf(log), payload.subject(), payload.html());
             }
@@ -250,17 +261,24 @@ public class NotificationService {
             recipients = List.of(target);
         }
         LocalDateTime now = LocalDateTime.now();
+        String event = broadcast ? "BROADCAST_MESSAGE" : "DIRECT_MESSAGE";
+        String subject = title.trim();
         for (UserEntity recipient : recipients) {
             UserNotificationEntity notification = new UserNotificationEntity();
             notification.setUserId(recipient.getId());
             notification.setSenderId(senderId);
-            notification.setEventType(broadcast ? "BROADCAST_MESSAGE" : "DIRECT_MESSAGE");
-            notification.setTitle(title.trim());
+            notification.setEventType(event);
+            notification.setTitle(subject);
             notification.setContent(plainText);
             notification.setContentHtml(safeHtml);
             notification.setActionUrl(null);
             notification.setCreatedAt(now);
             userNotificationMapper.insert(notification);
+            // 跳这条消息本身而不是列表：正文里的消息图片没法带进企业微信，链接是收件人
+            // 看到完整内容的唯一入口。每人一条投递记录，各自重试、各自记状态——广播因此
+            // 是 N 次调用而不是一次群发，换来的是"谁没收到"在日志里查得出来。
+            queueDelivery(recipient, event, subject, safeHtml,
+                    "/notifications/" + notification.getId());
         }
         return recipients.size();
     }

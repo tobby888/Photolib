@@ -48,6 +48,27 @@ class WeComPropertiesTests {
         assertThat(properties.tokenRefreshAhead()).isEqualTo(Duration.ofMinutes(10));
     }
 
+    /**
+     * {@code WECOM_SITE_BASE_URL=photowarehouse.cn} 是很自然的写法，但拼出来的
+     * {@code photowarehouse.cn/#/notifications} 在企业微信里点不开——渲染成链接需要
+     * 一个绝对 URL。
+     */
+    @Test
+    void bind_withASiteBaseUrlMissingItsScheme_shouldAssumeHttps() {
+        assertThat(bind(Map.of("photolib.wecom.site-base-url", "photowarehouse.cn")).siteBaseUrl())
+                .isEqualTo("https://photowarehouse.cn");
+        assertThat(bind(Map.of("photolib.wecom.site-base-url", "http://photowarehouse.cn/"))
+                .siteBaseUrl()).isEqualTo("http://photowarehouse.cn");
+    }
+
+    @Test
+    void bind_shouldDefaultToMarkdownAndAcceptATextOverride() {
+        assertThat(bind(Map.of("photolib.wecom.corp-id", "wwabc")).messageType())
+                .isEqualTo(WeComMessageType.MARKDOWN);
+        assertThat(bind(Map.of("photolib.wecom.message-type", "text")).messageType())
+                .isEqualTo(WeComMessageType.TEXT);
+    }
+
     @Test
     void bind_withoutOptionalValues_shouldFallBackToDefaults() {
         WeComProperties properties = bind(Map.of("photolib.wecom.corp-id", "wwabc"));

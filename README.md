@@ -236,7 +236,8 @@ curl --fail http://127.0.0.1:8080/api/v1/actuator/health
 | `WECOM_CORP_ID` | 企业微信企业 ID（管理后台「我的企业」页底部） |
 | `WECOM_AGENT_ID` | 自建应用的 AgentId（应用详情页） |
 | `WECOM_SECRET` | 自建应用的 Secret，用于换取 `access_token`；不要提交到仓库 |
-| `WECOM_SITE_BASE_URL` | 通知里跳转链接的站点地址（不含路径），留空则消息只有正文 |
+| `WECOM_SITE_BASE_URL` | 通知里跳转链接的站点地址（不含路径），留空则消息只有正文。不写协议头时按 `https` 补全 |
+| `WECOM_MESSAGE_TYPE` | `markdown`（默认）或 `text`。markdown 只有企业微信客户端支持，见下 |
 | `WECOM_TOKEN_REFRESH_AHEAD` | `access_token` 的提前续期量，默认 `5m` |
 | `WECOM_CONNECT_TIMEOUT`、`WECOM_READ_TIMEOUT` | 调用企业微信接口的超时，默认 `5s` / `10s` |
 | `DIRECTMAIL_*` | DirectMail 地域、发信地址和访问凭据；V38 起仅用于重试历史邮件投递记录 |
@@ -317,6 +318,15 @@ curl "https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=<企业ID>&corpsecret=
 **4. 绑定成员**
 
 在后台「成员管理」里给每个人填「企业微信 UserID」（企业微信管理后台「通讯录」中该成员的账号，不是姓名也不是手机号）。没绑定的成员只收站内信，不产生投递记录。
+
+**5. 消息格式**
+
+默认发 `markdown` 消息：标题、加粗、引用、链接都能正常渲染，读起来接近站内信。两条限制值得知道：
+
+- **markdown 消息只有企业微信客户端能看。** 在微信里通过「企业微信消息」插件收消息的成员会看到"当前版本不支持该消息类型"。有这种成员就把 `WECOM_MESSAGE_TYPE` 设成 `text` 全局退回纯文本。
+- **企业微信 markdown 不支持图片。** 管理消息正文里的消息图片会显示成 `[图片]` 占位，收件人点消息末尾的「查看详情」回站内看完整内容。
+
+正文超过 2048 字节会被截断，但标题和末尾的链接一定保留 —— 内容越长越需要那个链接。
 
 `app_user.email` 保留但只作登录凭据，不再触发投递；DirectMail 配置仅用于重试 V38 之前遗留的邮件记录。
 
