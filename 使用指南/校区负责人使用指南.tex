@@ -1,0 +1,324 @@
+% !TEX program = xelatex
+% =====================================================================
+%  PhotoLib 校区负责人使用指南
+%  编译：xelatex 校区负责人使用指南.tex（连续两次以生成目录）
+% =====================================================================
+\documentclass[cn,11pt,green]{elegantbook}
+
+\input{elegant-style}
+
+\title{PhotoLib 校区负责人使用指南}
+\subtitle{接单 · 上传 · 交付 · 报工时}
+\author{PhotoLib 项目组}
+\institute{校园摄影部图片工作站}
+\version{1.0}
+\date{2026 年 9 月}
+\extrainfo{本指南面向校区负责人（CAMPUS\_MANAGER），一步一步教你\\接需求、传图片、交作业、报工时，看完就能干活。}
+\cover{cover.png}
+
+\begin{document}
+
+\maketitle
+\frontmatter
+\tableofcontents
+\mainmatter
+
+% =====================================================================
+\chapter{开始之前}
+% =====================================================================
+
+\begin{introduction}
+  \item 你在系统里负责什么
+  \item 怎么登录、界面长什么样
+\end{introduction}
+
+\section{你的角色}
+
+你是\textbf{校区负责人}（系统里叫 \role{CAMPUS\_MANAGER}）。你负责\textbf{本校区}的具体拍摄工作，主要做四件事：
+
+\begin{enumerate}
+  \item \textbf{接需求}：接下部长发到你校区的拍摄任务。
+  \item \textbf{传图片}：把拍好的照片上传进系统。
+  \item \textbf{交作业}：把图片交付给对应的需求。
+  \item \textbf{报工时}：填报自己参与任务的工时。
+\end{enumerate}
+
+此外你还要\textbf{维护本校区的通讯录}（成员名单）。
+
+\begin{notebox}[你只管自己的校区]
+  你看到和能操作的，基本都限于\textbf{你被授权的校区}以及\textbf{你本人参与的任务}。
+  别的校区的需求、别人上传的图片，默认你是看不到、也管不了的。这是系统的设计，不是出了问题。
+\end{notebox}
+
+\section{登录与第一次改密}
+
+\begin{stepbox}[第一次登录]
+  \begin{enumerate}
+    \item 打开管理员给你的网址，输入\textbf{用户名（或邮箱）+ 密码}。
+    \item 第一次登录会\textbf{强制改密码}，设一个只有你知道的强密码。
+    \item 改完就进入\ui{工作台}首页了。
+  \end{enumerate}
+\end{stepbox}
+
+\begin{tipbox}[忘记密码]
+  系统没有自助找回。忘了密码就找\textbf{管理员或部长}帮你重置，重置后下次登录再改一次即可。
+\end{tipbox}
+
+\section{界面导览}
+
+左边是菜单，右上角是消息铃铛和头像。你常用的是这几个：
+
+\begin{table}[htbp]
+  \centering
+  \caption{校区负责人常用菜单}
+  \begin{tabular}{L{2.8cm} L{9.4cm}}
+    \toprule
+    \textbf{菜单} & \textbf{用来做什么} \\
+    \midrule
+    工作台 & 首页概览。 \\
+    图片需求 & 接需求、上传交付。 \\
+    图片库 & 上传图片、查看和下载。 \\
+    收藏图片 & 你收藏过的图片。 \\
+    工时记录 & 填报自己的工时。 \\
+    通讯录 & 维护本校区成员名单。 \\
+    消息中心 & 查看站内通知。 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+% =====================================================================
+\chapter{接需求与交付}
+% =====================================================================
+
+\begin{introduction}
+  \item 怎么接下一条需求
+  \item 怎么把拍好的图交上去
+  \item 接了不想干了怎么退出
+\end{introduction}
+
+\section{接受需求}
+
+部长发布需求后，\textbf{你校区已启用的负责人会收到通知}。进入\menu{图片需求}，找到发到你校区的需求，点\ui{接受}。
+
+\begin{itemize}
+  \item 你只能接\textbf{本校区}已发布 / 已接受的需求。
+  \item 一条需求\textbf{可以多个人一起接}。
+  \item 同一条需求你\textbf{不能重复接}，再点会提示已接受。
+\end{itemize}
+
+\section{交付图片}
+
+接了需求之后，就可以往这条需求里\textbf{上传并交付}图片了。
+
+\begin{stepbox}[交付一条需求]
+  \begin{enumerate}
+    \item 进入你已接受的需求，进入它的\textbf{交付页面}。
+    \item 上传照片（上传方法见下一章）。
+    \item 确认无误后\textbf{提交}，需求状态变为「已提交」，等部长确认。
+    \item 如果被部长\textbf{退回}，按意见补拍或重传，再提交一次。
+  \end{enumerate}
+\end{stepbox}
+
+\begin{tipbox}[被退回是正常的]
+  被退回不代表做错了，通常是需要补拍或换图。按部长的意见处理后重新提交即可。
+\end{tipbox}
+
+\section{退出需求}
+
+如果你接了之后确实参与不了，可以\textbf{退出}这条需求。但有个前提：
+
+\begin{warnbox}[传过图 / 报过工时就不能退了]
+  只要你\textbf{已经为这条需求上传过图片，或填报过工时}，就\textbf{不能再退出}了。
+  这是为了保护已经产生的数据。如果确实需要处理，联系部长或管理员。
+\end{warnbox}
+
+\begin{notebox}[最后一个人退出会怎样]
+  如果一条需求所有接单人都退光了，需求会自动\textbf{退回「已发布」}状态，重新等人来接。
+\end{notebox}
+
+% =====================================================================
+\chapter{上传图片}
+% =====================================================================
+
+\begin{introduction}
+  \item 单张、批量、压缩包三种上传方式
+  \item 「拍摄者」为什么必须从通讯录选
+  \item 上传有哪些限制
+\end{introduction}
+
+\section{三种上传方式}
+
+\begin{table}[htbp]
+  \centering
+  \caption{三种上传方式怎么选}
+  \begin{tabular}{L{2.6cm} L{9.6cm}}
+    \toprule
+    \textbf{方式} & \textbf{适用场景} \\
+    \midrule
+    单张上传 & 只传一两张，想仔细填每张的信息。 \\
+    批量文件 & 一次选多张照片一起传（最多 100 张）。 \\
+    ZIP 压缩包 & 照片很多时，打成一个压缩包上传，系统自动解压。 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{notebox}[上传的限制]
+  \begin{itemize}
+    \item 只支持 \textbf{JPG / JPEG / PNG}，单张最大 100 MiB。
+    \item 一次批量最多 \textbf{100 张}；ZIP 压缩包最大约 1.5 GB，解压后总量最大 10 GiB。
+    \item ZIP 里只会接收图片文件，其他文件、文件夹会被跳过。
+  \end{itemize}
+\end{notebox}
+
+\section{拍摄者必须从通讯录选}
+
+上传时要填\textbf{拍摄者}，它\textbf{只能从本校区通讯录里选}，不能手打名字。
+
+\begin{warnbox}[人不在名单里怎么办]
+  如果要选的拍摄者不在下拉列表里，先去\menu{通讯录}把他\textbf{加进本校区名单}，再回来上传。
+  通讯录为空时，上传页也会提示你先去维护通讯录。
+\end{warnbox}
+
+\section{拍摄时间会自动读取}
+
+系统会尝试从照片里读出\textbf{拍摄时间}（EXIF 信息）自动填好。
+
+\begin{itemize}
+  \item 单张上传：自动填这张照片的拍摄时间。
+  \item 需求多图上传：统一采用\textbf{第一张照片}的拍摄时间。
+  \item 读不出来时，你可以\textbf{手动选}拍摄时间。
+\end{itemize}
+
+\section{上传之后}
+
+上传后照片会经过系统的\textbf{处理}（压缩、生成缩略图），处理好才会出现在图库里。单张上传时页面会自动等待处理完成，稍等即可。
+
+\begin{tipbox}[重复的图传不上去]
+  单张上传时，系统会检查这张图是不是\textbf{已经传过}。如果完全一样，会提示重复，不用重复传。
+\end{tipbox}
+
+% =====================================================================
+\chapter{图片库与收藏}
+% =====================================================================
+
+\begin{introduction}
+  \item 你在图库里能看到哪些图
+  \item 怎么下载、收藏
+\end{introduction}
+
+\section{你能看到哪些图}
+
+图库里你默认看到的是\textbf{自己上传的图片}。这是由权限决定的。
+
+\begin{notebox}[看到的范围可能被放宽]
+  管理员\textbf{可以}把你的可见范围放宽到「本校区所有人上传的图」。到底看得到多少，取决于管理员给你的设置。
+  如果你觉得应该能看到同校区其他人的图却看不到，可以找管理员确认。
+\end{notebox}
+
+\section{下载与收藏}
+
+\begin{itemize}
+  \item \textbf{下载}：单张下载，或勾选多张\textbf{打包下载}（最多 200 张）。下载用的是临时安全链接，过期重新点一下即可。
+  \item \textbf{收藏}：点图片上的星标收藏，之后在\menu{收藏图片}里集中看。取消收藏后它会从收藏列表里消失。
+\end{itemize}
+
+\begin{warnbox}[采用、删除不归你管]
+  \textbf{标记被引（采用）是部长的权限}，你没有。图片的删除、归档等维护操作一般也\textbf{只针对你自己上传的图}，
+  且已经被采用的图片\textbf{不能直接删除}。
+\end{warnbox}
+
+% =====================================================================
+\chapter{填报工时}
+% =====================================================================
+
+\begin{introduction}
+  \item 工时怎么填
+  \item 填完之后会怎样
+\end{introduction}
+
+\section{填报}
+
+进入\menu{工时记录}，为你\textbf{参与的任务}填报工时。
+
+\begin{stepbox}[填一条工时]
+  \begin{enumerate}
+    \item 选择\textbf{工作日期}、填报的\textbf{成员}（来自本校区通讯录）、工时数等信息。
+    \item 保存提交。之后由\textbf{部长或管理员确认}。
+  \end{enumerate}
+\end{stepbox}
+
+\begin{notebox}[填报人来自通讯录]
+  和上传拍摄者一样，工时的成员也\textbf{来自校区通讯录}。历史工时会保存当时的姓名和学号，
+  日后就算把某人从通讯录删了，\textbf{也不会改动已经填好的历史工时}。
+\end{notebox}
+
+\section{确认之后}
+
+工时提交后要等部长\textbf{确认}。只有\textbf{已确认}的工时才会计入统计。如果被\textbf{退回}，按意见修改后重新提交。
+
+% =====================================================================
+\chapter{维护通讯录}
+% =====================================================================
+
+\begin{introduction}
+  \item 通讯录为什么重要
+  \item 怎么增、停用、删成员
+\end{introduction}
+
+\section{为什么重要}
+
+通讯录是\textbf{整条数据的源头}：上传时选的拍摄者、填工时时选的成员，都从这里来。名单不全，活儿就没法正常派人记账。
+所以请\textbf{及时把本校区的成员维护好}。
+
+\section{增、停用、删}
+
+进入\menu{通讯录}（你只能维护\textbf{本校区}的名单）：
+
+\begin{table}[htbp]
+  \centering
+  \caption{三种成员操作的区别}
+  \begin{tabular}{L{2.2cm} L{10cm}}
+    \toprule
+    \textbf{操作} & \textbf{效果} \\
+    \midrule
+    添加 & 新增一名成员（姓名 + 学号）。 \\
+    停用 & 成员保留在名单里但不再可选，\textbf{以后可以再启用}；历史记录不受影响。 \\
+    删除 & \textbf{彻底移除}这一行，之后同一个学号可以\textbf{重新添加}；历史照片和工时因为存的是快照，不受影响。 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{tipbox}[停用还是删除？]
+  拿不准就用\textbf{停用}——它更保险，随时能恢复。只有确定这个学号要腾出来重新用时，才用删除。
+\end{tipbox}
+
+% =====================================================================
+\chapter{消息与个人设置}
+% =====================================================================
+
+\section{消息中心}
+
+右上角\textbf{铃铛}会提示未读消息，\menu{消息中心}里能看到所有通知（比如有新需求发到你校区、工时被退回等）。
+养成\textbf{每天看一眼消息}的习惯，别漏掉派给你的任务。
+
+\section{个人设置}
+
+点右上角\textbf{头像}可以设置头像、退出登录，也从这里改密码。
+
+\section{遇到问题怎么办}
+
+\begin{tipbox}[常见小问题]
+  \begin{itemize}
+    \item \textbf{接不了某个需求}？确认它是发到\textbf{你校区}的，且状态是已发布 / 已接受。
+    \item \textbf{选不到拍摄者 / 工时成员}？先去\menu{通讯录}把人加进本校区。
+    \item \textbf{图片打不开 / 下载失败}？多半是临时链接过期，刷新或重新点开即可。
+    \item \textbf{退不出需求}？你已经传过图或报过工时了，找部长或管理员处理。
+    \item \textbf{看不到本该看到的东西}？可能是权限范围问题，找管理员确认。
+  \end{itemize}
+\end{tipbox}
+
+\begin{notebox}[记住一句话]
+  你的日常就是四步循环：\textbf{接需求 → 传图片 → 交作业 → 报工时}。把通讯录维护好，其余的跟着菜单走就行。
+\end{notebox}
+
+\end{document}

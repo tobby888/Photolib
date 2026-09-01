@@ -1,0 +1,76 @@
+% =====================================================================
+%  elegant-style.tex —— PhotoLib 使用指南三份文档共用的样式与宏定义
+%  由 管理员/部长/校区负责人 三份指南通过 \input{elegant-style} 引入。
+%  依赖：ElegantBook 文档类（须以 XeLaTeX 编译）。
+% =====================================================================
+
+% ---- 颜色（与 ElegantBook green 主题协调）----
+\definecolor{plMain}{RGB}{0,120,80}      % 主色：墨绿
+\definecolor{plInk}{RGB}{38,50,56}       % 正文强调
+\definecolor{admTipBg}{RGB}{236,247,240}
+\definecolor{admTipFr}{RGB}{34,139,88}
+\definecolor{admNoteBg}{RGB}{232,240,254}
+\definecolor{admNoteFr}{RGB}{25,103,210}
+\definecolor{admWarnBg}{RGB}{253,237,237}
+\definecolor{admWarnFr}{RGB}{198,40,40}
+\definecolor{admStepBg}{RGB}{245,243,255}
+\definecolor{admStepFr}{RGB}{103,58,183}
+
+% ---- tcolorbox（ElegantBook 已载入，这里补声明所需库）----
+\usepackage{tcolorbox}
+\tcbuselibrary{skins,breakable}
+
+% 统一的四种“提示框”环境，均支持可选自定义标题：
+%   \begin{tipbox}[自定义标题] ... \end{tipbox}
+\newtcolorbox{tipbox}[1][小贴士]{%
+  enhanced, breakable,
+  colback=admTipBg, colframe=admTipFr, coltitle=white,
+  fonttitle=\bfseries\sffamily, title={#1},
+  boxrule=0.6pt, arc=3pt, left=8pt, right=8pt, top=6pt, bottom=6pt}
+
+\newtcolorbox{notebox}[1][说明]{%
+  enhanced, breakable,
+  colback=admNoteBg, colframe=admNoteFr, coltitle=white,
+  fonttitle=\bfseries\sffamily, title={#1},
+  boxrule=0.6pt, arc=3pt, left=8pt, right=8pt, top=6pt, bottom=6pt}
+
+\newtcolorbox{warnbox}[1][注意]{%
+  enhanced, breakable,
+  colback=admWarnBg, colframe=admWarnFr, coltitle=white,
+  fonttitle=\bfseries\sffamily, title={#1},
+  boxrule=0.6pt, arc=3pt, left=8pt, right=8pt, top=6pt, bottom=6pt}
+
+\newtcolorbox{stepbox}[1][操作步骤]{%
+  enhanced, breakable,
+  colback=admStepBg, colframe=admStepFr, coltitle=white,
+  fonttitle=\bfseries\sffamily, title={#1},
+  boxrule=0.6pt, arc=3pt, left=8pt, right=8pt, top=6pt, bottom=6pt}
+
+% ---- 表格 ----
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{makecell}
+\renewcommand{\arraystretch}{1.28}
+
+% 左对齐、可换行的定宽列
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+
+% ---- 行内“键位/菜单/字段”标记 ----
+\usepackage{relsize}
+% 菜单路径：系统管理 \menu{数据备份}
+\newcommand{\menu}[1]{{\sffamily\bfseries\color{plMain}#1}}
+% 界面按钮/字段名
+\newcommand{\ui}[1]{\textsf{「#1」}}
+% 权限码等等宽标识；在每个下划线后允许换行，避免长标识顶出表格边界
+\newcommand{\code}[1]{{\ttfamily\smaller[0.5]%
+  \renewcommand{\_}{\textunderscore\penalty0\hspace{0pt}}#1}}
+% 角色徽标
+\newcommand{\role}[1]{{\sffamily\bfseries\color{admNoteFr}#1}}
+
+% ---- 超链接 ----
+\hypersetup{
+  colorlinks=true,
+  linkcolor=plMain,
+  urlcolor=admNoteFr,
+  citecolor=plMain}
