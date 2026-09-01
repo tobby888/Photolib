@@ -55,6 +55,8 @@ public class UserService {
         }
         String email = normalizeEmail(command.email());
         validateEmailAvailable(email, null);
+        String wecomUserid = normalizeWecomUserid(command.wecomUserid());
+        validateWecomUseridAvailable(wecomUserid, null);
         String initialPassword = randomPassword();
         UserEntity user = new UserEntity();
         user.setUsername(command.username());
@@ -65,13 +67,15 @@ public class UserService {
         user.setCampusId(campusIds.stream().findFirst().orElse(null));
         user.setPhone(command.phone());
         user.setEmail(email);
+        user.setWecomUserid(wecomUserid);
         user.setEnabled(true);
         user.setMustChangePassword(true);
         try {
             userMapper.insert(user);
             permissionGroups.replaceUserCampuses(user.getId(), group.getDataScope(), campusIds);
         } catch (DuplicateKeyException exception) {
-            throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE, "用户名或邮箱已被其他用户使用");
+            throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE,
+                    "用户名、邮箱或企业微信 UserID 已被其他用户使用");
         }
         notifications.notifyUser(user.getId(), "ACCOUNT_CREATED", "PhotoLib 账号已创建",
                 "<p>您的 PhotoLib 账号已创建，请向管理员获取初始密码并在首次登录后修改。</p>");
@@ -142,12 +146,15 @@ public class UserService {
         requireAdminCanChange(user, group.getId(), command.enabled());
         String email = normalizeEmail(command.email());
         validateEmailAvailable(email, id);
+        String wecomUserid = normalizeWecomUserid(command.wecomUserid());
+        validateWecomUseridAvailable(wecomUserid, id);
         user.setDisplayName(command.displayName());
         user.setRole(permissionGroups.compatibleRole(group));
         user.setPermissionGroupId(group.getId());
         user.setCampusId(campusIds.stream().findFirst().orElse(null));
         user.setPhone(command.phone());
         user.setEmail(email);
+        user.setWecomUserid(wecomUserid);
         user.setEnabled(command.enabled());
         user.setVersion(command.version());
         try {
@@ -156,7 +163,8 @@ public class UserService {
             }
             permissionGroups.replaceUserCampuses(id, group.getDataScope(), campusIds);
         } catch (DuplicateKeyException exception) {
-            throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE, "邮箱已被其他用户使用");
+            throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE,
+                    "邮箱或企业微信 UserID 已被其他用户使用");
         }
         if (!command.enabled()) {
             authService.revokeAll(id);
@@ -237,6 +245,9 @@ public class UserService {
         String freed = "del." + id + "." + user.getUsername();
         user.setUsername(freed.length() > 64 ? freed.substring(0, 64) : freed);
         user.setEmail(null);
+        // 同样释放企微绑定：uk_user_wecom_userid 在软删除后仍然占位，不清掉的话
+        // 这个人换账号重新入职时没法再绑同一个 userid。
+        user.setWecomUserid(null);
         user.setEnabled(false);
         if (userMapper.updateById(user) != 1) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
@@ -312,8 +323,28 @@ public class UserService {
         }
     }
 
+    private void validateWecomUseridAvailable(String wecomUserid, Long excludedUserId) {
+        if (wecomUserid == null) {
+            return;
+        }
+        long existing = userMapper.selectCount(Wrappers.<UserEntity>lambdaQuery()
+                .eq(UserEntity::getWecomUserid, wecomUserid)
+                .ne(excludedUserId != null, UserEntity::getId, excludedUserId));
+        if (existing > 0) {
+            throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE, "企业微信 UserID 已被其他用户使用");
+        }
+    }
+
     private String normalizeEmail(String email) {
         return StringUtils.hasText(email) ? email.trim().toLowerCase(Locale.ROOT) : null;
+    }
+
+    /**
+     * 企业微信的 userid 大小写不敏感，但通讯录里存的是管理员当初录入的写法，
+     * 这里只去空白、不改大小写，避免展示出来的和企微后台看到的对不上。
+     */
+    private String normalizeWecomUserid(String wecomUserid) {
+        return StringUtils.hasText(wecomUserid) ? wecomUserid.trim() : null;
     }
 
     private UserEntity require(Long id) {
@@ -337,26 +368,28 @@ public class UserService {
         PermissionGroupService.GroupView group = permissionGroups.get(resolvedGroup.getId());
         Set<Long> campusIds = permissionGroups.campusIds(user.getId());
         return new UserView(user.getId(), user.getUsername(), user.getDisplayName(), user.getRole(),
-                user.getCampusId(), user.getPhone(), user.getEmail(), user.getEnabled(),
+                user.getCampusId(), user.getPhone(), user.getEmail(), user.getWecomUserid(),
+                user.getEnabled(),
                 user.getMustChangePassword(), user.getCreatedAt(), user.getUpdatedAt(), user.getVersion(),
                 group.id(), group.code(), group.name(), group.dataScope(), campusIds,
                 UserAvatarService.avatarUrl(user));
     }
 
     public record CreateUser(String username, String displayName, UserRole role, Long campusId,
-                             String phone, String email, Long permissionGroupId, Set<Long> campusIds) {
+                             String phone, String email, String wecomUserid,
+                             Long permissionGroupId, Set<Long> campusIds) {
         public CreateUser(String username, String displayName, UserRole role, Long campusId,
                           String phone, String email) {
-            this(username, displayName, role, campusId, phone, email, null, null);
+            this(username, displayName, role, campusId, phone, email, null, null, null);
         }
     }
 
     public record UpdateUser(String displayName, UserRole role, Long campusId, String phone,
-                             String email, boolean enabled, int version, Long permissionGroupId,
-                             Set<Long> campusIds) {
+                             String email, String wecomUserid, boolean enabled, int version,
+                             Long permissionGroupId, Set<Long> campusIds) {
         public UpdateUser(String displayName, UserRole role, Long campusId, String phone,
                           String email, boolean enabled, int version) {
-            this(displayName, role, campusId, phone, email, enabled, version, null, null);
+            this(displayName, role, campusId, phone, email, null, enabled, version, null, null);
         }
     }
 
@@ -364,7 +397,8 @@ public class UserService {
     }
 
     public record UserView(Long id, String username, String displayName, UserRole role, Long campusId,
-                           String phone, String email, Boolean enabled, Boolean mustChangePassword,
+                           String phone, String email, String wecomUserid,
+                           Boolean enabled, Boolean mustChangePassword,
                            java.time.LocalDateTime createdAt, java.time.LocalDateTime updatedAt,
                            Integer version, Long permissionGroupId, String permissionGroupCode,
                            String permissionGroupName, DataScope dataScope, Set<Long> campusIds,

@@ -91,6 +91,20 @@ photolib:
     image-target-bytes: 10485760
     image-max-bytes: 104857600
     preview-compression-ratio: ${PREVIEW_COMPRESSION_RATIO:0.6}
+  wecom:
+    # 企业微信自建应用。corp-id 在"我的企业"页，agent-id / secret 在该自建应用的详情页。
+    # 三者缺一，通知就只落站内信、外发记 FAILED 并告警。
+    corp-id: ${WECOM_CORP_ID:}
+    agent-id: ${WECOM_AGENT_ID:}
+    secret: ${WECOM_SECRET:}
+    # 消息里跳转链接的站点地址（不含路径），留空则消息只有正文没有链接。
+    site-base-url: ${WECOM_SITE_BASE_URL:}
+    base-url: ${WECOM_BASE_URL:https://qyapi.weixin.qq.com}
+    # access_token 名义有效期 7200s，提前这么久续期，避开"本地没过期、服务端已过期"的窗口。
+    token-refresh-ahead: ${WECOM_TOKEN_REFRESH_AHEAD:5m}
+    connect-timeout: ${WECOM_CONNECT_TIMEOUT:5s}
+    read-timeout: ${WECOM_READ_TIMEOUT:10s}
+  # V38 起通知外发改走企业微信；DirectMail 仅用于重试 V38 之前遗留的邮件投递记录。
   direct-mail:
     region-id: ${DIRECTMAIL_REGION_ID:cn-hangzhou}
     account-name: ${DIRECTMAIL_ACCOUNT_NAME:}

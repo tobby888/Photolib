@@ -54,8 +54,8 @@ class NotificationServiceTests {
     }
 
     @Test
-    void notifyUser_withEmail_shouldCreateInAppNotificationAndMailLog() {
-        jdbc.sql("UPDATE app_user SET email='user-a@example.com' WHERE id=:id")
+    void notifyUser_withWecomBinding_shouldCreateInAppNotificationAndDeliveryLog() {
+        jdbc.sql("UPDATE app_user SET wecom_userid='ZhangSan' WHERE id=:id")
                 .param("id", USER_A).update();
 
         service.notifyUser(USER_A, "WORKLOG_CONFIRMED", "工时已确认", "<p>记录已确认</p>");
@@ -65,12 +65,26 @@ class NotificationServiceTests {
         assertThat(jdbc.sql("""
                 SELECT COUNT(*) FROM notification_log
                 WHERE user_id=:id AND event_type='WORKLOG_CONFIRMED' AND status='PENDING'
+                  AND channel='WECOM' AND recipient='ZhangSan'
                 """).param("id", USER_A).query(Long.class).single()).isEqualTo(1);
+    }
+
+    /** 邮箱只是登录凭据了：V38 起它不再触发任何外发。 */
+    @Test
+    void notifyUser_withEmailButNoWecomBinding_shouldNotCreateDeliveryLog() {
+        jdbc.sql("UPDATE app_user SET email='user-a@example.com' WHERE id=:id")
+                .param("id", USER_A).update();
+
+        service.notifyUser(USER_A, "WORKLOG_CONFIRMED", "工时已确认", "<p>记录已确认</p>");
+
+        assertThat(service.listForUser(USER_A, false)).hasSize(1);
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM notification_log WHERE user_id=:id")
+                .param("id", USER_A).query(Long.class).single()).isZero();
     }
 
     @Test
     void notifyUser_shouldSanitizeSystemMailHtmlCentrally() {
-        jdbc.sql("UPDATE app_user SET email='safe@example.com' WHERE id=:id")
+        jdbc.sql("UPDATE app_user SET wecom_userid='SafeUser' WHERE id=:id")
                 .param("id", USER_A).update();
 
         service.notifyUser(USER_A, "REQUEST_RETURNED", "<b>主题</b>",

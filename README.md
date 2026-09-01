@@ -23,7 +23,7 @@
 - **项目相册与采纳**：一张图片可归属多个项目相册；相册归属与采纳标记相互独立。
 - **通讯录与工时**：拍摄者和工时成员来自校区通讯录，历史记录保留姓名与学号快照；部长或管理员可确认、退回工时。
 - **统计与导出**：按成员统计图片采纳与已确认工时，通过异步任务生成 XLSX 或图片 ZIP。
-- **通知与协作**：支持站内通知、管理广播、富文本消息和 DirectMail 邮件通知。
+- **通知与协作**：支持站内通知、管理广播、富文本消息，并通过企业微信自建应用推送到成员的企业微信。
 - **成员招募**：部长可自定义报名表并限时发布，同学无需登录即可在公开页填写并上传原图作品，详见[成员招募与公开报名页](#成员招募与公开报名页)。
 - **后台管理**：维护账号、校区、权限组、品牌设置、审计日志、存储对账和管理员告警。
 - **数据库备份**：每天凌晨 0 点自动把整库业务数据备份到对象存储，系统管理员可手动备份、下载、导入外部备份文件或回滚，详见[数据库备份与回滚](#数据库备份与回滚)。该能力仅对系统管理员开放，不出现在权限面板。
@@ -233,7 +233,13 @@ curl --fail http://127.0.0.1:8080/api/v1/actuator/health
 | `STARTUP_MISSING_OBJECT_CLEANUP_MIN_ABSOLUTE` | 低于该绝对张数时不按占比熔断，默认 `20` |
 | `PHOTO_PROCESSING_THREADS` | 原生图片处理线程数，取值 1～32，默认 1 |
 | `PHOTO_PROCESSING_TEMPORARY_DIRECTORY` | ZIP 解压与图片处理临时目录 |
-| `DIRECTMAIL_*` | DirectMail 地域、发信地址和访问凭据 |
+| `WECOM_CORP_ID` | 企业微信企业 ID（管理后台「我的企业」页底部） |
+| `WECOM_AGENT_ID` | 自建应用的 AgentId（应用详情页） |
+| `WECOM_SECRET` | 自建应用的 Secret，用于换取 `access_token`；不要提交到仓库 |
+| `WECOM_SITE_BASE_URL` | 通知里跳转链接的站点地址（不含路径），留空则消息只有正文 |
+| `WECOM_TOKEN_REFRESH_AHEAD` | `access_token` 的提前续期量，默认 `5m` |
+| `WECOM_CONNECT_TIMEOUT`、`WECOM_READ_TIMEOUT` | 调用企业微信接口的超时，默认 `5s` / `10s` |
+| `DIRECTMAIL_*` | DirectMail 地域、发信地址和访问凭据；V38 起仅用于重试历史邮件投递记录 |
 | `DATABASE_BACKUP_ENABLED` | 是否每天凌晨 0 点自动备份数据库，默认 `true` |
 | `DATABASE_BACKUP_CRON` | 自动备份的 Spring 6 段 Cron，默认 `0 0 0 * * *`（Asia/Shanghai） |
 | `DATABASE_BACKUP_RETENTION` | 备份文件保留时长，默认 `30d` |
@@ -276,6 +282,43 @@ curl --fail http://127.0.0.1:8080/api/v1/actuator/health
 - 每行的字段数量与表头一致，取值只能是 null、字符串、数字、布尔或 `{"b64":"..."}`；表尾声明的行数必须与实际行数相符。
 
 导入时会记录文件的 SHA-256，之后回滚仍会重新校验对象的大小与摘要，因此"导入后对象被改动"同样会在改数据之前被拦下。
+
+### 企业微信通知接入
+
+通知外发走**企业微信自建应用**。站内信对所有成员照常落库，绑定了企业微信的成员额外收到一条应用消息。
+
+**1. 建自建应用，拿三个值**
+
+1. 用管理员账号登录 <https://work.weixin.qq.com/> → 「应用管理」→「应用」→「自建」→「创建应用」，选可见范围（**没在可见范围里的成员收不到消息**，接口会返回 `invaliduser`）。
+2. 在应用详情页拿到 `AgentId` 和 `Secret`（Secret 只在创建时和「查看」时展示一次，需管理员在企业微信客户端确认）。
+3. 在「我的企业」页面底部拿到 `企业ID`（corpid）。
+
+对应 `WECOM_CORP_ID`、`WECOM_AGENT_ID`、`WECOM_SECRET`。
+
+**2. 配好可信 IP**
+
+应用详情页的「企业可信IP」要填服务器公网出口 IP，否则调接口会返回 `errcode 60020`。
+
+**3. access_token 怎么来**
+
+用 corpid + 应用 secret 调 `gettoken`，本项目由 `WeComAccessTokenProvider` 自动完成，**不需要手工申请或填写 token**：
+
+```bash
+curl "https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=<企业ID>&corpsecret=<应用Secret>"
+```
+
+返回 `{"errcode":0,"access_token":"...","expires_in":7200}`。要点：
+
+- token 按「应用」隔离，用哪个应用的 secret 换出来的 token 就只能操作哪个应用。
+- 有效期 7200 秒，且**必须缓存**：`gettoken` 有频率限制，重复签发还会作废旧 token。本项目在进程内缓存并提前 `WECOM_TOKEN_REFRESH_AHEAD`（默认 5 分钟）续期，并发下一次过期最多只打一次 `gettoken`。
+- 服务端返回 `40014 / 42001 / 41001` 时视为 token 失效，作废缓存并用新 token 重试一次；其它错误码直接落到投递记录的 `last_error` 里，重试只会放大限频。
+- 上面那条 curl 只用于验证凭据是否正确。**不要**把换出来的 token 写进配置——它两小时就过期，而且会被应用自己的续期挤掉。
+
+**4. 绑定成员**
+
+在后台「成员管理」里给每个人填「企业微信 UserID」（企业微信管理后台「通讯录」中该成员的账号，不是姓名也不是手机号）。没绑定的成员只收站内信，不产生投递记录。
+
+`app_user.email` 保留但只作登录凭据，不再触发投递；DirectMail 配置仅用于重试 V38 之前遗留的邮件记录。
 
 ### 阿里云 OSS 检查清单
 

@@ -289,6 +289,7 @@ type BatchItemStatus = 'UPLOADING' | 'WAITING_METADATA' | 'PROCESSING' | 'SUCCEE
   "campusId": "2012345678901234001",
   "phone": "13800000000",
   "email": "zhangsan@example.edu.cn",
+  "wecomUserid": "ZhangSan",
   "enabled": true,
   "mustChangePassword": false,
   "avatarUrl": "/api/v1/users/2012345678901234567/avatar?v=3",
@@ -584,7 +585,8 @@ function parseTags(value?: string | null): string[] {
   "role": "CAMPUS_MANAGER",
   "campusId": "...",
   "phone": "13800000000",
-  "email": "zhangsan@example.edu.cn"
+  "email": "zhangsan@example.edu.cn",
+  "wecomUserid": "ZhangSan"
 }
 ```
 
@@ -594,6 +596,7 @@ function parseTags(value?: string | null): string[] {
 - `displayName`：非空，最多 100
 - `phone`：可空，最多 32
 - `email`：可空，合法邮箱，最多 255；保存时 trim 并转小写，未删除用户中唯一
+- `wecomUserid`：可空，`^[A-Za-z0-9_@.-]{1,64}$`；保存时 trim、保留大小写，未删除用户中唯一。留空表示该成员只收站内信
 - `CAMPUS_MANAGER` 必须指定已启用校区
 
 创建响应：
@@ -618,12 +621,13 @@ function parseTags(value?: string | null): string[] {
   "campusId": "...",
   "phone": "13800000000",
   "email": "zhangsan@example.edu.cn",
+  "wecomUserid": "ZhangSan",
   "enabled": true,
   "version": 1
 }
 ```
 
-更新、停用、重置密码、修改密码和删除账号会按相应规则撤销会话。不能删除当前登录账号，也不能停用或删除唯一仍启用的管理员。删除账号会保留历史业务引用，但释放原用户名和邮箱，以后可重新创建同名账号。
+更新、停用、重置密码、修改密码和删除账号会按相应规则撤销会话。不能删除当前登录账号，也不能停用或删除唯一仍启用的管理员。删除账号会保留历史业务引用，但释放原用户名、邮箱和企业微信 UserID，以后可重新创建同名账号并绑定同一个 UserID。
 
 #### 用户头像
 
@@ -1586,16 +1590,18 @@ PENDING -> FAILED
 
 读取：`GET /notifications/images/{id}`，A/M/C，返回图片二进制，`Cache-Control: private, max-age=7 days`。
 
-### 13.4 邮件投递日志
+### 13.4 通知投递日志
 
 | 方法与路径 | 权限 | 说明 |
 | --- | --- | --- |
 | `GET /notification-logs?status=FAILED&userId=...` | A | 最近 200 条，非分页 |
 | `POST /notification-logs/{id}/retry` | A | 重置重试计数并立即投递 |
 
-日志字段：`id`、`userId`、`email`、`eventType`、`status`、`retryCount`、`lastError`、`payloadJson`、`createdAt`、`updatedAt`。状态会出现 `PENDING`、`RETRYING`、`SENT`、`FAILED`。`payloadJson` 是服务端内部邮件载荷，客户端只应展示，不应解析或回传。
+日志字段：`id`、`userId`、`channel`、`recipient`、`email`、`eventType`、`status`、`retryCount`、`lastError`、`payloadJson`、`createdAt`、`updatedAt`。状态会出现 `PENDING`、`RETRYING`、`SENT`、`FAILED`。`payloadJson` 是服务端内部载荷，客户端只应展示，不应解析或回传。
 
-邮件失败不会回滚站内通知或主业务。自动重试最多 3 次，最终失败会创建管理员告警。
+`channel` 为 `WECOM` 时 `recipient` 是企业微信 UserID，这是当前唯一会新增的通道；`EMAIL` 只出现在 V38 之前的历史记录里，`recipient` 与 `email` 都是收件邮箱。未绑定企业微信的成员只有站内信，不会产生投递记录。
+
+外发失败不会回滚站内通知或主业务。自动重试最多 3 次，最终失败会创建 `NOTIFICATION_DELIVERY_FAILED` 管理员告警。
 
 ## 14. Markdown 说明图片
 
@@ -1713,8 +1719,8 @@ Cron 使用 Spring 六字段表达式，最长 128。最多 20 条；服务端�
 ```json
 {
   "id": "...",
-  "type": "MAIL_DELIVERY_FAILED",
-  "message": "邮件连续投递失败：...",
+  "type": "NOTIFICATION_DELIVERY_FAILED",
+  "message": "通知连续投递失败：...",
   "resourceType": "NOTIFICATION",
   "resourceId": "...",
   "resolved": false,

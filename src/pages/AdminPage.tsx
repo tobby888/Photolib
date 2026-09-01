@@ -25,9 +25,13 @@ interface BrandingFormValues {
   iconChoice: BrandingSettings['builtinIcon'] | 'custom'
 }
 
-interface EmailFormValues {
+interface AccountFormValues {
   email?: string
+  wecomUserid?: string
 }
+
+/** 企业微信通讯录对 userid 的约束：数字、字母和 _-@. 四种半角符号，1~64 字节。 */
+const WECOM_USERID_PATTERN = /^[A-Za-z0-9_@.-]{1,64}$/
 
 interface ScheduledIconDraft {
   key: string
@@ -56,7 +60,7 @@ function ScheduledIconPreview({ file, iconUrl }: Pick<ScheduledIconDraft, 'file'
 export default function AdminPage() {
   const { message, modal } = App.useApp()
   const [userForm] = Form.useForm()
-  const [emailForm] = Form.useForm<EmailFormValues>()
+  const [accountForm] = Form.useForm<AccountFormValues>()
   const [campusForm] = Form.useForm()
   const [brandingForm] = Form.useForm<BrandingFormValues>()
   const [userOpen, setUserOpen] = useState(false)
@@ -207,14 +211,14 @@ export default function AdminPage() {
       message.success(user.enabled ? '账号已停用' : '账号已启用'); await reload()
     } catch (e) { message.error((e as Error).message) }
   }
-  const openEmailEditor = (user: User) => {
+  const openAccountEditor = (user: User) => {
     setEditingUser(user)
-    emailForm.setFieldsValue({ email: user.email })
+    accountForm.setFieldsValue({ email: user.email, wecomUserid: user.wecomUserid ?? undefined })
   }
-  const updateUserEmail = async () => {
+  const updateUserAccount = async () => {
     if (!editingUser || editingUser.version == null) return
     try {
-      const values = await emailForm.validateFields()
+      const values = await accountForm.validateFields()
       await api<User>({
         method: 'PUT',
         url: `/users/${editingUser.id}`,
@@ -226,13 +230,14 @@ export default function AdminPage() {
           campusId: editingUser.campusId,
           phone: editingUser.phone,
           email: values.email?.trim() || null,
+          wecomUserid: values.wecomUserid?.trim() || null,
           enabled: editingUser.enabled ?? true,
           version: editingUser.version,
         },
       })
-      message.success('用户邮箱已更新')
+      message.success('账号信息已更新')
       setEditingUser(null)
-      emailForm.resetFields()
+      accountForm.resetFields()
       await reload()
     } catch (e) { message.error((e as Error).message) }
   }
@@ -377,8 +382,12 @@ export default function AdminPage() {
               { title: '授权校区', dataIndex: 'campusIds', render: (values: string[] = []) => values.length
                 ? values.map(value => campuses.find(c => c.id === value)?.name || `#${value}`).join('、') : '-' },
               { title: '联系方式', render: (_, item) => item.email || item.phone || '-' },
+              // 没绑企微 = 收不到任何外发通知，这一列让管理员一眼看出还差谁。
+              { title: '通知', render: (_, item) => item.wecomUserid
+                ? <Tag color="green" variant="filled">企微 {item.wecomUserid}</Tag>
+                : <Tag variant="filled">仅站内信</Tag> },
               { title: '状态', dataIndex: 'enabled', render: value => <Tag color={value ? 'green' : 'default'} variant="filled">{value ? '正常' : '已停用'}</Tag> },
-              { title: '操作', fixed: 'right', minWidth: USER_ACTION_MIN_WIDTH, className: 'table-action-cell', render: (_, item) => <Space><Switch size="small" checked={item.enabled} onChange={() => void toggleUser(item)} /><Button type="link" icon={<EditOutlined />} onClick={() => openEmailEditor(item)}>修改邮箱</Button><Button type="link" onClick={async () => {
+              { title: '操作', fixed: 'right', minWidth: USER_ACTION_MIN_WIDTH, className: 'table-action-cell', render: (_, item) => <Space><Switch size="small" checked={item.enabled} onChange={() => void toggleUser(item)} /><Button type="link" icon={<EditOutlined />} onClick={() => openAccountEditor(item)}>修改账号</Button><Button type="link" onClick={async () => {
                 try { const result = await api<{ initialPassword: string }>({ method: 'PUT', url: `/users/${item.id}/password` }); modal.warning({ title: '密码已重置', content: <Typography.Text copyable code>{result.initialPassword}</Typography.Text> }) } catch (e) { message.error((e as Error).message) }
               }}>重置密码</Button><Button type="link" danger onClick={() => deleteUser(item)}>删除</Button></Space> },
             ]} />
@@ -415,19 +424,29 @@ export default function AdminPage() {
         </Form.Item>
         <Form.Item label="邮箱" name="email" extra="填写后，用户可使用该邮箱登录。" rules={[{ type: 'email' }, { max: 255 }]}><Input /></Form.Item>
         <Form.Item label="手机号" name="phone"><Input /></Form.Item>
+        <Form.Item label="企业微信 UserID" name="wecomUserid"
+          extra="企业微信管理后台「通讯录」中该成员的账号；留空则该成员只收站内信。"
+          rules={[{ pattern: WECOM_USERID_PATTERN, message: '只能包含字母、数字和 _-@. ，且不超过 64 个字符' }]}>
+          <Input placeholder="例如 ZhangSan" />
+        </Form.Item>
       </Form>
     </Modal>
     <Modal
-      title={`修改 ${editingUser?.displayName || ''} 的邮箱`}
+      title={`修改 ${editingUser?.displayName || ''} 的账号信息`}
       open={editingUser !== null}
-      onCancel={() => { setEditingUser(null); emailForm.resetFields() }}
-      onOk={() => void updateUserEmail()}
+      onCancel={() => { setEditingUser(null); accountForm.resetFields() }}
+      onOk={() => void updateUserAccount()}
       okText="保存"
     >
-      <Typography.Paragraph type="secondary">邮箱不区分大小写，保存后可立即用于登录；留空则取消邮箱登录。</Typography.Paragraph>
-      <Form form={emailForm} layout="vertical" requiredMark={false}>
+      <Typography.Paragraph type="secondary">邮箱用于登录，不区分大小写，留空则取消邮箱登录；企业微信 UserID 用于接收通知，留空则该成员只收站内信。</Typography.Paragraph>
+      <Form form={accountForm} layout="vertical" requiredMark={false}>
         <Form.Item label="邮箱" name="email" rules={[{ type: 'email', message: '请输入有效的邮箱地址' }, { max: 255, message: '邮箱不能超过 255 个字符' }]}>
           <Input placeholder="例如 name@example.com" autoComplete="email" />
+        </Form.Item>
+        <Form.Item label="企业微信 UserID" name="wecomUserid"
+          extra="企业微信管理后台「通讯录」中该成员的账号，注意不是姓名或手机号。"
+          rules={[{ pattern: WECOM_USERID_PATTERN, message: '只能包含字母、数字和 _-@. ，且不超过 64 个字符' }]}>
+          <Input placeholder="例如 ZhangSan" autoComplete="off" />
         </Form.Item>
       </Form>
     </Modal>

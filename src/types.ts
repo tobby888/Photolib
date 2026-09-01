@@ -28,6 +28,8 @@ export interface User {
   campus?: string | null
   phone?: string
   email?: string
+  /** 企业微信通讯录 userid，通知投递的收件标识；未绑定则该成员只收站内信。 */
+  wecomUserid?: string | null
   enabled?: boolean
   mustChangePassword?: boolean
   version?: number
