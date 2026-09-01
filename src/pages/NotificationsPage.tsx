@@ -91,7 +91,8 @@ export default function NotificationsPage() {
         <Form.Item name="title" label="消息标题" rules={[{ required: true }, { max: 100 }]}>
           <Input placeholder="请输入消息标题" />
         </Form.Item>
-        <Form.Item label="消息正文" required>
+        <Form.Item label="消息正文" required
+          extra="消息同时推送到收件人的企业微信（未绑定的成员只收站内信）。企业微信不支持图片，正文里的图片会显示成占位，收件人点“查看详情”回站内看完整内容。">
           <RichTextEditor value={contentHtml} onChange={setContentHtml} />
         </Form.Item>
       </Form>

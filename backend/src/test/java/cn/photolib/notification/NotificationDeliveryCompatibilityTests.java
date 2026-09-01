@@ -61,7 +61,27 @@ class NotificationDeliveryCompatibilityTests {
     }
 
     @Test
-    void deliver_forWeComRow_shouldSendWithEventActionPath() {
+    void deliver_forWeComRow_shouldSendWithTheStoredActionPath() {
+        NotificationLogEntity log = new NotificationLogEntity();
+        log.setChannel("WECOM");
+        log.setRecipient("ZhangSan");
+        log.setEventType("REQUEST_PUBLISHED");
+        log.setActionPath("/requests");
+        log.setPayloadJson("新的图片需求" + SEPARATOR + "<p>毕业典礼</p>");
+        log.setRetryCount(0);
+
+        service.deliver(log);
+
+        verify(wecom).send("ZhangSan", "新的图片需求", "<p>毕业典礼</p>", "/requests");
+        verifyNoInteractions(gateway);
+    }
+
+    /**
+     * V39 之前的记录没有 action_path。跳到站内信列表由 WeComApiClient 兜底，
+     * 投递本身不能因为少一个路径就失败。
+     */
+    @Test
+    void deliver_forWeComRowWithoutActionPath_shouldStillSend() {
         NotificationLogEntity log = new NotificationLogEntity();
         log.setChannel("WECOM");
         log.setRecipient("ZhangSan");
@@ -71,8 +91,7 @@ class NotificationDeliveryCompatibilityTests {
 
         service.deliver(log);
 
-        verify(wecom).send("ZhangSan", "新的图片需求", "<p>毕业典礼</p>", "/requests");
-        verifyNoInteractions(gateway);
+        verify(wecom).send("ZhangSan", "新的图片需求", "<p>毕业典礼</p>", null);
     }
 
     @Test

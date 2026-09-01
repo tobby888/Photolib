@@ -19,6 +19,8 @@ public class NotificationLogEntity {
     /** 历史邮件记录的收件邮箱，V38 起不再写入，仅供旧数据展示与重试。 */
     private String email;
     private String eventType;
+    /** 站内路由路径，投递时拼成跳转链接；为空表示跳到站内信列表。 */
+    private String actionPath;
     private String status;
     private Integer retryCount;
     private String lastError;

@@ -86,6 +86,49 @@ class WeComApiClientTests {
     }
 
     @Test
+    void send_asMarkdown_shouldUseTheMarkdownPayloadShape() {
+        client("https://photowarehouse.cn", WeComMessageType.MARKDOWN)
+                .send("ZhangSan", "新的图片需求", "<p>毕业典礼 <b>下午三点</b></p>", "/requests");
+
+        Map<String, Object> body = captureBody();
+        assertThat(body).containsEntry("msgtype", "markdown").doesNotContainKey("text")
+                // safe 只对 text 有意义，markdown 消息不接受这个参数。
+                .doesNotContainKey("safe");
+        assertThat(markdown(body)).isEqualTo("""
+                # 新的图片需求
+
+                毕业典礼 **下午三点**
+
+                [查看详情](https://photowarehouse.cn/#/requests)""");
+    }
+
+    /** 标题也是用户可控的（需求标题会原样进来），不能让它在企微里造出链接。 */
+    @Test
+    void send_asMarkdown_shouldEscapeTheSubject() {
+        client(null, WeComMessageType.MARKDOWN)
+                .send("ZhangSan", "[点这里](http://evil.cn)", "<p>正文</p>", null);
+
+        // 方括号被转义就构不成链接语法了，后面那对圆括号只是普通文字。
+        assertThat(markdown(captureBody())).startsWith("# \\[点这里\\]")
+                .doesNotContain("[点这里](");
+    }
+
+    /**
+     * 正文越长收件人越需要那个链接——图片和超长内容只在站内看得全。整条拼完再截会
+     * 把末尾的链接切掉，正好切在最不该切的地方。
+     */
+    @Test
+    void send_withOverlongBody_shouldKeepTheHeadingAndTheLink() {
+        client("https://photowarehouse.cn", WeComMessageType.MARKDOWN)
+                .send("ZhangSan", "长通知", "<p>" + "内容".repeat(2000) + "</p>", "/requests");
+
+        String content = markdown(captureBody());
+        assertThat(content.getBytes(StandardCharsets.UTF_8).length).isLessThanOrEqualTo(2048);
+        assertThat(content).startsWith("# 长通知")
+                .endsWith("[查看详情](https://photowarehouse.cn/#/requests)");
+    }
+
+    @Test
     void truncateToBytes_shouldCutOnACharacterBoundary() {
         String overlong = "中".repeat(1200);
 
@@ -104,8 +147,12 @@ class WeComApiClientTests {
     }
 
     private WeComApiClient client(String siteBaseUrl) {
+        return client(siteBaseUrl, WeComMessageType.TEXT);
+    }
+
+    private WeComApiClient client(String siteBaseUrl, WeComMessageType messageType) {
         WeComProperties properties = new WeComProperties(null, "corp", 1000002L, "secret",
-                siteBaseUrl, null, null, null);
+                siteBaseUrl, messageType, null, null, null);
         return new WeComApiClient(api, properties, tokens);
     }
 
@@ -119,5 +166,10 @@ class WeComApiClientTests {
     @SuppressWarnings("unchecked")
     private String content(Map<String, Object> body) {
         return (String) ((Map<String, Object>) body.get("text")).get("content");
+    }
+
+    @SuppressWarnings("unchecked")
+    private String markdown(Map<String, Object> body) {
+        return (String) ((Map<String, Object>) body.get("markdown")).get("content");
     }
 }

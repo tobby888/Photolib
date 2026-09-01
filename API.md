@@ -1576,6 +1576,8 @@ PENDING -> FAILED
 
 标题最多 100，HTML 最多 20000。定向发送必须提供已启用用户。广播发给所有已启用用户，包括发送者本人。
 
+消息除写入站内信外，还会推送到收件人的企业微信（见 13.4）；未绑定企业微信的收件人只有站内信。企业微信消息不支持图片，正文里的消息图片显示为占位，跳转链接指向该条站内消息。
+
 服务端会清理 HTML，只保留受控的基础格式以及 `p`、`div`、`h1`～`h3`、`img` 等；图片 `src` 只允许 `/api/v1/notifications/images/{26位PublicId}`。客户端必须把服务端清理后的 `contentHtml` 当成最终内容。
 
 ### 13.3 消息图片
@@ -1597,9 +1599,11 @@ PENDING -> FAILED
 | `GET /notification-logs?status=FAILED&userId=...` | A | 最近 200 条，非分页 |
 | `POST /notification-logs/{id}/retry` | A | 重置重试计数并立即投递 |
 
-日志字段：`id`、`userId`、`channel`、`recipient`、`email`、`eventType`、`status`、`retryCount`、`lastError`、`payloadJson`、`createdAt`、`updatedAt`。状态会出现 `PENDING`、`RETRYING`、`SENT`、`FAILED`。`payloadJson` 是服务端内部载荷，客户端只应展示，不应解析或回传。
+日志字段：`id`、`userId`、`channel`、`recipient`、`email`、`eventType`、`actionPath`、`status`、`retryCount`、`lastError`、`payloadJson`、`createdAt`、`updatedAt`。`actionPath` 是消息里跳转链接指向的站内路径（管理消息指向消息本身），V39 之前的记录为空，投递时兜底跳站内信列表。状态会出现 `PENDING`、`RETRYING`、`SENT`、`FAILED`。`payloadJson` 是服务端内部载荷，客户端只应展示，不应解析或回传。
 
 `channel` 为 `WECOM` 时 `recipient` 是企业微信 UserID，这是当前唯一会新增的通道；`EMAIL` 只出现在 V38 之前的历史记录里，`recipient` 与 `email` 都是收件邮箱。未绑定企业微信的成员只有站内信，不会产生投递记录。
+
+系统通知和管理消息（广播、定向）都会产生投递记录。广播是**每个绑定了企业微信的收件人一条记录、一次调用**，未绑定的收件人只有站内信。
 
 外发失败不会回滚站内通知或主业务。自动重试最多 3 次，最终失败会创建 `NOTIFICATION_DELIVERY_FAILED` 管理员告警。
 

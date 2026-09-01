@@ -98,7 +98,11 @@ photolib:
     agent-id: ${WECOM_AGENT_ID:}
     secret: ${WECOM_SECRET:}
     # 消息里跳转链接的站点地址（不含路径），留空则消息只有正文没有链接。
+    # 不写协议头时按 https 补全。
     site-base-url: ${WECOM_SITE_BASE_URL:}
+    # markdown（默认）标题加粗链接都能渲染，但只有企业微信客户端支持；如果有成员在
+    # 微信里通过企业微信插件收消息，改成 text 全局退回纯文本。
+    message-type: ${WECOM_MESSAGE_TYPE:markdown}
     base-url: ${WECOM_BASE_URL:https://qyapi.weixin.qq.com}
     # access_token 名义有效期 7200s，提前这么久续期，避开"本地没过期、服务端已过期"的窗口。
     token-refresh-ahead: ${WECOM_TOKEN_REFRESH_AHEAD:5m}

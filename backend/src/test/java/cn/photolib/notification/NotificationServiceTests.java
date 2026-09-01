@@ -196,6 +196,37 @@ class NotificationServiceTests {
         assertThat(service.unreadCount(USER_B)).isEqualTo(1);
     }
 
+    /** 管理消息以前只写站内信、从不外发，是"配好了也收不到"最常见的来源。 */
+    @Test
+    void sendMessage_shouldQueueDeliveryForRecipientsBoundToWecom() {
+        jdbc.sql("UPDATE app_user SET wecom_userid='LiSi' WHERE id=:id")
+                .param("id", USER_B).update();
+
+        service.sendMessage(USER_A, USER_B, false, "值班安排", "<p>今晚七点</p>");
+
+        var notification = service.listForUser(USER_B, false).getFirst();
+        assertThat(jdbc.sql("""
+                SELECT action_path FROM notification_log
+                WHERE user_id=:id AND channel='WECOM' AND recipient='LiSi'
+                  AND event_type='DIRECT_MESSAGE' AND status='PENDING'
+                """).param("id", USER_B).query(String.class).single())
+                // 跳这条消息本身：正文里的图片带不进企业微信，链接是看全内容的唯一入口。
+                .isEqualTo("/notifications/" + notification.getId());
+    }
+
+    @Test
+    void sendMessage_broadcast_shouldOnlyQueueDeliveryForBoundRecipients() {
+        jdbc.sql("UPDATE app_user SET wecom_userid='LiSi' WHERE id=:id")
+                .param("id", USER_B).update();
+
+        int recipients = service.sendMessage(USER_A, null, true, "全员通知", "<p>请查收</p>");
+
+        // 两个人都拿到站内信，只有绑了企微的那个产生投递记录。
+        assertThat(recipients).isEqualTo(2);
+        assertThat(jdbc.sql("SELECT recipient FROM notification_log WHERE event_type='BROADCAST_MESSAGE'")
+                .query(String.class).list()).containsExactly("LiSi");
+    }
+
     @Test
     void sendMessage_toDisabledUser_shouldFail() {
         assertThatThrownBy(() -> service.sendMessage(

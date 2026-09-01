@@ -33,13 +33,15 @@ public class WeComApiClient implements WeComGateway {
 
     @Override
     public void send(String toUser, String subject, String html, String actionPath) {
+        WeComMessageType type = properties.messageType();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("touser", toUser);
-        body.put("msgtype", "text");
+        body.put("msgtype", type.wireName());
         body.put("agentid", properties.agentId());
-        body.put("text", Map.of("content", content(subject, html, actionPath)));
+        body.put(type.wireName(), Map.of("content", content(subject, html, actionPath)));
         // 不走保密消息：保密消息只能在企业微信客户端内查看且不可转发，对通知没有意义。
-        body.put("safe", 0);
+        // markdown 消息本身不接受这个参数，只给 text 带上。
+        if (type == WeComMessageType.TEXT) body.put("safe", 0);
 
         String token = tokens.token();
         try {
@@ -54,16 +56,38 @@ public class WeComApiClient implements WeComGateway {
     }
 
     String content(String subject, String html, String actionPath) {
-        StringBuilder text = new StringBuilder();
-        if (subject != null && !subject.isBlank()) text.append(subject.trim()).append('\n');
-        String plain = html == null ? "" : Jsoup.parse(html).text();
-        if (!plain.isBlank()) text.append(plain.trim());
+        boolean markdown = properties.messageType() == WeComMessageType.MARKDOWN;
         String link = link(actionPath);
-        if (link != null) {
-            if (!text.isEmpty()) text.append("\n\n");
-            text.append("查看详情：").append(link);
-        }
-        return truncateToBytes(text.toString(), MAX_CONTENT_BYTES);
+        String heading = heading(subject, markdown);
+        String footer = footer(link, markdown);
+        String body = markdown
+                ? WeComMarkdown.fromHtml(html, properties.siteBaseUrl())
+                : (html == null ? "" : Jsoup.parse(html).text().strip());
+
+        // 先给标题和链接留出位置，再截正文。反过来（整条拼完再截）会把末尾的链接切掉，
+        // 而正文越长、收件人越需要那个链接——图片和超长内容只在站内看得全。
+        int budget = MAX_CONTENT_BYTES - utf8Length(heading) - utf8Length(footer);
+        StringBuilder content = new StringBuilder(heading);
+        if (!body.isEmpty() && budget > 0) content.append(truncateToBytes(body, budget));
+        // 标题和正文都为空时，footer 开头那两个换行会变成消息的开头。
+        return content.append(footer).toString().stripLeading();
+    }
+
+    private static int utf8Length(String value) {
+        return value.getBytes(StandardCharsets.UTF_8).length;
+    }
+
+    private String heading(String subject, boolean markdown) {
+        if (subject == null || subject.isBlank()) return "";
+        String trimmed = subject.trim();
+        return markdown
+                ? "# " + WeComMarkdown.escapeText(trimmed) + "\n\n"
+                : trimmed + "\n";
+    }
+
+    private String footer(String link, boolean markdown) {
+        if (link == null) return "";
+        return markdown ? "\n\n[查看详情](" + link + ")" : "\n\n查看详情：" + link;
     }
 
     private String link(String actionPath) {
