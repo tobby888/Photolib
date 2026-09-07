@@ -41,7 +41,8 @@ public class SecurityConfig {
                         // administrator's branding before anyone is authenticated.
                         .requestMatchers(HttpMethod.GET,
                                 "/api/v1/branding",
-                                "/api/v1/branding/scheduled-icons/*/icon").permitAll()
+                                "/api/v1/branding/scheduled-icons/*/icon",
+                                "/api/v1/branding/placeholder-images/*/image").permitAll()
                         .requestMatchers(HttpMethod.GET,
                                 "/api/v1/public/recruitments",
                                 "/api/v1/public/recruitments/*/drafts/*/batches/*").permitAll()

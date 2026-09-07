@@ -15,6 +15,7 @@ import { api } from './api'
 import type { BrandingSettings, Notification, PreviewGenerationStatus } from './types'
 import { BrandGlyph, useBranding } from './branding'
 import { hasAnyPermission, hasPermission, hasSystemAccess } from './permissions'
+import SiteFooter from './SiteFooter'
 import UserAvatar from './UserAvatar'
 
 const LoginPage = lazy(() => import('./pages/LoginPage'))
@@ -217,6 +218,7 @@ function Shell() {
           await logout(); navigate('/login')
         }}>退出登录</Button>
       </Space>} />
+    <SiteFooter />
   </div>
   const selected = location.pathname.startsWith('/recruitment-applications/')
     ? '/recruitments'
@@ -327,6 +329,8 @@ function Shell() {
             <Route path="*" element={<NotFound />} />
           </Routes></Suspense>
         </div>
+        {/* 页脚对每个能进工作台的角色都显示，内容由管理员配置。 */}
+        <SiteFooter className="shell-footer" />
       </Content>
     </Layout>
     {avatarSettingsOpen && <Suspense fallback={null}>

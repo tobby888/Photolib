@@ -2450,3 +2450,83 @@ body {
   .docs-sidebar,
   .docs-manage-tree { position: static; max-height: none; }
 }
+
+/* 站点定制 ---------------------------------------------------------------- */
+/* 页脚与缺图占位图都由管理员配置，样式跟随当前主题变量，不另立一套配色。 */
+.site-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px 18px;
+  padding: 16px 24px 20px;
+  color: var(--studio-muted);
+  font-size: 12px;
+  line-height: 1.7;
+  text-align: center;
+}
+/* 管理员可以在文案里换行，所以保留换行但仍折叠多余空格。 */
+.site-footer-text { white-space: pre-line; }
+.site-footer-links { display: inline-flex; flex-wrap: wrap; gap: 6px 16px; justify-content: center; }
+.site-footer-links a { color: var(--porcelain-blue, #4682B4); }
+.site-footer-links a:hover { text-decoration: underline; }
+.shell-footer { border-top: 1px solid var(--studio-rule, rgba(70, 130, 180, .2)); }
+.login-footer { color: rgba(255, 255, 255, .55); }
+
+/* 登录页主标题允许管理员用换行分句。 */
+.story-copy h1.ant-typography.story-headline { white-space: pre-line; }
+/* 表单一侧多出页脚之后，卡片继续占满上方并保持居中。 */
+.login-form-side { grid-template-rows: 1fr auto; align-content: stretch; }
+.login-form-side > .login-card { align-self: center; }
+.login-footer.site-footer { color: var(--studio-muted); }
+
+/* 图片取不到时顶上来的占位图：铺满原来的灰底方块，说明文字压在底部。 */
+.placeholder-with-image { position: relative; overflow: hidden; padding: 0; }
+.placeholder-with-image > img {
+  width: 100%;
+  height: 100%;
+  min-height: inherit;
+  object-fit: cover;
+  display: block;
+}
+.image-placeholder.placeholder-with-image > .placeholder-note,
+.delivery-placeholder.placeholder-with-image > .placeholder-note {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 6px 10px;
+  width: auto;
+  height: auto;
+  border: 0;
+  border-radius: 0;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+  background: rgba(16, 32, 44, .62);
+}
+
+/* 后台的占位图管理：缩略图列表 + 单张删除。 */
+.placeholder-image-settings { max-width: 720px; }
+.placeholder-image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+}
+.placeholder-image-item {
+  border: 1px solid var(--studio-rule, rgba(70, 130, 180, .2));
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--studio-surface, #fff);
+}
+.placeholder-image-item > img { width: 100%; height: 96px; object-fit: cover; display: block; }
+.placeholder-image-item > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 4px 4px 4px 8px;
+  min-width: 0;
+}
+.placeholder-image-item .ant-typography { font-size: 12px; min-width: 0; }

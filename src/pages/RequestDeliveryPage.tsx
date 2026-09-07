@@ -20,6 +20,7 @@ import MarkdownRenderer from '../MarkdownRenderer'
 import { photoTitleFromFileName } from '../photoTitle'
 import { hasPermission } from '../permissions'
 import { PREVIEW_CROSS_ORIGIN } from '../previewImage'
+import { PhotoPlaceholder, pickPlaceholderImage, usePlaceholderImages } from '../photoPlaceholder'
 import { preparePhotoBatchDownload } from '../photoBatchDownload'
 
 type UploadValues = {
@@ -42,6 +43,7 @@ export default function RequestDeliveryPage() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const { message, modal } = App.useApp()
+  const placeholderImages = usePlaceholderImages()
   const [form] = Form.useForm<UploadValues>()
   const [photoStatus, setPhotoStatus] = useState('AVAILABLE')
   const [uploading, setUploading] = useState(false)
@@ -275,8 +277,11 @@ export default function RequestDeliveryPage() {
                           : current.filter(id => id !== photo.id))} />}
                     {photo.thumbnailUrl
                       ? <Image preview crossOrigin={PREVIEW_CROSS_ORIGIN}
-                          src={photo.thumbnailUrl} alt={photo.title} />
-                      : <div className="delivery-placeholder"><PictureOutlined /></div>}
+                          src={photo.thumbnailUrl} alt={photo.title}
+                          fallback={pickPlaceholderImage(placeholderImages, photo.id)} />
+                      : <PhotoPlaceholder className="delivery-placeholder" seed={photo.id}>
+                        <PictureOutlined />
+                      </PhotoPlaceholder>}
                     <StatusTag value={photo.status} />
                   </div>
                   <strong>{photo.title || '未命名图片'}</strong>

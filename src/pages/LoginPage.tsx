@@ -6,6 +6,7 @@ import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth'
 import { BrandGlyph, useBranding } from '../branding'
+import SiteFooter from '../SiteFooter'
 
 export default function LoginPage() {
   const { login } = useAuth()
@@ -14,6 +15,10 @@ export default function LoginPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const [loading, setLoading] = useState(false)
+  const headline = branding.loginHeadline?.trim()
+  const subheadline = branding.loginSubheadline?.trim()
+  const highlights = branding.loginHighlights ?? []
+  const notice = branding.loginNotice?.trim()
   const submit = async (values: { identifier: string; password: string }) => {
     setLoading(true)
     try {
@@ -33,11 +38,15 @@ export default function LoginPage() {
       </div>
       <div className="story-copy">
         <Typography.Text>{branding.slogan}</Typography.Text>
-        <Typography.Title>让每一次快门，<br />都抵达它该去的地方。</Typography.Title>
-        <Typography.Paragraph>从拍摄需求到图片采纳，把散落的协作收进一条清晰的工作流。</Typography.Paragraph>
+        {/* 主标题、副标题和下方关键词都由管理员配置；留空就整段不渲染，
+            而不是退回一份写死的文案——写死的那份迟早和后台配置对不上。 */}
+        {headline && <Typography.Title className="story-headline">{headline}</Typography.Title>}
+        {subheadline && <Typography.Paragraph>{subheadline}</Typography.Paragraph>}
       </div>
       <div className="frame-marks"><i /><i /><i /><i /></div>
-      <div className="story-meta"><span>项目协作</span><span>素材管理</span><span>贡献统计</span></div>
+      {!!highlights.length && <div className="story-meta">
+        {highlights.map(item => <span key={item}>{item}</span>)}
+      </div>}
     </section>
     <section className="login-form-side">
       <Card className="login-card" variant="borderless">
@@ -61,8 +70,9 @@ export default function LoginPage() {
           <Button size="large" style={{ width: '50%' }} icon={<ReadOutlined />}
             onClick={() => navigate('/docs')}>查看文档</Button>
         </Space.Compact>
-        <Typography.Text className="login-help">首次登录后，系统会引导你修改初始密码</Typography.Text>
+        {notice && <Typography.Text className="login-help">{notice}</Typography.Text>}
       </Card>
+      <SiteFooter className="login-footer" />
     </section>
   </main>
 }

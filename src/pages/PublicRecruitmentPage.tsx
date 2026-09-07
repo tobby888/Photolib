@@ -36,6 +36,7 @@ import { useAuth } from '../auth'
 import { BrandGlyph, useBranding } from '../branding'
 import { useLoad } from '../hooks'
 import MarkdownRenderer from '../MarkdownRenderer'
+import SiteFooter from '../SiteFooter'
 import {
   normalizeRecruitmentAnswers,
   normalizeStudentId,
@@ -382,6 +383,7 @@ export default function PublicRecruitmentPage() {
       <Typography.Paragraph type="secondary" style={{ textAlign: 'center', marginTop: 26 }}>
         已经是摄影部成员了？<Link to="/login">去登录工作站</Link>。<CloudUploadOutlined /> 整个提交过程都走加密连接。
       </Typography.Paragraph>
+      <SiteFooter />
     </div>
   </main>
 }
