@@ -29,12 +29,15 @@ http://localhost:8080/api/v1
 
 - `POST /auth/login`
 - `POST /auth/refresh`
+- `GET /branding`
 - `GET /branding/icon`
 - `GET /branding/scheduled-icons/{id}/icon`
+- `GET /branding/placeholder-images/{id}/image`
 - `GET /local-storage/objects/{token}` 和 `PUT /local-storage/objects/{token}`：仅本地存储模式下存在，且必须使用服务端签发的 token
 - `GET /actuator/health`
 
-注意：`GET /branding` 本身仍需要登录，只有图标二进制读取接口公开。
+注意：品牌读取接口对匿名开放，登录页、公开招募页和文档中心在未登录时就要显示管理员配置的标识、
+页脚和缺图占位图；写接口（`PUT /branding`、`PUT /branding/site` 及占位图的上传、删除）仍然只对 A 开放。
 
 ### 1.2 请求头与 Cookie
 
@@ -242,6 +245,7 @@ http.interceptors.response.use(undefined, async error => {
 - 审计日志 CSV：`GET /audit-logs/export`
 - 品牌图标：`GET /branding/icon`
 - 定时品牌图标：`GET /branding/scheduled-icons/{id}/icon`
+- 缺图占位图：`GET /branding/placeholder-images/{id}/image`
 - 用户头像：`GET /users/me/avatar`、`GET /users/{id}/avatar`
 - 说明图片：`GET /description-images/{id}`
 - 消息图片：`GET /notifications/images/{id}`
@@ -1635,7 +1639,7 @@ PENDING -> FAILED
 
 ### 15.1 基础品牌
 
-`GET /branding`，已登录。
+`GET /branding`，公开。
 
 ```json
 {
@@ -1646,7 +1650,15 @@ PENDING -> FAILED
   "slogan": "摄影工作站",
   "displayIconType": "builtin",
   "displayIconUrl": null,
-  "nextIconRefreshAt": "2026-07-25T00:00:00+08:00"
+  "nextIconRefreshAt": "2026-07-25T00:00:00+08:00",
+  "loginHeadline": "让每一次快门，
+都抵达它该去的地方。",
+  "loginSubheadline": "从拍摄需求到图片采纳，把散落的协作收进一条清晰的工作流。",
+  "loginHighlights": ["项目协作", "素材管理", "贡献统计"],
+  "loginNotice": "首次登录后，系统会引导你修改初始密码",
+  "footerText": "© 2026 校园摄影部",
+  "footerLinks": [{ "label": "使用指南", "url": "#/docs" }],
+  "placeholderImageUrls": ["/api/v1/branding/placeholder-images/1/image?v=..."]
 }
 ```
 
@@ -1669,7 +1681,56 @@ PENDING -> FAILED
 
 读取自定义图标：`GET /branding/icon`，公开，返回二进制；不存在时返回裸 `404`。
 
-### 15.2 定时品牌图标
+### 15.2 登录页文案与全站页脚
+
+`PUT /branding/site`，A。和 `PUT /branding` 分开：两块在后台是两张表单，
+合成一个请求体会逼着任何一块的保存都回传另一块的当前值，少传一个字段就是一次静默清空。
+
+```json
+{
+  "loginHeadline": "让每一次快门，
+都抵达它该去的地方。",
+  "loginSubheadline": "从拍摄需求到图片采纳，把散落的协作收进一条清晰的工作流。",
+  "loginHighlights": ["项目协作", "素材管理", "贡献统计"],
+  "loginNotice": "首次登录后，系统会引导你修改初始密码",
+  "footerText": "© 2026 校园摄影部",
+  "footerLinks": [{ "label": "使用指南", "url": "#/docs" }]
+}
+```
+
+- 长度上限：`loginHeadline` 120、`loginSubheadline` 200、`loginNotice` 200、`footerText` 300；
+  关键词最多 6 个、每个最多 12 字；页脚链接最多 6 条，名称 20、地址 200。
+- 文本首尾空白会被去掉，换行保留（前端按 `white-space: pre-line` 渲染）。
+- 页脚链接地址只接受 `http://`、`https://`、`mailto:` 或站内的 `#/` 开头；
+  其余（包括 `javascript:`）一律拒绝——页脚挂在每个页面上，伪协议就是存储型 XSS。
+- 空字符串和空数组表示"这一项没配"，对应区块在前端整块不渲染。
+- 返回体与 `GET /branding` 相同。
+
+### 15.3 缺图占位图
+
+图片没有预览地址、预览地址取不回来（对象存储故障、签名过期）或图片已被软删除时，
+前端从这些图片里任取一张展示；一张都没配就沿用内置的灰底占位。
+
+| 方法与路径 | 权限 | 返回 |
+| --- | --- | --- |
+| `GET /branding/placeholder-images` | A | `PlaceholderImageView[]` |
+| `POST /branding/placeholder-images` | A | `multipart/form-data`，重复的 `files` part；返回新数组 |
+| `DELETE /branding/placeholder-images/{id}` | A | 删除后的数组 |
+| `GET /branding/placeholder-images/{id}/image` | 公开 | 图片二进制 |
+
+```json
+{
+  "id": "1",
+  "fileName": "gray-card.png",
+  "imageUrl": "/api/v1/branding/placeholder-images/1/image?v=..."
+}
+```
+
+只支持 PNG/JPEG，单张最大 3 MiB、宽高均不超过 4096，最多保存 12 张；
+图片会重新编码后入库（丢掉尾部附加数据）。一批里只要有一张不合格，整批都不落库。
+所有地址也会挂在 `GET /branding` 的 `placeholderImageUrls` 上，页面只需读一次品牌接口。
+
+### 15.4 定时品牌图标
 
 | 方法与路径 | 权限 | 返回 |
 | --- | --- | --- |

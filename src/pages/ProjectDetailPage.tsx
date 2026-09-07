@@ -20,6 +20,7 @@ import MarkdownRenderer, { markdownExcerpt } from '../MarkdownRenderer'
 import { preparePhotoBatchDownload } from '../photoBatchDownload'
 import { hasPermission } from '../permissions'
 import { PREVIEW_CROSS_ORIGIN } from '../previewImage'
+import { PhotoPlaceholder, pickPlaceholderImage, usePlaceholderImages } from '../photoPlaceholder'
 
 const projectStateCopy = {
   DRAFT: {
@@ -45,6 +46,7 @@ export default function ProjectDetailPage() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const { message, modal } = App.useApp()
+  const placeholderImages = usePlaceholderImages()
   const [requestForm] = Form.useForm()
   const publishMode = Form.useWatch('publishMode', requestForm) || 'publish'
   const [editForm] = Form.useForm()
@@ -425,8 +427,11 @@ export default function ProjectDetailPage() {
                 cover={<div className="photo-cover">
                   {photo.thumbnailUrl
                     ? <Image src={photo.thumbnailUrl} alt={photo.title || '需求图片'}
-                        crossOrigin={PREVIEW_CROSS_ORIGIN} />
-                    : <div className="image-placeholder"><span>{photo.title?.slice(0, 1) || '图'}</span></div>}
+                        crossOrigin={PREVIEW_CROSS_ORIGIN}
+                        fallback={pickPlaceholderImage(placeholderImages, photo.id)} />
+                    : <PhotoPlaceholder seed={photo.id}>
+                      <span>{photo.title?.slice(0, 1) || '图'}</span>
+                    </PhotoPlaceholder>}
                   <div className="photo-overlay">
                     {canBatchDownload && (photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED') &&
                       <Checkbox

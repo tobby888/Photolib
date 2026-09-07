@@ -15,6 +15,7 @@ import { useLoad } from '../hooks'
 import { hasPermission } from '../permissions'
 import PhotoHistogram from '../PhotoHistogram'
 import { useLocalImageUrl } from '../useLocalImageUrl'
+import { PhotoPlaceholder } from '../photoPlaceholder'
 import type { EntityId, PageData, Photo, Project } from '../types'
 import { withPhotoLibrarySearch } from '../photoLibrarySearch'
 
@@ -203,7 +204,10 @@ export default function PhotoDetailPage({ favoritesOnly = false }: { favoritesOn
                   ? <Image src={localImage.url} alt={photo.title || `图片 ${photo.id}`} />
                   : localImage.status === 'loading'
                     ? <Skeleton.Image active />
-                    : <div className="image-placeholder"><span>{photo.title?.slice(0, 1) || '图'}</span></div>}
+                    : <PhotoPlaceholder seed={photo.id}
+                      note={localImage.status === 'error' ? localImage.message : undefined}>
+                      <span>{photo.title?.slice(0, 1) || '图'}</span>
+                    </PhotoPlaceholder>}
               </div>
             </Card>
             <Card title="曝光直方图" extra={<Typography.Text type="secondary">浏览器本地生成</Typography.Text>}>

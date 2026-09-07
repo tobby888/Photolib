@@ -17,6 +17,7 @@ import {
 import { useLoad } from '../hooks'
 import RichTextContent from '../RichTextContent'
 import { PREVIEW_CROSS_ORIGIN } from '../previewImage'
+import { PhotoPlaceholder, pickPlaceholderImage, usePlaceholderImages } from '../photoPlaceholder'
 import type {
   FeaturedCollection, FeaturedDocumentDownload, FeaturedEntry, PageData, Photo,
 } from '../types'
@@ -31,6 +32,7 @@ export default function FeaturedCollectionDetailPage() {
   const navigate = useNavigate()
   const { message, modal } = App.useApp()
   const [form] = Form.useForm<EntryValues>()
+  const placeholderImages = usePlaceholderImages()
   const [pickerOpen, setPickerOpen] = useState(false)
   const [pickedPhoto, setPickedPhoto] = useState<Photo | null>(null)
   const [editingEntry, setEditingEntry] = useState<FeaturedEntry | null>(null)
@@ -307,8 +309,17 @@ export default function FeaturedCollectionDetailPage() {
                 onClick={() => setPickedPhoto(photo)}
                 cover={photo.thumbnailUrl
                   ? <img src={photo.thumbnailUrl} alt={photo.title} className="featured-photo-thumb"
-                      crossOrigin={PREVIEW_CROSS_ORIGIN} />
-                  : <div className="image-placeholder"><PictureOutlined /></div>}>
+                      crossOrigin={PREVIEW_CROSS_ORIGIN}
+                      onError={event => {
+                        // 预览地址取不回来（对象存储故障、签名过期）时换成占位图。
+                        // dataset 上打个标记，占位图本身再失败也不会绕回来死循环。
+                        const image = event.currentTarget
+                        const placeholder = pickPlaceholderImage(placeholderImages, photo.id)
+                        if (!placeholder || image.dataset.placeholder) return
+                        image.dataset.placeholder = 'true'
+                        image.src = placeholder
+                      }} />
+                  : <PhotoPlaceholder seed={photo.id}><PictureOutlined /></PhotoPlaceholder>}>
                 <Card.Meta title={photo.title || '未命名'}
                   description={photo.photographerName} />
               </Card>
@@ -347,15 +358,19 @@ export default function FeaturedCollectionDetailPage() {
 }
 
 function EntryCard({ entry, actions }: { entry: FeaturedEntry; actions?: React.ReactNode }) {
+  const placeholderImages = usePlaceholderImages()
   return <Card size="small" className="featured-entry-card"
     title={entry.photoTitle || '未命名作品'} extra={actions}>
     <Space direction="vertical" size={8} style={{ width: '100%' }}>
       {entry.previewUrl
-        ? <Image src={entry.previewUrl} alt={entry.photoTitle || '精选图片'} />
-        : <div className="image-placeholder">
-          {/* 图片可能在填报之后被删除；文字快照仍然完整保留。 */}
+        ? <Image src={entry.previewUrl} alt={entry.photoTitle || '精选图片'}
+            fallback={pickPlaceholderImage(placeholderImages, entry.photoId)} />
+        /* 图片可能在填报之后被删除；文字快照仍然完整保留，所以换成占位图之后
+           仍要把"已删除"写在图上，不能让占位图看起来像原作。 */
+        : <PhotoPlaceholder seed={entry.photoId}
+          note={entry.photoAvailable ? '预览暂不可用' : '图片已从图库删除'}>
           <span>{entry.photoAvailable ? '预览暂不可用' : '图片已从图库删除'}</span>
-        </div>}
+        </PhotoPlaceholder>}
       <Descriptions column={1} size="small" items={[
         { key: 'photographer', label: '拍摄人',
           children: `${entry.photographerName || '—'}${entry.photographerStudentId ? `（${entry.photographerStudentId}）` : ''}` },

@@ -104,7 +104,10 @@ public class AccessTokenFilter extends OncePerRequestFilter {
     // Branding is anonymous-readable, so a restricted session must not be worse
     // off than a logged-out visitor: these screens still show the product identity.
     private boolean isPublicBranding(String path) {
-        return path.equals("/api/v1/branding") || path.equals("/api/v1/branding/icon");
+        return path.equals("/api/v1/branding") || path.equals("/api/v1/branding/icon")
+                // 占位图的读取路径。只认 /{id}/image 结尾，管理接口（上传、删除）
+                // 落在 /branding/placeholder-images 及 /{id} 上，不会被这条放行。
+                || (path.startsWith("/api/v1/branding/placeholder-images/") && path.endsWith("/image"));
     }
 
     /**

@@ -21,6 +21,7 @@ import { preparePhotoBatchDownload } from '../photoBatchDownload'
 import { photoTitleFromFileName } from '../photoTitle'
 import { hasPermission } from '../permissions'
 import { PREVIEW_CROSS_ORIGIN } from '../previewImage'
+import { PhotoPlaceholder, pickPlaceholderImage, usePlaceholderImages } from '../photoPlaceholder'
 import {
   readPhotoLibraryFilters, writePhotoLibraryFilters, withPhotoLibrarySearch,
 } from '../photoLibrarySearch'
@@ -33,6 +34,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
   const libraryRoot = favoritesOnly ? '/favorites' : '/photos'
   const [searchParams, setSearchParams] = useSearchParams()
   const { message, modal } = App.useApp()
+  const placeholderImages = usePlaceholderImages()
   const { user } = useAuth()
   const currentViewKey = `${favoritesOnly}:${location.search}`
   const currentViewKeyRef = useRef(currentViewKey)
@@ -322,8 +324,13 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
               if (event.key === 'Enter' && event.target === event.currentTarget) navigate(withPhotoLibrarySearch(
                 `${libraryRoot}/${photo.id}`, location.search))
             }}>
+            {/* fallback 覆盖的是"有预览地址但取不回来"——对象存储故障、签名过期都会走到它。 */}
             {photo.thumbnailUrl ? <Image preview={false} crossOrigin={PREVIEW_CROSS_ORIGIN}
-              src={photo.thumbnailUrl} alt={photo.title} /> : <div className="image-placeholder"><span>{photo.title?.slice(0, 1) || '图'}</span></div>}
+              src={photo.thumbnailUrl} alt={photo.title}
+              fallback={pickPlaceholderImage(placeholderImages, photo.id)} />
+              : <PhotoPlaceholder seed={photo.id}>
+                <span>{photo.title?.slice(0, 1) || '图'}</span>
+              </PhotoPlaceholder>}
             <div className="photo-overlay" onClick={event => event.stopPropagation()}
               onKeyDown={event => event.stopPropagation()}>
               {(canAddToProject || canDownload || canDelete) && (photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED') && <Checkbox

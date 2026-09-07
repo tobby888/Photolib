@@ -3,6 +3,7 @@ import { Button, Space, Typography } from 'antd'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../auth'
 import { BrandGlyph, useBranding } from '../branding'
+import SiteFooter from '../SiteFooter'
 import DocsReader from '../DocsReader'
 import { hasPermission } from '../permissions'
 
@@ -39,5 +40,6 @@ export default function DocsPage() {
       </Space>
     </header>
     <DocsReader basePath="/docs" publicId={publicId} />
+    <SiteFooter />
   </main>
 }

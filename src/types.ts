@@ -234,6 +234,11 @@ export interface MemberStats {
   totalMinutes: number
 }
 
+export interface FooterLink {
+  label: string
+  url: string
+}
+
 export interface BrandingSettings {
   title: string
   iconType: 'builtin' | 'custom'
@@ -243,6 +248,20 @@ export interface BrandingSettings {
   displayIconType?: 'builtin' | 'custom'
   displayIconUrl?: string | null
   nextIconRefreshAt?: string
+  loginHeadline?: string
+  loginSubheadline?: string
+  loginHighlights?: string[]
+  loginNotice?: string
+  footerText?: string
+  footerLinks?: FooterLink[]
+  /** 管理员上传的缺图占位图，前端从中任取一张顶替加载不出来的图片。 */
+  placeholderImageUrls?: string[]
+}
+
+export interface PlaceholderImage {
+  id: EntityId
+  fileName: string
+  imageUrl: string
 }
 
 export interface ScheduledBrandIcon {
