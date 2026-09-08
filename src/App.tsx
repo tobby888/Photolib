@@ -117,14 +117,18 @@ function Shell() {
       // The shell stays usable during a temporary notification service failure.
     }
   }
+  // 未登录时外壳只是"马上跳登录页"的一层壳（早退发生在下面的 Navigate），但 Hook
+  // 已经跑过了：不挡住下面两个轮询，匿名访客每次落到外壳（首页，或路径式深链被
+  // 弹回来的那一下）都会去打需要鉴权的接口，连带触发一次注定失败的 /auth/refresh。
+  const shellPollingEnabled = !!user && user.dataScope !== 'NONE'
   useEffect(() => {
-    if (user?.dataScope === 'NONE') return
+    if (!shellPollingEnabled) return
     void loadNotifications()
     const timer = window.setInterval(() => void loadNotifications(), 30_000)
     return () => window.clearInterval(timer)
-  }, [user?.dataScope])
+  }, [shellPollingEnabled])
   useEffect(() => {
-    if (user?.dataScope === 'NONE') return
+    if (!shellPollingEnabled) return
     let cancelled = false
     let timer: number | undefined
     const loadPreviewStatus = async () => {
@@ -149,7 +153,7 @@ function Shell() {
       cancelled = true
       if (timer !== undefined) window.clearTimeout(timer)
     }
-  }, [message, user?.dataScope])
+  }, [message, shellPollingEnabled])
   const markRead = async (item: Notification) => {
     if (!item.readAt) {
       await api<void>({ method: 'post', url: `/notifications/${item.id}/read` })

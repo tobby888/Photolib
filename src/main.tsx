@@ -7,7 +7,14 @@ import { AuthProvider } from './auth'
 import { BrandingProvider } from './branding'
 import App from './App'
 import AppErrorBoundary from './AppErrorBoundary'
+import { hashRouteForDeepLink } from './deepLink'
 import './styles.css'
+
+// 路径式深链（后端 forward 到 index.html 的那批）在 HashRouter 挂载之前搬进 hash，
+// 否则访问者会停在 "/"。用 replaceState 而不是跳转：地址栏就地改好，不多一次整页加载，
+// 也不在历史里留下"回退就回到打不开的那个地址"的一条记录。
+const deepLinkRoute = hashRouteForDeepLink(window.location)
+if (deepLinkRoute) window.history.replaceState(null, '', deepLinkRoute)
 
 const PRELOAD_RELOAD_KEY = 'photolib_preload_reload'
 window.addEventListener('vite:preloadError', (event) => {
