@@ -117,14 +117,18 @@ function Shell() {
       // The shell stays usable during a temporary notification service failure.
     }
   }
+  // 未登录时外壳只是"马上跳登录页"的一层壳（早退发生在下面的 Navigate），但 Hook
+  // 已经跑过了：不挡住下面两个轮询，匿名访客每次落到外壳（首页，或路径式深链被
+  // 弹回来的那一下）都会去打需要鉴权的接口，连带触发一次注定失败的 /auth/refresh。
+  const shellPollingEnabled = !!user && user.dataScope !== 'NONE'
   useEffect(() => {
-    if (user?.dataScope === 'NONE') return
+    if (!shellPollingEnabled) return
     void loadNotifications()
     const timer = window.setInterval(() => void loadNotifications(), 30_000)
     return () => window.clearInterval(timer)
-  }, [user?.dataScope])
+  }, [shellPollingEnabled])
   useEffect(() => {
-    if (user?.dataScope === 'NONE') return
+    if (!shellPollingEnabled) return
     let cancelled = false
     let timer: number | undefined
     const loadPreviewStatus = async () => {
@@ -149,7 +153,7 @@ function Shell() {
       cancelled = true
       if (timer !== undefined) window.clearTimeout(timer)
     }
-  }, [message, user?.dataScope])
+  }, [message, shellPollingEnabled])
   const markRead = async (item: Notification) => {
     if (!item.readAt) {
       await api<void>({ method: 'post', url: `/notifications/${item.id}/read` })
@@ -340,11 +344,18 @@ function Shell() {
 }
 
 export default function App() {
-  const { user } = useAuth()
+  const { user, sessionVerified } = useAuth()
   const branding = useBranding()
   return <Suspense fallback={<div className="route-loading">正在进入{branding.title}…</div>}><Routes>
     <Route path="/login" element={user ? <Navigate to={user.mustChangePassword ? '/initial-password' : '/'} replace /> : <LoginPage />} />
-    <Route path="/recruitment" element={user
+    {/*
+      报名页只把"后端确认过的成员"弹回工作台。光看 `user` 不行：它是从 localStorage
+      乐观读出来的，浏览器上留着一份过期身份的人（在这台机器上登录过的部员，或者
+      共用的电脑）会被当成已登录，于是没有账号的访客也跟着被弹去登录页——报名页
+      "有时候打得开有时候打不开"就是这么来的（失败那一次顺手清掉了脏缓存，
+      所以刷新一下又好了，更难查）。
+    */}
+    <Route path="/recruitment" element={user && sessionVerified
       ? <Navigate to={user.mustChangePassword ? '/initial-password' : '/'} replace />
       : <PublicRecruitmentPage />} />
     {/*
