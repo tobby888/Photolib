@@ -27,9 +27,15 @@ public class SecurityConfig {
                 .cors(cors -> {})
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        // 前端路由的 permitAll 只表示"匿名也能拿到 index.html"，
+                        // 页面里的数据依旧要过 /api/v1/** 的鉴权。清单要和
+                        // SpaForwardController（以及 src/App.tsx 的 <Route>）保持一致，
+                        // 否则深链会被 401 的 JSON 顶掉而不是渲染成应用。
                         .requestMatchers("/", "/index.html", "/assets/**", "/favicon.ico",
                                 "/login", "/initial-password", "/projects/**", "/requests/**",
-                                "/photos", "/worklogs", "/notifications/**", "/statistics", "/admin",
+                                "/photos", "/photos/**", "/favorites", "/favorites/**",
+                                "/worklogs", "/directory", "/featured", "/featured/**",
+                                "/notifications/**", "/statistics", "/manager-campuses", "/admin",
                                 "/recruitment", "/recruitments/**", "/recruitment-applications/**",
                                 "/docs", "/docs/**", "/documents", "/documents/**",
                                 "/api", "/api/",
