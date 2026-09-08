@@ -317,7 +317,7 @@ function PublicTaskForm({ task }: { task: PublicRecruitmentTask }) {
 }
 
 export default function PublicRecruitmentPage() {
-  const { user } = useAuth()
+  const { user, sessionVerified } = useAuth()
   const branding = useBranding()
   const tasks = useLoad(
     async () => {
@@ -333,10 +333,13 @@ export default function PublicRecruitmentPage() {
       return values.map(normalizePublicRecruitmentTask)
     },
     [] as PublicRecruitmentTask[],
-    [user],
+    // 招募列表是公开数据，对谁都一样，不跟着会话变。挂 `user` 会让"过期会话被清掉"
+    // 这一下重新拉一次列表，期间卡片整块消失、表单跟着卸载，正在填的内容就没了。
+    [],
   )
 
-  if (user) return <Navigate to="/" replace />
+  // 和 App.tsx 的路由判断保持同一条规则：未经后端确认的缓存身份不足以把人弹走。
+  if (user && sessionVerified) return <Navigate to="/" replace />
 
   return <main style={{ minHeight: '100vh', background: 'linear-gradient(145deg, #f7f4ee 0%, #edf3f0 100%)' }}>
     <header style={{ background: '#173b35', color: 'white', padding: '22px clamp(18px, 5vw, 68px)' }}>
