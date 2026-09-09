@@ -12,7 +12,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, http } from '../api'
 import { formatBytes } from '../components'
-import { useLoad } from '../hooks'
+import { useLoad, useRefreshOnResume } from '../hooks'
 import MarkdownRenderer from '../MarkdownRenderer'
 import { buildApplicationDetailsMarkdown, normalizeRecruitmentFormSchema } from '../recruitmentForm'
 import {
@@ -77,6 +77,7 @@ export default function RecruitmentApplicationDetailPage() {
     null as RecruitmentApplicationDetail | null,
     [applicationId],
   )
+  useRefreshOnResume(detailState.refresh)
   const detail = detailState.data
 
   const download = async (attachment: RecruitmentAttachment) => {

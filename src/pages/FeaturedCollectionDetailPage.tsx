@@ -14,7 +14,7 @@ import { DataState, PageTitle } from '../components'
 import {
   FEATURED_DOCUMENT_LABELS, featuredStatusDisplay, groupEntriesByCampus, remainingEntryQuota,
 } from '../featuredCollections'
-import { useLoad } from '../hooks'
+import { useLoad, useRefreshOnResume } from '../hooks'
 import RichTextContent from '../RichTextContent'
 import { PREVIEW_CROSS_ORIGIN } from '../previewImage'
 import { PhotoPlaceholder, pickPlaceholderImage, usePlaceholderImages } from '../photoPlaceholder'
@@ -61,6 +61,10 @@ export default function FeaturedCollectionDetailPage() {
       : Promise.resolve(emptyPage<Photo>()),
     emptyPage<Photo>(), [pickerOpen, photoFilters.page, photoFilters.keyword],
   )
+  // 条目和选图弹窗里渲染的都是签名地址；弹窗没打开时 loader 直接返回空页，
+  // 这一次刷新不会真的发请求。
+  useRefreshOnResume(entries.refresh)
+  useRefreshOnResume(photos.refresh)
 
   const reloadAll = async () => {
     await Promise.all([collection.reload(), entries.reload()])

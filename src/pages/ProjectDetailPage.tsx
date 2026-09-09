@@ -14,7 +14,7 @@ import { api, emptyPage } from '../api'
 import type { Adoption, BatchPublishResult, Campus, PageData, Photo, PhotoRequest, Project } from '../types'
 import { DataState, StatusTag } from '../components'
 import { ContentFitTable } from '../ContentFitTable'
-import { useLoad } from '../hooks'
+import { useLoad, useRefreshOnResume } from '../hooks'
 import MarkdownEditor from '../MarkdownEditor'
 import MarkdownRenderer, { markdownExcerpt } from '../MarkdownRenderer'
 import { preparePhotoBatchDownload } from '../photoBatchDownload'
@@ -59,7 +59,7 @@ export default function ProjectDetailPage() {
   const [batchDownloading, setBatchDownloading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [markingPhotoId, setMarkingPhotoId] = useState<string | null>(null)
-  const { data, setData, loading, error, reload } = useLoad(async () => {
+  const { data, setData, loading, error, reload, refresh } = useLoad(async () => {
     const [project, firstRequests, campuses, firstPhotos, firstAdoptions] = await Promise.all([
       api<Project>({ url: `/projects/${projectId}` }),
       api<PageData<PhotoRequest>>({ url: '/requests', params: { page: 1, pageSize: 100, projectId } }),
@@ -104,6 +104,7 @@ export default function ProjectDetailPage() {
     photos: [] as Photo[],
     adoptions: [] as Adoption[],
   }, [projectId, user?.dataScope])
+  useRefreshOnResume(refresh)
   const { data: galleryPhotos, loading: galleryLoading } = useLoad(
     () => galleryOpen && hasPermission(user, 'PROJECT_ADOPT') && hasPermission(user, 'PHOTO_VIEW')
       ? api<PageData<Photo>>({
