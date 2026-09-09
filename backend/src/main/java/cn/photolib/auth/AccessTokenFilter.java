@@ -24,6 +24,14 @@ public class AccessTokenFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
+        // 选题分享链接的访客通道整条不看令牌：能力完全由"链接 + 密码"换来的分享会话
+        // 决定，浏览器里恰好存着的那份登录令牌与它无关。不这样早退的话，未改初始密码
+        // 或尚未分配权限组的会话会在下面被 403 顶掉——一个成员点开同事发来的分享链接，
+        // 反而比一个登出的访客更打不开。
+        if (isAnonymousShare(request)) {
+            chain.doFilter(request, response);
+            return;
+        }
         String authorization = request.getHeader("Authorization");
         if (authorization != null && authorization.startsWith("Bearer ")) {
             AuthService.SessionAuthentication authenticated =
@@ -108,6 +116,11 @@ public class AccessTokenFilter extends OncePerRequestFilter {
                 // 占位图的读取路径。只认 /{id}/image 结尾，管理接口（上传、删除）
                 // 落在 /branding/placeholder-images 及 /{id} 上，不会被这条放行。
                 || (path.startsWith("/api/v1/branding/placeholder-images/") && path.endsWith("/image"));
+    }
+
+    /** 分享链接的访客接口，见 {@code ProjectSharePublicController}。 */
+    private boolean isAnonymousShare(HttpServletRequest request) {
+        return request.getServletPath().startsWith("/api/v1/public/shares/");
     }
 
     /**

@@ -6,6 +6,7 @@ public enum PermissionCode {
     PROJECT_CREATE(PermissionCategory.PROJECT, "新建、编辑、发布和删除选题"),
     PROJECT_COMPLETE(PermissionCategory.PROJECT, "标记选题完成"),
     PROJECT_DOWNLOAD(PermissionCategory.PROJECT, "下载选题图片"),
+    PROJECT_SHARE(PermissionCategory.PROJECT, "生成和管理选题对外分享链接"),
 
     REQUEST_VIEW(PermissionCategory.REQUEST, "需求访问、接受和提交"),
     REQUEST_CREATE(PermissionCategory.REQUEST, "新建、编辑和发布需求"),

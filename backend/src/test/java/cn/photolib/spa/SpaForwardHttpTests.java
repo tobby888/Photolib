@@ -44,6 +44,7 @@ class SpaForwardHttpTests {
             "/recruitment",
             "/docs",
             "/docs/abc123",
+            "/share/0123456789ABCDEFGHJKMNPQRS",
             "/projects",
             "/projects/42",
             "/requests",

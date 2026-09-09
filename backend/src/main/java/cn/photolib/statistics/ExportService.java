@@ -71,6 +71,21 @@ public class ExportService {
 
     @Transactional
     public ExportJobEntity createPhotoZip(List<Long> photoIds, AuthenticatedUser user) {
+        List<PhotoEntity> photos = requireZippablePhotos(photoIds);
+        if (photos.stream().anyMatch(photo -> !canDownload(photo, user))) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权下载所选图片中的部分内容");
+        }
+        ExportJobEntity job = newJob("PHOTO_BATCH", user.id());
+        mapper.insert(job);
+        events.publishEvent(new PhotoZipRequested(job.getId(),
+                photos.stream().map(PhotoEntity::getId).toList()));
+        return job;
+    }
+
+    /**
+     * 数量、存在性和状态这三道复核对每条打包入口都一样，只有"谁有权下载"因入口而异。
+     */
+    private List<PhotoEntity> requireZippablePhotos(List<Long> photoIds) {
         if (photoIds == null || photoIds.isEmpty() || photoIds.size() > 200) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "批量下载需选择 1 至 200 张图片");
         }
@@ -85,13 +100,35 @@ public class ExportService {
                 && photo.getStatus() != PhotoStatus.ARCHIVED)) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "只能批量下载可用或已归档的图片");
         }
-        if (photos.stream().anyMatch(photo -> !canDownload(photo, user))) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "无权下载所选图片中的部分内容");
-        }
-        ExportJobEntity job = newJob("PHOTO_BATCH", user.id());
+        return photos;
+    }
+
+    /**
+     * 分享链接的打包下载。
+     *
+     * <p>刻意不做逐张的 {@link #canDownload} 判定：那套规则问的是"这个账号能不能下"，
+     * 而访客没有账号——他能看到哪些图片由 {@code ProjectShareService} 按链接所属项目
+     * 的相册算好并逐张校验过了，再套一遍成员规则只会得到一个恒假的结果。
+     * 这里仍然复核图片状态，任务归属记在 {@code shareLinkId} 上。</p>
+     */
+    @Transactional
+    public ExportJobEntity createShareZip(List<Long> photoIds, Long ownerUserId, Long shareLinkId) {
+        List<Long> distinctIds = requireZippablePhotos(photoIds).stream()
+                .map(PhotoEntity::getId).toList();
+        ExportJobEntity job = newJob("PHOTO_BATCH", ownerUserId);
+        job.setShareLinkId(shareLinkId);
         mapper.insert(job);
         events.publishEvent(new PhotoZipRequested(job.getId(), distinctIds));
         return job;
+    }
+
+    /** 分享链接访客查自己那条打包任务：归属只认 {@code shareLinkId}。 */
+    public JobView viewForShare(String id, Long shareLinkId) {
+        ExportJobEntity job = mapper.selectById(id);
+        if (job == null || !shareLinkId.equals(job.getShareLinkId())) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "导出任务不存在");
+        }
+        return withDownloadUrl(job);
     }
 
     @Transactional
@@ -113,6 +150,15 @@ public class ExportService {
         if (!job.getCreatedBy().equals(user.id()) && !user.isAdministrator()) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权查看该任务");
         }
+        // 分享链接发起的任务只能从分享通道查（见 viewForShare）：它的 createdBy 是
+        // 链接创建者，登录通道按 createdBy 判定归属会把它一并放行，语义上说不通。
+        if (job.getShareLinkId() != null && !user.isAdministrator()) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权查看该任务");
+        }
+        return withDownloadUrl(job);
+    }
+
+    private JobView withDownloadUrl(ExportJobEntity job) {
         String url = null;
         java.time.Instant expires = null;
         if ("SUCCEEDED".equals(job.getStatus()) && job.getExpiresAt().isAfter(LocalDateTime.now())) {

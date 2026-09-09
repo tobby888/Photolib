@@ -38,6 +38,7 @@ public class SecurityConfig {
                                 "/notifications/**", "/statistics", "/manager-campuses", "/admin",
                                 "/recruitment", "/recruitments/**", "/recruitment-applications/**",
                                 "/docs", "/docs/**", "/documents", "/documents/**",
+                                "/share/**",
                                 "/api", "/api/",
                                 "/api/v1/auth/login", "/api/v1/auth/refresh",
                                 "/api/v1/actuator/health",
@@ -61,6 +62,12 @@ public class SecurityConfig {
                                 "/api/v1/public/docs/*",
                                 "/api/v1/public/docs/assets/*",
                                 "/api/v1/public/docs/*/file").permitAll()
+                        // 选题分享链接的访客通道。permitAll 同样只表示"不带令牌也能调用"：
+                        // 每个方法都要一个通过密码换来的分享会话，能力由链接上的开关决定，
+                        // 判定在 ProjectShareService，见那里的类注释。
+                        .requestMatchers(
+                                "/api/v1/public/shares/*",
+                                "/api/v1/public/shares/*/**").permitAll()
                         .requestMatchers(HttpMethod.POST,
                                 "/api/v1/public/recruitments/*/drafts",
                                 "/api/v1/public/recruitments/*/drafts/*/submit",

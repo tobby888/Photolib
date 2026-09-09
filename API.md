@@ -720,6 +720,11 @@ function parseTags(value?: string | null): string[] {
 | `POST /projects/{id}/status` | A/M | `{ status, version }` | `ProjectEntity` |
 | `POST /projects/{id}/reopen` | A | `{ reason, version }` | `ProjectEntity` |
 | `DELETE /projects/{id}` | A/M | — | `data: null` |
+| `GET /projects/{id}/share-links` | `PROJECT_SHARE` | — | `ProjectShareLink[]` |
+| `POST /projects/{id}/share-links` | `PROJECT_SHARE` | 见 §19 | `{ link, password }` |
+| `PUT /projects/{id}/share-links/{linkId}` | `PROJECT_SHARE` | 见 §19 | `ProjectShareLink` |
+| `POST /projects/{id}/share-links/{linkId}/password` | `PROJECT_SHARE` | `{ password? }` | `{ link, password }` |
+| `DELETE /projects/{id}/share-links/{linkId}` | `PROJECT_SHARE` | — | `data: null` |
 
 创建请求：
 
@@ -2076,16 +2081,124 @@ type DocVisibility = 'PUBLIC' | 'MEMBERS'   // PUBLIC=未登录可读，MEMBERS=
 
 正常阅读不会触碰到这些额度；会撞上的是遍历式抓取。限速基于服务端进程内的固定窗口，反向代理后面无法区分真实客户端时会放行，由网关限流负责。
 
-## 19. 客户端实现检查清单
+## 19. 选题项目对外分享链接
 
-### 19.1 登录与会话
+部长和管理员可以为一个选题项目生成任意多条"链接 + 密码"，把项目相册交给没有账号的人查看。每条链接单独决定访客是否能**下载图片**和**标记被引**，两个开关随时可改，改完对已经打开页面的访客立即生效。
+
+**访客看到的图片和被引状态与项目内完全同步**：图片来自项目相册（`photo_project`，仅 `AVAILABLE`），被引来自该项目的 `adoption` 记录，访客的标记写进的就是同一张表。服务端不为任何链接保存图片列表或被引快照，所以同一个项目的多条链接彼此一致，站内和站外也一致。
+
+### 19.1 管理端
+
+路由见 §7.1。整组要 `PROJECT_SHARE`（内置发给 A 和 M），并且**数据范围为 CAMPUS 的账号一律拒绝**——一条链接会把整个项目相册（含其他校区的图片）交给站外的人。
+
+创建请求：
+
+```json
+{
+  "name": "校报编辑部",
+  "password": "至少 6 位，最多 64 位；留空则自动生成 10 位随机密码",
+  "allowDownload": true,
+  "allowAdoption": false,
+  "expiresAt": "2026-12-31T23:59:59"
+}
+```
+
+`expiresAt` 留空表示长期有效，给值必须晚于当前时间。一个项目最多同时保留 20 条链接。
+
+`ProjectShareLink`：
+
+```ts
+interface ProjectShareLink {
+  id: EntityId
+  token: string          // 26 位随机串，拼进分享地址
+  projectId: EntityId
+  name?: string | null
+  allowDownload: boolean
+  allowAdoption: boolean
+  expiresAt?: string | null
+  expired: boolean
+  viewCount: number
+  lastViewedAt?: string | null
+  createdBy: EntityId
+  createdAt: string
+  version: number
+}
+```
+
+**明文密码只在创建和重置密码的响应里出现一次**（`{ link, password }`），数据库里只有 BCrypt 哈希；此后没有任何接口能读回明文，想换只能重置。**重置密码会作废该链接已经发出的全部会话**。删除是软删，等同"撤销"：已经发出的会话下一次请求即被拒。
+
+更新用 `PUT`，带 `version` 走乐观锁；冲突返回 `409 RESOURCE_STATE_CONFLICT`。
+
+分享地址由客户端拼：`{站点地址}/#/share/{token}`。
+
+### 19.2 访客端（不需要登录）
+
+`/public/shares/**` 全部 permitAll。这里的 `public` 和文档中心一样，指"不带令牌也能调用"，**不是"返回的都是公开内容"**——除了第一个打招呼的接口，其余每个都要一个用密码换来的分享会话。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/public/shares/{token}` | 链接是否可用；刻意不返回项目标题等任何项目信息 |
+| POST | `/public/shares/{token}/sessions` | `{ password }` → `{ sessionToken, expiresAt, access }` |
+| GET | `/public/shares/{token}/access` | 重新读取这条链接当下授予的能力 |
+| GET | `/public/shares/{token}/photos` | `page`、`pageSize`、`keyword?` → `PageData<SharePhoto>` |
+| POST | `/public/shares/{token}/photos/{photoId}/download-url` | 需要 `allowDownload` |
+| POST | `/public/shares/{token}/batch-downloads` | `{ photoIds }`（1～200），需要 `allowDownload` |
+| GET | `/public/shares/{token}/batch-downloads/{jobId}` | 打包任务状态，结构同 §12 的导出任务 |
+| POST | `/public/shares/{token}/photos/{photoId}/adoption` | 需要 `allowAdoption` |
+| DELETE | `/public/shares/{token}/photos/{photoId}/adoption` | 需要 `allowAdoption` |
+
+除前两个外，每个请求都要带会话头：
+
+```http
+X-Share-Session: {sessionToken}
+```
+
+会话有效期 6 小时。它只证明"这个人过了这条链接的密码"，**不携带权限**：服务端每次请求都重新读链接行判开关，所以客户端不要缓存 `access` 当授权依据，隐藏按钮只是体验。
+
+```ts
+interface ShareGuestAccess {
+  projectTitle: string
+  projectStatus: ProjectStatus
+  linkName?: string | null
+  allowDownload: boolean
+  allowAdoption: boolean
+  expiresAt?: string | null
+}
+
+// 比 PhotoView 少几列：没有学号、上传者和校区——站外的人没有理由拿到这些。
+interface SharePhoto {
+  id: EntityId
+  title: string
+  description?: string
+  photographerName: string
+  takenAt: string
+  width?: number
+  height?: number
+  size: number
+  storedFileName: string
+  thumbnailUrl?: string   // 短期签名地址，与站内同一套（约 10 分钟）
+  adopted: boolean        // 与项目内的被引记录是同一份数据
+}
+```
+
+标记被引要求项目处于 `ACTIVE`，且图片仍在项目相册里；重复标记返回 `409 DUPLICATE_RESOURCE`。
+
+### 19.3 错误与限速
+
+- 链接不存在、已撤销、已过期：一律 `404 RESOURCE_NOT_FOUND`，文案相同。客户端不能从错误里推断 token 是否曾经存在。
+- 密码错误、会话缺失或失效、开关未开放：`403 FORBIDDEN`。**刻意不是 401**——401 会触发客户端的令牌刷新逻辑，给一个从没登录过的访客发一次注定失败的 `/auth/refresh`。收到 403 就退回密码页重新换会话。
+- 限速：每个动作按"链接"和"链接 + 客户端地址"两个维度计数（10 分钟窗口），密码校验最紧、浏览最宽，超出返回 `429 RATE_LIMITED`。反向代理后面无法区分真实客户端时按地址的那一路放行，由网关限流负责。
+
+## 20. 客户端实现检查清单
+
+### 20.1 登录与会话
 
 - 请求实例开启 Cookie credentials，并在业务请求中添加 Bearer token。
 - 并发 `401` 只触发一次 refresh；刷新失败清理本地和内存登录状态。
 - `mustChangePassword=true` 立即进入首次改密页，不提前请求其他业务接口。
 - 修改密码、停用、删除或密码重置后，旧会话可能立即失效。
 
-### 19.2 数据解析
+### 20.2 数据解析
 
 - 所有 Long ID 在进入状态管理前执行 `String(id)`。
 - 不把业务 `LocalDateTime` 当 UTC；签名 URL 的 `Instant` 则按标准 UTC 解析。
@@ -2093,7 +2206,7 @@ type DocVisibility = 'PUBLIC' | 'MEMBERS'   // PUBLIC=未登录可读，MEMBERS=
 - 忽略实体中的 `deleted` 和批次中的对象存储 key，不据此构造 URL。
 - 只使用服务端返回的 `thumbnailUrl`、`downloadUrl`、图片 `url`。
 
-### 19.3 上传与异步任务
+### 20.3 上传与异步任务
 
 - 客户端计算 64 位小写 SHA-256，创建票据后再直传。
 - 直传的 `Content-Type` 与票据完全一致，不使用 API 客户端的 base URL 或 Bearer 拦截器改写签名请求。
@@ -2102,7 +2215,7 @@ type DocVisibility = 'PUBLIC' | 'MEMBERS'   // PUBLIC=未登录可读，MEMBERS=
 - 导出任务从 `data.id` 取 job ID，从查询响应的 `data.job.status` 取状态，从 `data.downloadUrl` 取下载地址。
 - Blob URL 用完后释放。
 
-### 19.4 业务状态与并发
+### 20.4 业务状态与并发
 
 - 更新项目、需求、图片元数据、校区、用户、通讯录成员、工时等时提交最近响应的 `version`。
 - 收到 `409 RESOURCE_STATE_CONFLICT` 后重新拉取资源，不在客户端盲目增加 version 重试。
@@ -2111,14 +2224,14 @@ type DocVisibility = 'PUBLIC' | 'MEMBERS'   // PUBLIC=未登录可读，MEMBERS=
 - 允许需求零图片提交，`requiredCount` 可空。
 - 工时拍摄者和照片拍摄者都提交通讯录 contact ID，不提交自由文本姓名/学号。
 
-### 19.5 权限界面
+### 20.5 权限界面
 
 - A：全部后台和业务能力。
 - M：项目/需求创建与审核、图库管理、采用、工时审核、统计导出、消息发送；部分写操作仍受“资源创建者”约束。
 - C：本人校区接单、本人图片、本人填报工时；可把本人图片加入本人可见项目并采用。
 - 对 `403` 做正常权限反馈，不把它统一当成登录过期；只有 `401` 才进入 refresh 流程。
 
-## 20. 当前契约中容易误读的点
+## 21. 当前契约中容易误读的点
 
 1. 所有普通业务成功目前是 HTTP 200，不是创建 201/删除 204。
 2. ID 可能是 JSON 字符串，也可能是小整数；统一按字符串处理。

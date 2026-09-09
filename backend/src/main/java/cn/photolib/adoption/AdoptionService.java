@@ -37,10 +37,33 @@ public class AdoptionService {
         if (!user.hasPermission(PermissionCode.PROJECT_ADOPT)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权标记图片被引");
         }
+        projectService.getVisible(projectId, user);
+        return record(projectId, photoIds, remark, user.id(), user);
+    }
+
+    /**
+     * 以某个成员的名义写入被引标记，但不校验该成员的权限和可见范围。
+     *
+     * <p>唯一的调用方是分享链接的匿名访客（{@code share} 包）：他没有账号，被引记在
+     * 发放链接的那位成员名下，而"能不能标"由链接上的开关决定，调用方已经判过。
+     * 走的是与站内标记**同一段实现、同一张 adoption 表**——项目的被引因此天然只有
+     * 一份，绝不要为分享链接另写一份判定或另存一份快照。</p>
+     */
+    @Transactional
+    public List<AdoptionEntity> adoptOnBehalf(Long projectId, List<Long> photoIds, String remark,
+                                              Long actorId) {
+        return record(projectId, photoIds, remark, actorId, null);
+    }
+
+    /**
+     * @param scopedUser 需要按校区范围收窄时传入操作人，匿名分享访客传 {@code null}
+     */
+    private List<AdoptionEntity> record(Long projectId, List<Long> photoIds, String remark,
+                                        Long actorId, AuthenticatedUser scopedUser) {
         if (photoIds == null || photoIds.isEmpty() || photoIds.size() > 200) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择 1 至 200 张图片");
         }
-        if (projectService.getVisible(projectId, user).getStatus() != ProjectStatus.ACTIVE) {
+        if (projectService.get(projectId).getStatus() != ProjectStatus.ACTIVE) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "仅进行中项目可采用图片");
         }
         LocalDateTime now = LocalDateTime.now();
@@ -49,7 +72,8 @@ public class AdoptionService {
             if (photo == null || photo.getStatus() != PhotoStatus.AVAILABLE) {
                 throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "存在不可采用的图片");
             }
-            if (user.isCampusScoped() && !photo.getUploadedBy().equals(user.id())) {
+            if (scopedUser != null && scopedUser.isCampusScoped()
+                    && !photo.getUploadedBy().equals(scopedUser.id())) {
                 throw new BusinessException(ErrorCode.FORBIDDEN, "无权使用不可见的图库图片");
             }
             long membership = jdbc.sql("SELECT COUNT(*) FROM photo_project WHERE photo_id=:photoId AND project_id=:projectId")
@@ -70,7 +94,7 @@ public class AdoptionService {
                         WHERE project_id=:project AND photo_id=:photo
                         """).param("sid", photo.getPhotographerStudentId())
                         .param("name", photo.getPhotographerName()).param("remark", remark)
-                        .param("user", user.id()).param("at", now).param("project", projectId)
+                        .param("user", actorId).param("at", now).param("project", projectId)
                         .param("photo", photoId).update();
             } else {
                 AdoptionEntity adoption = new AdoptionEntity();
@@ -79,7 +103,7 @@ public class AdoptionService {
                 adoption.setPhotographerStudentId(photo.getPhotographerStudentId());
                 adoption.setPhotographerName(photo.getPhotographerName());
                 adoption.setRemark(remark);
-                adoption.setAdoptedBy(user.id());
+                adoption.setAdoptedBy(actorId);
                 adoption.setAdoptedAt(now);
                 adoption.setDeleted(false);
                 adoption.setCreatedAt(now);

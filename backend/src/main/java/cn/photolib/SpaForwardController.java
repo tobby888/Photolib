@@ -21,6 +21,7 @@ public class SpaForwardController {
             "/recruitment",
             "/docs",
             "/docs/{publicId}",
+            "/share/{token}",
             // 工作台内的页面
             "/projects",
             "/projects/{id}",
