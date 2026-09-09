@@ -38,7 +38,9 @@ class PermissionGroupServiceTests {
         assertThat(minister.permissions()).containsExactlyInAnyOrder(
                 PermissionCode.PROJECT_VIEW, PermissionCode.PROJECT_ADOPT,
                 PermissionCode.PROJECT_CREATE, PermissionCode.PROJECT_COMPLETE,
-                PermissionCode.PROJECT_DOWNLOAD, PermissionCode.PHOTO_VIEW,
+                PermissionCode.PROJECT_DOWNLOAD,
+                // 对外分享链接由管理员和部长发放，所以 V41 把 PROJECT_SHARE 也发给了部长。
+                PermissionCode.PROJECT_SHARE, PermissionCode.PHOTO_VIEW,
                 PermissionCode.PHOTO_DELETE, PermissionCode.PHOTO_UPLOAD,
                 PermissionCode.PHOTO_DOWNLOAD, PermissionCode.REQUEST_VIEW,
                 PermissionCode.REQUEST_CREATE, PermissionCode.REQUEST_CLOSE,

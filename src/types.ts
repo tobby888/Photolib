@@ -5,6 +5,7 @@ export type DataScope = 'NONE' | 'CAMPUS' | 'GLOBAL'
 export type PhotoVisibility = 'SELF' | 'CAMPUS' | 'GLOBAL'
 export type PermissionCode =
   | 'PROJECT_VIEW' | 'PROJECT_ADOPT' | 'PROJECT_CREATE' | 'PROJECT_COMPLETE' | 'PROJECT_DOWNLOAD'
+  | 'PROJECT_SHARE'
   | 'REQUEST_VIEW' | 'REQUEST_CREATE' | 'REQUEST_DELETE' | 'REQUEST_CLOSE' | 'REQUEST_CONFIRM' | 'REQUEST_PHOTO_MANAGE'
   | 'PHOTO_VIEW' | 'PHOTO_DELETE' | 'PHOTO_UPLOAD' | 'PHOTO_DOWNLOAD'
   | 'WORKLOG_SUBMIT' | 'WORKLOG_CONFIRM' | 'WORKLOG_EXPORT'
@@ -186,6 +187,62 @@ export interface Adoption {
   adoptedBy: EntityId
   adoptedAt: string
   createdAt: string
+}
+
+/**
+ * 选题项目的对外分享链接（管理端视图）。
+ *
+ * 明文密码只在创建和重置密码的返回里出现一次，之后服务端只剩哈希——这个类型里
+ * 因此没有 password 字段，要"再看一眼密码"只能重置。
+ */
+export interface ProjectShareLink {
+  id: EntityId
+  token: string
+  projectId: EntityId
+  name?: string | null
+  allowDownload: boolean
+  allowAdoption: boolean
+  expiresAt?: string | null
+  expired: boolean
+  viewCount: number
+  lastViewedAt?: string | null
+  createdBy: EntityId
+  createdAt: string
+  version: number
+}
+
+/** 分享访客通过密码换来的会话，以及这条链接当下授予的能力。 */
+export interface ShareGuestAccess {
+  projectTitle: string
+  projectStatus: Project['status']
+  linkName?: string | null
+  allowDownload: boolean
+  allowAdoption: boolean
+  expiresAt?: string | null
+}
+
+export interface ShareGuestSession {
+  sessionToken: string
+  expiresAt: string
+  access: ShareGuestAccess
+}
+
+/**
+ * 分享访客看到的图片。刻意比 {@link Photo} 少：没有学号、上传者和校区，
+ * 站外的人没有理由拿到这些。被引状态和项目内是同一份数据。
+ */
+export interface SharePhoto {
+  id: EntityId
+  title: string
+  description?: string
+  photographerName: string
+  takenAt: string
+  width?: number
+  height?: number
+  size: number
+  storedFileName: string
+  thumbnailUrl?: string
+  adopted: boolean
 }
 
 export interface Worklog extends BaseEntity {

@@ -4,9 +4,9 @@ import {
 } from 'antd'
 import {
   ArrowLeftOutlined, CameraOutlined, CheckCircleOutlined, DownloadOutlined, EditOutlined, FileImageOutlined,
-  LinkOutlined, PlusOutlined, RocketOutlined, StopOutlined, UnorderedListOutlined,
+  LinkOutlined, PlusOutlined, RocketOutlined, ShareAltOutlined, StopOutlined, UnorderedListOutlined,
 } from '@ant-design/icons'
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { useAuth } from '../auth'
@@ -21,6 +21,8 @@ import { preparePhotoBatchDownload } from '../photoBatchDownload'
 import { hasPermission } from '../permissions'
 import { PREVIEW_CROSS_ORIGIN } from '../previewImage'
 import { PhotoPlaceholder, pickPlaceholderImage, usePlaceholderImages } from '../photoPlaceholder'
+
+const ProjectShareLinksModal = lazy(() => import('../ProjectShareLinksModal'))
 
 const projectStateCopy = {
   DRAFT: {
@@ -53,6 +55,7 @@ export default function ProjectDetailPage() {
   const [requestOpen, setRequestOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [galleryOpen, setGalleryOpen] = useState(false)
+  const [shareOpen, setShareOpen] = useState(false)
   const [galleryKeyword, setGalleryKeyword] = useState('')
   const [selectedPhotoIds, setSelectedPhotoIds] = useState<string[]>([])
   const [selectedDownloadPhotoIds, setSelectedDownloadPhotoIds] = useState<string[]>([])
@@ -320,6 +323,7 @@ export default function ProjectDetailPage() {
   const canComplete = hasPermission(user, 'PROJECT_COMPLETE')
   const canAdopt = hasPermission(user, 'PROJECT_ADOPT')
   const canBatchDownload = hasPermission(user, 'PROJECT_DOWNLOAD')
+  const canShare = hasPermission(user, 'PROJECT_SHARE')
   const downloadablePhotoCount = data.photos.filter(
     photo => photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED',
   ).length
@@ -346,6 +350,7 @@ export default function ProjectDetailPage() {
           <Space wrap>
             {canAdopt && project.status === 'ACTIVE' &&
               <Button icon={<FileImageOutlined />} onClick={() => setGalleryOpen(true)}>从图库添加图片</Button>}
+            {canShare && <Button icon={<ShareAltOutlined />} onClick={() => setShareOpen(true)}>分享链接</Button>}
             {canEdit && <>
             {project.status !== 'COMPLETED' && project.status !== 'CANCELLED' &&
               <Button icon={<EditOutlined />} onClick={() => {
@@ -549,6 +554,9 @@ export default function ProjectDetailPage() {
             ]} />
         </Space>
       </Modal>
+      {shareOpen && <Suspense fallback={null}>
+        <ProjectShareLinksModal projectId={projectId} open onClose={() => setShareOpen(false)} />
+      </Suspense>}
     </>}
   </DataState>
 }

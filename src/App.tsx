@@ -36,6 +36,7 @@ const AdminPage = lazy(() => import('./pages/AdminPage'))
 const NotificationsPage = lazy(() => import('./pages/NotificationsPage'))
 const NotificationDetailPage = lazy(() => import('./pages/NotificationDetailPage'))
 const PublicRecruitmentPage = lazy(() => import('./pages/PublicRecruitmentPage'))
+const SharedProjectPage = lazy(() => import('./pages/SharedProjectPage'))
 const DocsPage = lazy(() => import('./pages/DocsPage'))
 const DocumentsPage = lazy(() => import('./pages/DocumentsPage'))
 const FeaturedCollectionsPage = lazy(() => import('./pages/FeaturedCollectionsPage'))
@@ -364,6 +365,12 @@ export default function App() {
     */}
     <Route path="/docs" element={<DocsPage />} />
     <Route path="/docs/:publicId" element={<DocsPage />} />
+    {/*
+      选题分享页同样不把登录用户弹回工作台：链接常常是部员自己转发出去的，
+      他点开时应该看到访客看到的那一屏，而不是被送回工作台。这一页完全不看
+      `user`，能力由"链接 + 密码"换来的分享会话决定。
+    */}
+    <Route path="/share/:token" element={<SharedProjectPage />} />
     <Route path="/initial-password" element={!user ? <Navigate to="/login" replace /> :
       user.mustChangePassword ? <InitialPasswordPage /> : <Navigate to="/" replace />} />
     <Route path="/*" element={<Shell />} />

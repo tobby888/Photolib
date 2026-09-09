@@ -67,7 +67,8 @@ public record AuthenticatedUser(
             case MINISTER -> Set.of(
                     PermissionCode.PROJECT_VIEW, PermissionCode.PROJECT_ADOPT,
                     PermissionCode.PROJECT_CREATE, PermissionCode.PROJECT_COMPLETE,
-                    PermissionCode.PROJECT_DOWNLOAD, PermissionCode.PHOTO_VIEW,
+                    PermissionCode.PROJECT_DOWNLOAD, PermissionCode.PROJECT_SHARE,
+                    PermissionCode.PHOTO_VIEW,
                     PermissionCode.PHOTO_DELETE, PermissionCode.PHOTO_UPLOAD,
                     PermissionCode.PHOTO_DOWNLOAD, PermissionCode.REQUEST_VIEW,
                     PermissionCode.REQUEST_CREATE, PermissionCode.REQUEST_CLOSE,
