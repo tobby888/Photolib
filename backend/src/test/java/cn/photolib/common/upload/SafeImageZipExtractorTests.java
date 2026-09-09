@@ -5,6 +5,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -96,9 +98,37 @@ class SafeImageZipExtractorTests {
         assertThat(displayName).endsWith(".jpg").doesNotContain("/", "\\", "\u0001");
     }
 
+    @Test
+    void readsChineseNamesFromAnArchiveZippedByWindowsWithoutTheUtf8Flag() throws Exception {
+        byte[] jpeg = {(byte) 0xff, (byte) 0xd8, (byte) 0xff, 1, 2, 3, 4};
+        byte[] archive = zip(Map.of("DSC00680-编辑.jpg", jpeg), Charset.forName("GBK"));
+
+        var result = extractor.extract(new ByteArrayInputStream(archive),
+                extension -> temporaryDirectory.resolve(UUID.randomUUID() + extension), 255);
+
+        assertThat(result).extracting(SafeImageZipExtractor.ExtractedImage::originalFileName)
+                .containsExactly("DSC00680-编辑.jpg");
+        assertThat(Files.readAllBytes(result.getFirst().localFile())).isEqualTo(jpeg);
+    }
+
+    @Test
+    void decodesUnflaggedNamesAsUtf8FirstAndKeepsUndecodableBytesAsIs() {
+        String chinese = "毕业照/合影.jpg";
+        assertThat(SafeImageZipExtractor.decodeEntryName(
+                new String(chinese.getBytes(StandardCharsets.UTF_8), StandardCharsets.ISO_8859_1)))
+                .isEqualTo(chinese);
+        assertThat(SafeImageZipExtractor.decodeEntryName("photo.jpg")).isEqualTo("photo.jpg");
+        assertThat(SafeImageZipExtractor.decodeEntryName("café.jpg")).isEqualTo("café.jpg");
+        assertThat(SafeImageZipExtractor.decodeEntryName("透明图.png")).isEqualTo("透明图.png");
+    }
+
     private byte[] zip(Map<String, byte[]> entries) throws Exception {
+        return zip(entries, StandardCharsets.UTF_8);
+    }
+
+    private byte[] zip(Map<String, byte[]> entries, Charset charset) throws Exception {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
-        try (ZipOutputStream zip = new ZipOutputStream(output)) {
+        try (ZipOutputStream zip = new ZipOutputStream(output, charset)) {
             for (var entry : entries.entrySet()) {
                 zip.putNextEntry(new ZipEntry(entry.getKey()));
                 zip.write(entry.getValue());
