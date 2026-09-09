@@ -5,6 +5,11 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.Charset;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.DigestOutputStream;
@@ -22,6 +27,9 @@ import java.util.zip.ZipInputStream;
  */
 @Component
 public class SafeImageZipExtractor {
+
+    /** Legacy encoding of names in archives zipped by Chinese Windows, absent on a trimmed JDK. */
+    private static final Charset LEGACY_CHINESE_CHARSET = legacyChineseCharset();
 
     /** Extracts with the gallery quota, for signed-in bulk uploads. */
     public List<ExtractedImage> extract(InputStream source, DestinationFactory destinations)
@@ -53,10 +61,12 @@ public class SafeImageZipExtractor {
                                          Integer maxDisplayNameCodePoints) throws IOException {
         List<ExtractedImage> extracted = new ArrayList<>();
         long expandedTotal = 0;
-        try (ZipInputStream zip = new ZipInputStream(source)) {
+        // ISO-8859-1 keeps non-UTF-8 entry names as raw bytes for decodeEntryName instead of
+        // letting ZipInputStream reject the archive; UTF-8-flagged names bypass this charset.
+        try (ZipInputStream zip = new ZipInputStream(source, StandardCharsets.ISO_8859_1)) {
             ZipEntry entry;
             while ((entry = zip.getNextEntry()) != null) {
-                String entryName = validateEntryPath(entry.getName());
+                String entryName = validateEntryPath(decodeEntryName(entry.getName()));
                 if (entry.isDirectory() || entryName.endsWith("/")) continue;
                 String baseName = baseName(entryName);
                 String originalFileName = maxDisplayNameCodePoints == null
@@ -96,6 +106,52 @@ public class SafeImageZipExtractor {
             extracted.forEach(image -> deleteQuietly(image.localFile()));
             throw exception;
         }
+    }
+
+    /**
+     * Recovers the entry name written by the zipping tool. A name flagged as UTF-8 has already
+     * been decoded by {@link ZipInputStream} and is returned untouched; anything else arrives as
+     * raw bytes (see the ISO-8859-1 stream charset) and is decoded as UTF-8, then as the legacy
+     * Chinese encoding, keeping the raw form when neither applies. Decoding happens before path
+     * validation because a GBK trail byte can be {@code 0x5C}, which would otherwise be read as
+     * a directory separator.
+     */
+    static String decodeEntryName(String rawName) {
+        if (rawName == null) return null;
+        if (!rawName.chars().allMatch(character -> character <= 0xFF)) return rawName;
+        byte[] bytes = rawName.getBytes(StandardCharsets.ISO_8859_1);
+        boolean ascii = true;
+        for (byte value : bytes) {
+            if (value < 0) {
+                ascii = false;
+                break;
+            }
+        }
+        if (ascii) return rawName;
+        String utf8 = strictDecode(bytes, StandardCharsets.UTF_8);
+        if (utf8 != null) return utf8;
+        String legacy = LEGACY_CHINESE_CHARSET == null
+                ? null : strictDecode(bytes, LEGACY_CHINESE_CHARSET);
+        return legacy != null ? legacy : rawName;
+    }
+
+    private static String strictDecode(byte[] bytes, Charset charset) {
+        try {
+            return charset.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(bytes))
+                    .toString();
+        } catch (CharacterCodingException notThisCharset) {
+            return null;
+        }
+    }
+
+    private static Charset legacyChineseCharset() {
+        for (String name : new String[] {"GBK", "GB18030"}) {
+            if (Charset.isSupported(name)) return Charset.forName(name);
+        }
+        return null;
     }
 
     static String validateEntryPath(String rawName) {
