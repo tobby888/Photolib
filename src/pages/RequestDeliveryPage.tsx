@@ -14,7 +14,7 @@ import { readTakenAt } from '../exif'
 import { uploadToObjectStorage } from '../storageUpload'
 import { useAuth } from '../auth'
 import { DataState, StatusTag } from '../components'
-import { useLoad } from '../hooks'
+import { useLoad, useRefreshOnResume } from '../hooks'
 import type { Campus, CampusMember, EntityId, PageData, Photo, PhotoRequest, Project } from '../types'
 import MarkdownRenderer from '../MarkdownRenderer'
 import { photoTitleFromFileName } from '../photoTitle'
@@ -70,6 +70,7 @@ export default function RequestDeliveryPage() {
     emptyPage<Photo>(),
     [requestId, photoStatus],
   )
+  useRefreshOnResume(photosState.refresh)
 
   const request = requestState.data.request
   const campusScoped = user?.dataScope === 'CAMPUS'

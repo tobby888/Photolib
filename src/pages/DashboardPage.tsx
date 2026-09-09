@@ -9,7 +9,7 @@ import { useAuth } from '../auth'
 import { api, emptyPage } from '../api'
 import type { PageData, Photo, PhotoRequest, Project } from '../types'
 import { DataState, StatusTag } from '../components'
-import { useLoad } from '../hooks'
+import { useLoad, useRefreshOnResume } from '../hooks'
 import { hasPermission } from '../permissions'
 import { PREVIEW_CROSS_ORIGIN } from '../previewImage'
 
@@ -20,7 +20,7 @@ const requestProgress: Record<PhotoRequest['status'], number> = {
 export default function DashboardPage() {
   const { user } = useAuth()
   const navigate = useNavigate()
-  const { data, loading, error, reload } = useLoad(async () => {
+  const { data, loading, error, reload, refresh } = useLoad(async () => {
     const [projects, requests, photos] = await Promise.all([
       hasPermission(user, 'PROJECT_VIEW') ? api<PageData<Project>>({ url: '/projects', params: { page: 1, pageSize: 8 } }).catch(() => emptyPage<Project>()) : emptyPage<Project>(),
       hasPermission(user, 'REQUEST_VIEW') ? api<PageData<PhotoRequest>>({ url: '/requests', params: { page: 1, pageSize: 8 } }).catch(() => emptyPage<PhotoRequest>()) : emptyPage<PhotoRequest>(),
@@ -30,6 +30,7 @@ export default function DashboardPage() {
   }, {
     projects: emptyPage<Project>(), requests: emptyPage<PhotoRequest>(), photos: emptyPage<Photo>(),
   }, [user?.permissionGroupId])
+  useRefreshOnResume(refresh)
 
   const active = data.projects.items.filter((item) => item.status === 'ACTIVE').length
   const pending = data.requests.items.filter((item) => ['PUBLISHED', 'ACCEPTED'].includes(item.status)).length

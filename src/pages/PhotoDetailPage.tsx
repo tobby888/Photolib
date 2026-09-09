@@ -11,7 +11,7 @@ import { api, emptyPage, qs } from '../api'
 import { DataState, formatBytes, PageTitle, StatusTag } from '../components'
 import { ContentFitTable } from '../ContentFitTable'
 import { useAuth } from '../auth'
-import { useLoad } from '../hooks'
+import { useLoad, useRefreshOnResume } from '../hooks'
 import { hasPermission } from '../permissions'
 import PhotoHistogram from '../PhotoHistogram'
 import { useLocalImageUrl } from '../useLocalImageUrl'
@@ -52,13 +52,14 @@ export default function PhotoDetailPage({ favoritesOnly = false }: { favoritesOn
   const [projectSaving, setProjectSaving] = useState(false)
   const [selectedProjectId, setSelectedProjectId] = useState<EntityId | null>(null)
   const [projectFilters, setProjectFilters] = useState({ page: 1, keyword: '' })
-  const { data: photo, setData: setPhoto, loading, error, reload } = useLoad(
+  const { data: photo, setData: setPhoto, loading, error, reload, refresh } = useLoad(
     () => photoId
       ? api<Photo>({ url: `/photos/${photoId}` })
       : Promise.reject(new Error('图片 ID 无效')),
     null as Photo | null,
     [photoId],
   )
+  useRefreshOnResume(refresh)
   const localImage = useLocalImageUrl(photo?.thumbnailUrl)
   useEffect(() => {
     const onPreviewRegenerated = () => void reload()

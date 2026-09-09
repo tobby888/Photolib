@@ -15,7 +15,7 @@ import { uploadToObjectStorage } from '../storageUpload'
 import type { CampusMember, DedupedMember, EntityId, PageData, Photo, Project } from '../types'
 import { DataState, PageTitle, StatusTag } from '../components'
 import { ContentFitTable } from '../ContentFitTable'
-import { useLoad } from '../hooks'
+import { useLoad, useRefreshOnResume } from '../hooks'
 import { useAuth } from '../auth'
 import { preparePhotoBatchDownload } from '../photoBatchDownload'
 import { photoTitleFromFileName } from '../photoTitle'
@@ -62,13 +62,14 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
     setSearchParams(writePhotoLibraryFilters(nextFilters), { replace: true })
   }
   const selectedIds = selectedPhotos.map(photo => photo.id)
-  const { data, setData, loading, error, reload } = useLoad(
+  const { data, setData, loading, error, reload, refresh } = useLoad(
     () => api<PageData<Photo>>({
       url: '/photos',
       params: qs({ ...filters, pageSize: 24, favoritesOnly: favoritesOnly || undefined }),
     }),
     emptyPage<Photo>(), [filters.page, filters.keyword, filters.status, favoritesOnly],
   )
+  useRefreshOnResume(refresh)
   useEffect(() => {
     setSearchText(filters.keyword)
   }, [filters.keyword])
