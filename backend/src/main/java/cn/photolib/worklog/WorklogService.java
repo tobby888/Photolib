@@ -6,6 +6,9 @@ import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.directory.CampusMemberEntity;
 import cn.photolib.directory.CampusMemberService;
+import cn.photolib.project.ProjectService;
+import cn.photolib.project.model.ProjectEntity;
+import cn.photolib.project.model.ProjectStatus;
 import cn.photolib.request.RequestService;
 import cn.photolib.notification.NotificationService;
 import cn.photolib.request.mapper.PhotoRequestMapper;
@@ -39,6 +42,7 @@ public class WorklogService {
     private final PhotoRequestMapper requestMapper;
     private final UserMapper userMapper;
     private final RequestService requestService;
+    private final ProjectService projectService;
     private final CampusMemberService campusMemberService;
     private final NotificationService notifications;
 
@@ -47,6 +51,7 @@ public class WorklogService {
         requirePermission(user, PermissionCode.WORKLOG_SUBMIT);
         PhotoRequestEntity request = requestService.get(requestId);
         requireCampusAccess(request, user);
+        requireProjectOpen(request);
         requireParticipant(requestId, user);
         validate(command);
         CampusMemberEntity member = campusMemberService.getForWorklog(
@@ -92,6 +97,7 @@ public class WorklogService {
         validate(command);
         PhotoRequestEntity request = requestService.get(worklog.getRequestId());
         requireCampusAccess(request, user);
+        requireProjectOpen(request);
         CampusMemberEntity member = campusMemberService.getForWorklog(
                 command.memberContactId(), request.getCampusId());
         apply(worklog, command, member);
@@ -109,6 +115,7 @@ public class WorklogService {
         if (worklog.getStatus() != WorklogStatus.DRAFT && worklog.getStatus() != WorklogStatus.REJECTED) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "当前工时不可提交");
         }
+        requireProjectOpen(requestService.get(worklog.getRequestId()));
         worklog.setStatus(WorklogStatus.SUBMITTED);
         worklog.setRejectReason(null);
         worklog.setVersion(version);
@@ -199,6 +206,16 @@ public class WorklogService {
         target.setShootingMinutes(command.shootingMinutes());
         target.setRetouchingMinutes(command.retouchingMinutes());
         target.setRemark(command.remark());
+    }
+
+    // 项目一旦完成或取消就不再计发工时，因此填报侧（新建、编辑、提交）都要挡住已结束项目下的
+    // 需求；只挡新建的话，草稿仍能在项目结束后被提交上来。审核侧（确认、退回、删除）不受影响，
+    // 否则项目结束时还没审完的工时会永远卡住。
+    private void requireProjectOpen(PhotoRequestEntity request) {
+        ProjectEntity project = projectService.get(request.getProjectId());
+        if (project.getStatus() == ProjectStatus.COMPLETED || project.getStatus() == ProjectStatus.CANCELLED) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "所属项目已结束，不能填报该需求的工时");
+        }
     }
 
     private void requireParticipant(Long requestId, AuthenticatedUser user) {

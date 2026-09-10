@@ -8,7 +8,7 @@ import { useState } from 'react'
 import dayjs from 'dayjs'
 import { api, emptyPage, qs } from '../api'
 import { useAuth } from '../auth'
-import type { CampusMember, EntityId, PageData, PhotoRequest, Worklog } from '../types'
+import type { CampusMember, EntityId, PageData, PhotoRequest, Project, Worklog } from '../types'
 import { DataState, formatMinutes, PageTitle, StatusTag } from '../components'
 import { ContentFitTable, TableEllipsisText } from '../ContentFitTable'
 import { useLoad } from '../hooks'
@@ -47,12 +47,23 @@ export default function WorklogsPage() {
     emptyPage<Worklog>(), [filters.page, filters.status],
   )
   const { data: requestOptions, loading: requestsLoading } = useLoad(
-    () => canSubmit && user
-      ? api<PageData<PhotoRequest>>({
+    async () => {
+      if (!canSubmit || !user) return []
+      // 后端拒绝在已结束（已完成/已取消）项目的需求下填报工时，所以这里先把这些需求
+      // 从下拉里去掉，别让人选完才吃一个报错。只查已结束的两种状态，是为了让 100 条的
+      // 上限花在真正需要屏蔽的项目上；万一漏掉一个，后端仍会挡住。
+      const [requests, completed, cancelled] = await Promise.all([
+        api<PageData<PhotoRequest>>({
           url: '/requests',
           params: { page: 1, pageSize: 100, participantId: user.id },
-        }).then(result => result.items.filter(item => item.status !== 'CANCELLED'))
-      : Promise.resolve([]),
+        }),
+        api<PageData<Project>>({ url: '/projects', params: { page: 1, pageSize: 100, status: 'COMPLETED' } }),
+        api<PageData<Project>>({ url: '/projects', params: { page: 1, pageSize: 100, status: 'CANCELLED' } }),
+      ])
+      const endedProjectIds = new Set([...completed.items, ...cancelled.items].map(project => project.id))
+      return requests.items.filter(item =>
+        item.status !== 'CANCELLED' && !endedProjectIds.has(item.projectId))
+    },
     [] as PhotoRequest[], [user?.id, canSubmit],
   )
   const { data: directory, loading: directoryLoading } = useLoad(
@@ -302,8 +313,8 @@ export default function WorklogsPage() {
             showSearch
             optionFilterProp="label"
             loading={requestsLoading}
-            placeholder={requestOptions.length ? '请选择已接受的需求' : '暂无已接受的需求'}
-            notFoundContent={requestsLoading ? '正在加载需求…' : '暂无可申报工时的需求'}
+            placeholder={requestOptions.length ? '请选择已接受的需求' : '暂无可填报工时的需求'}
+            notFoundContent={requestsLoading ? '正在加载需求…' : '暂无可填报工时的需求（已结束项目的需求不会出现在这里）'}
             options={requestOptions.map(item => ({ value: item.id, label: item.title }))}
           />
         </Form.Item>
