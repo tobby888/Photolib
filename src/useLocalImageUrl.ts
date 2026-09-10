@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import type { PreviewUrlRefresher } from './previewImage'
 
 interface SharedImageResource {
   controller: AbortController
@@ -79,8 +80,17 @@ export function acquireLocalImage(remoteUrl: string) {
   }
 }
 
-export function useLocalImageUrl(remoteUrl?: string): LocalImageState {
+/**
+ * @param refresh 取新签名地址的办法。预览图取不回来最常见的原因是签名过期，
+ *   所以先重取一次地址再试，真的取不回来才报错——理由见 `src/previewRetry.ts`。
+ *   和那边一样只重试一次。
+ */
+export function useLocalImageUrl(remoteUrl?: string, refresh?: PreviewUrlRefresher): LocalImageState {
   const [state, setState] = useState<LocalImageState>({ status: 'idle' })
+  // 用 ref 拿 refresh：调用方通常是内联箭头函数，放进依赖里会让整个 effect 每次
+  // 渲染都重来一遍，等于把刚下好的 Blob 扔掉重下。
+  const refreshRef = useRef(refresh)
+  refreshRef.current = refresh
 
   useEffect(() => {
     if (!remoteUrl) {
@@ -89,14 +99,43 @@ export function useLocalImageUrl(remoteUrl?: string): LocalImageState {
     }
 
     let active = true
+    let url = remoteUrl
+    let resource = acquireLocalImage(url)
     setState({ status: 'loading' })
-    const resource = acquireLocalImage(remoteUrl)
-    void resource.promise.then(url => {
-      if (active) setState({ status: 'ready', url })
-    }).catch(reason => {
-      if (!active || (reason as Error).name === 'AbortError') return
-      setState({ status: 'error', message: (reason as Error).message || '预览图没能加载出来' })
-    })
+
+    const consume = (retried: boolean) => {
+      const attemptedUrl = url
+      const attempted = resource
+      void attempted.promise.then(value => {
+        if (active) setState({ status: 'ready', url: value })
+      }).catch(async reason => {
+        if (!active || (reason as Error).name === 'AbortError') return
+        const message = (reason as Error).message || '预览图没能加载出来'
+        if (retried || !refreshRef.current) {
+          setState({ status: 'error', message })
+          return
+        }
+
+        let fresh: string | undefined
+        try {
+          fresh = (await refreshRef.current()) ?? undefined
+        } catch {
+          fresh = undefined
+        }
+        if (!active) return
+        // 地址没变说明这次失败与签名过期无关（同一个签名窗口内后端对同一张图签出
+        // 的地址是逐字节相同的），再取一次也是同样的结果。
+        if (!fresh || fresh === attemptedUrl) {
+          setState({ status: 'error', message })
+          return
+        }
+        attempted.release()
+        url = fresh
+        resource = acquireLocalImage(url)
+        consume(true)
+      })
+    }
+    consume(false)
 
     return () => {
       active = false

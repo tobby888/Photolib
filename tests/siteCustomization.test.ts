@@ -45,12 +45,12 @@ test('图片加载失败也要顶上占位图，而不是留一个碎图图标',
   ])
 
   // 这是回归点：只处理"没有预览地址"是不够的，对象存储故障或签名过期时
-  // 地址是有的、取不回来，antd Image 的 fallback 和 <img> 的 onError 才是那一条路。
-  for (const source of [photos, project, delivery]) {
+  // 地址是有的、取不回来，`PreviewPhoto` 的 fallback 才是那一条路。
+  for (const source of [photos, project, delivery, featured]) {
     assert.match(source, /fallback=\{pickPlaceholderImage\(placeholderImages, photo\.id\)\}/)
   }
-  assert.match(featured, /onError=\{event => \{/)
-  assert.match(featured, /image\.dataset\.placeholder/)
+  // 精选条目的图可能在报送之后被删，占位图按 photoId 取。
+  assert.match(featured, /fallback=\{pickPlaceholderImage\(placeholderImages, entry\.photoId\)\}/)
 })
 
 test('已从图库删除的精选图片换成占位图之后，仍然写明它已被删除', async () => {

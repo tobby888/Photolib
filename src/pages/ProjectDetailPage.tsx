@@ -1,5 +1,5 @@
 import {
-  App, Breadcrumb, Button, Card, Checkbox, Col, DatePicker, Form, Image, Input,
+  App, Breadcrumb, Button, Card, Checkbox, Col, DatePicker, Form, Input,
   Modal, Radio, Row, Select, Space, Statistic, Tag, Typography,
 } from 'antd'
 import {
@@ -19,7 +19,8 @@ import MarkdownEditor from '../MarkdownEditor'
 import MarkdownRenderer, { markdownExcerpt } from '../MarkdownRenderer'
 import { preparePhotoBatchDownload } from '../photoBatchDownload'
 import { hasPermission } from '../permissions'
-import { PREVIEW_CROSS_ORIGIN } from '../previewImage'
+import PreviewPhoto from '../PreviewPhoto'
+import { refreshPhotoPreviewUrl } from '../previewRefresh'
 import { PhotoPlaceholder, pickPlaceholderImage, usePlaceholderImages } from '../photoPlaceholder'
 
 const ProjectShareLinksModal = lazy(() => import('../ProjectShareLinksModal'))
@@ -432,8 +433,8 @@ export default function ProjectDetailPage() {
                 className={`photo-card${selectedDownloadPhotoIds.includes(photo.id) ? ' photo-card-selected' : ''}`}
                 cover={<div className="photo-cover">
                   {photo.thumbnailUrl
-                    ? <Image src={photo.thumbnailUrl} alt={photo.title || '需求图片'}
-                        crossOrigin={PREVIEW_CROSS_ORIGIN}
+                    ? <PreviewPhoto src={photo.thumbnailUrl} alt={photo.title || '需求图片'}
+                        refresh={() => refreshPhotoPreviewUrl(photo.id)}
                         fallback={pickPlaceholderImage(placeholderImages, photo.id)} />
                     : <PhotoPlaceholder seed={photo.id}>
                       <span>{photo.title?.slice(0, 1) || '图'}</span>
@@ -544,8 +545,10 @@ export default function ProjectDetailPage() {
             locale={{ emptyText: '没有可添加的图库图片' }}
             columns={[
               { title: '预览', width: 92, render: (_, photo) =>
-                photo.thumbnailUrl ? <Image width={68} height={48} style={{ objectFit: 'contain' }}
-                  preview={false} crossOrigin={PREVIEW_CROSS_ORIGIN} src={photo.thumbnailUrl} /> : '-' },
+                photo.thumbnailUrl ? <PreviewPhoto width={68} height={48} style={{ objectFit: 'contain' }}
+                  preview={false} src={photo.thumbnailUrl}
+                  refresh={() => refreshPhotoPreviewUrl(photo.id)}
+                  fallback={pickPlaceholderImage(placeholderImages, photo.id)} /> : '-' },
               { title: '图片', dataIndex: 'title', render: (value, photo) =>
                 <div className="table-title"><strong>{value || '未命名图片'}</strong>
                   <span>{photo.photographerName} · {dayjs(photo.takenAt).format('YYYY-MM-DD')}</span></div> },

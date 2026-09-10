@@ -1,15 +1,15 @@
 import {
-  App, Button, Card, Checkbox, Col, Empty, Form, Image, Input, Result, Row, Skeleton, Space, Tag, Typography,
+  App, Button, Card, Checkbox, Col, Empty, Form, Input, Result, Row, Skeleton, Space, Tag, Typography,
 } from 'antd'
 import { DownloadOutlined, LinkOutlined, LockOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { ApiError } from '../api'
 import { BrandGlyph, useBranding } from '../branding'
 import SiteFooter from '../SiteFooter'
 import { PhotoPlaceholder, pickPlaceholderImage, usePlaceholderImages } from '../photoPlaceholder'
-import { PREVIEW_CROSS_ORIGIN } from '../previewImage'
+import PreviewPhoto from '../PreviewPhoto'
 import { useRefreshOnResume } from '../hooks'
 import {
   clearShareSession, prepareSharedBatchDownload, readStoredShareSession, shareApi, storeShareSession,
@@ -120,6 +120,26 @@ export default function SharedProjectPage() {
   useEffect(() => { void loadPhotos() }, [loadPhotos])
   // 预签名预览地址只活 10 分钟，页面切回前台时静默重取一遍，理由见 src/previewFreshness.ts。
   useRefreshOnResume(useCallback(() => { void loadPhotos(true) }, [loadPhotos]))
+
+  // 访客通道没有"单张图重签地址"的接口，重取这一页就是最小的办法——而且一屏
+  // 图片的签名本来就是一起过期的，重取一次正好把整屏都换新。几十张图几乎同时
+  // 失败，所以在途的那一次请求要共用，不能一张图一次。
+  const refreshingPhotos = useRef<Promise<SharePhoto[]> | null>(null)
+  const refreshPreviewUrl = useCallback(async (photoId: string) => {
+    if (!session) return undefined
+    refreshingPhotos.current ??= shareApi
+      .photos(token, session, { page, pageSize: PAGE_SIZE, keyword: keyword || undefined })
+      .then(result => {
+        setPhotos(result.items)
+        setTotal(result.total)
+        return result.items
+      })
+      .finally(() => { refreshingPhotos.current = null })
+    // 会话失效之类的错误在这里不弹提示：用户没有主动发起这次请求，页面上别的
+    // 请求会把它说清楚，这里安静地让占位图顶上就行。
+    const items = await refreshingPhotos.current.catch(() => [] as SharePhoto[])
+    return items.find(item => item.id === photoId)?.thumbnailUrl
+  }, [keyword, page, session, token])
 
   const unlock = async () => {
     const values = await passwordForm.validateFields()
@@ -270,8 +290,8 @@ export default function SharedProjectPage() {
               <Card className={`photo-card${selected.includes(photo.id) ? ' photo-card-selected' : ''}`}
                 cover={<div className="photo-cover">
                   {photo.thumbnailUrl
-                    ? <Image src={photo.thumbnailUrl} alt={photo.title || '项目图片'}
-                        crossOrigin={PREVIEW_CROSS_ORIGIN}
+                    ? <PreviewPhoto src={photo.thumbnailUrl} alt={photo.title || '项目图片'}
+                        refresh={() => refreshPreviewUrl(photo.id)}
                         fallback={pickPlaceholderImage(placeholderImages, photo.id)} />
                     : <PhotoPlaceholder seed={photo.id}>
                       <span>{photo.title?.slice(0, 1) || '图'}</span>
