@@ -4,7 +4,7 @@ import {
 import {
   ArrowLeftOutlined, DeleteOutlined, DownloadOutlined, FolderAddOutlined, StarFilled, StarOutlined,
 } from '@ant-design/icons'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { api, emptyPage, qs } from '../api'
@@ -15,6 +15,7 @@ import { useLoad, useRefreshOnResume } from '../hooks'
 import { hasPermission } from '../permissions'
 import PhotoHistogram from '../PhotoHistogram'
 import { useLocalImageUrl } from '../useLocalImageUrl'
+import { refreshPhotoPreviewUrl } from '../previewRefresh'
 import { PhotoPlaceholder } from '../photoPlaceholder'
 import type { EntityId, PageData, Photo, Project } from '../types'
 import { withPhotoLibrarySearch } from '../photoLibrarySearch'
@@ -60,7 +61,12 @@ export default function PhotoDetailPage({ favoritesOnly = false }: { favoritesOn
     [photoId],
   )
   useRefreshOnResume(refresh)
-  const localImage = useLocalImageUrl(photo?.thumbnailUrl)
+  // 预览图取不回来多半只是签名过期，先重取一次地址（详见 src/previewRetry.ts）。
+  // 大图和直方图共用这一份结果，所以重试一次两处一起恢复。
+  const localImage = useLocalImageUrl(
+    photo?.thumbnailUrl,
+    useCallback(() => (photoId ? refreshPhotoPreviewUrl(photoId) : Promise.resolve(undefined)), [photoId]),
+  )
   useEffect(() => {
     const onPreviewRegenerated = () => void reload()
     window.addEventListener('preview-generation-succeeded', onPreviewRegenerated)

@@ -22,3 +22,11 @@
  * `AliyunObjectStorageService.initialize` provisions the rule (`OSS_CORS_ALLOWED_ORIGINS`).
  */
 export const PREVIEW_CROSS_ORIGIN = 'anonymous'
+
+/**
+ * 取一条新的签名预览地址。预览图加载失败时用它再试一次，语义和"只重试一次"的
+ * 理由见 `src/previewRetry.ts`。
+ *
+ * 返回 `undefined`/`null` 表示这张图确实取不回来了（被删、无权查看、后端出错）。
+ */
+export type PreviewUrlRefresher = () => Promise<string | null | undefined>

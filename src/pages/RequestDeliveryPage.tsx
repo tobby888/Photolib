@@ -1,5 +1,5 @@
 import {
-  Alert, App, Button, Card, Checkbox, Col, DatePicker, Descriptions, Form, Image, Input, Progress,
+  Alert, App, Button, Card, Checkbox, Col, DatePicker, Descriptions, Form, Input, Progress,
   Result, Row, Select, Space, Statistic, Tag, Typography, Upload,
 } from 'antd'
 import {
@@ -19,7 +19,8 @@ import type { Campus, CampusMember, EntityId, PageData, Photo, PhotoRequest, Pro
 import MarkdownRenderer from '../MarkdownRenderer'
 import { photoTitleFromFileName } from '../photoTitle'
 import { hasPermission } from '../permissions'
-import { PREVIEW_CROSS_ORIGIN } from '../previewImage'
+import PreviewPhoto from '../PreviewPhoto'
+import { refreshPhotoPreviewUrl } from '../previewRefresh'
 import { PhotoPlaceholder, pickPlaceholderImage, usePlaceholderImages } from '../photoPlaceholder'
 import { preparePhotoBatchDownload } from '../photoBatchDownload'
 
@@ -277,8 +278,9 @@ export default function RequestDeliveryPage() {
                           ? [...new Set([...current, photo.id])].slice(0, 200)
                           : current.filter(id => id !== photo.id))} />}
                     {photo.thumbnailUrl
-                      ? <Image preview crossOrigin={PREVIEW_CROSS_ORIGIN}
+                      ? <PreviewPhoto preview
                           src={photo.thumbnailUrl} alt={photo.title}
+                          refresh={() => refreshPhotoPreviewUrl(photo.id)}
                           fallback={pickPlaceholderImage(placeholderImages, photo.id)} />
                       : <PhotoPlaceholder className="delivery-placeholder" seed={photo.id}>
                         <PictureOutlined />

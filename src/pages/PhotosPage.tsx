@@ -1,5 +1,5 @@
 import {
-  App, Button, Card, Checkbox, Col, DatePicker, Form, Image, Input, Modal,
+  App, Button, Card, Checkbox, Col, DatePicker, Form, Input, Modal,
   Pagination, Progress, Row, Select, Space, Tag, Typography, Upload,
 } from 'antd'
 import {
@@ -20,7 +20,8 @@ import { useAuth } from '../auth'
 import { preparePhotoBatchDownload } from '../photoBatchDownload'
 import { photoTitleFromFileName } from '../photoTitle'
 import { hasPermission } from '../permissions'
-import { PREVIEW_CROSS_ORIGIN } from '../previewImage'
+import PreviewPhoto from '../PreviewPhoto'
+import { refreshPhotoPreviewUrl } from '../previewRefresh'
 import { PhotoPlaceholder, pickPlaceholderImage, usePlaceholderImages } from '../photoPlaceholder'
 import {
   readPhotoLibraryFilters, writePhotoLibraryFilters, withPhotoLibrarySearch,
@@ -325,9 +326,11 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
               if (event.key === 'Enter' && event.target === event.currentTarget) navigate(withPhotoLibrarySearch(
                 `${libraryRoot}/${photo.id}`, location.search))
             }}>
-            {/* fallback 覆盖的是"有预览地址但取不回来"——对象存储故障、签名过期都会走到它。 */}
-            {photo.thumbnailUrl ? <Image preview={false} crossOrigin={PREVIEW_CROSS_ORIGIN}
+            {/* 取不回来时先向后端重取一次签名地址（见 src/previewRetry.ts），
+                仍然取不回来才让占位图顶上。 */}
+            {photo.thumbnailUrl ? <PreviewPhoto preview={false}
               src={photo.thumbnailUrl} alt={photo.title}
+              refresh={() => refreshPhotoPreviewUrl(photo.id)}
               fallback={pickPlaceholderImage(placeholderImages, photo.id)} />
               : <PhotoPlaceholder seed={photo.id}>
                 <span>{photo.title?.slice(0, 1) || '图'}</span>
