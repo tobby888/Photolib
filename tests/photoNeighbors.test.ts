@@ -48,6 +48,50 @@ test('page edges point at the adjacent page and leave the photo ID to be fetched
   })
 })
 
+test('only the whole library has a first and a last photo — pages in between never dead-end', () => {
+  // 每页 2 张、共 3 页。p2 和 p4 各自是所在页的最后一张，但整个图库里它们后面还有图片：
+  // 这条走查就是用来盯住「最后一张」指的是图库的最后一张，而不是当前这一页的最后一张。
+  const library = ['p1', 'p2', 'p3', 'p4', 'p5']
+  const pageSize = 2
+  const pageOf = (photoId: string) => {
+    const index = library.indexOf(photoId)
+    const current = Math.floor(index / pageSize) + 1
+    return page(
+      library.slice((current - 1) * pageSize, current * pageSize),
+      current,
+      Math.ceil(library.length / pageSize),
+      pageSize,
+    )
+  }
+  // 翻页时相邻图片的 ID 要等取到隔壁页才知道，这里按同一份数据把它补出来。
+  const step = (photoId: string, direction: 'previous' | 'next') => {
+    const neighbor = findPhotoNeighbors(pageOf(photoId), photoId)[direction]
+    if (!neighbor) return null
+    if (neighbor.id !== null) return neighbor.id
+    const adjacent = page(
+      library.slice((neighbor.page - 1) * pageSize, neighbor.page * pageSize),
+      neighbor.page,
+      Math.ceil(library.length / pageSize),
+      pageSize,
+    )
+    return pickEdgePhotoId(adjacent, direction === 'previous' ? 'last' : 'first')
+  }
+
+  const forward = ['p1']
+  while (step(forward[forward.length - 1], 'next')) forward.push(step(forward[forward.length - 1], 'next')!)
+  assert.deepEqual(forward, library, '一路点「下一张」必须走遍整个图库，不能停在某一页的末尾')
+
+  const backward = ['p5']
+  while (step(backward[backward.length - 1], 'previous')) {
+    backward.push(step(backward[backward.length - 1], 'previous')!)
+  }
+  assert.deepEqual(backward, [...library].reverse(), '一路点「上一张」必须走回图库开头')
+
+  // 整个图库只有两个尽头，页边界（p2 / p3 / p4）一个都不算。
+  const deadEnds = library.filter(id => !step(id, 'next') || !step(id, 'previous'))
+  assert.deepEqual(deadEnds, ['p1', 'p5'])
+})
+
 test('a photo missing from the page disables both directions instead of guessing', () => {
   // 直链进来、图片刚被删掉、或筛选条件已经变了都会走到这里。
   assert.deepEqual(findPhotoNeighbors(page(['a', 'b', 'c'], 2, 3), 'zzz'), {
