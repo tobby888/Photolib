@@ -2,7 +2,8 @@ import {
   Alert, App, Button, Card, Col, Descriptions, Image, Input, Modal, Row, Skeleton, Space, Tag, Typography,
 } from 'antd'
 import {
-  ArrowLeftOutlined, DeleteOutlined, DownloadOutlined, FolderAddOutlined, StarFilled, StarOutlined,
+  ArrowLeftOutlined, DeleteOutlined, DownloadOutlined, FolderAddOutlined, LeftOutlined, RightOutlined,
+  StarFilled, StarOutlined,
 } from '@ant-design/icons'
 import { useCallback, useEffect, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
@@ -18,7 +19,10 @@ import { useLocalImageUrl } from '../useLocalImageUrl'
 import { refreshPhotoPreviewUrl } from '../previewRefresh'
 import { PhotoPlaceholder } from '../photoPlaceholder'
 import type { EntityId, PageData, Photo, Project } from '../types'
-import { withPhotoLibrarySearch } from '../photoLibrarySearch'
+import {
+  PHOTO_LIBRARY_PAGE_SIZE, readPhotoLibraryFilters, withPhotoLibrarySearch, writePhotoLibraryFilters,
+} from '../photoLibrarySearch'
+import { findPhotoNeighbors, pickEdgePhotoId } from '../photoNeighbors'
 
 function isLinkedToProject(photo: Photo, projectId: EntityId) {
   return photo.relatedProjects?.some(project => String(project.id) === String(projectId))
@@ -86,6 +90,55 @@ export default function PhotoDetailPage({ favoritesOnly = false }: { favoritesOn
     emptyPage<Project>(),
     [projectPickerOpen, projectFilters.page, projectFilters.keyword],
   )
+
+  // 「上一张 / 下一张」的顺序就是用户进来时那一屏图库的顺序：详情页 URL 里带着
+  // 同一套筛选条件，照它重新取一页列表就能把当前图片定位回去（见 src/photoNeighbors.ts）。
+  const libraryFilters = readPhotoLibraryFilters(new URLSearchParams(location.search))
+  const libraryPageParams = (page: number) => qs({
+    ...libraryFilters,
+    page,
+    pageSize: PHOTO_LIBRARY_PAGE_SIZE,
+    favoritesOnly: favoritesOnly || undefined,
+  })
+  const { data: libraryPage } = useLoad(
+    () => api<PageData<Photo>>({ url: '/photos', params: libraryPageParams(libraryFilters.page) }),
+    emptyPage<Photo>(),
+    [libraryFilters.page, libraryFilters.keyword, libraryFilters.status, favoritesOnly],
+  )
+  const neighbors = findPhotoNeighbors(libraryPage, photoId)
+  const [movingTo, setMovingTo] = useState<'previous' | 'next' | null>(null)
+
+  const goToNeighbor = async (direction: 'previous' | 'next') => {
+    const neighbor = direction === 'previous' ? neighbors.previous : neighbors.next
+    if (!neighbor || movingTo) return
+    setMovingTo(direction)
+    try {
+      // 同页内相邻图片的 ID 已经在手上，只有跨页才需要再取一页拿边上那张。
+      const targetId = neighbor.id ?? pickEdgePhotoId(
+        await api<PageData<Photo>>({ url: '/photos', params: libraryPageParams(neighbor.page) }),
+        direction === 'previous' ? 'last' : 'first',
+      )
+      if (targetId === null) {
+        message.warning('这个方向上已经没有图片了，可能刚被删除或移出了当前筛选条件。')
+        return
+      }
+      navigate(withPhotoLibrarySearch(
+        `${libraryRoot}/${targetId}`,
+        `?${writePhotoLibraryFilters({ ...libraryFilters, page: neighbor.page })}`,
+      ))
+    } catch (reason) {
+      message.error(`切换图片失败：${(reason as Error).message}`)
+    } finally {
+      setMovingTo(null)
+    }
+  }
+
+  const neighborTitle = (direction: 'previous' | 'next') => {
+    const label = direction === 'previous' ? '上一张' : '下一张'
+    if (direction === 'previous' ? neighbors.previous : neighbors.next) return `查看${label}图片`
+    if (!neighbors.positioned) return `无法确定这张图片在图片库中的位置，${label}不可用`
+    return direction === 'previous' ? '已经是第一张图片' : '已经是最后一张图片'
+  }
 
   const download = async () => {
     if (!photo) return
@@ -183,6 +236,10 @@ export default function PhotoDetailPage({ favoritesOnly = false }: { favoritesOn
           onClick={() => navigate(withPhotoLibrarySearch(libraryRoot, location.search))}>
           {favoritesOnly ? '返回收藏图片' : '返回图片库'}
         </Button>
+        <Button icon={<LeftOutlined />} disabled={!neighbors.previous} loading={movingTo === 'previous'}
+          title={neighborTitle('previous')} onClick={() => void goToNeighbor('previous')}>上一张</Button>
+        <Button icon={<RightOutlined />} disabled={!neighbors.next} loading={movingTo === 'next'}
+          title={neighborTitle('next')} onClick={() => void goToNeighbor('next')}>下一张</Button>
         {photo && <Button icon={photo.favorited ? <StarFilled /> : <StarOutlined />}
           loading={favoriteSaving} aria-pressed={photo.favorited}
           aria-label={photo.favorited ? '取消收藏当前图片' : '收藏当前图片'}
