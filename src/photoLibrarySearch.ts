@@ -1,3 +1,9 @@
+/**
+ * 图库每页图片数。详情页的「上一张 / 下一张」按同一套筛选条件重新取列表来定位
+ * 当前图片（`src/photoNeighbors.ts`），两边的分页必须严格一致，否则翻页会跳号。
+ */
+export const PHOTO_LIBRARY_PAGE_SIZE = 24
+
 export const PHOTO_LIBRARY_STATUSES = ['AVAILABLE', 'PROCESSING', 'ARCHIVED'] as const
 
 export type PhotoLibraryStatus = typeof PHOTO_LIBRARY_STATUSES[number]

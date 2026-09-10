@@ -24,7 +24,7 @@ import PreviewPhoto from '../PreviewPhoto'
 import { refreshPhotoPreviewUrl } from '../previewRefresh'
 import { PhotoPlaceholder, pickPlaceholderImage, usePlaceholderImages } from '../photoPlaceholder'
 import {
-  readPhotoLibraryFilters, writePhotoLibraryFilters, withPhotoLibrarySearch,
+  PHOTO_LIBRARY_PAGE_SIZE, readPhotoLibraryFilters, writePhotoLibraryFilters, withPhotoLibrarySearch,
 } from '../photoLibrarySearch'
 import type { PhotoLibraryFilters, PhotoLibraryStatus } from '../photoLibrarySearch'
 import { updateFavoritePage } from '../photoFavorites'
@@ -66,7 +66,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
   const { data, setData, loading, error, reload, refresh } = useLoad(
     () => api<PageData<Photo>>({
       url: '/photos',
-      params: qs({ ...filters, pageSize: 24, favoritesOnly: favoritesOnly || undefined }),
+      params: qs({ ...filters, pageSize: PHOTO_LIBRARY_PAGE_SIZE, favoritesOnly: favoritesOnly || undefined }),
     }),
     emptyPage<Photo>(), [filters.page, filters.keyword, filters.status, favoritesOnly],
   )
@@ -368,7 +368,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
           </Card>
         </Col>)}
       </Row>
-      <Pagination current={filters.page} pageSize={24} total={data.total} hideOnSinglePage onChange={page => setFilters({ ...filters, page })} />
+      <Pagination current={filters.page} pageSize={PHOTO_LIBRARY_PAGE_SIZE} total={data.total} hideOnSinglePage onChange={page => setFilters({ ...filters, page })} />
     </DataState>
     <Modal title="上传单张图片" width={680} open={uploadOpen} onCancel={() => { if (!uploading) setUploadOpen(false) }} onOk={submitUpload}
       okText="开始上传" confirmLoading={uploading} destroyOnHidden
