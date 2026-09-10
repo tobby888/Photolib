@@ -37,7 +37,7 @@ public class PhotoController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyAuthority('PHOTO_VIEW','PROJECT_VIEW','REQUEST_VIEW','REQUEST_PHOTO_MANAGE')")
+    @PreAuthorize("hasAnyAuthority('PHOTO_VIEW','PROJECT_VIEW','PROJECT_VIEW_ALL','REQUEST_VIEW','REQUEST_PHOTO_MANAGE')")
     ApiResponse<PageResponse<PhotoService.PhotoView>> list(
             @RequestParam(defaultValue = "1") @Min(1) int page,
             @RequestParam(defaultValue = "30") @Min(1) @Max(100) int pageSize,
@@ -59,7 +59,7 @@ public class PhotoController {
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyAuthority('PHOTO_VIEW','PROJECT_VIEW','REQUEST_VIEW','REQUEST_PHOTO_MANAGE')")
+    @PreAuthorize("hasAnyAuthority('PHOTO_VIEW','PROJECT_VIEW','PROJECT_VIEW_ALL','REQUEST_VIEW','REQUEST_PHOTO_MANAGE')")
     ApiResponse<PhotoService.PhotoView> get(@PathVariable Long id,
                                             @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.get(id, user));

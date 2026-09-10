@@ -33,7 +33,7 @@ public class ProjectController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAuthority('PROJECT_VIEW')")
+    @PreAuthorize("hasAnyAuthority('PROJECT_VIEW','PROJECT_VIEW_ALL')")
     ApiResponse<PageResponse<ProjectEntity>> list(
             @RequestParam(defaultValue = "1") @Min(1) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int pageSize,
@@ -44,7 +44,7 @@ public class ProjectController {
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAuthority('PROJECT_VIEW')")
+    @PreAuthorize("hasAnyAuthority('PROJECT_VIEW','PROJECT_VIEW_ALL')")
     ApiResponse<ProjectService.ProjectDetail> get(@PathVariable Long id,
                                                   @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.getDetail(id, user));

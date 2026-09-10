@@ -48,7 +48,7 @@ public class ProjectService {
 
     public PageResponse<ProjectEntity> list(int page, int pageSize, String keyword, ProjectStatus status,
                                             AuthenticatedUser user) {
-        requirePermission(user, PermissionCode.PROJECT_VIEW);
+        requireViewPermission(user);
         String likeKeyword = LikeFilter.escape(keyword);
         LambdaQueryWrapper<ProjectEntity> query = Wrappers.<ProjectEntity>lambdaQuery()
                 .and(StringUtils.hasText(keyword), q -> q
@@ -56,18 +56,9 @@ public class ProjectService {
                         .or().apply(LikeFilter.contains("description"), likeKeyword))
                 .eq(status != null, ProjectEntity::getStatus, status);
 
-        // For campus managers, restrict to projects they participate in
-        if (user.isCampusScoped()) {
-            List<Long> visibleProjectIds = jdbc.sql(
-                "SELECT DISTINCT r.project_id FROM photo_request r " +
-                "JOIN request_participant rp ON rp.request_id = r.id " +
-                "WHERE r.deleted = 0 AND rp.user_id = :userId " +
-                "AND r.campus_id IN (:campusIds)"
-            ).param("userId", user.id())
-             .param("campusIds", user.scopedCampusIds())
-             .query((rs, rowNum) -> rs.getLong("project_id"))
-             .list();
-
+        // 没有"无条件查看"权限的账号只看得到自己参与过需求的选题（校区范围账号再叠一层校区过滤）
+        if (user.seesOnlyAssignedProjects()) {
+            List<Long> visibleProjectIds = assignedProjectIds(user);
             if (visibleProjectIds.isEmpty()) {
                 // No visible projects - return empty result
                 return PageResponse.from(Page.of(page, pageSize));
@@ -89,7 +80,7 @@ public class ProjectService {
     }
 
     public ProjectDetail getDetail(Long id, AuthenticatedUser user) {
-        requirePermission(user, PermissionCode.PROJECT_VIEW);
+        requireViewPermission(user);
         ProjectEntity project = get(id);
         requireVisible(project, user);
         // Campus managers only see a slice of the project (their campus's requests, their own
@@ -255,30 +246,60 @@ public class ProjectService {
         }
     }
 
+    /**
+     * 选题可见性的唯一判定点。两条限制是**正交**的，不要合并：
+     * <ul>
+     *   <li>参与人限制来自权限码——没有 {@code PROJECT_VIEW_ALL} 就只看得到自己接过需求的选题；</li>
+     *   <li>校区限制来自数据范围——{@code DataScope.CAMPUS} 的账号连"参与过"也只在授权校区内算数。</li>
+     * </ul>
+     * 全局范围但只勾了 {@code PROJECT_VIEW} 的账号因此不能带上校区条件：
+     * {@link AuthenticatedUser#scopedCampusIds()} 对它返回空集合，拼进 {@code IN ()} 会直接是语法错误。
+     */
     private void requireVisible(ProjectEntity project, AuthenticatedUser user) {
-        if (!user.isCampusScoped()) {
+        if (!user.seesOnlyAssignedProjects()) {
             return;
         }
-        long assignments = jdbc.sql("""
+        boolean campusLocked = user.isCampusScoped();
+        var statement = jdbc.sql("""
                 SELECT COUNT(*)
                 FROM photo_request r
                 JOIN request_participant rp ON rp.request_id=r.id
                 WHERE r.project_id=:projectId AND r.deleted=0 AND rp.user_id=:userId
-                  AND r.campus_id IN (:campusIds)
-                """)
+                """ + (campusLocked ? "  AND r.campus_id IN (:campusIds)" : ""))
                 .param("projectId", project.getId())
-                .param("userId", user.id())
-                .param("campusIds", user.scopedCampusIds())
-                .query(Long.class)
-                .single();
-        if (assignments == 0) {
+                .param("userId", user.id());
+        if (campusLocked) {
+            statement = statement.param("campusIds", user.scopedCampusIds());
+        }
+        if (statement.query(Long.class).single() == 0) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权查看未指派需求所属的项目");
         }
+    }
+
+    /** {@link #requireVisible} 的列表版：同一套参与人 + 校区规则，一次取出全部可见选题 id。 */
+    private List<Long> assignedProjectIds(AuthenticatedUser user) {
+        boolean campusLocked = user.isCampusScoped();
+        var statement = jdbc.sql(
+                "SELECT DISTINCT r.project_id FROM photo_request r "
+                        + "JOIN request_participant rp ON rp.request_id = r.id "
+                        + "WHERE r.deleted = 0 AND rp.user_id = :userId"
+                        + (campusLocked ? " AND r.campus_id IN (:campusIds)" : ""))
+                .param("userId", user.id());
+        if (campusLocked) {
+            statement = statement.param("campusIds", user.scopedCampusIds());
+        }
+        return statement.query((rs, rowNum) -> rs.getLong("project_id")).list();
     }
 
     private void updateChecked(ProjectEntity project) {
         if (mapper.updateById(project) != 1) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "项目已被其他操作修改");
+        }
+    }
+
+    private void requireViewPermission(AuthenticatedUser user) {
+        if (!user.canViewProjects()) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权执行该选题操作");
         }
     }
 

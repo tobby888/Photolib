@@ -36,7 +36,11 @@ class PermissionGroupServiceTests {
         assertThat(admin.dataScope()).isEqualTo(DataScope.GLOBAL);
         assertThat(admin.permissions()).containsExactlyInAnyOrder(PermissionCode.values());
         assertThat(minister.permissions()).containsExactlyInAnyOrder(
-                PermissionCode.PROJECT_VIEW, PermissionCode.PROJECT_ADOPT,
+                PermissionCode.PROJECT_VIEW,
+                // V42 把「无条件查看全部选题」拆成独立权限，并补给全局范围的存量权限组，
+                // 使升级前后部长看到的选题范围完全一致。
+                PermissionCode.PROJECT_VIEW_ALL,
+                PermissionCode.PROJECT_ADOPT,
                 PermissionCode.PROJECT_CREATE, PermissionCode.PROJECT_COMPLETE,
                 PermissionCode.PROJECT_DOWNLOAD,
                 // 对外分享链接由管理员和部长发放，所以 V41 把 PROJECT_SHARE 也发给了部长。
@@ -53,6 +57,7 @@ class PermissionGroupServiceTests {
                 PermissionCode.DOC_MANAGE,
                 PermissionCode.STATISTICS_DOWNLOAD, PermissionCode.MANAGER_CAMPUS_ASSIGN);
         assertThat(manager.dataScope()).isEqualTo(DataScope.CAMPUS);
+        // 校区负责人刻意不补 PROJECT_VIEW_ALL：它改动前就只看得到自己接到需求的选题。
         assertThat(manager.permissions()).containsExactlyInAnyOrder(
                 PermissionCode.PROJECT_VIEW, PermissionCode.PROJECT_ADOPT,
                 PermissionCode.PHOTO_VIEW, PermissionCode.PHOTO_UPLOAD,

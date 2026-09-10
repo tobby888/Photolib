@@ -243,7 +243,10 @@ class PhotoServiceTests {
     void galleryTicketCannotBeCompletedWithRequestUploadPermissionAfterPermissionChanges() {
         var galleryUploader = new AuthenticatedUser(ministerUser.id(), "gallery-uploader", "图库上传者",
                 UserRole.CAMPUS_MANAGER, null, false, -23L, "GALLERY_UPLOADER", "图库上传者",
-                DataScope.GLOBAL, Set.of(PermissionCode.PHOTO_UPLOAD, PermissionCode.PROJECT_ADOPT), Set.of());
+                // 往没接过需求的选题里传图需要「无条件查看全部选题」：拆分后选题可见性只看权限码，
+                // 而 Flyway V42 正是把它补给了所有持有选题权限的全局范围权限组。
+                DataScope.GLOBAL, Set.of(PermissionCode.PHOTO_UPLOAD, PermissionCode.PROJECT_ADOPT,
+                        PermissionCode.PROJECT_VIEW_ALL), Set.of());
         var ticket = photoService.createTicket(new PhotoService.CreateTicket(
                 null, testProject.getId(), "permission-changed.jpg", "image/jpeg", 1024L,
                 "6".repeat(64), photographerContactId, LocalDateTime.now()), galleryUploader);

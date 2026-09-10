@@ -16,7 +16,7 @@ import { ContentFitTable } from '../ContentFitTable'
 import { useLoad } from '../hooks'
 import MarkdownEditor from '../MarkdownEditor'
 import MarkdownRenderer from '../MarkdownRenderer'
-import { hasPermission } from '../permissions'
+import { canViewProjects, hasPermission } from '../permissions'
 import { REQUEST_ACTION_MIN_WIDTH } from '../tableActionWidths'
 
 const statuses = [
@@ -50,7 +50,7 @@ export default function RequestsPage() {
   )
   const { data: options } = useLoad(async () => {
     const [projects, campuses] = await Promise.all([
-      hasPermission(user, 'PROJECT_VIEW')
+      canViewProjects(user)
         ? api<PageData<Project>>({ url: '/projects', params: { page: 1, pageSize: 100 } })
         : Promise.resolve(emptyPage<Project>()),
       canCreate ? api<Campus[]>({ url: '/campuses', params: { enabled: true } }) : Promise.resolve([] as Campus[]),

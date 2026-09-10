@@ -441,7 +441,7 @@ public class PhotoService {
         boolean allowed = requestId != null
                 ? user.hasAnyPermission(PermissionCode.REQUEST_VIEW, PermissionCode.REQUEST_PHOTO_MANAGE)
                 : projectId != null
-                ? user.hasPermission(PermissionCode.PROJECT_VIEW)
+                ? user.canViewProjects()
                 : user.hasPermission(PermissionCode.PHOTO_VIEW);
         if (!allowed) throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问图片列表");
     }
@@ -507,7 +507,7 @@ public class PhotoService {
     private void requireViewPermission(PhotoEntity photo, AuthenticatedUser user) {
         boolean requestAllowed = photo.getRequestId() != null
                 && user.hasAnyPermission(PermissionCode.REQUEST_VIEW, PermissionCode.REQUEST_PHOTO_MANAGE);
-        boolean projectAllowed = user.hasPermission(PermissionCode.PROJECT_VIEW)
+        boolean projectAllowed = user.canViewProjects()
                 && jdbc.sql("SELECT COUNT(*) FROM photo_project WHERE photo_id = :photoId")
                 .param("photoId", photo.getId()).query(Long.class).single() > 0;
         if (!requestAllowed && !projectAllowed && !user.hasPermission(PermissionCode.PHOTO_VIEW)) {

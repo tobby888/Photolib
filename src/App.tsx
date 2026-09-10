@@ -14,7 +14,7 @@ import { NotFound } from './components'
 import { api } from './api'
 import type { BrandingSettings, Notification, PreviewGenerationStatus } from './types'
 import { BrandGlyph, useBranding } from './branding'
-import { hasAnyPermission, hasPermission, hasSystemAccess } from './permissions'
+import { canViewProjects, hasAnyPermission, hasPermission, hasSystemAccess } from './permissions'
 import SiteFooter from './SiteFooter'
 import UserAvatar from './UserAvatar'
 
@@ -177,7 +177,7 @@ function Shell() {
   }
   const nav = useMemo(() => {
     const common = [{ key: '/', icon: <DashboardOutlined />, label: '工作台' }]
-    if (hasPermission(user, 'PROJECT_VIEW')) common.push(
+    if (canViewProjects(user)) common.push(
       { key: '/projects', icon: <FolderOutlined />, label: '选题项目' })
     if (hasPermission(user, 'REQUEST_VIEW')) common.push(
       { key: '/requests', icon: <UnorderedListOutlined />, label: '图片需求' })
@@ -308,8 +308,8 @@ function Shell() {
         <div className="route-stage" key={location.pathname}>
           <Suspense fallback={<div className="route-loading">正在整理工作台…</div>}><Routes>
             <Route path="/" element={<DashboardPage />} />
-            <Route path="/projects" element={hasPermission(user, 'PROJECT_VIEW') ? <ProjectsPage /> : <Navigate to="/" />} />
-            <Route path="/projects/:projectId" element={hasPermission(user, 'PROJECT_VIEW') ? <ProjectDetailPage /> : <Navigate to="/" />} />
+            <Route path="/projects" element={canViewProjects(user) ? <ProjectsPage /> : <Navigate to="/" />} />
+            <Route path="/projects/:projectId" element={canViewProjects(user) ? <ProjectDetailPage /> : <Navigate to="/" />} />
             <Route path="/requests" element={hasPermission(user, 'REQUEST_VIEW') ? <RequestsPage /> : <Navigate to="/" />} />
             <Route path="/requests/:requestId" element={hasPermission(user, 'REQUEST_VIEW') ? <RequestDeliveryPage /> : <Navigate to="/" />} />
             <Route path="/photos" element={hasPermission(user, 'PHOTO_VIEW') ? <PhotosPage /> : <Navigate to="/" />} />
