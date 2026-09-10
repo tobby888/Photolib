@@ -48,6 +48,9 @@ export default function ProjectDetailPage() {
   const { projectId = '' } = useParams()
   const navigate = useNavigate()
   const { user } = useAuth()
+  // 「能看选题」和「能看需求」是两条权限，选题详情页要能在只有前者时正常打开，
+  // 所以这一条必须在取数之前就算出来（其余 can* 常量只服务渲染，声明在下面）。
+  const canViewRequests = hasPermission(user, 'REQUEST_VIEW')
   const { message, modal } = App.useApp()
   const placeholderImages = usePlaceholderImages()
   const [requestForm] = Form.useForm()
@@ -66,7 +69,11 @@ export default function ProjectDetailPage() {
   const { data, setData, loading, error, reload, refresh } = useLoad(async () => {
     const [project, firstRequests, campuses, firstPhotos, firstAdoptions] = await Promise.all([
       api<Project>({ url: `/projects/${projectId}` }),
-      api<PageData<PhotoRequest>>({ url: '/requests', params: { page: 1, pageSize: 100, projectId } }),
+      // GET /requests 硬性要求 REQUEST_VIEW。只有选题权限的账号打这条会 403，而它和
+      // 其余请求同在一个 Promise.all 里——一条被拒，整页详情就进不去。
+      canViewRequests
+        ? api<PageData<PhotoRequest>>({ url: '/requests', params: { page: 1, pageSize: 100, projectId } })
+        : Promise.resolve(emptyPage<PhotoRequest>()),
       api<Campus[]>({ url: '/campuses', params: { enabled: true } }),
       api<PageData<Photo>>({ url: '/photos', params: { page: 1, pageSize: 100, projectId, includeAllStatuses: true } }),
       user?.dataScope === 'CAMPUS'
@@ -107,7 +114,7 @@ export default function ProjectDetailPage() {
     campuses: [] as Campus[],
     photos: [] as Photo[],
     adoptions: [] as Adoption[],
-  }, [projectId, user?.dataScope])
+  }, [projectId, user?.dataScope, canViewRequests])
   useRefreshOnResume(refresh)
   const { data: galleryPhotos, loading: galleryLoading } = useLoad(
     () => galleryOpen && hasPermission(user, 'PROJECT_ADOPT') && hasPermission(user, 'PHOTO_VIEW')
@@ -390,7 +397,9 @@ export default function ProjectDetailPage() {
 
       <Card title="项目图片需求" extra={canCreateRequest && ['DRAFT', 'ACTIVE'].includes(project.status) &&
         <Button type="link" icon={<PlusOutlined />} onClick={() => setRequestOpen(true)}>新建需求</Button>}>
-        <ContentFitTable rowKey="id" dataSource={data.requests} pagination={false} locale={{ emptyText: '这个项目还没有图片需求' }}
+        <ContentFitTable rowKey="id" dataSource={data.requests} pagination={false}
+          locale={{ emptyText: canViewRequests ? '这个项目还没有图片需求'
+            : '你的权限组没有需求访问权限，这里不显示需求' }}
           columns={[
             { title: '需求', dataIndex: 'title', render: (value, item) => {
               const title = String(value || '未命名需求')
