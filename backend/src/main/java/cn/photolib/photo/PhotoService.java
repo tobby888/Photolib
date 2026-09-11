@@ -32,8 +32,10 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -209,8 +211,13 @@ public class PhotoService {
         List<Long> pagePhotoIds = result.getRecords().stream().map(PhotoEntity::getId).toList();
         Set<Long> favoriteIds = pagePhotoIds.isEmpty() ? Set.of()
                 : Set.copyOf(favoriteMapper.findFavoritePhotoIds(user.id(), pagePhotoIds));
+        // 归属项目与被引数整页各查一次，不再逐张查（pageSize 最大 100，逐张查是 200 条额外 SQL）。
+        Map<Long, List<ProjectLink>> projectLinks = projectLinks(pagePhotoIds);
+        Map<Long, Long> adoptionCounts = adoptionCounts(pagePhotoIds);
         return new PageResponse<>(result.getRecords().stream()
-                .map(photo -> toView(photo, favoriteIds.contains(photo.getId())))
+                .map(photo -> toView(photo, favoriteIds.contains(photo.getId()),
+                        projectLinks.getOrDefault(photo.getId(), List.of()),
+                        adoptionCounts.getOrDefault(photo.getId(), 0L)))
                 .toList(),
                 result.getCurrent(), result.getSize(), result.getTotal(), result.getPages());
     }
@@ -643,30 +650,63 @@ public class PhotoService {
         }
     }
 
+    /** 单张图片的视图（详情、编辑、完成上传等）：与列表走同一套批量查询，只是 id 只有一个。 */
     private PhotoView toView(PhotoEntity p, AuthenticatedUser user) {
-        return toView(p, favoriteMapper.count(user.id(), p.getId()) > 0);
+        Long id = p.getId();
+        return toView(p, favoriteMapper.count(user.id(), id) > 0,
+                projectLinks(List.of(id)).getOrDefault(id, List.of()),
+                adoptionCount(id));
     }
 
-    private PhotoView toView(PhotoEntity p, boolean favorited) {
+    private PhotoView toView(PhotoEntity p, boolean favorited, List<ProjectLink> projects, long adoptionCount) {
         String thumbnailUrl = previewUrl(p);
-        // 获取图片关联的所有项目
-        List<ProjectLink> projects = jdbc.sql("""
-                SELECT DISTINCT pr.id, pr.title
-                FROM photo_project pp
-                JOIN project pr ON pr.id = pp.project_id AND pr.deleted = 0
-                WHERE pp.photo_id = :photoId
-                ORDER BY pr.id
-                """)
-                .param("photoId", p.getId())
-                .query((rs, rowNum) -> new ProjectLink(rs.getLong("id"), rs.getString("title")))
-                .list();
         List<Long> projectIds = projects.stream().map(ProjectLink::id).toList();
 
         return new PhotoView(p.getId(), p.getRequestId(), p.getProjectId(), p.getTitle(), p.getDescription(),
                 p.getPhotographerStudentId(), p.getPhotographerName(), p.getUploadedBy(), p.getCampusId(),
                 p.getTakenAt(), PhotoTags.parse(p.getTagsJson()), p.getWidth(), p.getHeight(), p.getSize(), p.getContentType(),
                 p.getStoredFileName(), thumbnailUrl, p.getThumbnailSize(), p.getStatus(), p.getFailureReason(),
-                p.getCreatedAt(), p.getVersion(), adoptionCount(p.getId()), favorited, projectIds, projects);
+                p.getCreatedAt(), p.getVersion(), adoptionCount, favorited, projectIds, projects);
+    }
+
+    /**
+     * 图片所在的项目相册（按 photo_id 分组，组内按项目 id 升序），已软删除的项目不算。
+     * 归属以 photo_project 为准（AGENTS.md §2.5），不看 photo.project_id。
+     * 没有归属的图片不会出现在返回的 Map 里。
+     */
+    private Map<Long, List<ProjectLink>> projectLinks(List<Long> photoIds) {
+        if (photoIds.isEmpty()) return Map.of(); // IN () 是语法错误
+        Map<Long, List<ProjectLink>> links = new HashMap<>();
+        jdbc.sql("""
+                SELECT DISTINCT pp.photo_id, pr.id, pr.title
+                FROM photo_project pp
+                JOIN project pr ON pr.id = pp.project_id AND pr.deleted = 0
+                WHERE pp.photo_id IN (:photoIds)
+                ORDER BY pp.photo_id, pr.id
+                """)
+                .param("photoIds", photoIds)
+                .query(rs -> {
+                    links.computeIfAbsent(rs.getLong("photo_id"), key -> new ArrayList<>())
+                            .add(new ProjectLink(rs.getLong("id"), rs.getString("title")));
+                });
+        return links;
+    }
+
+    /** 未取消（deleted=0）的采用记录数，按 photo_id 分组；没有采用记录的图片不会出现在返回的 Map 里。 */
+    private Map<Long, Long> adoptionCounts(List<Long> photoIds) {
+        if (photoIds.isEmpty()) return Map.of(); // IN () 是语法错误
+        Map<Long, Long> counts = new HashMap<>();
+        jdbc.sql("""
+                SELECT photo_id, COUNT(*) AS adoption_count
+                FROM adoption
+                WHERE photo_id IN (:photoIds) AND deleted = 0
+                GROUP BY photo_id
+                """)
+                .param("photoIds", photoIds)
+                .query(rs -> {
+                    counts.put(rs.getLong("photo_id"), rs.getLong("adoption_count"));
+                });
+        return counts;
     }
 
     /**
@@ -689,10 +729,7 @@ public class PhotoService {
     }
 
     private long adoptionCount(Long photoId) {
-        return jdbc.sql("SELECT COUNT(*) FROM adoption WHERE photo_id=:photoId AND deleted=0")
-                .param("photoId", photoId)
-                .query(Long.class)
-                .single();
+        return adoptionCounts(List.of(photoId)).getOrDefault(photoId, 0L);
     }
 
     public record CreateTicket(Long requestId, Long projectId, String fileName, String contentType, long size,
