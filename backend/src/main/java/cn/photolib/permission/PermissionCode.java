@@ -1,7 +1,8 @@
 package cn.photolib.permission;
 
 public enum PermissionCode {
-    PROJECT_VIEW(PermissionCategory.PROJECT, "选题查看"),
+    PROJECT_VIEW(PermissionCategory.PROJECT, "查看接到需求的选题"),
+    PROJECT_VIEW_ALL(PermissionCategory.PROJECT, "无条件查看全部选题"),
     PROJECT_ADOPT(PermissionCategory.PROJECT, "标记或取消图片被引"),
     PROJECT_CREATE(PermissionCategory.PROJECT, "新建、编辑、发布和删除选题"),
     PROJECT_COMPLETE(PermissionCategory.PROJECT, "标记选题完成"),

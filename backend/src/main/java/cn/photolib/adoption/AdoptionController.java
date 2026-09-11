@@ -28,7 +28,7 @@ public class AdoptionController {
     }
 
     @GetMapping("/projects/{projectId}/adoptions")
-    @PreAuthorize("hasAuthority('PROJECT_VIEW')")
+    @PreAuthorize("hasAnyAuthority('PROJECT_VIEW','PROJECT_VIEW_ALL')")
     ApiResponse<PageResponse<AdoptionEntity>> list(@PathVariable Long projectId,
                                                    @RequestParam(defaultValue = "1") @Min(1) int page,
                                                    @RequestParam(defaultValue = "50") @Min(1) @Max(100) int pageSize,

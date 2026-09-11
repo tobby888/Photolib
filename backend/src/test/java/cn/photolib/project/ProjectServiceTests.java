@@ -335,6 +335,66 @@ class ProjectServiceTests {
                 .hasMessageContaining("无权查看");
     }
 
+    /**
+     * 「只看接到的选题」现在是 PROJECT_VIEW 自己的语义，不再是校区数据范围的副作用：
+     * 全局范围账号只勾 PROJECT_VIEW 时同样被收窄到自己参与过需求的选题，
+     * 并且**不叠加校区过滤**（它的 scopedCampusIds() 是空集合，加了就会拼出 IN ()）。
+     */
+    @Test
+    void globalScopeWithoutViewAllOnlySeesProjectsItParticipatesIn() {
+        var assigned = projectService.create("参与的选题", "描述", ProjectStatus.ACTIVE, adminUser);
+        var hidden = projectService.create("没参与的选题", "描述", ProjectStatus.ACTIVE, adminUser);
+        assignRequest(9110L, assigned.getId(), 901L, managerUser.id());
+        var restrictedGlobal = new AuthenticatedUser(managerUser.id(), "test-manager", "测试负责人",
+                UserRole.MINISTER, null, false, -20L, "ASSIGNED_ONLY", "仅看接到的选题",
+                DataScope.GLOBAL, Set.of(PermissionCode.PROJECT_VIEW), Set.of());
+
+        assertThat(projectService.list(1, 20, null, null, restrictedGlobal).items())
+                .extracting(project -> project.getId())
+                .contains(assigned.getId())
+                .doesNotContain(hidden.getId());
+        assertThat(projectService.getDetail(assigned.getId(), restrictedGlobal).id()).isEqualTo(assigned.getId());
+        assertThatThrownBy(() -> projectService.getDetail(hidden.getId(), restrictedGlobal))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("无权查看");
+    }
+
+    /** PROJECT_VIEW_ALL 是「无条件查看」，校区范围账号拿到它也能看到没接过需求的选题。 */
+    @Test
+    void viewAllLiftsTheParticipationRestrictionEvenForCampusScopedAccounts() {
+        var untouched = projectService.create("谁都没接的选题", "描述", ProjectStatus.ACTIVE, adminUser);
+        var campusManagerWithViewAll = new AuthenticatedUser(managerUser.id(), "test-manager", "测试负责人",
+                UserRole.CAMPUS_MANAGER, 901L, false, -21L, "CAMPUS_VIEW_ALL", "校区范围但可看全部选题",
+                DataScope.CAMPUS, Set.of(PermissionCode.PROJECT_VIEW, PermissionCode.PROJECT_VIEW_ALL),
+                Set.of(901L));
+
+        assertThat(projectService.list(1, 20, null, null, campusManagerWithViewAll).items())
+                .extracting(project -> project.getId()).contains(untouched.getId());
+        assertThat(projectService.getDetail(untouched.getId(), campusManagerWithViewAll).id())
+                .isEqualTo(untouched.getId());
+    }
+
+    /** 两条查看权限任意一条都能进选题模块；一条都没有则被挡住。 */
+    @Test
+    void eitherViewPermissionOpensTheModuleAndNeitherClosesIt() {
+        var project = projectService.create("权限边界选题", "描述", ProjectStatus.ACTIVE, adminUser);
+        var viewAllOnly = new AuthenticatedUser(managerUser.id(), "test-manager", "测试负责人",
+                UserRole.MINISTER, null, false, -22L, "VIEW_ALL_ONLY", "只勾无条件查看",
+                DataScope.GLOBAL, Set.of(PermissionCode.PROJECT_VIEW_ALL), Set.of());
+        var noView = new AuthenticatedUser(managerUser.id(), "test-manager", "测试负责人",
+                UserRole.MINISTER, null, false, -23L, "NO_VIEW", "没有任何选题查看权限",
+                DataScope.GLOBAL, Set.of(PermissionCode.PROJECT_ADOPT), Set.of());
+
+        assertThat(projectService.list(1, 20, null, null, viewAllOnly).items())
+                .extracting(item -> item.getId()).contains(project.getId());
+        assertThatThrownBy(() -> projectService.list(1, 20, null, null, noView))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("无权执行该选题操作");
+        assertThatThrownBy(() -> projectService.getDetail(project.getId(), noView))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("无权执行该选题操作");
+    }
+
     @Test
     void historicalParticipationDoesNotKeepProjectVisibleAfterCampusGrantIsRevoked() {
         var assigned = projectService.create("历史参与项目", "描述", ProjectStatus.ACTIVE, adminUser);
@@ -359,5 +419,19 @@ class ProjectServiceTests {
         assertThatThrownBy(() -> projectService.getVisible(assigned.getId(), movedManager))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("无权查看");
+    }
+
+    private void assignRequest(Long requestId, Long projectId, Long campusId, Long userId) {
+        jdbc.sql("""
+                INSERT INTO photo_request
+                    (id, project_id, title, campus_id, required_count, deadline, status, created_by)
+                VALUES (:requestId, :projectId, '测试需求', :campusId, 1,
+                        DATEADD('DAY', 1, CURRENT_TIMESTAMP), 'ACCEPTED', :adminId)
+                """).param("requestId", requestId).param("projectId", projectId)
+                .param("campusId", campusId).param("adminId", adminUser.id()).update();
+        jdbc.sql("""
+                INSERT INTO request_participant (request_id, user_id, accepted_at)
+                VALUES (:requestId, :userId, CURRENT_TIMESTAMP)
+                """).param("requestId", requestId).param("userId", userId).update();
     }
 }

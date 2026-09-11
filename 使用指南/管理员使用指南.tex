@@ -327,7 +327,9 @@ curl --fail http://127.0.0.1:8080/api/v1/actuator/health
     \toprule
     \textbf{权限码} & \textbf{含义} \\
     \midrule
-    \code{PROJECT\_VIEW / \_CREATE / \_COMPLETE} & 选题的查看 / 新建编辑发布 / 标记完成 \\
+    \code{PROJECT\_VIEW} & 只能查看\textbf{自己接到需求}的选题 \\
+    \code{PROJECT\_VIEW\_ALL} & 无条件查看全部选题（覆盖上一条） \\
+    \code{PROJECT\_CREATE / \_COMPLETE} & 选题的新建编辑发布 / 标记完成 \\
     \code{PROJECT\_ADOPT} & 标记或取消图片被引（采用） \\
     \code{REQUEST\_VIEW / \_CREATE / \_CONFIRM} & 需求的接受提交 / 新建发布 / 确认退回 \\
     \code{REQUEST\_PHOTO\_MANAGE} & 管理需求图片（上传、下载、删除） \\

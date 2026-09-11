@@ -10,7 +10,7 @@ import { api, emptyPage } from '../api'
 import type { PageData, Photo, PhotoRequest, Project } from '../types'
 import { DataState, StatusTag } from '../components'
 import { useLoad, useRefreshOnResume } from '../hooks'
-import { hasPermission } from '../permissions'
+import { canViewProjects, hasPermission } from '../permissions'
 import PreviewPhoto from '../PreviewPhoto'
 import { refreshPhotoPreviewUrl } from '../previewRefresh'
 
@@ -23,7 +23,7 @@ export default function DashboardPage() {
   const navigate = useNavigate()
   const { data, loading, error, reload, refresh } = useLoad(async () => {
     const [projects, requests, photos] = await Promise.all([
-      hasPermission(user, 'PROJECT_VIEW') ? api<PageData<Project>>({ url: '/projects', params: { page: 1, pageSize: 8 } }).catch(() => emptyPage<Project>()) : emptyPage<Project>(),
+      canViewProjects(user) ? api<PageData<Project>>({ url: '/projects', params: { page: 1, pageSize: 8 } }).catch(() => emptyPage<Project>()) : emptyPage<Project>(),
       hasPermission(user, 'REQUEST_VIEW') ? api<PageData<PhotoRequest>>({ url: '/requests', params: { page: 1, pageSize: 8 } }).catch(() => emptyPage<PhotoRequest>()) : emptyPage<PhotoRequest>(),
       hasPermission(user, 'PHOTO_VIEW') ? api<PageData<Photo>>({ url: '/photos', params: { page: 1, pageSize: 8, status: 'AVAILABLE' } }).catch(() => emptyPage<Photo>()) : emptyPage<Photo>(),
     ])

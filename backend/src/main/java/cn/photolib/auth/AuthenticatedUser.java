@@ -65,7 +65,8 @@ public record AuthenticatedUser(
         return switch (role) {
             case ADMIN -> Set.of(PermissionCode.values());
             case MINISTER -> Set.of(
-                    PermissionCode.PROJECT_VIEW, PermissionCode.PROJECT_ADOPT,
+                    PermissionCode.PROJECT_VIEW, PermissionCode.PROJECT_VIEW_ALL,
+                    PermissionCode.PROJECT_ADOPT,
                     PermissionCode.PROJECT_CREATE, PermissionCode.PROJECT_COMPLETE,
                     PermissionCode.PROJECT_DOWNLOAD, PermissionCode.PROJECT_SHARE,
                     PermissionCode.PHOTO_VIEW,
@@ -106,6 +107,24 @@ public record AuthenticatedUser(
 
     public boolean isCampusScoped() {
         return dataScope == DataScope.CAMPUS;
+    }
+
+    /**
+     * 能不能进选题模块。两个查看权限任意一个都够：{@code PROJECT_VIEW} 只看自己接到需求的选题，
+     * {@code PROJECT_VIEW_ALL} 看全部选题，后者天然覆盖前者，所以不要求同时勾选。
+     */
+    public boolean canViewProjects() {
+        return hasAnyPermission(PermissionCode.PROJECT_VIEW, PermissionCode.PROJECT_VIEW_ALL);
+    }
+
+    /**
+     * 选题可见范围是否被收窄到"本人参与过需求的选题"。这条**只看权限码，不看数据范围**——
+     * 以前它是 {@code isCampusScoped()} 的副作用，于是"只看接到的选题"和"只在授权校区内活动"
+     * 被绑死，全局范围的账号想被限制在自己接到的选题里就无从表达。校区过滤是另一件事，
+     * 仍旧由 {@link #isCampusScoped()} 决定，两者叠加而不是互相替代。
+     */
+    public boolean seesOnlyAssignedProjects() {
+        return !hasPermission(PermissionCode.PROJECT_VIEW_ALL);
     }
 
     /**
