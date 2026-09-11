@@ -12,8 +12,10 @@ import { PageTitle } from '../components'
 import { useLoad } from '../hooks'
 import { uploadToObjectStorage } from '../storageUpload'
 import type {
-  BatchUploadStatus, BatchUploadView, CampusMember, DedupedMember, EntityId, PhotoRequest,
+  BatchUploadStatus, BatchUploadView, CampusMember, DedupedMember, EntityId, PhotoRequest, TagOptions,
 } from '../types'
+import TagSelect from '../TagSelect'
+import { normalizeTags, tagRules } from '../photoTags'
 
 const ZIP_MAX_BYTES = 1_500_000_000
 const TERMINAL_STATUSES: BatchUploadStatus[] = ['SUCCEEDED', 'PARTIALLY_SUCCEEDED', 'FAILED']
@@ -46,7 +48,14 @@ export default function BatchUploadPage() {
 
   const context = useLoad(async () => {
     let request: PhotoRequest | null = null
-    if (requestId) request = await api<PhotoRequest>({ url: `/requests/${requestId}` })
+    // 需求批次受所属选题的预设标签约束；直接传图库的批次不受限。
+    let tagOptions: TagOptions = { restricted: false, tags: [] }
+    if (requestId) {
+      [request, tagOptions] = await Promise.all([
+        api<PhotoRequest>({ url: `/requests/${requestId}` }),
+        api<TagOptions>({ url: `/requests/${requestId}/tag-options` }),
+      ])
+    }
     const members = request
       ? (await api<CampusMember[]>({
           url: '/campus-members', params: { enabled: true, campusId: request.campusId },
@@ -56,8 +65,9 @@ export default function BatchUploadPage() {
             .map(member => ({ value: member.id, label: `${member.name} · ${member.studentId}` }))
         : (await api<DedupedMember[]>({ url: '/campus-members/deduped' }))
             .map(member => ({ value: member.id, label: `${member.name} · ${member.studentId}` }))
-    return { request, members }
-  }, { request: null as PhotoRequest | null, members: [] as { value: EntityId; label: string }[] },
+    return { request, members, tagOptions }
+  }, { request: null as PhotoRequest | null, members: [] as { value: EntityId; label: string }[],
+    tagOptions: { restricted: false, tags: [] } as TagOptions },
   [requestId, user?.dataScope])
 
   const currentStep = useMemo(() => {
@@ -133,7 +143,7 @@ export default function BatchUploadPage() {
         data: {
           photographerContactId: values.photographerContactId,
           takenAt: values.takenAt.format('YYYY-MM-DDTHH:mm:ss'),
-          tags: values.tags || [],
+          tags: normalizeTags(values.tags),
           description: values.description,
         },
       })
@@ -204,8 +214,10 @@ export default function BatchUploadPage() {
         <Form.Item label="统一拍摄时间" name="takenAt" rules={[{ required: true }]}>
           <DatePicker showTime style={{ width: '100%' }} />
         </Form.Item>
-        <Form.Item label="统一标签" name="tags">
-          <Select mode="tags" maxCount={30} placeholder="输入后回车添加" />
+        <Form.Item label="统一标签" name="tags" rules={tagRules}
+          extra={context.data.tagOptions.restricted
+            ? '需求所属选题设置了预设标签，只能从中选择，也可以不加标签' : undefined}>
+          <TagSelect restricted={context.data.tagOptions.restricted} presets={context.data.tagOptions.tags} />
         </Form.Item>
         <Form.Item label="统一说明" name="description"><Input.TextArea rows={3} /></Form.Item>
         {submitting && <Space direction="vertical" style={{ width: '100%', marginBottom: 20 }}>

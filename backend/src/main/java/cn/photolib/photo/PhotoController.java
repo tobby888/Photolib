@@ -1,9 +1,11 @@
 package cn.photolib.photo;
 
+import cn.photolib.audit.AuditInterceptor;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.api.PageResponse;
 import cn.photolib.photo.model.PhotoStatus;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import lombok.RequiredArgsConstructor;
@@ -12,7 +14,9 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/photos")
@@ -88,6 +92,25 @@ public class PhotoController {
         return ApiResponse.ok(service.update(id, request.command(), user));
     }
 
+    /**
+     * 批量增删标签。在选题详情页里操作时带上 {@code projectId}，新增标签就要受该选题的预设约束。
+     * 审计详情里记下选题、张数和增删了哪些标签，否则一条 POST /photos/batch-tags 事后看不出做了什么。
+     */
+    @PostMapping("/batch-tags")
+    @PreAuthorize("hasAnyAuthority('PHOTO_UPLOAD','REQUEST_PHOTO_MANAGE')")
+    ApiResponse<List<PhotoService.TaggedPhoto>> batchTags(@Valid @RequestBody BatchTagsRequest request,
+                                                          HttpServletRequest servletRequest,
+                                                          @AuthenticationPrincipal AuthenticatedUser user) {
+        Map<String, Object> audit = new LinkedHashMap<>();
+        audit.put("projectId", request.projectId());
+        audit.put("photoCount", request.photoIds().size());
+        audit.put("addTags", request.addTags() == null ? List.of() : request.addTags());
+        audit.put("removeTags", request.removeTags() == null ? List.of() : request.removeTags());
+        servletRequest.setAttribute(AuditInterceptor.DETAIL_ATTRIBUTE, audit);
+        return ApiResponse.ok(service.batchTags(new PhotoService.BatchTags(request.photoIds(),
+                request.addTags(), request.removeTags(), request.projectId()), user));
+    }
+
     @PatchMapping("/{id}/campus")
     @PreAuthorize("hasRole('ADMIN')")
     ApiResponse<PhotoService.PhotoView> updateCampus(@PathVariable Long id,
@@ -147,13 +170,13 @@ public class PhotoController {
 
     record CompleteRequest(@NotBlank @Size(max = 200) String title,
                            @Size(max = 5000) String description,
-                           @Size(max = 30) List<@Size(max = 50) String> tags) {}
+                           @Size(max = 30) List<@Size(max = 100) String> tags) {}
 
     record MetadataRequest(@NotBlank @Size(max = 200) String title,
                            @Size(max = 5000) String description,
                            @NotNull Long photographerContactId,
                            @NotNull @PastOrPresent LocalDateTime takenAt,
-                           @Size(max = 30) List<@Size(max = 50) String> tags,
+                           @Size(max = 30) List<@Size(max = 100) String> tags,
                            @Min(1) int version) {
         PhotoService.Metadata command() {
             return new PhotoService.Metadata(title, description, photographerContactId,
@@ -162,5 +185,9 @@ public class PhotoController {
     }
 
     record CampusRequest(Long campusId, @Min(1) int version) {}
+    record BatchTagsRequest(@NotEmpty @Size(max = 200) List<@NotNull Long> photoIds,
+                            @Size(max = 30) List<@Size(max = 100) String> addTags,
+                            @Size(max = 30) List<@Size(max = 100) String> removeTags,
+                            Long projectId) {}
     record BatchDeleteRequest(@NotEmpty @Size(max = 200) List<@NotNull Long> photoIds) {}
 }

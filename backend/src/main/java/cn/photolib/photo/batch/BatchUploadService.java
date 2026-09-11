@@ -6,6 +6,7 @@ import cn.photolib.common.error.ErrorCode;
 import cn.photolib.common.upload.ImageUploadPolicy;
 import cn.photolib.common.util.PublicId;
 import cn.photolib.photo.PhotoProcessingService;
+import cn.photolib.photo.PhotoTags;
 import cn.photolib.photo.mapper.PhotoMapper;
 import cn.photolib.photo.model.PhotoEntity;
 import cn.photolib.photo.model.PhotoStatus;
@@ -169,13 +170,14 @@ public class BatchUploadService {
         if (item.getStatus() != BatchItemStatus.WAITING_METADATA) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "当前图片不能填写元数据");
         }
+        List<String> tags = allowedTags(batch, metadata.tags());
         transitionItem(itemId, BatchItemStatus.WAITING_METADATA, BatchItemStatus.PROCESSING);
         Long campusId = batch.getRequestId() == null
                 ? requireGalleryUploadCampus(user)
                 : requestService.get(batch.getRequestId()).getCampusId();
         var photographer = campusMemberService.resolvePhotographer(metadata.photographerContactId(), campusId);
         createPhoto(batch, item, metadata.title(), metadata.description(), metadata.takenAt(),
-                metadata.tags(), photographer.getStudentId(), photographer.getName(), campusId, user.id());
+                tags, photographer.getStudentId(), photographer.getName(), campusId, user.id());
         return view(batchMapper.selectById(batchId));
     }
 
@@ -188,6 +190,7 @@ public class BatchUploadService {
         if (batch.getStatus() != BatchStatus.WAITING_METADATA) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "批次尚未完成解压或已开始处理");
         }
+        List<String> tags = allowedTags(batch, metadata.tags());
         transitionBatch(batchId, BatchStatus.WAITING_METADATA, BatchStatus.PROCESSING);
         List<PhotoUploadItemEntity> waitingItems = itemMapper.selectList(
                 Wrappers.<PhotoUploadItemEntity>lambdaQuery()
@@ -204,7 +207,7 @@ public class BatchUploadService {
         for (PhotoUploadItemEntity item : waitingItems) {
             transitionItem(item.getId(), BatchItemStatus.WAITING_METADATA, BatchItemStatus.PROCESSING);
             createPhoto(batch, item, titleFromFileName(item.getOriginalFileName()), metadata.description(),
-                    metadata.takenAt(), metadata.tags(), photographer.getStudentId(), photographer.getName(),
+                    metadata.takenAt(), tags, photographer.getStudentId(), photographer.getName(),
                     campusId, user.id());
         }
         return view(batchMapper.selectById(batchId));
@@ -225,7 +228,7 @@ public class BatchUploadService {
         photo.setUploadedBy(uploadedBy);
         photo.setCampusId(campusId);
         photo.setTakenAt(takenAt);
-        photo.setTagsJson(tagsJson(tags));
+        photo.setTagsJson(PhotoTags.toJson(tags));
         photo.setSize(item.getSize());
         photo.setContentType(item.getContentType());
         photo.setOriginalObjectKey(item.getTempObjectKey());
@@ -250,6 +253,16 @@ public class BatchUploadService {
         item.setStatus(BatchItemStatus.PROCESSING);
         itemMapper.updateById(item);
         events.publishEvent(new PhotoProcessingService.PhotoProcessRequested(photo.getId()));
+    }
+
+    /**
+     * 批次落在选题里（需求上传，或带 projectId 的图库上传）时，标签受该选题预设约束；
+     * 直接传图库的批次不受限。在任何状态迁移之前校验，被拒时批次原样留在待整理状态。
+     */
+    private List<String> allowedTags(PhotoUploadBatchEntity batch, List<String> requested) {
+        List<String> tags = PhotoTags.normalize(requested);
+        projectService.requireAllowedPhotoTags(batch.getProjectId(), tags);
+        return tags;
     }
 
     private String titleFromFileName(String fileName) {
@@ -333,12 +346,6 @@ public class BatchUploadService {
 
     private BatchView view(PhotoUploadBatchEntity batch) {
         return new BatchView(batch, items(batch.getId()));
-    }
-
-    private String tagsJson(List<String> tags) {
-        if (tags == null) return "[]";
-        return tags.stream().map(v -> "\"" + v.replace("\"", "\\\"") + "\"")
-                .collect(java.util.stream.Collectors.joining(",", "[", "]"));
     }
 
     public record CreateBatch(BatchMode mode, Long requestId, Long projectId, String archiveFileName,

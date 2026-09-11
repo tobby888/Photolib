@@ -29,7 +29,8 @@ public class ProjectController {
     @PreAuthorize("hasAuthority('PROJECT_CREATE')")
     ApiResponse<ProjectEntity> create(@Valid @RequestBody CreateRequest request,
                                       @AuthenticationPrincipal AuthenticatedUser user) {
-        return ApiResponse.ok(service.create(request.title(), request.description(), request.status(), user));
+        return ApiResponse.ok(service.create(request.title(), request.description(), request.status(),
+                request.tags(), user));
     }
 
     @GetMapping
@@ -62,7 +63,8 @@ public class ProjectController {
     @PreAuthorize("hasAuthority('PROJECT_CREATE')")
     ApiResponse<ProjectEntity> update(@PathVariable Long id, @Valid @RequestBody UpdateRequest request,
                                       @AuthenticationPrincipal AuthenticatedUser user) {
-        return ApiResponse.ok(service.update(id, request.title(), request.description(), request.version(), user));
+        return ApiResponse.ok(service.update(id, request.title(), request.description(), request.tags(),
+                request.version(), user));
     }
 
     @PostMapping("/{id}/status")
@@ -86,10 +88,13 @@ public class ProjectController {
     }
 
     record CreateRequest(@NotBlank @Size(max = 200) String title, @Size(max = 5000) String description,
-                         @NotNull ProjectStatus status) {
+                         @NotNull ProjectStatus status,
+                         @Size(max = 30) List<@Size(max = 100) String> tags) {
     }
 
+    /** {@code tags} 省略时保留原预设标签；传空数组表示取消限制。 */
     record UpdateRequest(@NotBlank @Size(max = 200) String title, @Size(max = 5000) String description,
+                         @Size(max = 30) List<@Size(max = 100) String> tags,
                          @Min(1) int version) {
     }
 

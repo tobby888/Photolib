@@ -31,7 +31,10 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
@@ -119,13 +122,16 @@ public class PhotoService {
         if (photo.getStatus() != PhotoStatus.UPLOADING) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "图片不处于待上传状态");
         }
+        // 往选题（含其需求）里上传时，选题有预设标签就只能从预设里选；直接传图库不受限。
+        List<String> tags = PhotoTags.normalize(command.tags());
+        projectService.requireAllowedPhotoTags(photo.getProjectId(), tags);
         ObjectStorageService.ObjectInfo info = storage.stat(photo.getOriginalObjectKey());
         if (info.size() <= 0 || info.size() > properties.imageMaxBytes()) {
             throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "图片为空或超过 100 MiB");
         }
         photo.setTitle(command.title());
         photo.setDescription(command.description());
-        photo.setTagsJson(tagsJson(command.tags()));
+        photo.setTagsJson(PhotoTags.toJson(tags));
         photo.setStatus(PhotoStatus.PROCESSING);
         photo.setFailureReason(null);
 
@@ -232,6 +238,8 @@ public class PhotoService {
     public PhotoView update(Long id, Metadata command, AuthenticatedUser user) {
         PhotoEntity photo = require(id);
         requireCanManageMetadata(photo, user);
+        List<String> tags = PhotoTags.normalize(command.tags());
+        projectService.requireAllowedPhotoTags(photo.getProjectId(), newlyAdded(photo, tags));
         var photographer = campusMemberService.resolvePhotographer(
                 command.photographerContactId(), photo.getCampusId());
         photo.setTitle(command.title());
@@ -239,12 +247,95 @@ public class PhotoService {
         photo.setPhotographerStudentId(photographer.getStudentId());
         photo.setPhotographerName(photographer.getName());
         photo.setTakenAt(command.takenAt());
-        photo.setTagsJson(tagsJson(command.tags()));
+        photo.setTagsJson(PhotoTags.toJson(tags));
         photo.setVersion(command.version());
         if (mapper.updateById(photo) != 1) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "图片已被其他操作修改");
         }
         return toView(require(id), user);
+    }
+
+    /**
+     * 批量给图片添加/删除标签，全部成功或全部回滚。
+     *
+     * <p>新增标签要同时满足两道预设限制：{@code projectId}（在选题详情页里操作时传入）的预设，
+     * 以及每张图片来源选题（{@code photo.project_id}，即通过需求或选题上传进来的那个选题）的预设。
+     * 删除标签不受预设限制。权限与单张编辑 {@link #update} 相同，逐张校验。</p>
+     */
+    @Transactional
+    public List<TaggedPhoto> batchTags(BatchTags command, AuthenticatedUser user) {
+        List<Long> ids = command.photoIds() == null ? List.of()
+                : command.photoIds().stream().filter(Objects::nonNull).distinct().toList();
+        if (ids.isEmpty() || ids.size() > 200) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择 1 至 200 张图片");
+        }
+        List<String> add = PhotoTags.normalize(command.addTags());
+        List<String> remove = PhotoTags.normalize(command.removeTags());
+        if (add.isEmpty() && remove.isEmpty()) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请至少选择一个要添加或删除的标签");
+        }
+        Long contextProjectId = command.projectId();
+        if (contextProjectId != null) {
+            if (!user.canViewProjects()) {
+                throw new BusinessException(ErrorCode.FORBIDDEN, "无权执行该选题操作");
+            }
+            projectService.getVisible(contextProjectId, user);
+            projectService.requireAllowedPhotoTags(contextProjectId, add);
+        }
+        List<PhotoEntity> photos = ids.stream().map(this::require).toList();
+        for (PhotoEntity photo : photos) {
+            requireCanManageMetadata(photo, user);
+            if (contextProjectId != null && !inProject(photo.getId(), contextProjectId)) {
+                throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "所选图片不在该选题中，请刷新后重试");
+            }
+            if (!Objects.equals(photo.getProjectId(), contextProjectId)) {
+                projectService.requireAllowedPhotoTags(photo.getProjectId(), newlyAdded(photo, add));
+            }
+        }
+        List<TaggedPhoto> result = new ArrayList<>();
+        for (PhotoEntity photo : photos) {
+            List<String> existing = PhotoTags.parse(photo.getTagsJson());
+            Set<String> merged = new LinkedHashSet<>(existing);
+            remove.forEach(merged::remove);
+            merged.addAll(add);
+            if (merged.size() > PhotoTags.MAX_TAGS) {
+                throw new BusinessException(ErrorCode.VALIDATION_ERROR, "图片「"
+                        + Objects.requireNonNullElse(photo.getTitle(), "#" + photo.getId())
+                        + "」的标签将超过 " + PhotoTags.MAX_TAGS + " 个");
+            }
+            List<String> next = List.copyOf(merged);
+            if (next.equals(existing)) {
+                result.add(new TaggedPhoto(photo.getId(), existing, photo.getVersion()));
+                continue;
+            }
+            // 走 mapper 而不是 JdbcClient：同一事务里 MyBatis 会缓存 selectById 的结果，
+            // 绕过它直接写库，之后的读取会拿到改之前的标签。只写 tags_json 一列，
+            // 避免把整行旧值写回去；版本条件手写，因为实体参数为 null 时乐观锁拦截器不介入。
+            int updated = mapper.update(null, Wrappers.<PhotoEntity>lambdaUpdate()
+                    .set(PhotoEntity::getTagsJson, PhotoTags.toJson(next))
+                    .set(PhotoEntity::getUpdatedAt, LocalDateTime.now())
+                    .setSql("version = version + 1")
+                    .eq(PhotoEntity::getId, photo.getId())
+                    .eq(PhotoEntity::getVersion, photo.getVersion()));
+            if (updated != 1) {
+                throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "图片已被其他操作修改，请刷新后重试");
+            }
+            result.add(new TaggedPhoto(photo.getId(), next, photo.getVersion() + 1));
+        }
+        return result;
+    }
+
+    private boolean inProject(Long photoId, Long projectId) {
+        return jdbc.sql("SELECT COUNT(*) FROM photo_project WHERE photo_id=:photoId AND project_id=:projectId")
+                .param("photoId", photoId)
+                .param("projectId", projectId)
+                .query(Long.class).single() > 0;
+    }
+
+    /** {@code tags} 中图片原本没有的那部分——预设限制只管「新加」的标签。 */
+    private List<String> newlyAdded(PhotoEntity photo, List<String> tags) {
+        List<String> existing = PhotoTags.parse(photo.getTagsJson());
+        return tags.stream().filter(tag -> !existing.contains(tag)).toList();
     }
 
     @Transactional
@@ -552,12 +643,6 @@ public class PhotoService {
         }
     }
 
-    private String tagsJson(List<String> tags) {
-        if (tags == null) return "[]";
-        return tags.stream().map(value -> "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"")
-                .collect(java.util.stream.Collectors.joining(",", "[", "]"));
-    }
-
     private PhotoView toView(PhotoEntity p, AuthenticatedUser user) {
         return toView(p, favoriteMapper.count(user.id(), p.getId()) > 0);
     }
@@ -579,7 +664,7 @@ public class PhotoService {
 
         return new PhotoView(p.getId(), p.getRequestId(), p.getProjectId(), p.getTitle(), p.getDescription(),
                 p.getPhotographerStudentId(), p.getPhotographerName(), p.getUploadedBy(), p.getCampusId(),
-                p.getTakenAt(), p.getTagsJson(), p.getWidth(), p.getHeight(), p.getSize(), p.getContentType(),
+                p.getTakenAt(), PhotoTags.parse(p.getTagsJson()), p.getWidth(), p.getHeight(), p.getSize(), p.getContentType(),
                 p.getStoredFileName(), thumbnailUrl, p.getThumbnailSize(), p.getStatus(), p.getFailureReason(),
                 p.getCreatedAt(), p.getVersion(), adoptionCount(p.getId()), favorited, projectIds, projects);
     }
@@ -616,12 +701,15 @@ public class PhotoService {
     public record CompleteUpload(String title, String description, List<String> tags) {}
     public record Metadata(String title, String description, Long photographerContactId,
                            LocalDateTime takenAt, List<String> tags, int version) {}
+    public record BatchTags(List<Long> photoIds, List<String> addTags, List<String> removeTags,
+                            Long projectId) {}
+    public record TaggedPhoto(Long id, List<String> tags, Integer version) {}
     public record UploadTicket(Long photoId, String uploadUrl, String method, String contentType,
                                java.time.Instant expiresAt) {}
     public record DownloadUrl(String downloadUrl, java.time.Instant expiresAt, String fileName) {}
     public record PhotoView(Long id, Long requestId, Long projectId, String title, String description,
                             String photographerStudentId, String photographerName, Long uploadedBy,
-                            Long campusId, LocalDateTime takenAt, String tagsJson, Integer width,
+                            Long campusId, LocalDateTime takenAt, List<String> tags, Integer width,
                             Integer height, Long size, String contentType, String storedFileName,
                             String thumbnailUrl, Long thumbnailSize, PhotoStatus status, String failureReason,
                             LocalDateTime uploadedAt, Integer version, long adoptionCount, boolean favorited,

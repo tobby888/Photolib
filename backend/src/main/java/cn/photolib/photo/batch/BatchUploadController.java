@@ -77,9 +77,9 @@ public class BatchUploadController {
                            @Size(max = 5000) String description,
                            @NotNull Long photographerContactId,
                            @NotNull @PastOrPresent LocalDateTime takenAt,
-                           @Size(max = 30) List<@Size(max = 50) String> tags) {}
+                           @Size(max = 30) List<@Size(max = 100) String> tags) {}
     record BatchMetadataRequest(@Size(max = 5000) String description,
                                 @NotNull Long photographerContactId,
                                 @NotNull @PastOrPresent LocalDateTime takenAt,
-                                @Size(max = 30) List<@Size(max = 50) String> tags) {}
+                                @Size(max = 30) List<@Size(max = 100) String> tags) {}
 }

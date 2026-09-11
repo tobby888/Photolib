@@ -5,6 +5,7 @@ import cn.photolib.common.api.PageResponse;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.util.LikeFilter;
 import cn.photolib.common.error.ErrorCode;
+import cn.photolib.photo.PhotoTags;
 import cn.photolib.photo.mapper.PhotoMapper;
 import cn.photolib.photo.model.PhotoEntity;
 import cn.photolib.photo.model.PhotoStatus;
@@ -22,6 +23,7 @@ import org.springframework.util.StringUtils;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 
 @Service
@@ -33,6 +35,12 @@ public class ProjectService {
 
     @Transactional
     public ProjectEntity create(String title, String description, ProjectStatus status, AuthenticatedUser user) {
+        return create(title, description, status, List.of(), user);
+    }
+
+    @Transactional
+    public ProjectEntity create(String title, String description, ProjectStatus status, List<String> tags,
+                                AuthenticatedUser user) {
         requirePermission(user, PermissionCode.PROJECT_CREATE);
         if (status != ProjectStatus.DRAFT && status != ProjectStatus.ACTIVE) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "新项目状态只能是 DRAFT 或 ACTIVE");
@@ -42,6 +50,7 @@ public class ProjectService {
         project.setDescription(description);
         project.setStatus(status);
         project.setCreatedBy(user.id());
+        project.setTagsJson(PhotoTags.toJson(PhotoTags.normalize(tags)));
         mapper.insert(project);
         return project;
     }
@@ -53,7 +62,8 @@ public class ProjectService {
         LambdaQueryWrapper<ProjectEntity> query = Wrappers.<ProjectEntity>lambdaQuery()
                 .and(StringUtils.hasText(keyword), q -> q
                         .apply(LikeFilter.contains("title"), likeKeyword)
-                        .or().apply(LikeFilter.contains("description"), likeKeyword))
+                        .or().apply(LikeFilter.contains("description"), likeKeyword)
+                        .or().apply(LikeFilter.contains("tags_json"), likeKeyword))
                 .eq(status != null, ProjectEntity::getStatus, status);
 
         // 没有"无条件查看"权限的账号只看得到自己参与过需求的选题（校区范围账号再叠一层校区过滤）
@@ -91,7 +101,8 @@ public class ProjectService {
                 : projectSummary(id);
         return new ProjectDetail(project.getId(), project.getTitle(), project.getDescription(),
                 project.getStatus(), project.getCreatedBy(), project.getCreatedAt(), project.getUpdatedAt(),
-                project.getVersion(), summary.requestCount(), summary.photoCount(), summary.adoptionCount());
+                project.getVersion(), summary.requestCount(), summary.photoCount(), summary.adoptionCount(),
+                project.getTags());
     }
 
     private ProjectSummary projectSummary(Long id) {
@@ -142,6 +153,13 @@ public class ProjectService {
 
     @Transactional
     public ProjectEntity update(Long id, String title, String description, int version, AuthenticatedUser user) {
+        return update(id, title, description, null, version, user);
+    }
+
+    /** {@code tags} 为 {@code null} 时保留原预设标签，空列表表示取消限制。 */
+    @Transactional
+    public ProjectEntity update(Long id, String title, String description, List<String> tags, int version,
+                                AuthenticatedUser user) {
         requirePermission(user, PermissionCode.PROJECT_CREATE);
         ProjectEntity project = get(id);
         requireOwnerOrAdmin(project, user);
@@ -150,9 +168,33 @@ public class ProjectService {
         }
         project.setTitle(title);
         project.setDescription(description);
+        if (tags != null) project.setTagsJson(PhotoTags.toJson(PhotoTags.normalize(tags)));
         project.setVersion(version);
         updateChecked(project);
         return get(id);
+    }
+
+    /** 选题的预设标签；选题不存在或没有预设时返回空列表（即不限制）。 */
+    public List<String> presetTags(Long projectId) {
+        if (projectId == null) return List.of();
+        ProjectEntity project = mapper.selectById(projectId);
+        return project == null ? List.of() : project.getTags();
+    }
+
+    /**
+     * 选题有预设标签时，新加到图片上的标签必须全部来自预设。
+     * 只校验「新增」的标签：预设改过之后，图片上已有的旧标签可以保留，也可以删除。
+     */
+    public void requireAllowedPhotoTags(Long projectId, Collection<String> addedTags) {
+        if (projectId == null || addedTags == null || addedTags.isEmpty()) return;
+        List<String> presets = presetTags(projectId);
+        if (presets.isEmpty()) return;
+        List<String> rejected = addedTags.stream().filter(tag -> !presets.contains(tag)).toList();
+        if (!rejected.isEmpty()) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                    "该选题只允许使用预设标签（" + String.join("、", presets) + "），不能添加："
+                            + String.join("、", rejected));
+        }
     }
 
     @Transactional
@@ -314,6 +356,7 @@ public class ProjectService {
 
     public record ProjectDetail(Long id, String title, String description, ProjectStatus status,
                                 Long createdBy, LocalDateTime createdAt, LocalDateTime updatedAt,
-                                Integer version, long requestCount, long photoCount, long adoptionCount) {
+                                Integer version, long requestCount, long photoCount, long adoptionCount,
+                                List<String> tags) {
     }
 }

@@ -224,6 +224,10 @@ button, input, textarea, select { font-family: inherit; }
   background: var(--studio-surface, #fff);
   box-shadow: 0 10px 16px -16px rgba(22, 50, 43, .55);
 }
+/* 相册头部的操作按钮（全选 / 加删标签 / 打包下载）放不下时换行，不能把标题挤没。 */
+.project-photo-gallery > .ant-card-head .ant-card-head-wrapper { flex-wrap: wrap; gap: 8px 16px; padding: 10px 0; }
+.project-photo-gallery > .ant-card-head .ant-card-head-title { flex: 1 0 auto; }
+.project-photo-gallery > .ant-card-head .ant-card-extra { margin-inline-start: auto; }
 .state-guide { margin-bottom: 16px; overflow: hidden; }
 .state-guide .ant-card-body { display: flex; align-items: center; justify-content: space-between; gap: 30px; padding: 24px 28px; }
 .state-guide h4 { margin: 5px 0 3px; }
@@ -256,6 +260,19 @@ button, input, textarea, select { font-family: inherit; }
 .photo-overlay > .photo-download-button:only-child { margin-left: auto; }
 .photo-badges { position: absolute; z-index: 2; left: 12px; bottom: 12px; }
 .photo-meta { padding-bottom: 0; margin-top: 10px; }
+/* 标签：选题卡片、选题详情头部的预设标签、项目相册筛选栏与图片卡片 */
+.clickable-tag { cursor: pointer; }
+.project-card-tags,
+.project-preset-tags,
+.photo-card-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 0; }
+.project-card-tags { margin: -4px 0 12px; color: var(--studio-muted, #6f7975); }
+.project-card-tags > .anticon { margin-right: 8px; }
+.project-preset-tags { margin-top: 14px; }
+.project-preset-tags > .ant-typography:first-child { margin-right: 10px; }
+.photo-card-tags { min-height: 24px; margin-top: 8px; font-size: 12px; }
+.project-photo-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 18px;
+  padding-bottom: 16px; border-bottom: 1px solid var(--studio-rule, #eeebe5); }
+.project-photo-filters-icon { color: var(--studio-muted, #6f7975); }
 .image-placeholder { height: 100%; width: 100%; display: grid; place-items: center; background: linear-gradient(135deg, #d8e1dc, #b8cbc3); }
 .image-placeholder span { display: grid; place-items: center; width: 70px; height: 70px; border: 1px solid rgba(255,255,255,.6); color: white; font-size: 32px; border-radius: 50%; }
 .detail-image { border-radius: 12px; margin-bottom: 20px; display: flex; justify-content: center; background: #f0ede6; }
