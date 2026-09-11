@@ -8,11 +8,12 @@ import { useState } from 'react'
 import dayjs from 'dayjs'
 import { api, emptyPage, qs } from '../api'
 import { useAuth } from '../auth'
-import type { CampusMember, EntityId, PageData, PhotoRequest, Project, Worklog } from '../types'
+import type { Campus, CampusMember, EntityId, PageData, PhotoRequest, Project, Worklog } from '../types'
 import { DataState, formatMinutes, PageTitle, StatusTag } from '../components'
 import { ContentFitTable, TableEllipsisText } from '../ContentFitTable'
 import { useLoad } from '../hooks'
 import { hasPermission } from '../permissions'
+import { campusNameOf, membersForRequest, requestSelectOptions } from '../worklogForm'
 import {
   WORKLOG_OWNER_ACTION_MIN_WIDTH,
   WORKLOG_REVIEW_ACTION_MIN_WIDTH,
@@ -72,6 +73,25 @@ export default function WorklogsPage() {
       : Promise.resolve([]),
     [] as CampusMember[], [user?.id, canSubmit],
   )
+  // 不带 enabled 过滤：只是拿来显示需求所属校区的名字，已停用校区也要叫得出名字。
+  const { data: campuses } = useLoad(
+    () => canSubmit ? api<Campus[]>({ url: '/campuses' }) : Promise.resolve([]),
+    [] as Campus[], [canSubmit],
+  )
+  const selectedRequestId = Form.useWatch('requestId', form) as EntityId | undefined
+  const selectedRequest = requestOptions.find(item => item.id === selectedRequestId)
+  const selectedCampusName = selectedRequest ? campusNameOf(campuses, selectedRequest.campusId) : ''
+  const memberOptions = membersForRequest(directory, selectedRequest)
+
+  // 换了需求之后，已选的工作人员如果不在新需求的校区里就清掉，否则保存时才被后端拒掉。
+  const onFormValuesChange = (changed: { requestId?: EntityId }) => {
+    if (!('requestId' in changed)) return
+    const request = requestOptions.find(item => item.id === changed.requestId)
+    const memberId = form.getFieldValue('memberContactId') as EntityId | undefined
+    if (memberId && !membersForRequest(directory, request).some(member => member.id === memberId)) {
+      form.setFieldValue('memberContactId', undefined)
+    }
+  }
 
   const create = async () => {
     const values = await form.validateFields()
@@ -307,25 +327,33 @@ export default function WorklogsPage() {
       </DataState>
     </Card>
     <Modal title="填报工时" open={open} onCancel={() => setOpen(false)} onOk={create} okText="保存记录" confirmLoading={saving}>
-      <Form form={form} layout="vertical" initialValues={{ shootingMinutes: 0, retouchingMinutes: 0, status: 'SUBMITTED' }} requiredMark={false}>
-        <Form.Item label="关联需求" name="requestId" rules={[{ required: true, message: '请选择需求' }]}>
+      <Form form={form} layout="vertical" initialValues={{ shootingMinutes: 0, retouchingMinutes: 0, status: 'SUBMITTED' }} requiredMark={false}
+        onValuesChange={onFormValuesChange}>
+        <Form.Item label="关联需求" name="requestId" rules={[{ required: true, message: '请选择需求' }]}
+          extra={selectedRequest ? <>需求所属校区：<strong>{selectedCampusName}</strong></> : undefined}>
           <Select
             showSearch
             optionFilterProp="label"
             loading={requestsLoading}
             placeholder={requestOptions.length ? '请选择已接受的需求' : '暂无可填报工时的需求'}
             notFoundContent={requestsLoading ? '正在加载需求…' : '暂无可填报工时的需求（已结束项目的需求不会出现在这里）'}
-            options={requestOptions.map(item => ({ value: item.id, label: item.title }))}
+            options={requestSelectOptions(requestOptions, campuses)}
           />
         </Form.Item>
-        <Form.Item label="工作人员" name="memberContactId" extra="通讯录成员在「通讯录」页维护" rules={[{ required: true, message: '请从校区通讯录选择工作人员' }]}>
+        <Form.Item label="工作人员" name="memberContactId" rules={[{ required: true, message: '请从校区通讯录选择工作人员' }]}
+          extra={selectedRequest
+            ? `只列出「${selectedCampusName}」通讯录中的成员，成员在「通讯录」页维护`
+            : '工作人员按需求所属校区的通讯录列出，请先选择关联需求'}>
           <Select
             showSearch
             optionFilterProp="label"
             loading={directoryLoading}
-            placeholder={directory.length ? '按姓名或学号选择' : '通讯录为空，请先添加成员'}
-            notFoundContent={directoryLoading ? '正在加载通讯录…' : '通讯录中没有可用成员'}
-            options={directory.map(member => ({
+            disabled={!selectedRequest}
+            placeholder={!selectedRequest
+              ? '请先选择关联需求'
+              : memberOptions.length || directoryLoading ? '按姓名或学号选择' : '该校区通讯录为空，请先添加成员'}
+            notFoundContent={directoryLoading ? '正在加载通讯录…' : `「${selectedCampusName}」通讯录中没有可用成员`}
+            options={memberOptions.map(member => ({
               value: member.id,
               label: `${member.name} · ${member.studentId}`,
             }))}
