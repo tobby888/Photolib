@@ -3,8 +3,8 @@ import {
   Pagination, Progress, Row, Select, Space, Tag, Typography, Upload,
 } from 'antd'
 import {
-  CloudUploadOutlined, DeleteOutlined, DownloadOutlined, FolderAddOutlined, InboxOutlined, SearchOutlined,
-  StarFilled, StarOutlined,
+  CloudUploadOutlined, DeleteOutlined, DownloadOutlined, FolderAddOutlined, InboxOutlined, MinusCircleOutlined,
+  SearchOutlined, StarFilled, StarOutlined, TagsOutlined,
 } from '@ant-design/icons'
 import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
@@ -12,7 +12,7 @@ import dayjs from 'dayjs'
 import { api, emptyPage, qs } from '../api'
 import { readTakenAt } from '../exif'
 import { uploadToObjectStorage } from '../storageUpload'
-import type { CampusMember, DedupedMember, EntityId, PageData, Photo, Project } from '../types'
+import type { CampusMember, DedupedMember, EntityId, PageData, Photo, Project, TaggedPhoto } from '../types'
 import { DataState, PageTitle, StatusTag } from '../components'
 import { ContentFitTable } from '../ContentFitTable'
 import { useLoad, useRefreshOnResume } from '../hooks'
@@ -28,6 +28,10 @@ import {
 } from '../photoLibrarySearch'
 import type { PhotoLibraryFilters, PhotoLibraryStatus } from '../photoLibrarySearch'
 import { updateFavoritePage } from '../photoFavorites'
+import BatchTagModal from '../BatchTagModal'
+import type { BatchTagMode } from '../BatchTagModal'
+import TagSelect from '../TagSelect'
+import { normalizeTags, tagRules } from '../photoTags'
 
 export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: boolean }) {
   const navigate = useNavigate()
@@ -44,6 +48,9 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
   const canDelete = hasPermission(user, 'PHOTO_DELETE')
   const canUpload = hasPermission(user, 'PHOTO_UPLOAD')
   const canDownload = hasPermission(user, 'PHOTO_DOWNLOAD')
+  // 与 POST /photos/batch-tags 的方法级授权一致；逐张的上传者/需求参与限制由后端判断。
+  const canTag = hasPermission(user, 'PHOTO_UPLOAD') || hasPermission(user, 'REQUEST_PHOTO_MANAGE')
+  const [tagMode, setTagMode] = useState<BatchTagMode | null>(null)
   const [uploadForm] = Form.useForm()
   const [uploadOpen, setUploadOpen] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -134,7 +141,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
       await uploadToObjectStorage(ticket, file, setUploadPercent)
       setUploadPhase('processing')
       await api({ method: 'POST', url: `/photos/${ticket.photoId}/complete-upload`,
-        data: { title: values.title, description: values.description, tags: values.tags || [] } })
+        data: { title: values.title, description: values.description, tags: normalizeTags(values.tags) } })
       const photo = await waitForProcessing(ticket.photoId)
       if (photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED') {
         message.success('图片已上传并处理完成')
@@ -226,6 +233,16 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
       },
     })
   }
+  const applyTaggedPhotos = (result: TaggedPhoto[]) => {
+    const byId = new Map(result.map(item => [String(item.id), item]))
+    const retag = (photo: Photo) => {
+      const tagged = byId.get(String(photo.id))
+      return tagged ? { ...photo, tags: tagged.tags, version: tagged.version } : photo
+    }
+    setData(current => ({ ...current, items: current.items.map(retag) }))
+    setSelectedPhotos(current => current.map(retag))
+    setTagMode(null)
+  }
   const isLinkedToProject = (photo: Photo, projectId: EntityId) =>
     photo.relatedProjects?.some(project => String(project.id) === String(projectId))
     || photo.relatedProjectIds?.some(id => String(id) === String(projectId))
@@ -285,6 +302,10 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
           onClick={() => openProjectPicker(selectedPhotos)}>
           添加到项目{selectedIds.length ? `（${selectedIds.length}）` : ''}
         </Button>}
+        {canTag && <Button size="large" icon={<TagsOutlined />} disabled={!selectedIds.length}
+          onClick={() => setTagMode('add')}>添加标签</Button>}
+        {canTag && <Button size="large" icon={<MinusCircleOutlined />} disabled={!selectedIds.length}
+          onClick={() => setTagMode('remove')}>移除标签</Button>}
         {canDownload && <Button size="large" icon={<DownloadOutlined />} loading={batchDownloading}
           disabled={!selectedIds.length} onClick={() => void batchDownload()}>
           打包下载{selectedIds.length ? `（${selectedIds.length}）` : ''}
@@ -337,7 +358,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
               </PhotoPlaceholder>}
             <div className="photo-overlay" onClick={event => event.stopPropagation()}
               onKeyDown={event => event.stopPropagation()}>
-              {(canAddToProject || canDownload || canDelete) && (photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED') && <Checkbox
+              {(canAddToProject || canDownload || canDelete || canTag) && (photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED') && <Checkbox
                 className="photo-select-checkbox"
                 checked={selectedIds.includes(photo.id)}
                 disabled={selectedIds.length >= 200 && !selectedIds.includes(photo.id)}
@@ -397,7 +418,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
             notFoundContent={photographersLoading ? '正在加载通讯录…' : '通讯录中没有可用成员'}
             options={photographers} />
         </Form.Item>
-        <Form.Item label="标签" name="tags"><Select mode="tags" maxCount={30} placeholder="输入后回车添加标签" /></Form.Item>
+        <Form.Item label="标签" name="tags" rules={tagRules}><TagSelect /></Form.Item>
         <Form.Item label="图片说明" name="description"><Input.TextArea rows={3} /></Form.Item>
       </Form>
       {uploadPhase && <div style={{ marginTop: 4 }}>
@@ -409,6 +430,8 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
         </Typography.Text>
       </div>}
     </Modal>
+    <BatchTagModal mode={tagMode} photos={selectedPhotos}
+      onClose={() => setTagMode(null)} onDone={applyTaggedPhotos} />
     <Modal title={projectPickerPhotos.length > 1 ? '批量添加图片到选题项目' : '添加图片到选题项目'}
       width={760} open={projectPickerOpen}
       onCancel={() => { if (!projectSaving) closeProjectPicker() }}

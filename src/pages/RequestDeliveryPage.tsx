@@ -15,7 +15,7 @@ import { uploadToObjectStorage } from '../storageUpload'
 import { useAuth } from '../auth'
 import { DataState, StatusTag } from '../components'
 import { useLoad, useRefreshOnResume } from '../hooks'
-import type { Campus, CampusMember, EntityId, PageData, Photo, PhotoRequest, Project } from '../types'
+import type { Campus, CampusMember, EntityId, PageData, Photo, PhotoRequest, Project, TagOptions } from '../types'
 import MarkdownRenderer from '../MarkdownRenderer'
 import { photoTitleFromFileName } from '../photoTitle'
 import { hasPermission } from '../permissions'
@@ -23,6 +23,8 @@ import PreviewPhoto from '../PreviewPhoto'
 import { refreshPhotoPreviewUrl } from '../previewRefresh'
 import { PhotoPlaceholder, pickPlaceholderImage, usePlaceholderImages } from '../photoPlaceholder'
 import { preparePhotoBatchDownload } from '../photoBatchDownload'
+import TagSelect from '../TagSelect'
+import { normalizeTags, tagRules } from '../photoTags'
 
 type UploadValues = {
   files: { originFileObj?: File }[]
@@ -87,6 +89,15 @@ export default function RequestDeliveryPage() {
     [] as CampusMember[],
     [canUpload, request?.campusId],
   )
+  // 上传者不一定能看选题详情，预设标签单独从需求取，见 GET /requests/{id}/tag-options。
+  const tagOptionsState = useLoad(
+    () => canUpload && request
+      ? api<TagOptions>({ url: `/requests/${request.id}/tag-options` })
+      : Promise.resolve({ restricted: false, tags: [] } as TagOptions),
+    { restricted: false, tags: [] } as TagOptions,
+    [canUpload, request?.id],
+  )
+  const tagOptions = tagOptionsState.data
   const campusName = useMemo(() => request
     ? requestState.data.campuses.find(campus => campus.id === request.campusId)?.name || `校区 #${request.campusId}`
     : '', [request, requestState.data.campuses])
@@ -152,7 +163,7 @@ export default function RequestDeliveryPage() {
           data: {
             title: photoTitleFromFileName(file.name),
             description: values.description,
-            tags: values.tags || [],
+            tags: normalizeTags(values.tags),
           },
         })
         setProgress(Math.round(((index + 1) / files.length) * 100))
@@ -340,8 +351,12 @@ export default function RequestDeliveryPage() {
                 extra="批量上传统一采用该时间，已自动取自第一张照片的 EXIF，可手动调整">
                 <DatePicker showTime style={{ width: '100%' }} />
               </Form.Item>
-              <Form.Item label="标签" name="tags">
-                <Select mode="tags" maxCount={30} placeholder="输入后回车添加" />
+              <Form.Item label="标签" name="tags" rules={tagRules}
+                extra={tagOptions.restricted
+                  ? '这个选题设置了预设标签，只能从中选择，也可以不加标签'
+                  : '这个选题没有预设标签，可以自定义'}>
+                <TagSelect restricted={tagOptions.restricted} presets={tagOptions.tags}
+                  loading={tagOptionsState.loading} />
               </Form.Item>
               <Form.Item label="统一说明" name="description"><Input.TextArea rows={2} /></Form.Item>
               {uploading && <Progress percent={progress} status="active" />}

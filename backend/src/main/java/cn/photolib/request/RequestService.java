@@ -151,6 +151,19 @@ public class RequestService {
     }
 
     /**
+     * 往这个需求上传图片时能用哪些标签：所属选题有预设标签就只能从预设里选，否则不限制。
+     * 上传者（{@code REQUEST_PHOTO_MANAGE}）不一定有选题查看权限，所以单独给一条接口，
+     * 可见范围与 {@link #get(Long, AuthenticatedUser)} / 参与人校验一致。
+     */
+    public TagOptions tagOptions(Long id, AuthenticatedUser user) {
+        PhotoRequestEntity request = user.hasPermission(PermissionCode.REQUEST_VIEW)
+                ? get(id, user)
+                : requireParticipantAccess(id, user);
+        List<String> presets = projectService.presetTags(request.getProjectId());
+        return new TagOptions(!presets.isEmpty(), presets);
+    }
+
+    /**
      * Revalidates both the caller's current campus scope and the persisted participant
      * relationship. Historical participation must not outlive a revoked campus grant.
      */
@@ -433,6 +446,9 @@ public class RequestService {
         if (!user.hasPermission(permission)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权执行该需求操作");
         }
+    }
+
+    public record TagOptions(boolean restricted, List<String> tags) {
     }
 
     public record CreateCommand(String title, String description, Long campusId,

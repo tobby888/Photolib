@@ -85,6 +85,13 @@ public class RequestController {
         return ApiResponse.ok(service.accept(id, user));
     }
 
+    @GetMapping("/requests/{id}/tag-options")
+    @PreAuthorize("hasAnyAuthority('REQUEST_VIEW','REQUEST_PHOTO_MANAGE')")
+    ApiResponse<RequestService.TagOptions> tagOptions(@PathVariable Long id,
+                                                      @AuthenticationPrincipal AuthenticatedUser user) {
+        return ApiResponse.ok(service.tagOptions(id, user));
+    }
+
     @GetMapping("/requests/{id}/participants")
     @PreAuthorize("hasAuthority('REQUEST_VIEW')")
     ApiResponse<List<RequestParticipantEntity>> participants(

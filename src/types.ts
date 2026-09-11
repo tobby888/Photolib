@@ -95,6 +95,8 @@ export interface Project extends BaseEntity {
   description: string
   status: 'DRAFT' | 'ACTIVE' | 'COMPLETED' | 'CANCELLED'
   createdBy: EntityId
+  /** 选题预设标签；为空表示上传者可以自定义标签。 */
+  tags?: string[]
   requestCount?: number
   photoCount?: number
   adoptionCount?: number
@@ -147,6 +149,19 @@ export interface Photo extends BaseEntity {
   favorited: boolean
   relatedProjectIds?: EntityId[]
   relatedProjects?: { id: EntityId; title: string }[]
+}
+
+/** 往某个需求上传时可用的标签：restricted 为 true 时只能从 tags 里选。 */
+export interface TagOptions {
+  restricted: boolean
+  tags: string[]
+}
+
+/** POST /photos/batch-tags 逐张返回的新标签与新版本号。 */
+export interface TaggedPhoto {
+  id: EntityId
+  tags: string[]
+  version: number
 }
 
 export type BatchUploadStatus = 'UPLOADING' | 'PROCESSING' | 'WAITING_METADATA'

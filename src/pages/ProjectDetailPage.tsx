@@ -4,14 +4,15 @@ import {
 } from 'antd'
 import {
   ArrowLeftOutlined, CameraOutlined, CheckCircleOutlined, DownloadOutlined, EditOutlined, FileImageOutlined,
-  LinkOutlined, PlusOutlined, RocketOutlined, ShareAltOutlined, StopOutlined, UnorderedListOutlined,
+  FilterOutlined, LinkOutlined, MinusCircleOutlined, PlusOutlined, RocketOutlined, ShareAltOutlined, StopOutlined,
+  TagsOutlined, UnorderedListOutlined,
 } from '@ant-design/icons'
-import { lazy, Suspense, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { useAuth } from '../auth'
 import { api, emptyPage } from '../api'
-import type { Adoption, BatchPublishResult, Campus, PageData, Photo, PhotoRequest, Project } from '../types'
+import type { Adoption, BatchPublishResult, Campus, PageData, Photo, PhotoRequest, Project, TaggedPhoto } from '../types'
 import { DataState, StatusTag } from '../components'
 import { ContentFitTable } from '../ContentFitTable'
 import { useLoad, useRefreshOnResume } from '../hooks'
@@ -22,6 +23,14 @@ import { hasPermission } from '../permissions'
 import PreviewPhoto from '../PreviewPhoto'
 import { refreshPhotoPreviewUrl } from '../previewRefresh'
 import { PhotoPlaceholder, pickPlaceholderImage, usePlaceholderImages } from '../photoPlaceholder'
+import BatchTagModal from '../BatchTagModal'
+import type { BatchTagMode } from '../BatchTagModal'
+import TagSelect from '../TagSelect'
+import {
+  collectPhotographers, collectTagOptions, emptyProjectPhotoFilters, filterPhotos, hasActiveFilters,
+  normalizeTags, tagRules,
+} from '../photoTags'
+import type { ProjectPhotoFilters } from '../photoTags'
 
 const ProjectShareLinksModal = lazy(() => import('../ProjectShareLinksModal'))
 
@@ -62,7 +71,10 @@ export default function ProjectDetailPage() {
   const [shareOpen, setShareOpen] = useState(false)
   const [galleryKeyword, setGalleryKeyword] = useState('')
   const [selectedPhotoIds, setSelectedPhotoIds] = useState<string[]>([])
-  const [selectedDownloadPhotoIds, setSelectedDownloadPhotoIds] = useState<string[]>([])
+  // 项目相册里的勾选：打包下载和批量改标签共用一份选择。
+  const [selectedAlbumPhotoIds, setSelectedAlbumPhotoIds] = useState<string[]>([])
+  const [photoFilters, setPhotoFilters] = useState<ProjectPhotoFilters>(emptyProjectPhotoFilters)
+  const [tagMode, setTagMode] = useState<BatchTagMode | null>(null)
   const [batchDownloading, setBatchDownloading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [markingPhotoId, setMarkingPhotoId] = useState<string | null>(null)
@@ -248,7 +260,7 @@ export default function ProjectDetailPage() {
     setSaving(true)
     try {
       await api({ method: 'PUT', url: `/projects/${projectId}`,
-        data: { ...values, version: data.project.version } })
+        data: { ...values, tags: normalizeTags(values.tags), version: data.project.version } })
       message.success('项目信息已更新')
       setEditOpen(false)
       await reload()
@@ -278,8 +290,8 @@ export default function ProjectDetailPage() {
     }
   }
 
-  const toggleDownloadPhoto = (photoId: string, checked: boolean) => {
-    setSelectedDownloadPhotoIds(current => checked
+  const toggleAlbumPhoto = (photoId: string, checked: boolean) => {
+    setSelectedAlbumPhotoIds(current => checked
       ? current.includes(photoId) ? current : [...current, photoId].slice(0, 200)
       : current.filter(id => id !== photoId))
   }
@@ -296,24 +308,49 @@ export default function ProjectDetailPage() {
     }
   }
 
-  const selectAllDownloadablePhotos = () => {
-    const downloadableIds = data.photos
+  const filteredPhotos = useMemo(() => filterPhotos(data.photos, photoFilters), [data.photos, photoFilters])
+  const tagFilterOptions = useMemo(
+    () => collectTagOptions(data.project?.tags, data.photos), [data.project?.tags, data.photos])
+  const photographerOptions = useMemo(() => collectPhotographers(data.photos), [data.photos])
+  const filtersActive = hasActiveFilters(photoFilters)
+
+  // 筛选变了就把看不见的图片从勾选里去掉，免得批量操作落到用户看不到的图片上。
+  const updatePhotoFilters = (next: ProjectPhotoFilters) => {
+    setPhotoFilters(next)
+    const visibleIds = new Set(filterPhotos(data.photos, next).map(photo => photo.id))
+    setSelectedAlbumPhotoIds(current => current.filter(id => visibleIds.has(id)))
+  }
+
+  const selectAllVisiblePhotos = () => {
+    const selectableIds = filteredPhotos
       .filter(photo => photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED')
       .map(photo => photo.id)
-    setSelectedDownloadPhotoIds(downloadableIds.slice(0, 200))
-    if (downloadableIds.length > 200) {
-      message.info('单次最多下载 200 张，已选择前 200 张可下载图片')
+    setSelectedAlbumPhotoIds(selectableIds.slice(0, 200))
+    if (selectableIds.length > 200) {
+      message.info('单次最多选择 200 张，已选择前 200 张')
     }
   }
 
+  const applyTaggedPhotos = (result: TaggedPhoto[]) => {
+    const byId = new Map(result.map(item => [String(item.id), item]))
+    setData(current => ({
+      ...current,
+      photos: current.photos.map(photo => {
+        const tagged = byId.get(String(photo.id))
+        return tagged ? { ...photo, tags: tagged.tags, version: tagged.version } : photo
+      }),
+    }))
+    setTagMode(null)
+  }
+
   const batchDownload = async () => {
-    if (!selectedDownloadPhotoIds.length) return
+    if (!selectedAlbumPhotoIds.length) return
     setBatchDownloading(true)
     try {
-      const downloadUrl = await preparePhotoBatchDownload(selectedDownloadPhotoIds)
+      const downloadUrl = await preparePhotoBatchDownload(selectedAlbumPhotoIds)
       if (downloadUrl) {
         window.location.assign(downloadUrl)
-        setSelectedDownloadPhotoIds([])
+        setSelectedAlbumPhotoIds([])
         message.success('所选项目图片已打包为 ZIP')
       } else {
         message.info('ZIP 仍在后台生成，请稍后重新发起下载')
@@ -332,6 +369,11 @@ export default function ProjectDetailPage() {
   const canAdopt = hasPermission(user, 'PROJECT_ADOPT')
   const canBatchDownload = hasPermission(user, 'PROJECT_DOWNLOAD')
   const canShare = hasPermission(user, 'PROJECT_SHARE')
+  // 与 PUT /photos/{id}、POST /photos/batch-tags 的方法级授权一致；逐张的归属/上传者限制由后端判断。
+  const canTag = hasPermission(user, 'PHOTO_UPLOAD') || hasPermission(user, 'REQUEST_PHOTO_MANAGE')
+  const canSelectPhotos = canBatchDownload || canTag
+  const presetTags = project?.tags || []
+  const selectedAlbumPhotos = data.photos.filter(photo => selectedAlbumPhotoIds.includes(photo.id))
   const downloadablePhotoCount = data.photos.filter(
     photo => photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED',
   ).length
@@ -354,6 +396,15 @@ export default function ProjectDetailPage() {
             {project.description
               ? <MarkdownRenderer value={project.description} />
               : <Typography.Paragraph>尚未添加项目说明。清晰的说明能帮助负责人准确理解拍摄目标。</Typography.Paragraph>}
+            <div className="project-preset-tags">
+              <Typography.Text type="secondary"><TagsOutlined /> 预设标签</Typography.Text>
+              {presetTags.length
+                ? presetTags.map(tag => <Tag key={tag} color="blue" variant="filled" className="clickable-tag"
+                    onClick={() => updatePhotoFilters({ ...photoFilters,
+                      tags: photoFilters.tags.includes(tag) ? photoFilters.tags : [...photoFilters.tags, tag] })}>
+                    {tag}</Tag>)
+                : <Typography.Text type="secondary">未设置，上传者可以自定义标签</Typography.Text>}
+            </div>
           </div>
           <Space wrap>
             {canAdopt && project.status === 'ACTIVE' &&
@@ -362,7 +413,7 @@ export default function ProjectDetailPage() {
             {canEdit && <>
             {project.status !== 'COMPLETED' && project.status !== 'CANCELLED' &&
               <Button icon={<EditOutlined />} onClick={() => {
-                editForm.setFieldsValue({ title: project.title, description: project.description })
+                editForm.setFieldsValue({ title: project.title, description: project.description, tags: project.tags || [] })
                 setEditOpen(true)
               }}>编辑项目</Button>}
             {canCreateRequest && (project.status === 'DRAFT' || project.status === 'ACTIVE') &&
@@ -418,28 +469,62 @@ export default function ProjectDetailPage() {
 
       <Card
         className="project-photo-gallery"
-        title={`需求图片（${data.photos.length}）`}
+        title={filtersActive
+          ? `需求图片（${filteredPhotos.length} / ${data.photos.length}）`
+          : `需求图片（${data.photos.length}）`}
         extra={<Space wrap>
           <Typography.Text type="secondary">汇总展示本选题下所有需求已上传的图片</Typography.Text>
-          {canBatchDownload && <>
+          {canSelectPhotos && <>
             <Button type="link" disabled={!downloadablePhotoCount || batchDownloading}
-              onClick={selectAllDownloadablePhotos}>全选可下载</Button>
-            {!!selectedDownloadPhotoIds.length && <Button type="link" disabled={batchDownloading}
-              onClick={() => setSelectedDownloadPhotoIds([])}>清空选择</Button>}
-            <Button type="primary" icon={<DownloadOutlined />} loading={batchDownloading}
-              disabled={!selectedDownloadPhotoIds.length} onClick={() => void batchDownload()}>
-              打包下载{selectedDownloadPhotoIds.length ? `（${selectedDownloadPhotoIds.length}）` : ''}
-            </Button>
+              onClick={selectAllVisiblePhotos}>{filtersActive ? '全选筛选结果' : '全选'}</Button>
+            {!!selectedAlbumPhotoIds.length && <Button type="link" disabled={batchDownloading}
+              onClick={() => setSelectedAlbumPhotoIds([])}>清空选择</Button>}
           </>}
+          {canTag && <>
+            <Button icon={<TagsOutlined />} disabled={!selectedAlbumPhotoIds.length}
+              onClick={() => setTagMode('add')}>添加标签</Button>
+            <Button icon={<MinusCircleOutlined />} disabled={!selectedAlbumPhotoIds.length}
+              onClick={() => setTagMode('remove')}>移除标签</Button>
+          </>}
+          {canBatchDownload &&
+            <Button type="primary" icon={<DownloadOutlined />} loading={batchDownloading}
+              disabled={!selectedAlbumPhotoIds.length} onClick={() => void batchDownload()}>
+              打包下载{selectedAlbumPhotoIds.length ? `（${selectedAlbumPhotoIds.length}）` : ''}
+            </Button>}
         </Space>}
       >
-        {data.photos.length ? <Row gutter={[16, 20]} className="photo-grid">
-          {data.photos.map(photo => {
+        {!!data.photos.length && <div className="project-photo-filters">
+          <FilterOutlined className="project-photo-filters-icon" />
+          <Select mode="multiple" allowClear showSearch maxTagCount="responsive" style={{ minWidth: 220, flex: '1 1 220px' }}
+            placeholder="按标签筛选（同时包含）" value={photoFilters.tags}
+            options={tagFilterOptions.map(tag => ({ value: tag, label: tag }))}
+            notFoundContent="这些图片还没有标签"
+            onChange={tags => updatePhotoFilters({ ...photoFilters, tags })} />
+          <DatePicker.RangePicker allowEmpty={[true, true]} style={{ flex: '0 1 280px' }}
+            placeholder={['拍摄开始日期', '拍摄结束日期']}
+            value={[
+              photoFilters.takenFrom ? dayjs(photoFilters.takenFrom) : null,
+              photoFilters.takenTo ? dayjs(photoFilters.takenTo) : null,
+            ]}
+            onChange={range => updatePhotoFilters({
+              ...photoFilters,
+              takenFrom: range?.[0]?.format('YYYY-MM-DD') || null,
+              takenTo: range?.[1]?.format('YYYY-MM-DD') || null,
+            })} />
+          <Select mode="multiple" allowClear showSearch maxTagCount="responsive" style={{ minWidth: 180, flex: '1 1 180px' }}
+            placeholder="按拍摄者筛选" value={photoFilters.photographers}
+            options={photographerOptions.map(name => ({ value: name, label: name }))}
+            onChange={photographers => updatePhotoFilters({ ...photoFilters, photographers })} />
+          {filtersActive && <Button type="link" onClick={() => updatePhotoFilters(emptyProjectPhotoFilters)}>
+            清空筛选</Button>}
+        </div>}
+        {filteredPhotos.length ? <Row gutter={[16, 20]} className="photo-grid">
+          {filteredPhotos.map(photo => {
             const adopted = data.adoptions.some(item => item.photoId === photo.id)
             const request = data.requests.find(item => item.id === photo.requestId)
             return <Col xs={24} sm={12} lg={8} xxl={6} key={photo.id}>
               <Card
-                className={`photo-card${selectedDownloadPhotoIds.includes(photo.id) ? ' photo-card-selected' : ''}`}
+                className={`photo-card${selectedAlbumPhotoIds.includes(photo.id) ? ' photo-card-selected' : ''}`}
                 cover={<div className="photo-cover">
                   {photo.thumbnailUrl
                     ? <PreviewPhoto src={photo.thumbnailUrl} alt={photo.title || '需求图片'}
@@ -449,13 +534,13 @@ export default function ProjectDetailPage() {
                       <span>{photo.title?.slice(0, 1) || '图'}</span>
                     </PhotoPlaceholder>}
                   <div className="photo-overlay">
-                    {canBatchDownload && (photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED') &&
+                    {canSelectPhotos && (photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED') &&
                       <Checkbox
                         className="photo-select-checkbox"
-                        checked={selectedDownloadPhotoIds.includes(photo.id)}
-                        disabled={batchDownloading || (selectedDownloadPhotoIds.length >= 200
-                          && !selectedDownloadPhotoIds.includes(photo.id))}
-                        onChange={event => toggleDownloadPhoto(photo.id, event.target.checked)}
+                        checked={selectedAlbumPhotoIds.includes(photo.id)}
+                        disabled={batchDownloading || (selectedAlbumPhotoIds.length >= 200
+                          && !selectedAlbumPhotoIds.includes(photo.id))}
+                        onChange={event => toggleAlbumPhoto(photo.id, event.target.checked)}
                         aria-label={`选择项目图片 ${photo.title || photo.id}`} />}
                     {canBatchDownload && (photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED') &&
                       <Button className="photo-download-button" shape="circle" icon={<DownloadOutlined />}
@@ -472,6 +557,15 @@ export default function ProjectDetailPage() {
                 <Typography.Text type="secondary" ellipsis>
                   {request?.title || (photo.requestId ? `需求 #${photo.requestId}` : '未关联需求')}
                 </Typography.Text>
+                <div className="photo-card-tags">
+                  {photo.tags?.length
+                    ? photo.tags.map(tag => <Tag key={tag} variant="filled" className="clickable-tag"
+                        color={photoFilters.tags.includes(tag) ? 'blue' : undefined}
+                        onClick={() => updatePhotoFilters({ ...photoFilters,
+                          tags: photoFilters.tags.includes(tag) ? photoFilters.tags : [...photoFilters.tags, tag] })}>
+                        {tag}</Tag>)
+                    : <Typography.Text type="secondary">无标签</Typography.Text>}
+                </div>
                 <div className="photo-meta">
                   <span>{photo.photographerName}</span>
                   <span>{dayjs(photo.takenAt).format('YYYY.MM.DD')}</span>
@@ -490,7 +584,11 @@ export default function ProjectDetailPage() {
               </Card>
             </Col>
           })}
-        </Row> : <div className="empty-state">这个选题还没有上传图片</div>}
+        </Row> : <div className="empty-state">
+          {data.photos.length ? '没有符合筛选条件的图片' : '这个选题还没有上传图片'}
+          {filtersActive && <Button type="link" onClick={() => updatePhotoFilters(emptyProjectPhotoFilters)}>
+            清空筛选</Button>}
+        </div>}
       </Card>
 
       <Modal title="新建图片需求" width={780} open={requestOpen} onCancel={() => setRequestOpen(false)}
@@ -531,6 +629,10 @@ export default function ProjectDetailPage() {
           <Form.Item label="项目说明" name="description">
             <MarkdownEditor placeholder="使用 Markdown 说明选题方向、内容范围和交付目标；可上传说明图片" />
           </Form.Item>
+          <Form.Item label="预设标签" name="tags" rules={tagRules}
+            extra="需求上传图片和在选题里给图片加标签时只能从这些标签中选择；清空则允许自定义。修改不会改动图片上已有的标签。">
+            <TagSelect placeholder="输入后回车添加预设标签" />
+          </Form.Item>
         </Form>
       </Modal>
 
@@ -566,6 +668,8 @@ export default function ProjectDetailPage() {
             ]} />
         </Space>
       </Modal>
+      <BatchTagModal mode={tagMode} photos={selectedAlbumPhotos} projectId={projectId}
+        presets={presetTags} onClose={() => setTagMode(null)} onDone={applyTaggedPhotos} />
       {shareOpen && <Suspense fallback={null}>
         <ProjectShareLinksModal projectId={projectId} open onClose={() => setShareOpen(false)} />
       </Suspense>}
