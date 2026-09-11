@@ -1,13 +1,13 @@
 import {
   App, Breadcrumb, Button, Card, Checkbox, Col, DatePicker, Form, Input,
-  Modal, Radio, Row, Select, Space, Statistic, Tag, Typography,
+  Modal, Pagination, Radio, Row, Select, Space, Statistic, Tag, Typography,
 } from 'antd'
 import {
   ArrowLeftOutlined, CameraOutlined, CheckCircleOutlined, DownloadOutlined, EditOutlined, FileImageOutlined,
   FilterOutlined, LinkOutlined, MinusCircleOutlined, PlusOutlined, RocketOutlined, ShareAltOutlined, StopOutlined,
   TagsOutlined, UnorderedListOutlined,
 } from '@ant-design/icons'
-import { lazy, Suspense, useMemo, useState } from 'react'
+import { lazy, memo, Suspense, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { useAuth } from '../auth'
@@ -15,7 +15,7 @@ import { api, emptyPage } from '../api'
 import type { Adoption, BatchPublishResult, Campus, PageData, Photo, PhotoRequest, Project, TaggedPhoto } from '../types'
 import { DataState, StatusTag } from '../components'
 import { ContentFitTable } from '../ContentFitTable'
-import { useLoad, useRefreshOnResume } from '../hooks'
+import { useLoad, useRefreshOnResume, useStableCallback } from '../hooks'
 import MarkdownEditor from '../MarkdownEditor'
 import MarkdownRenderer, { markdownExcerpt } from '../MarkdownRenderer'
 import { preparePhotoBatchDownload } from '../photoBatchDownload'
@@ -31,6 +31,7 @@ import {
   normalizeTags, tagRules,
 } from '../photoTags'
 import type { ProjectPhotoFilters } from '../photoTags'
+import { PHOTO_LIBRARY_PAGE_SIZE } from '../photoLibrarySearch'
 
 const ProjectShareLinksModal = lazy(() => import('../ProjectShareLinksModal'))
 
@@ -53,6 +54,134 @@ const projectStateCopy = {
   },
 }
 
+/**
+ * 相册分页。以前一次把选题里的全部图片都挂成卡片，400 张时首屏要卡 3 秒多、
+ * 每勾一张图卡 1.5 秒。默认张数与图片库（PHOTO_LIBRARY_PAGE_SIZE）一致。
+ */
+const PHOTO_PAGE_SIZES = [PHOTO_LIBRARY_PAGE_SIZE, 48, 96]
+const DEFAULT_PHOTO_PAGE_SIZE = PHOTO_LIBRARY_PAGE_SIZE
+
+const isDownloadableStatus = (status: Photo['status']) => status === 'AVAILABLE' || status === 'ARCHIVED'
+
+interface ProjectPhotoCardProps {
+  photo: Photo
+  requestLabel: string
+  adopted: boolean
+  selected: boolean
+  selectable: boolean
+  selectDisabled: boolean
+  downloadable: boolean
+  canAdopt: boolean
+  adoptDisabled: boolean
+  marking: boolean
+  activeTags: string[]
+  placeholderImages: string[]
+  onToggleSelect: (photoId: string, checked: boolean) => void
+  onDownload: (photo: Photo) => void
+  onToggleAdoption: (photo: Photo) => void
+  onTagClick: (tag: string) => void
+}
+
+/**
+ * 相册里的一张卡片。用 memo 包起来、且只接收基本类型和引用稳定的回调，
+ * 这样勾选一张图只会重渲染这一张，而不是整页几百张。
+ *
+ * 标题和需求名刻意不用 `Typography` 的 `ellipsis`：它会在每个实例上量一次布局，
+ * 几十上百个实例叠在一起就是一连串强制重排；单行省略交给 CSS（`.photo-card-line`）。
+ */
+const ProjectPhotoCard = memo(function ProjectPhotoCard({
+  photo, requestLabel, adopted, selected, selectable, selectDisabled, downloadable, canAdopt, adoptDisabled,
+  marking, activeTags, placeholderImages, onToggleSelect, onDownload, onToggleAdoption, onTagClick,
+}: ProjectPhotoCardProps) {
+  return <Card
+    className={`photo-card${selected ? ' photo-card-selected' : ''}`}
+    cover={<div className="photo-cover">
+      {photo.thumbnailUrl
+        ? <PreviewPhoto src={photo.thumbnailUrl} alt={photo.title || '需求图片'} loading="lazy" decoding="async"
+            refresh={() => refreshPhotoPreviewUrl(photo.id)}
+            fallback={pickPlaceholderImage(placeholderImages, photo.id)} />
+        : <PhotoPlaceholder seed={photo.id}>
+          <span>{photo.title?.slice(0, 1) || '图'}</span>
+        </PhotoPlaceholder>}
+      <div className="photo-overlay">
+        {selectable &&
+          <Checkbox
+            className="photo-select-checkbox"
+            checked={selected}
+            disabled={selectDisabled}
+            onChange={event => onToggleSelect(photo.id, event.target.checked)}
+            aria-label={`选择项目图片 ${photo.title || photo.id}`} />}
+        {downloadable &&
+          <Button className="photo-download-button" shape="circle" icon={<DownloadOutlined />}
+            aria-label={`下载项目图片 ${photo.title || photo.id}`}
+            onClick={() => onDownload(photo)} />}
+      </div>
+      <div className="photo-badges"><Space size={4}>
+        <StatusTag value={photo.status} />
+        {adopted && <Tag color="gold">已采纳</Tag>}
+      </Space></div>
+    </div>}
+  >
+    <Typography.Title level={5} className="photo-card-line" title={photo.title || '未命名图片'}>
+      {photo.title || '未命名图片'}</Typography.Title>
+    <Typography.Text type="secondary" className="photo-card-line" title={requestLabel}>
+      {requestLabel}</Typography.Text>
+    <div className="photo-card-tags">
+      {photo.tags?.length
+        ? photo.tags.map(tag => <Tag key={tag} variant="filled" className="clickable-tag"
+            color={activeTags.includes(tag) ? 'blue' : undefined}
+            onClick={() => onTagClick(tag)}>
+            {tag}</Tag>)
+        : <Typography.Text type="secondary">无标签</Typography.Text>}
+    </div>
+    <div className="photo-meta">
+      <span>{photo.photographerName}</span>
+      <span>{dayjs(photo.takenAt).format('YYYY.MM.DD')}</span>
+    </div>
+    {canAdopt && <Button
+      block
+      type={adopted ? 'default' : 'primary'}
+      danger={adopted}
+      icon={<LinkOutlined />}
+      loading={marking}
+      disabled={adoptDisabled}
+      onClick={() => onToggleAdoption(photo)}
+    >
+      {adopted ? '取消采纳' : '标注为采纳'}
+    </Button>}
+  </Card>
+})
+
+/** 需求表格。单独 memo：它和相册勾选毫无关系，却会跟着每次勾选重算每行的摘要。 */
+const ProjectRequestTable = memo(function ProjectRequestTable({ requests, campuses, emptyText, onOpen }: {
+  requests: PhotoRequest[]
+  campuses: Campus[]
+  emptyText: string
+  onOpen: (request: PhotoRequest) => void
+}) {
+  const columns = useMemo(() => {
+    const campusNames = new Map(campuses.map(campus => [String(campus.id), campus.name]))
+    return [
+      { title: '需求', dataIndex: 'title', render: (value: unknown, item: PhotoRequest) => {
+        const title = String(value || '未命名需求')
+        const description = markdownExcerpt(item.description) || '暂无拍摄说明'
+        return <div className="table-title">
+          <strong className="table-ellipsis-text" style={{ maxWidth: 360 }} title={title}>{title}</strong>
+          <span className="table-ellipsis-text" style={{ maxWidth: 360 }} title={description}>{description}</span>
+        </div>
+      } },
+      { title: '校区', dataIndex: 'campusId', render: (value: PhotoRequest['campusId']) =>
+        campusNames.get(String(value)) || `校区 #${value}` },
+      { title: '截止时间', dataIndex: 'deadline', render: (value: string) => dayjs(value).format('YYYY-MM-DD HH:mm') },
+      { title: '状态', dataIndex: 'status', render: (value: string) => <StatusTag value={value} /> },
+      { title: '操作', render: (_: unknown, item: PhotoRequest) =>
+        <Button type="link" onClick={() => onOpen(item)}>查看需求</Button> },
+    ]
+  }, [campuses, onOpen])
+  return <ContentFitTable<PhotoRequest> rowKey="id" dataSource={requests} pagination={false}
+    locale={{ emptyText }} columns={columns} />
+})
+
 export default function ProjectDetailPage() {
   const { projectId = '' } = useParams()
   const navigate = useNavigate()
@@ -74,6 +203,8 @@ export default function ProjectDetailPage() {
   // 项目相册里的勾选：打包下载和批量改标签共用一份选择。
   const [selectedAlbumPhotoIds, setSelectedAlbumPhotoIds] = useState<string[]>([])
   const [photoFilters, setPhotoFilters] = useState<ProjectPhotoFilters>(emptyProjectPhotoFilters)
+  const [photoPage, setPhotoPage] = useState({ current: 1, pageSize: DEFAULT_PHOTO_PAGE_SIZE })
+  const galleryRef = useRef<HTMLDivElement>(null)
   const [tagMode, setTagMode] = useState<BatchTagMode | null>(null)
   const [batchDownloading, setBatchDownloading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -314,16 +445,44 @@ export default function ProjectDetailPage() {
   const photographerOptions = useMemo(() => collectPhotographers(data.photos), [data.photos])
   const filtersActive = hasActiveFilters(photoFilters)
 
+  // 每张卡片都要问「采纳了吗 / 属于哪个需求 / 勾上了吗」，逐张在数组里线性查找
+  // 就是 图片数 × 采纳数 的开销，这里一次建好索引。
+  const adoptedPhotoIds = useMemo(() => new Set(data.adoptions.map(item => String(item.photoId))), [data.adoptions])
+  const requestTitles = useMemo(
+    () => new Map(data.requests.map(item => [String(item.id), item.title])), [data.requests])
+  const selectedAlbumIdSet = useMemo(() => new Set(selectedAlbumPhotoIds), [selectedAlbumPhotoIds])
+
+  // 分页只作用于展示；筛选、全选、批量操作仍然针对全部筛选结果。
+  const photoPageCount = Math.max(1, Math.ceil(filteredPhotos.length / photoPage.pageSize))
+  const currentPhotoPage = Math.min(photoPage.current, photoPageCount)
+  const pagedPhotos = useMemo(
+    () => filteredPhotos.slice((currentPhotoPage - 1) * photoPage.pageSize, currentPhotoPage * photoPage.pageSize),
+    [filteredPhotos, currentPhotoPage, photoPage.pageSize])
+  const changePhotoPage = (current: number, pageSize: number) => {
+    setPhotoPage({ current: pageSize === photoPage.pageSize ? current : 1, pageSize })
+    galleryRef.current?.scrollIntoView({ block: 'start' })
+  }
+
   // 筛选变了就把看不见的图片从勾选里去掉，免得批量操作落到用户看不到的图片上。
   const updatePhotoFilters = (next: ProjectPhotoFilters) => {
     setPhotoFilters(next)
+    setPhotoPage(current => ({ ...current, current: 1 }))
     const visibleIds = new Set(filterPhotos(data.photos, next).map(photo => photo.id))
     setSelectedAlbumPhotoIds(current => current.filter(id => visibleIds.has(id)))
   }
 
+  // 传给 memo 卡片的回调必须引用稳定，否则每次渲染都是新函数，memo 等于没加。
+  const onToggleAlbumPhoto = useStableCallback(toggleAlbumPhoto)
+  const onDownloadPhoto = useStableCallback((photo: Photo) => void downloadPhoto(photo))
+  const onToggleAdoption = useStableCallback((photo: Photo) => void toggleAdoption(photo))
+  const onPhotoTagClick = useStableCallback((tag: string) => updatePhotoFilters({ ...photoFilters,
+    tags: photoFilters.tags.includes(tag) ? photoFilters.tags : [...photoFilters.tags, tag] }))
+  const onOpenRequest = useStableCallback((request: PhotoRequest) =>
+    navigate(`/requests?projectId=${projectId}&requestId=${request.id}`))
+
   const selectAllVisiblePhotos = () => {
     const selectableIds = filteredPhotos
-      .filter(photo => photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED')
+      .filter(photo => isDownloadableStatus(photo.status))
       .map(photo => photo.id)
     setSelectedAlbumPhotoIds(selectableIds.slice(0, 200))
     if (selectableIds.length > 200) {
@@ -373,10 +532,11 @@ export default function ProjectDetailPage() {
   const canTag = hasPermission(user, 'PHOTO_UPLOAD') || hasPermission(user, 'REQUEST_PHOTO_MANAGE')
   const canSelectPhotos = canBatchDownload || canTag
   const presetTags = project?.tags || []
-  const selectedAlbumPhotos = data.photos.filter(photo => selectedAlbumPhotoIds.includes(photo.id))
-  const downloadablePhotoCount = data.photos.filter(
-    photo => photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED',
-  ).length
+  const selectedAlbumPhotos = useMemo(
+    () => data.photos.filter(photo => selectedAlbumIdSet.has(photo.id)), [data.photos, selectedAlbumIdSet])
+  const downloadablePhotoCount = useMemo(
+    () => data.photos.filter(photo => isDownloadableStatus(photo.status)).length, [data.photos])
+  const selectionFull = selectedAlbumPhotoIds.length >= 200
   const addableGalleryPhotos = galleryPhotos.items.filter(photo =>
     !photo.relatedProjectIds?.some(id => String(id) === projectId))
   return <DataState loading={loading} error={error} empty={!project} onRetry={reload}
@@ -400,8 +560,7 @@ export default function ProjectDetailPage() {
               <Typography.Text type="secondary"><TagsOutlined /> 预设标签</Typography.Text>
               {presetTags.length
                 ? presetTags.map(tag => <Tag key={tag} color="blue" variant="filled" className="clickable-tag"
-                    onClick={() => updatePhotoFilters({ ...photoFilters,
-                      tags: photoFilters.tags.includes(tag) ? photoFilters.tags : [...photoFilters.tags, tag] })}>
+                    onClick={() => onPhotoTagClick(tag)}>
                     {tag}</Tag>)
                 : <Typography.Text type="secondary">未设置，上传者可以自定义标签</Typography.Text>}
             </div>
@@ -448,26 +607,13 @@ export default function ProjectDetailPage() {
 
       <Card title="项目图片需求" extra={canCreateRequest && ['DRAFT', 'ACTIVE'].includes(project.status) &&
         <Button type="link" icon={<PlusOutlined />} onClick={() => setRequestOpen(true)}>新建需求</Button>}>
-        <ContentFitTable rowKey="id" dataSource={data.requests} pagination={false}
-          locale={{ emptyText: canViewRequests ? '这个项目还没有图片需求'
-            : '你的权限组没有需求访问权限，这里不显示需求' }}
-          columns={[
-            { title: '需求', dataIndex: 'title', render: (value, item) => {
-              const title = String(value || '未命名需求')
-              const description = markdownExcerpt(item.description) || '暂无拍摄说明'
-              return <div className="table-title">
-                <strong className="table-ellipsis-text" style={{ maxWidth: 360 }} title={title}>{title}</strong>
-                <span className="table-ellipsis-text" style={{ maxWidth: 360 }} title={description}>{description}</span>
-              </div>
-            } },
-            { title: '校区', dataIndex: 'campusId', render: value => data.campuses.find(c => c.id === value)?.name || `校区 #${value}` },
-            { title: '截止时间', dataIndex: 'deadline', render: value => dayjs(value).format('YYYY-MM-DD HH:mm') },
-            { title: '状态', dataIndex: 'status', render: value => <StatusTag value={value} /> },
-            { title: '操作', render: (_, item) => <Button type="link" onClick={() => navigate(`/requests?projectId=${projectId}&requestId=${item.id}`)}>查看需求</Button> },
-          ]} />
+        <ProjectRequestTable requests={data.requests} campuses={data.campuses} onOpen={onOpenRequest}
+          emptyText={canViewRequests ? '这个项目还没有图片需求'
+            : '你的权限组没有需求访问权限，这里不显示需求'} />
       </Card>
 
       <Card
+        ref={galleryRef}
         className="project-photo-gallery"
         title={filtersActive
           ? `需求图片（${filteredPhotos.length} / ${data.photos.length}）`
@@ -518,73 +664,38 @@ export default function ProjectDetailPage() {
           {filtersActive && <Button type="link" onClick={() => updatePhotoFilters(emptyProjectPhotoFilters)}>
             清空筛选</Button>}
         </div>}
-        {filteredPhotos.length ? <Row gutter={[16, 20]} className="photo-grid">
-          {filteredPhotos.map(photo => {
-            const adopted = data.adoptions.some(item => item.photoId === photo.id)
-            const request = data.requests.find(item => item.id === photo.requestId)
-            return <Col xs={24} sm={12} lg={8} xxl={6} key={photo.id}>
-              <Card
-                className={`photo-card${selectedAlbumPhotoIds.includes(photo.id) ? ' photo-card-selected' : ''}`}
-                cover={<div className="photo-cover">
-                  {photo.thumbnailUrl
-                    ? <PreviewPhoto src={photo.thumbnailUrl} alt={photo.title || '需求图片'}
-                        refresh={() => refreshPhotoPreviewUrl(photo.id)}
-                        fallback={pickPlaceholderImage(placeholderImages, photo.id)} />
-                    : <PhotoPlaceholder seed={photo.id}>
-                      <span>{photo.title?.slice(0, 1) || '图'}</span>
-                    </PhotoPlaceholder>}
-                  <div className="photo-overlay">
-                    {canSelectPhotos && (photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED') &&
-                      <Checkbox
-                        className="photo-select-checkbox"
-                        checked={selectedAlbumPhotoIds.includes(photo.id)}
-                        disabled={batchDownloading || (selectedAlbumPhotoIds.length >= 200
-                          && !selectedAlbumPhotoIds.includes(photo.id))}
-                        onChange={event => toggleAlbumPhoto(photo.id, event.target.checked)}
-                        aria-label={`选择项目图片 ${photo.title || photo.id}`} />}
-                    {canBatchDownload && (photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED') &&
-                      <Button className="photo-download-button" shape="circle" icon={<DownloadOutlined />}
-                        aria-label={`下载项目图片 ${photo.title || photo.id}`}
-                        onClick={() => void downloadPhoto(photo)} />}
-                  </div>
-                  <div className="photo-badges"><Space size={4}>
-                    <StatusTag value={photo.status} />
-                    {adopted && <Tag color="gold">已采纳</Tag>}
-                  </Space></div>
-                </div>}
-              >
-                <Typography.Title level={5} ellipsis>{photo.title || '未命名图片'}</Typography.Title>
-                <Typography.Text type="secondary" ellipsis>
-                  {request?.title || (photo.requestId ? `需求 #${photo.requestId}` : '未关联需求')}
-                </Typography.Text>
-                <div className="photo-card-tags">
-                  {photo.tags?.length
-                    ? photo.tags.map(tag => <Tag key={tag} variant="filled" className="clickable-tag"
-                        color={photoFilters.tags.includes(tag) ? 'blue' : undefined}
-                        onClick={() => updatePhotoFilters({ ...photoFilters,
-                          tags: photoFilters.tags.includes(tag) ? photoFilters.tags : [...photoFilters.tags, tag] })}>
-                        {tag}</Tag>)
-                    : <Typography.Text type="secondary">无标签</Typography.Text>}
-                </div>
-                <div className="photo-meta">
-                  <span>{photo.photographerName}</span>
-                  <span>{dayjs(photo.takenAt).format('YYYY.MM.DD')}</span>
-                </div>
-                {canAdopt && <Button
-                  block
-                  type={adopted ? 'default' : 'primary'}
-                  danger={adopted}
-                  icon={<LinkOutlined />}
-                  loading={markingPhotoId === photo.id}
-                  disabled={project.status !== 'ACTIVE' || photo.status !== 'AVAILABLE'}
-                  onClick={() => void toggleAdoption(photo)}
-                >
-                  {adopted ? '取消采纳' : '标注为采纳'}
-                </Button>}
-              </Card>
-            </Col>
-          })}
-        </Row> : <div className="empty-state">
+        {filteredPhotos.length ? <>
+          <Row gutter={[16, 20]} className="photo-grid">
+            {pagedPhotos.map(photo => {
+              const selected = selectedAlbumIdSet.has(photo.id)
+              const downloadable = isDownloadableStatus(photo.status)
+              return <Col xs={24} sm={12} lg={8} xxl={6} key={photo.id}>
+                <ProjectPhotoCard
+                  photo={photo}
+                  requestLabel={requestTitles.get(String(photo.requestId))
+                    || (photo.requestId ? `需求 #${photo.requestId}` : '未关联需求')}
+                  adopted={adoptedPhotoIds.has(String(photo.id))}
+                  selected={selected}
+                  selectable={canSelectPhotos && downloadable}
+                  selectDisabled={batchDownloading || (selectionFull && !selected)}
+                  downloadable={canBatchDownload && downloadable}
+                  canAdopt={canAdopt}
+                  adoptDisabled={project.status !== 'ACTIVE' || photo.status !== 'AVAILABLE'}
+                  marking={markingPhotoId === photo.id}
+                  activeTags={photoFilters.tags}
+                  placeholderImages={placeholderImages}
+                  onToggleSelect={onToggleAlbumPhoto}
+                  onDownload={onDownloadPhoto}
+                  onToggleAdoption={onToggleAdoption}
+                  onTagClick={onPhotoTagClick} />
+              </Col>
+            })}
+          </Row>
+          {filteredPhotos.length > PHOTO_PAGE_SIZES[0] && <Pagination className="project-photo-pagination"
+            current={currentPhotoPage} pageSize={photoPage.pageSize} total={filteredPhotos.length}
+            showSizeChanger pageSizeOptions={PHOTO_PAGE_SIZES} showTotal={total => `共 ${total} 张`}
+            onChange={changePhotoPage} />}
+        </> : <div className="empty-state">
           {data.photos.length ? '没有符合筛选条件的图片' : '这个选题还没有上传图片'}
           {filtersActive && <Button type="link" onClick={() => updatePhotoFilters(emptyProjectPhotoFilters)}>
             清空筛选</Button>}

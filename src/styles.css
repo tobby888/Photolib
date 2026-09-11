@@ -251,6 +251,8 @@ button, input, textarea, select { font-family: inherit; }
 .photo-favorite-button.is-favorited { color: #a86600; border-color: #ffd591; background: #fff7e6; }
 .photo-favorite-button:focus-visible { outline: 3px solid rgba(24, 144, 255, .55); outline-offset: 2px; }
 .photo-card h5 { margin: 0 0 8px; }
+/* 单行省略交给 CSS，不用 Typography 的 ellipsis（它逐个实例量布局，见 ProjectDetailPage 的 ProjectPhotoCard）。 */
+.photo-card .photo-card-line { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .photo-cover { height: 230px; position: relative; overflow: hidden; background: #e8e5de; }
 .photo-cover .ant-image { display: block; width: 100%; height: 100%; }
 .photo-cover .ant-image-img, .photo-cover img { width: 100%; height: 100%; object-fit: cover; object-position: center center; transition: transform .45s ease; }
@@ -273,6 +275,7 @@ button, input, textarea, select { font-family: inherit; }
 .project-photo-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 18px;
   padding-bottom: 16px; border-bottom: 1px solid var(--studio-rule, #eeebe5); }
 .project-photo-filters-icon { color: var(--studio-muted, #6f7975); }
+.project-photo-pagination { display: flex; justify-content: center; margin-top: 24px; }
 .image-placeholder { height: 100%; width: 100%; display: grid; place-items: center; background: linear-gradient(135deg, #d8e1dc, #b8cbc3); }
 .image-placeholder span { display: grid; place-items: center; width: 70px; height: 70px; border: 1px solid rgba(255,255,255,.6); color: white; font-size: 32px; border-radius: 50%; }
 .detail-image { border-radius: 12px; margin-bottom: 20px; display: flex; justify-content: center; background: #f0ede6; }
