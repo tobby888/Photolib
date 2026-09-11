@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createResumeRefresh } from './previewFreshness'
 
 export function useLoad<T>(loader: () => Promise<T>, initial: T, deps: unknown[] = []) {
@@ -63,4 +63,19 @@ export function useRefreshOnResume(refresh: () => void) {
       window.removeEventListener('pageshow', onPageShow)
     }
   }, [refresh])
+}
+
+/**
+ * 引用恒定、但每次调用都执行最新实现的回调。传给 `memo` 过的子组件（例如选题相册里
+ * 的图片卡片）时用它：普通闭包每次渲染都是新函数，会让 memo 形同虚设，而 `useCallback`
+ * 又得把读到的状态全列进依赖，照样每次都变。只能在事件处理里调用，不要在渲染期间调用。
+ */
+export function useStableCallback<Args extends unknown[], Result>(
+  callback: (...args: Args) => Result,
+): (...args: Args) => Result {
+  const latest = useRef(callback)
+  useLayoutEffect(() => {
+    latest.current = callback
+  })
+  return useCallback((...args: Args) => latest.current(...args), [])
 }

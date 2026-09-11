@@ -667,6 +667,99 @@ class PhotoServiceTests {
         assertThat(photoService.get(1012L, adminUser).adoptionCount()).isEqualTo(1L);
     }
 
+    /**
+     * 列表把归属项目与被引数整页批量查询后按图片分发，必须与逐张查（详情）的结果一致：
+     * 一图多项目按项目 id 升序、软删除的项目不算、取消的采用不算、没有归属/采用的图片为空/0。
+     */
+    @Test
+    void listBatchesRelatedProjectsAndAdoptionCountsPerPhotoOnOnePage() {
+        ProjectEntity projectB = projectService.create("批量视图项目B", "描述", ProjectStatus.ACTIVE, adminUser);
+        ProjectEntity removed = projectService.create("批量视图已删项目", "描述", ProjectStatus.ACTIVE, adminUser);
+        jdbc.sql("UPDATE project SET deleted=TRUE WHERE id=:id").param("id", removed.getId()).update();
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, project_id, title, photographer_student_id, photographer_name,
+                     uploaded_by, campus_id, taken_at, size, content_type, object_key, sha256, status)
+                VALUES
+                    (2100, :projectA, '批量视图-两个项目', '20230001', '张三', :userId, :campusId,
+                     NOW(), 1000, 'image/jpeg', 'photos/batch-two.jpg', :sha1, 'AVAILABLE'),
+                    (2101, :projectA, '批量视图-含已删项目', '20230001', '张三', :userId, :campusId,
+                     NOW(), 1000, 'image/jpeg', 'photos/batch-removed.jpg', :sha2, 'AVAILABLE'),
+                    (2102, null, '批量视图-无归属', '20230001', '张三', :userId, :campusId,
+                     NOW(), 1000, 'image/jpeg', 'photos/batch-none.jpg', :sha3, 'AVAILABLE')
+                """)
+                .param("projectA", testProject.getId())
+                .param("userId", adminUser.id())
+                .param("campusId", testCampus.getId())
+                .param("sha1", "r".repeat(64))
+                .param("sha2", "s".repeat(64))
+                .param("sha3", "t".repeat(64))
+                .update();
+        // 故意先插项目 B 再插主项目，确认返回顺序来自 ORDER BY 项目 id 而不是插入顺序。
+        jdbc.sql("""
+                INSERT INTO photo_project (photo_id, project_id)
+                VALUES (2100, :projectB), (2100, :projectA), (2101, :removed), (2101, :projectA)
+                """)
+                .param("projectA", testProject.getId())
+                .param("projectB", projectB.getId())
+                .param("removed", removed.getId())
+                .update();
+        jdbc.sql("""
+                INSERT INTO adoption
+                    (project_id, photo_id, photographer_student_id, photographer_name,
+                     adopted_by, adopted_at, deleted)
+                VALUES
+                    (:projectA, 2100, '20230001', '张三', :adminId, NOW(), false),
+                    (:projectB, 2100, '20230001', '张三', :adminId, NOW(), false),
+                    (:projectA, 2101, '20230001', '张三', :adminId, NOW(), true)
+                """)
+                .param("projectA", testProject.getId())
+                .param("projectB", projectB.getId())
+                .param("adminId", adminUser.id())
+                .update();
+
+        var page = photoService.list(1, 20, "批量视图", null, null, null, null,
+                null, null, PhotoStatus.AVAILABLE, false, false, false, adminUser);
+        assertThat(page.items()).extracting(PhotoService.PhotoView::id)
+                .containsExactlyInAnyOrder(2100L, 2101L, 2102L);
+        var byId = page.items().stream().collect(java.util.stream.Collectors.toMap(
+                PhotoService.PhotoView::id, java.util.function.Function.identity()));
+
+        var twoProjects = byId.get(2100L);
+        assertThat(twoProjects.relatedProjectIds()).containsExactly(testProject.getId(), projectB.getId());
+        assertThat(twoProjects.relatedProjects()).containsExactly(
+                new PhotoService.ProjectLink(testProject.getId(), "测试项目"),
+                new PhotoService.ProjectLink(projectB.getId(), "批量视图项目B"));
+        assertThat(twoProjects.adoptionCount()).isEqualTo(2L);
+
+        var withRemovedProject = byId.get(2101L);
+        assertThat(withRemovedProject.relatedProjectIds()).containsExactly(testProject.getId());
+        assertThat(withRemovedProject.relatedProjects()).containsExactly(
+                new PhotoService.ProjectLink(testProject.getId(), "测试项目"));
+        assertThat(withRemovedProject.adoptionCount()).isZero();
+
+        var unlinked = byId.get(2102L);
+        assertThat(unlinked.relatedProjectIds()).isEmpty();
+        assertThat(unlinked.relatedProjects()).isEmpty();
+        assertThat(unlinked.adoptionCount()).isZero();
+
+        // 详情仍按单张查询，结果必须与列表一致。
+        for (var listed : page.items()) {
+            var detail = photoService.get(listed.id(), adminUser);
+            assertThat(detail.relatedProjectIds()).isEqualTo(listed.relatedProjectIds());
+            assertThat(detail.relatedProjects()).isEqualTo(listed.relatedProjects());
+            assertThat(detail.adoptionCount()).isEqualTo(listed.adoptionCount());
+        }
+    }
+
+    @Test
+    void listWithNoMatchingPhotosSkipsTheBatchLookups() {
+        var empty = photoService.list(1, 20, "不存在的关键词-batch", null, null, null, null,
+                null, null, PhotoStatus.AVAILABLE, false, false, false, adminUser);
+        assertThat(empty.items()).isEmpty();
+        assertThat(empty.total()).isZero();
+    }
+
     @Test
     void thumbnailUrl_shouldFallBackToTheFinishedObjectWhenNoPreviewExists() {
         jdbc.sql("""

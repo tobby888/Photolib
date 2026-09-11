@@ -1,4 +1,4 @@
-import { useEffect, useState, type ComponentPropsWithoutRef } from 'react'
+import { memo, useEffect, useState, type ComponentPropsWithoutRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { http } from './api'
@@ -49,7 +49,7 @@ function PlainMarkdownLink({ children }: ComponentPropsWithoutRef<'a'>) {
   return <>{children}</>
 }
 
-export default function MarkdownRenderer({ value, className = '', allowLinks = true }: {
+function MarkdownRenderer({ value, className = '', allowLinks = true }: {
   value?: string | null
   className?: string
   allowLinks?: boolean
@@ -63,6 +63,12 @@ export default function MarkdownRenderer({ value, className = '', allowLinks = t
     </ReactMarkdown>
   </div>
 }
+
+/**
+ * 解析 Markdown 不便宜，而它常挂在交互频繁的页面顶部（选题详情的说明、需求说明）。
+ * props 全是基本类型，正文不变就跳过重渲染，页面里勾选、筛选时不再反复解析。
+ */
+export default memo(MarkdownRenderer)
 
 export function markdownExcerpt(value?: string | null) {
   if (!value) return ''

@@ -87,5 +87,7 @@ test('选题详情页的批量改标签带上选题 id，筛选只作用于已�
   assert.match(detail, /<BatchTagModal mode=\{tagMode\} photos=\{selectedAlbumPhotos\} projectId=\{projectId\}/)
   assert.match(detail, /presets=\{presetTags\}/)
   assert.match(detail, /filterPhotos\(data\.photos, photoFilters\)/)
-  assert.match(detail, /\{filteredPhotos\.map\(photo =>/)
+  // 相册分页只切展示：当前页取自筛选结果。
+  assert.match(detail, /filteredPhotos\.slice\(/)
+  assert.match(detail, /\{pagedPhotos\.map\(photo =>/)
 })
