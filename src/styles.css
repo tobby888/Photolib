@@ -238,10 +238,29 @@ button, input, textarea, select { font-family: inherit; }
 .state-guide.state-cancelled { border-left: 4px solid #b34f4f; }
 .photo-card .ant-card-body { padding: 14px 16px; }
 .photo-card-selected { box-shadow: 0 0 0 2px #3f7f6d, 0 10px 24px rgba(35, 74, 63, .16); }
-.photo-select-checkbox { margin: 0; line-height: 1; }
+/* 勾选框本体只有 20px 见方，压在封面左上角，点偏一点就落到图片上——
+   图库会跳去图片详情页、选题/分享页会弹出大图预览。这里给 label 撑出 12px
+   内边距，把可点区域放大到 20 + 12 × 2 = 44px 见方（点在内边距上依旧是点
+   label，原生 label 行为照常切换勾选），再用等量负外边距抵消掉，勾选框的
+   视觉位置不变，仍和右侧的圆形按钮对齐。改这里请保持 padding 与负 margin 等量。
+   必须带上 `.photo-overlay >`：antd 的 `.ant-checkbox-wrapper` 自带
+   `margin: 0; padding: 0`，特指度和单个类名一样，靠先后顺序赢不保险。 */
+.photo-overlay > .photo-select-checkbox {
+  margin: -12px;
+  padding: 12px;
+  line-height: 1;
+  /* 圆角会把四角的命中区域切掉，这里只做 8px，落在封面角上的点击也还算勾选框的。 */
+  border-radius: 8px;
+  transition: background-color var(--motion-base, 360ms) ease;
+}
+/* 放大后的可点区域是看不见的，指上去给一层底衬，让人知道这一块都能点。 */
+.photo-overlay > .photo-select-checkbox:not(.ant-checkbox-wrapper-disabled):hover,
+.photo-overlay > .photo-select-checkbox:focus-within { background: rgba(255, 255, 255, .3); }
+/* antd 6 的勾选框没有 `.ant-checkbox-inner` 了，方框本体就是 `.ant-checkbox`
+   （边长跟着 `controlHeight: 40` 的 token 走，见 src/main.tsx，正好 20px）。
+   压在照片上得够显眼，未选中时把描边压深、底色填实。 */
 .photo-select-checkbox .ant-checkbox { filter: drop-shadow(0 1px 3px rgba(15, 31, 27, .38)); }
-.photo-select-checkbox .ant-checkbox-inner { width: 20px; height: 20px; }
-.photo-select-checkbox .ant-checkbox:not(.ant-checkbox-checked) .ant-checkbox-inner {
+.photo-select-checkbox .ant-checkbox:not(.ant-checkbox-checked) {
   border-color: rgba(34, 54, 48, .72);
   background: rgba(255, 255, 255, .96);
 }
