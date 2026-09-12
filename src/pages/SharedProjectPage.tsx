@@ -3,7 +3,7 @@ import {
 } from 'antd'
 import { DownloadOutlined, LinkOutlined, LockOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { ApiError } from '../api'
 import { BrandGlyph, useBranding } from '../branding'
@@ -14,10 +14,12 @@ import { useRefreshOnResume } from '../hooks'
 import {
   clearShareSession, prepareSharedBatchDownload, readStoredShareSession, shareApi, storeShareSession,
 } from '../projectShare'
+import { MAX_SHARE_BATCH, dropFromSelection, isFullySelected, mergeSelection } from '../shareSelection'
 import type { ShareGuestAccess, SharePhoto } from '../types'
 
 const PAGE_SIZE = 60
-const MAX_BATCH = 200
+// 「全选全部」自己翻页把 id 取回来，用后端允许的最大页长（`@Max(100)`）少发几次请求。
+const SELECT_ALL_PAGE_SIZE = 100
 
 /**
  * 分享链接的访客页，不需要登录。
@@ -48,6 +50,7 @@ export default function SharedProjectPage() {
   const [keyword, setKeyword] = useState('')
   const [loadingPhotos, setLoadingPhotos] = useState(false)
   const [selected, setSelected] = useState<string[]>([])
+  const [selectingAll, setSelectingAll] = useState(false)
   const [batchDownloading, setBatchDownloading] = useState(false)
   const [markingPhotoId, setMarkingPhotoId] = useState<string | null>(null)
 
@@ -158,10 +161,19 @@ export default function SharedProjectPage() {
     }
   }
 
+  // 勾选是跨页累加的（见 src/shareSelection.ts），所以每张卡片都要问一次"勾上了吗"，
+  // 在数组里线性查找就是 图片数 x 已选数 的开销，这里一次建好索引。
+  const selectedIds = useMemo(() => new Set(selected), [selected])
+  const pageIds = useMemo(() => photos.map(photo => photo.id), [photos])
+  const pageFullySelected = isFullySelected(pageIds, selectedIds)
+
+  const notifyTruncated = () =>
+    message.info(`单次最多下载 ${MAX_SHARE_BATCH} 张，已选到上限`)
+
   const toggleSelected = (photoId: string, checked: boolean) => {
     setSelected(current => checked
-      ? current.includes(photoId) ? current : [...current, photoId].slice(0, MAX_BATCH)
-      : current.filter(id => id !== photoId))
+      ? mergeSelection(current, [photoId]).selected
+      : dropFromSelection(current, [photoId]))
   }
 
   const downloadOne = async (photo: SharePhoto) => {
@@ -210,10 +222,40 @@ export default function SharedProjectPage() {
     }
   }
 
-  const selectAll = () => {
-    const ids = photos.map(photo => photo.id).slice(0, MAX_BATCH)
-    setSelected(ids)
-    if (photos.length > MAX_BATCH) message.info(`单次最多下载 ${MAX_BATCH} 张，已选择当前页前 ${MAX_BATCH} 张`)
+  // 「全选本页」并入这一页、再点一次撤掉这一页，两个方向都只动当前页——别的页
+  // 上勾的图片在这一屏根本看不见，替换掉就等于无声地丢选择。
+  const togglePageSelection = () => {
+    if (pageFullySelected) {
+      setSelected(current => dropFromSelection(current, pageIds))
+      return
+    }
+    const merged = mergeSelection(selected, pageIds)
+    setSelected(merged.selected)
+    if (merged.truncated) notifyTruncated()
+  }
+
+  // 服务端分页，一页只有 60 张，想一次打包更多就得把后面的页自己取回来。取到
+  // 上限就停，不会为了勾选而把整个项目的图片都拉一遍。
+  const selectAllMatching = async () => {
+    if (!session) return
+    setSelectingAll(true)
+    try {
+      const ids: string[] = []
+      for (let cursor = 1; ids.length < MAX_SHARE_BATCH; cursor += 1) {
+        const result = await shareApi.photos(token, session, {
+          page: cursor, pageSize: SELECT_ALL_PAGE_SIZE, keyword: keyword || undefined,
+        })
+        ids.push(...result.items.map(photo => photo.id))
+        if (!result.items.length || ids.length >= result.total) break
+      }
+      const merged = mergeSelection(selected, ids)
+      setSelected(merged.selected)
+      if (merged.truncated) notifyTruncated()
+    } catch (reason) {
+      handleGuestError(reason)
+    } finally {
+      setSelectingAll(false)
+    }
   }
 
   const header = <header className="share-header">
@@ -274,11 +316,15 @@ export default function SharedProjectPage() {
           <Input.Search allowClear placeholder="搜索图片标题、描述或标签" style={{ maxWidth: 260 }}
             onSearch={value => { setKeyword(value); setPage(1) }} />
           {access?.allowDownload && <>
-            <Button type="link" disabled={!photos.length || batchDownloading} onClick={selectAll}>全选本页</Button>
-            {!!selected.length && <Button type="link" disabled={batchDownloading}
+            <Button type="link" disabled={!photos.length || batchDownloading || selectingAll}
+              onClick={togglePageSelection}>{pageFullySelected ? '取消本页' : '全选本页'}</Button>
+            {total > photos.length && <Button type="link" loading={selectingAll}
+              disabled={!photos.length || batchDownloading}
+              onClick={() => void selectAllMatching()}>全选全部（最多 {MAX_SHARE_BATCH} 张）</Button>}
+            {!!selected.length && <Button type="link" disabled={batchDownloading || selectingAll}
               onClick={() => setSelected([])}>清空选择</Button>}
             <Button type="primary" icon={<DownloadOutlined />} loading={batchDownloading}
-              disabled={!selected.length} onClick={() => void batchDownload()}>
+              disabled={!selected.length || selectingAll} onClick={() => void batchDownload()}>
               打包下载{selected.length ? `（${selected.length}）` : ''}
             </Button>
           </>}
@@ -287,7 +333,7 @@ export default function SharedProjectPage() {
         {loadingPhotos ? <Skeleton active paragraph={{ rows: 6 }} />
           : photos.length ? <Row gutter={[16, 20]} className="photo-grid">
             {photos.map(photo => <Col xs={24} sm={12} lg={8} xxl={6} key={photo.id}>
-              <Card className={`photo-card${selected.includes(photo.id) ? ' photo-card-selected' : ''}`}
+              <Card className={`photo-card${selectedIds.has(photo.id) ? ' photo-card-selected' : ''}`}
                 cover={<div className="photo-cover">
                   {photo.thumbnailUrl
                     ? <PreviewPhoto src={photo.thumbnailUrl} alt={photo.title || '项目图片'}
@@ -298,8 +344,9 @@ export default function SharedProjectPage() {
                     </PhotoPlaceholder>}
                   <div className="photo-overlay">
                     {access?.allowDownload && <>
-                      <Checkbox className="photo-select-checkbox" checked={selected.includes(photo.id)}
-                        disabled={batchDownloading || (selected.length >= MAX_BATCH && !selected.includes(photo.id))}
+                      <Checkbox className="photo-select-checkbox" checked={selectedIds.has(photo.id)}
+                        disabled={batchDownloading || selectingAll
+                          || (selected.length >= MAX_SHARE_BATCH && !selectedIds.has(photo.id))}
                         onChange={event => toggleSelected(photo.id, event.target.checked)}
                         aria-label={`选择图片 ${photo.title || photo.id}`} />
                       <Button className="photo-download-button" shape="circle" icon={<DownloadOutlined />}
@@ -324,11 +371,14 @@ export default function SharedProjectPage() {
             </Col>)}
           </Row> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="这个项目还没有可查看的图片" />}
         {total > PAGE_SIZE && <div className="share-pager">
-          <Space>
+          <Space wrap>
             <Button disabled={page <= 1 || loadingPhotos} onClick={() => setPage(current => current - 1)}>上一页</Button>
             <Typography.Text type="secondary">第 {page} / {Math.ceil(total / PAGE_SIZE)} 页</Typography.Text>
             <Button disabled={page >= Math.ceil(total / PAGE_SIZE) || loadingPhotos}
               onClick={() => setPage(current => current + 1)}>下一页</Button>
+            {/* 翻页后上一页的勾选还在，但那些卡片已经看不见了，这里把数目说出来。 */}
+            {!!selected.length && access?.allowDownload
+              && <Typography.Text type="secondary">已跨页选择 {selected.length} 张</Typography.Text>}
           </Space>
         </div>}
       </Card>
