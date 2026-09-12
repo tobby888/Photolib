@@ -64,16 +64,12 @@ test('the tag scanner ignores JSX quoted inside comments', () => {
   assert.deepEqual(imageTags('/** <img src={thumbnailUrl} /> */\n<img src={u} />'), ['<img src={u} />'])
 })
 
-// A preview URL requested as a plain <img> is cached without
-// Access-Control-Allow-Origin, and the photo detail page's CORS fetch for the same
-// URL is then blocked by that cache entry. See src/previewImage.ts.
-//
-// `PreviewPhoto` is where that (and the expired-signature retry, see
-// src/previewRetry.ts) is applied once for everyone, so pages must render signed
-// preview URLs through it rather than reaching for `<Image>`/`<img>` themselves.
+// The HTTP cache is keyed by URL alone, so one preview URL may only ever be
+// requested in ONE CORS mode — mix the two and whichever response lands in the cache
+// first breaks the other. `PreviewPhoto` is where that mode (and the expired-signature
+// retry, see src/previewRetry.ts) is applied once for everyone, so pages must render
+// signed preview URLs through it rather than reaching for `<Image>`/`<img>` themselves.
 test('every element rendering a signed preview URL goes through PreviewPhoto', () => {
-  assert.equal(PREVIEW_CROSS_ORIGIN, 'anonymous')
-
   const rendered = sourceFiles(sourceRoot)
     .flatMap(file => imageTags(readFileSync(file, 'utf8'))
       .filter(tag => SIGNED_PREVIEW.test(tag))
@@ -84,7 +80,7 @@ test('every element rendering a signed preview URL goes through PreviewPhoto', (
   assert.deepEqual(unguarded.map(({ file }) => file), [])
 })
 
-test('PreviewPhoto asks for every preview in CORS mode, including its bare <img> form', () => {
+test('PreviewPhoto routes both its forms through the one CORS-mode decision', () => {
   const source = readFileSync(path.join(sourceRoot, 'PreviewPhoto.tsx'), 'utf8')
   const tags = imageTags(source)
 
@@ -92,4 +88,26 @@ test('PreviewPhoto asks for every preview in CORS mode, including its bare <img>
   for (const tag of tags) {
     assert.match(tag, /crossOrigin=\{PREVIEW_CROSS_ORIGIN\}/)
   }
+})
+
+// Previews are requested in no-cors mode because that is what a plain <img> does and
+// what third-party code does by default — antd's <Image> loads the same src a second
+// time through rc-image's `isImageValid` probe, which has no crossOrigin and no way
+// to be given one. Asking for CORS here would only mean racing that probe for the
+// cache entry, and losing it on any grid using loading="lazy". See src/previewImage.ts.
+test('previews are requested without CORS', () => {
+  assert.equal(PREVIEW_CROSS_ORIGIN, undefined)
+})
+
+// The other half of that invariant: the histogram needs readable pixels, so it is the
+// single consumer that must have Access-Control-Allow-Origin. It can only be sure of
+// getting one by refusing to read the shared cache entry, which normally holds the
+// gallery's header-less no-cors response.
+test('the one consumer that needs CORS bypasses the HTTP cache', () => {
+  const source = readFileSync(path.join(sourceRoot, 'useLocalImageUrl.ts'), 'utf8')
+  const call = withoutComments(source).match(/fetch\([^)]*\)/)
+
+  assert.ok(call, 'expected useLocalImageUrl to fetch the preview')
+  assert.match(call[0], /mode: 'cors'/)
+  assert.match(call[0], /cache: 'reload'/)
 })

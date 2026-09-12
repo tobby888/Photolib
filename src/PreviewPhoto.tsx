@@ -4,9 +4,9 @@ import { PREVIEW_CROSS_ORIGIN, type PreviewUrlRefresher } from './previewImage'
 import { attemptFor, loadFailed, refreshed, startAttempt, type PreviewAttempt } from './previewRetry'
 
 /**
- * 渲染签名预览地址的统一入口：`crossOrigin` 由它带上（原因见
- * `src/previewImage.ts`），加载失败时重取一次地址再试（原因见
- * `src/previewRetry.ts`），两次都不成才让占位图顶上。
+ * 渲染签名预览地址的统一入口：CORS 模式由它统一决定（`PREVIEW_CROSS_ORIGIN`，
+ * 现在是"不用 CORS"，原因见 `src/previewImage.ts`），加载失败时重取一次地址再试
+ * （原因见 `src/previewRetry.ts`），两次都不成才让占位图顶上。
  *
  * 页面不要再直接写 `<Image src={photo.thumbnailUrl}>`——`tests/previewCorsMode.test.ts`
  * 会拦下这种写法。

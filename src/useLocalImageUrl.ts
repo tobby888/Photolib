@@ -19,12 +19,22 @@ const resources = new Map<string, SharedImageResource>()
 
 function createResource(remoteUrl: string): SharedImageResource {
   const controller = new AbortController()
-  // `mode: 'cors'` is what makes the pixels readable (an <img> without it taints
-  // the histogram's canvas), and it is why every other element rendering the same
-  // preview URL must request it as `crossOrigin="anonymous"` — a no-CORS response
-  // for this URL sitting in the HTTP cache is served back here without
-  // Access-Control-Allow-Origin and fails. See src/previewImage.ts.
-  const promise = fetch(remoteUrl, { signal: controller.signal, mode: 'cors' })
+  // `mode: 'cors'` is what makes the pixels readable — an <img> without it taints
+  // the histogram's canvas. This is the *only* consumer of a preview URL that needs
+  // CORS; everything else renders previews as plain no-cors <img> (see
+  // src/previewImage.ts for why that is the invariant rather than the opposite one).
+  //
+  // `cache: 'reload'` is what keeps those two worlds apart, and it is not optional.
+  // The HTTP cache is keyed by URL alone, so the entry sitting under this URL is
+  // almost always the gallery's no-cors response — stored without
+  // Access-Control-Allow-Origin, and rejected here as a CORS failure if we read it.
+  // Going straight to the network sends an `Origin` and always gets the header back;
+  // the response it writes back into the cache carries the header, so it stays
+  // perfectly usable for the no-cors <img> elements too.
+  //
+  // The cost is one extra download per photo detail view (a preview is ~20 KB,
+  // up to imageTargetBytes for photos falling back to the finished image).
+  const promise = fetch(remoteUrl, { signal: controller.signal, mode: 'cors', cache: 'reload' })
     .then(response => {
       if (!response.ok) {
         console.error('[preview] 预览图请求失败', { url: remoteUrl, status: response.status })
