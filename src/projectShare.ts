@@ -1,5 +1,19 @@
-import { api } from './api'
+import { api, qs } from './api'
+import type { ProjectPhotoFilters } from './photoTags'
 import type { EntityId, PageData, ShareGuestAccess, ShareGuestSession, SharePhoto } from './types'
+
+/** 访客图片列表的查询条件：分页、关键字，加上与选题详情页同一组筛选。 */
+export interface SharePhotoQuery extends Partial<ProjectPhotoFilters> {
+  page: number
+  pageSize: number
+  keyword?: string
+}
+
+/** 筛选下拉的候选，由服务端按这条链接看得到的图片算好（含项目预设标签）。 */
+export interface ShareFilterOptions {
+  tags: string[]
+  photographers: string[]
+}
 
 /** 与后端 `ProjectSharePublicController.SESSION_HEADER` 必须一致。 */
 export const SHARE_SESSION_HEADER = 'X-Share-Session'
@@ -64,8 +78,21 @@ export const shareApi = {
   access: (token: string, session: string) =>
     api<ShareGuestAccess>({ url: `/public/shares/${token}/access`, ...guest(session) }),
 
-  photos: (token: string, session: string, params: { page: number; pageSize: number; keyword?: string }) =>
-    api<PageData<SharePhoto>>({ url: `/public/shares/${token}/photos`, params, ...guest(session) }),
+  photos: (token: string, session: string, query: SharePhotoQuery) =>
+    api<PageData<SharePhoto>>({
+      url: `/public/shares/${token}/photos`,
+      params: qs({
+        ...query,
+        tags: query.tags?.length ? query.tags : undefined,
+        photographers: query.photographers?.length ? query.photographers : undefined,
+      }),
+      // 多选条件发成 tags=a&tags=b，Spring 的 List 参数只认这种；axios 默认的 tags[]=a 绑不上。
+      paramsSerializer: { indexes: null },
+      ...guest(session),
+    }),
+
+  photoFilterOptions: (token: string, session: string) =>
+    api<ShareFilterOptions>({ url: `/public/shares/${token}/photo-filter-options`, ...guest(session) }),
 
   downloadUrl: (token: string, session: string, photoId: EntityId) =>
     api<{ downloadUrl: string }>({

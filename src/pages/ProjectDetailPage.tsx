@@ -4,10 +4,10 @@ import {
 } from 'antd'
 import {
   ArrowLeftOutlined, CameraOutlined, CheckCircleOutlined, DownloadOutlined, EditOutlined, FileImageOutlined,
-  FilterOutlined, LinkOutlined, MinusCircleOutlined, PlusOutlined, RocketOutlined, ShareAltOutlined, StopOutlined,
+  LinkOutlined, MinusCircleOutlined, PlusOutlined, RocketOutlined, ShareAltOutlined, StopOutlined,
   TagsOutlined, UnorderedListOutlined,
 } from '@ant-design/icons'
-import { lazy, memo, Suspense, useMemo, useRef, useState } from 'react'
+import { lazy, memo, Suspense, useCallback, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { useAuth } from '../auth'
@@ -31,6 +31,7 @@ import {
   normalizeTags, tagRules,
 } from '../photoTags'
 import type { ProjectPhotoFilters } from '../photoTags'
+import ProjectPhotoFilterBar from '../ProjectPhotoFilterBar'
 import { PHOTO_LIBRARY_PAGE_SIZE } from '../photoLibrarySearch'
 
 const ProjectShareLinksModal = lazy(() => import('../ProjectShareLinksModal'))
@@ -309,6 +310,8 @@ export default function ProjectDetailPage() {
         }))
         message.success('已标注为采纳图片')
       }
+      // 按被引状态筛选时，改完的这张已经移出结果，不能留在看不见的勾选里。
+      if (photoFilters.adoption) setSelectedAlbumPhotoIds(current => current.filter(id => id !== photo.id))
     } catch (reason) {
       message.error((reason as Error).message)
     } finally {
@@ -439,15 +442,17 @@ export default function ProjectDetailPage() {
     }
   }
 
-  const filteredPhotos = useMemo(() => filterPhotos(data.photos, photoFilters), [data.photos, photoFilters])
+  // 每张卡片都要问「采纳了吗 / 属于哪个需求 / 勾上了吗」，逐张在数组里线性查找
+  // 就是 图片数 × 采纳数 的开销，这里一次建好索引。
+  const adoptedPhotoIds = useMemo(() => new Set(data.adoptions.map(item => String(item.photoId))), [data.adoptions])
+  const isAdoptedHere = useCallback((photo: Photo) => adoptedPhotoIds.has(String(photo.id)), [adoptedPhotoIds])
+  // 被引状态也参与筛选：在「未被引」下标注一张，它就从当前结果里移走。
+  const filteredPhotos = useMemo(
+    () => filterPhotos(data.photos, photoFilters, isAdoptedHere), [data.photos, photoFilters, isAdoptedHere])
   const tagFilterOptions = useMemo(
     () => collectTagOptions(data.project?.tags, data.photos), [data.project?.tags, data.photos])
   const photographerOptions = useMemo(() => collectPhotographers(data.photos), [data.photos])
   const filtersActive = hasActiveFilters(photoFilters)
-
-  // 每张卡片都要问「采纳了吗 / 属于哪个需求 / 勾上了吗」，逐张在数组里线性查找
-  // 就是 图片数 × 采纳数 的开销，这里一次建好索引。
-  const adoptedPhotoIds = useMemo(() => new Set(data.adoptions.map(item => String(item.photoId))), [data.adoptions])
   const requestTitles = useMemo(
     () => new Map(data.requests.map(item => [String(item.id), item.title])), [data.requests])
   const selectedAlbumIdSet = useMemo(() => new Set(selectedAlbumPhotoIds), [selectedAlbumPhotoIds])
@@ -467,7 +472,7 @@ export default function ProjectDetailPage() {
   const updatePhotoFilters = (next: ProjectPhotoFilters) => {
     setPhotoFilters(next)
     setPhotoPage(current => ({ ...current, current: 1 }))
-    const visibleIds = new Set(filterPhotos(data.photos, next).map(photo => photo.id))
+    const visibleIds = new Set(filterPhotos(data.photos, next, isAdoptedHere).map(photo => photo.id))
     setSelectedAlbumPhotoIds(current => current.filter(id => visibleIds.has(id)))
   }
 
@@ -639,31 +644,8 @@ export default function ProjectDetailPage() {
             </Button>}
         </Space>}
       >
-        {!!data.photos.length && <div className="project-photo-filters">
-          <FilterOutlined className="project-photo-filters-icon" />
-          <Select mode="multiple" allowClear showSearch maxTagCount="responsive" style={{ minWidth: 220, flex: '1 1 220px' }}
-            placeholder="按标签筛选（同时包含）" value={photoFilters.tags}
-            options={tagFilterOptions.map(tag => ({ value: tag, label: tag }))}
-            notFoundContent="这些图片还没有标签"
-            onChange={tags => updatePhotoFilters({ ...photoFilters, tags })} />
-          <DatePicker.RangePicker allowEmpty={[true, true]} style={{ flex: '0 1 280px' }}
-            placeholder={['拍摄开始日期', '拍摄结束日期']}
-            value={[
-              photoFilters.takenFrom ? dayjs(photoFilters.takenFrom) : null,
-              photoFilters.takenTo ? dayjs(photoFilters.takenTo) : null,
-            ]}
-            onChange={range => updatePhotoFilters({
-              ...photoFilters,
-              takenFrom: range?.[0]?.format('YYYY-MM-DD') || null,
-              takenTo: range?.[1]?.format('YYYY-MM-DD') || null,
-            })} />
-          <Select mode="multiple" allowClear showSearch maxTagCount="responsive" style={{ minWidth: 180, flex: '1 1 180px' }}
-            placeholder="按拍摄者筛选" value={photoFilters.photographers}
-            options={photographerOptions.map(name => ({ value: name, label: name }))}
-            onChange={photographers => updatePhotoFilters({ ...photoFilters, photographers })} />
-          {filtersActive && <Button type="link" onClick={() => updatePhotoFilters(emptyProjectPhotoFilters)}>
-            清空筛选</Button>}
-        </div>}
+        {!!data.photos.length && <ProjectPhotoFilterBar value={photoFilters} onChange={updatePhotoFilters}
+          tagOptions={tagFilterOptions} photographerOptions={photographerOptions} />}
         {filteredPhotos.length ? <>
           <Row gutter={[16, 20]} className="photo-grid">
             {pagedPhotos.map(photo => {

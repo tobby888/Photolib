@@ -142,6 +142,47 @@ class ProjectShareHttpTests {
                 .andExpect(jsonPath("$.data.items[0].id").value(PHOTO_ID));
     }
 
+    /**
+     * 前端 projectShare.ts 把多选条件发成重复的 {@code tags=a&tags=b}（不是 axios 默认的
+     * {@code tags[]=a}），日期是 YYYY-MM-DD，被引是枚举名。这里钉住这套参数格式能绑上。
+     */
+    @Test
+    void filtersAndFilterOptionsBindFromTheQueryStringTheGuestPageSends() throws Exception {
+        jdbc.sql("UPDATE photo SET tags_json = '[\"合影\",\"开幕式\"]', taken_at = :takenAt WHERE id = :id")
+                .param("takenAt", java.time.LocalDateTime.of(2026, 6, 2, 10, 0))
+                .param("id", PHOTO_ID).update();
+        String session = openSession("share-pass");
+        String photos = "/api/v1/public/shares/" + token + "/photos";
+
+        mvc.perform(anonymous(get(photos))
+                        .queryParam("tags", "合影", "开幕式")
+                        .queryParam("photographers", "张三", "李四")
+                        .queryParam("takenFrom", "2026-06-02").queryParam("takenTo", "2026-06-02")
+                        .queryParam("adoption", "NOT_ADOPTED")
+                        .header(ProjectSharePublicController.SESSION_HEADER, session))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(1))
+                .andExpect(jsonPath("$.data.items[0].id").value(PHOTO_ID));
+        mvc.perform(anonymous(get(photos)).queryParam("adoption", "ADOPTED")
+                        .header(ProjectSharePublicController.SESSION_HEADER, session))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(0));
+        mvc.perform(anonymous(get(photos)).queryParam("takenFrom", "2026-06-03")
+                        .header(ProjectSharePublicController.SESSION_HEADER, session))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(0));
+
+        mvc.perform(anonymous(get("/api/v1/public/shares/" + token + "/photo-filter-options"))
+                        .header(ProjectSharePublicController.SESSION_HEADER, session))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.tags[0]").value("合影"))
+                .andExpect(jsonPath("$.data.tags[1]").value("开幕式"))
+                .andExpect(jsonPath("$.data.photographers[0]").value("张三"));
+        // 候选同样是会话内容，没过密码拿不到。
+        mvc.perform(anonymous(get("/api/v1/public/shares/" + token + "/photo-filter-options")))
+                .andExpect(status().isForbidden());
+    }
+
     /** 管理端不在 permitAll 清单里，匿名一律 401。 */
     @Test
     void theManagementEndpointsStayBehindLogin() throws Exception {

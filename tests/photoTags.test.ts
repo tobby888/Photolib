@@ -51,6 +51,21 @@ test('拍摄者筛选是任意其一，且能与标签、时间叠加', () => {
   assert.equal(hasActiveFilters(emptyProjectPhotoFilters), false)
 })
 
+test('被引筛选按本选题的采用记录判断，能与其他条件叠加', () => {
+  const adopted = new Set(['2', '4'])
+  const isAdopted = (photo: { id: string }) => adopted.has(photo.id)
+  const ids = (filters: typeof emptyProjectPhotoFilters) =>
+    filterPhotos(photos, filters, isAdopted).map(photo => photo.id)
+
+  assert.deepEqual(ids({ ...emptyProjectPhotoFilters, adoption: 'ADOPTED' }), ['2', '4'])
+  assert.deepEqual(ids({ ...emptyProjectPhotoFilters, adoption: 'NOT_ADOPTED' }), ['1', '3'])
+  assert.deepEqual(ids({ ...emptyProjectPhotoFilters, adoption: null }), ['1', '2', '3', '4'])
+  assert.deepEqual(ids({ ...emptyProjectPhotoFilters, tags: ['合影'], adoption: 'NOT_ADOPTED' }), ['1'])
+  assert.equal(hasActiveFilters({ ...emptyProjectPhotoFilters, adoption: 'ADOPTED' }), true)
+  // 不传判断函数时一律当作未被引，不会因为漏传而把「未被引」筛成空。
+  assert.deepEqual(filterPhotos(photos, { ...emptyProjectPhotoFilters, adoption: 'NOT_ADOPTED' }).length, 4)
+})
+
 test('筛选候选：预设标签按定义顺序在前，其余按出现次数排序', () => {
   assert.deepEqual(collectTagOptions(['颁奖', '未使用'], photos), ['颁奖', '未使用', '合影', '开幕式'])
   assert.deepEqual(tagsOnPhotos(photos.slice(0, 2)), ['合影', '开幕式'])
@@ -86,7 +101,9 @@ test('选题详情页的批量改标签带上选题 id，筛选只作用于已�
   const detail = await read('pages/ProjectDetailPage.tsx')
   assert.match(detail, /<BatchTagModal mode=\{tagMode\} photos=\{selectedAlbumPhotos\} projectId=\{projectId\}/)
   assert.match(detail, /presets=\{presetTags\}/)
-  assert.match(detail, /filterPhotos\(data\.photos, photoFilters\)/)
+  assert.match(detail, /filterPhotos\(data\.photos, photoFilters, isAdoptedHere\)/)
+  // 被引是本选题里的状态，按本选题的采用记录判断，不能用图片上跨选题的 adoptionCount。
+  assert.match(detail, /const isAdoptedHere = useCallback\(\(photo: Photo\) => adoptedPhotoIds\.has\(/)
   // 相册分页只切展示：当前页取自筛选结果。
   assert.match(detail, /filteredPhotos\.slice\(/)
   assert.match(detail, /\{pagedPhotos\.map\(photo =>/)

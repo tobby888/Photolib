@@ -55,6 +55,32 @@ test('访客页的能力开关只用于隐藏按钮，权限判定在服务端',
   assert.match(page, /useRefreshOnResume/)
 })
 
+test('选题里的筛选全部对分享访客开放，且两页用同一个筛选组件', async () => {
+  const [page, detail, bar, client, controller] = await Promise.all([
+    read('pages/SharedProjectPage.tsx'),
+    read('pages/ProjectDetailPage.tsx'),
+    read('ProjectPhotoFilterBar.tsx'),
+    read('projectShare.ts'),
+    readBackend('share/ProjectSharePublicController.java'),
+  ])
+
+  assert.match(page, /<ProjectPhotoFilterBar value=\{filters\}/)
+  assert.match(detail, /<ProjectPhotoFilterBar value=\{photoFilters\}/)
+  for (const placeholder of ['按标签筛选', '拍摄开始日期', '按拍摄者筛选', '被引状态']) {
+    assert.match(bar, new RegExp(placeholder))
+  }
+  // 访客页是服务端分页：筛选随列表请求发出，"全选全部"翻页时也必须带上，否则会勾到筛掉的图。
+  assert.equal(page.match(/\.\.\.listQuery/g)?.length, 3)
+  // 多选参数必须是 tags=a&tags=b，Spring 的 List 参数绑不上 axios 默认的 tags[]=a。
+  assert.match(client, /paramsSerializer: \{ indexes: null \}/)
+  for (const param of ['List<String> tags', 'LocalDate takenFrom', 'LocalDate takenTo',
+    'List<String> photographers', 'AdoptionFilter adoption']) {
+    assert.ok(controller.includes(param), `后端列表接口缺少参数 ${param}`)
+  }
+  assert.match(controller, /@GetMapping\("\/photo-filter-options"\)/)
+  assert.match(client, /\/photo-filter-options/)
+})
+
 test('分享链接管理入口挂在 PROJECT_SHARE 上并懒加载', async () => {
   const [page, types] = await Promise.all([read('pages/ProjectDetailPage.tsx'), read('types.ts')])
 

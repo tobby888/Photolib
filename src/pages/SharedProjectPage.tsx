@@ -14,6 +14,10 @@ import { useRefreshOnResume } from '../hooks'
 import {
   clearShareSession, prepareSharedBatchDownload, readStoredShareSession, shareApi, storeShareSession,
 } from '../projectShare'
+import type { ShareFilterOptions } from '../projectShare'
+import { emptyProjectPhotoFilters, hasActiveFilters } from '../photoTags'
+import type { ProjectPhotoFilters } from '../photoTags'
+import ProjectPhotoFilterBar from '../ProjectPhotoFilterBar'
 import { MAX_SHARE_BATCH, dropFromSelection, isFullySelected, mergeSelection } from '../shareSelection'
 import type { ShareGuestAccess, SharePhoto } from '../types'
 
@@ -48,6 +52,8 @@ export default function SharedProjectPage() {
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [keyword, setKeyword] = useState('')
+  const [filters, setFilters] = useState<ProjectPhotoFilters>(emptyProjectPhotoFilters)
+  const [filterOptions, setFilterOptions] = useState<ShareFilterOptions>({ tags: [], photographers: [] })
   const [loadingPhotos, setLoadingPhotos] = useState(false)
   const [selected, setSelected] = useState<string[]>([])
   const [selectingAll, setSelectingAll] = useState(false)
@@ -106,11 +112,30 @@ export default function SharedProjectPage() {
     return () => { cancelled = true }
   }, [handleGuestError, session, token])
 
+  // 筛选条件与选题详情页同一组（ProjectPhotoFilterBar），但访客这边是服务端分页，
+  // 所以每次都随列表请求发给后端，而不是在前端对一页图片做筛选。
+  const listQuery = useMemo(() => ({ ...filters, keyword: keyword || undefined }), [filters, keyword])
+
+  useEffect(() => {
+    if (!session) return
+    let cancelled = false
+    // 候选取不到也能用：下拉为空而已，会话失效会由图片列表那一路请求说清楚。
+    shareApi.photoFilterOptions(token, session)
+      .then(options => { if (!cancelled) setFilterOptions(options) })
+      .catch(() => undefined)
+    return () => { cancelled = true }
+  }, [session, token])
+
   const loadPhotos = useCallback(async (quiet = false) => {
     if (!session) return
     if (!quiet) setLoadingPhotos(true)
     try {
-      const result = await shareApi.photos(token, session, { page, pageSize: PAGE_SIZE, keyword: keyword || undefined })
+      const result = await shareApi.photos(token, session, { ...listQuery, page, pageSize: PAGE_SIZE })
+      // 在「未被引」下标完最后一页的最后一张，这一页就空了，退回到还有图的最后一页。
+      if (!result.items.length && page > 1 && result.total > 0) {
+        setPage(Math.ceil(result.total / PAGE_SIZE))
+        return
+      }
       setPhotos(result.items)
       setTotal(result.total)
     } catch (reason) {
@@ -118,7 +143,12 @@ export default function SharedProjectPage() {
     } finally {
       if (!quiet) setLoadingPhotos(false)
     }
-  }, [handleGuestError, keyword, page, session, token])
+  }, [handleGuestError, listQuery, page, session, token])
+
+  const changeFilters = (next: ProjectPhotoFilters) => {
+    setFilters(next)
+    setPage(1)
+  }
 
   useEffect(() => { void loadPhotos() }, [loadPhotos])
   // 预签名预览地址只活 10 分钟，页面切回前台时静默重取一遍，理由见 src/previewFreshness.ts。
@@ -131,7 +161,7 @@ export default function SharedProjectPage() {
   const refreshPreviewUrl = useCallback(async (photoId: string) => {
     if (!session) return undefined
     refreshingPhotos.current ??= shareApi
-      .photos(token, session, { page, pageSize: PAGE_SIZE, keyword: keyword || undefined })
+      .photos(token, session, { ...listQuery, page, pageSize: PAGE_SIZE })
       .then(result => {
         setPhotos(result.items)
         setTotal(result.total)
@@ -142,7 +172,7 @@ export default function SharedProjectPage() {
     // 请求会把它说清楚，这里安静地让占位图顶上就行。
     const items = await refreshingPhotos.current.catch(() => [] as SharePhoto[])
     return items.find(item => item.id === photoId)?.thumbnailUrl
-  }, [keyword, page, session, token])
+  }, [listQuery, page, session, token])
 
   const unlock = async () => {
     const values = await passwordForm.validateFields()
@@ -215,6 +245,8 @@ export default function SharedProjectPage() {
       setPhotos(current => current.map(item =>
         item.id === photo.id ? { ...item, adopted: result.adopted } : item))
       message.success(result.adopted ? '已标记为被引' : '已取消被引标记')
+      // 按被引状态筛选时，改完的这张已不符合条件：静默重取这一页，让它移出、后面的图补上来。
+      if (filters.adoption) void loadPhotos(true)
     } catch (reason) {
       handleGuestError(reason)
     } finally {
@@ -243,7 +275,7 @@ export default function SharedProjectPage() {
       const ids: string[] = []
       for (let cursor = 1; ids.length < MAX_SHARE_BATCH; cursor += 1) {
         const result = await shareApi.photos(token, session, {
-          page: cursor, pageSize: SELECT_ALL_PAGE_SIZE, keyword: keyword || undefined,
+          ...listQuery, page: cursor, pageSize: SELECT_ALL_PAGE_SIZE,
         })
         ids.push(...result.items.map(photo => photo.id))
         if (!result.items.length || ids.length >= result.total) break
@@ -330,6 +362,8 @@ export default function SharedProjectPage() {
           </>}
         </Space>}
       >
+        <ProjectPhotoFilterBar value={filters} onChange={changeFilters}
+          tagOptions={filterOptions.tags} photographerOptions={filterOptions.photographers} />
         {loadingPhotos ? <Skeleton active paragraph={{ rows: 6 }} />
           : photos.length ? <Row gutter={[16, 20]} className="photo-grid">
             {photos.map(photo => <Col xs={24} sm={12} lg={8} xxl={6} key={photo.id}>
@@ -369,7 +403,12 @@ export default function SharedProjectPage() {
                 </Button>}
               </Card>
             </Col>)}
-          </Row> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="这个项目还没有可查看的图片" />}
+          </Row> : hasActiveFilters(filters) || keyword
+            ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有符合筛选条件的图片">
+              {hasActiveFilters(filters) && <Button type="link" onClick={() => changeFilters(emptyProjectPhotoFilters)}>
+                清空筛选</Button>}
+            </Empty>
+            : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="这个项目还没有可查看的图片" />}
         {total > PAGE_SIZE && <div className="share-pager">
           <Space wrap>
             <Button disabled={page <= 1 || loadingPhotos} onClick={() => setPage(current => current - 1)}>上一页</Button>

@@ -21,9 +21,11 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -248,6 +250,78 @@ class ProjectShareServiceTests {
         assertThat(service.photos(guest(created), 1, 30, null).items())
                 .filteredOn(photo -> photo.id().equals(PHOTO_B))
                 .allMatch(ProjectShareService.SharePhotoView::adopted);
+    }
+
+    /** 访客页开放选题详情页的全部筛选，规则与站内 src/photoTags.ts 的 filterPhotos 一致。 */
+    @Test
+    void guestsFilterByTagsTakenDatePhotographerAndAdoptionLikeTheProjectPage() {
+        // H2 会把写进 JSON 列的字符串参数再包成 JSON 字符串，读回来的正是 PhotoTags.parse
+        // 要容忍的那种形态——标签筛选因此必须按解析结果比，LIKE 拼不出来。
+        jdbc.sql("UPDATE photo SET tags_json = :tags, taken_at = :takenAt WHERE id = :id")
+                .param("tags", "[\"合影\",\"开幕式\"]").param("takenAt", LocalDateTime.of(2026, 6, 2, 23, 59, 59))
+                .param("id", PHOTO_A).update();
+        jdbc.sql("UPDATE photo SET tags_json = :tags, taken_at = :takenAt WHERE id = :id")
+                .param("tags", "[\"合影\"]").param("takenAt", LocalDateTime.of(2026, 6, 3, 0, 0))
+                .param("id", PHOTO_B).update();
+        adoptionService.adopt(project.getId(), List.of(PHOTO_B), "站内标记", minister);
+        ProjectShareLinkEntity link = guest(service.create(project.getId(), command(false, false), minister));
+
+        Function<ProjectShareService.PhotoFilter, List<Long>> ids = filter ->
+                service.photos(link, 1, 30, filter).items().stream()
+                        .map(ProjectShareService.SharePhotoView::id).toList();
+        LocalDate june2 = LocalDate.of(2026, 6, 2);
+
+        assertThat(ids.apply(ProjectShareService.PhotoFilter.NONE))
+                .containsExactlyInAnyOrder(PHOTO_A, PHOTO_B);
+        assertThat(ids.apply(filter(List.of("合影"), null, null, null, null)))
+                .containsExactlyInAnyOrder(PHOTO_A, PHOTO_B);
+        assertThat(ids.apply(filter(List.of("合影", "开幕式"), null, null, null, null)))
+                .containsExactly(PHOTO_A);
+        assertThat(service.photos(link, 1, 30, filter(List.of("没有这个标签"), null, null, null, null))
+                .total()).isZero();
+        // 日期两端都含整天：23:59:59 属于 6 月 2 日，次日零点属于 6 月 3 日。
+        assertThat(ids.apply(filter(null, june2, june2, null, null))).containsExactly(PHOTO_A);
+        assertThat(ids.apply(filter(null, june2.plusDays(1), null, null, null))).containsExactly(PHOTO_B);
+        assertThat(ids.apply(filter(null, null, june2, null, null))).containsExactly(PHOTO_A);
+        assertThat(ids.apply(filter(null, null, null, List.of("李四", "王五"), null)))
+                .containsExactly(PHOTO_B);
+        assertThat(ids.apply(filter(null, null, null, null, ProjectShareService.AdoptionFilter.ADOPTED)))
+                .containsExactly(PHOTO_B);
+        assertThat(ids.apply(filter(null, null, null, null, ProjectShareService.AdoptionFilter.NOT_ADOPTED)))
+                .containsExactly(PHOTO_A);
+        // 条件叠加。
+        assertThat(ids.apply(filter(List.of("合影"), null, null, List.of("张三"),
+                ProjectShareService.AdoptionFilter.ADOPTED))).isEmpty();
+
+        // 取消被引后立刻回到"未被引"里：筛选现查 adoption，软删掉的记录不算。
+        AdoptionEntity adoption = adoptionService.list(project.getId(), 1, 50, null, minister)
+                .items().getFirst();
+        adoptionService.cancel(project.getId(), adoption.getId());
+        assertThat(ids.apply(filter(null, null, null, null, ProjectShareService.AdoptionFilter.NOT_ADOPTED)))
+                .containsExactlyInAnyOrder(PHOTO_A, PHOTO_B);
+    }
+
+    private static ProjectShareService.PhotoFilter filter(List<String> tags, LocalDate takenFrom,
+                                                          LocalDate takenTo, List<String> photographers,
+                                                          ProjectShareService.AdoptionFilter adoption) {
+        return new ProjectShareService.PhotoFilter(null, tags, takenFrom, takenTo, photographers, adoption);
+    }
+
+    @Test
+    void filterOptionsComeFromTheSharedAlbumOnlyWithPresetsFirst() {
+        jdbc.sql("UPDATE project SET tags_json = '[\"颁奖\",\"合影\"]' WHERE id = :id")
+                .param("id", project.getId()).update();
+        jdbc.sql("UPDATE photo SET tags_json = '[\"开幕式\",\"合影\"]' WHERE id IN (:a, :b)")
+                .param("a", PHOTO_A).param("b", PHOTO_B).update();
+        jdbc.sql("UPDATE photo SET tags_json = '[\"项目外标签\"]' WHERE id = :id")
+                .param("id", PHOTO_OUTSIDE).update();
+        ProjectShareLinkEntity link = guest(service.create(project.getId(), command(false, false), minister));
+
+        ProjectShareService.FilterOptions options = service.filterOptions(link);
+
+        assertThat(options.tags()).containsExactly("颁奖", "合影", "开幕式");
+        // 项目外那张图的标签和拍摄者"王五"不能漏给访客。
+        assertThat(options.photographers()).containsExactlyInAnyOrder("张三", "李四");
     }
 
     @Test
