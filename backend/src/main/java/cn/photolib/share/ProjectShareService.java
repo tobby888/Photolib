@@ -11,6 +11,7 @@ import cn.photolib.common.util.LikeFilter;
 import cn.photolib.common.util.PublicId;
 import cn.photolib.permission.PermissionCode;
 import cn.photolib.photo.PhotoService;
+import cn.photolib.photo.PhotoTags;
 import cn.photolib.photo.mapper.PhotoMapper;
 import cn.photolib.photo.model.PhotoEntity;
 import cn.photolib.photo.model.PhotoStatus;
@@ -37,12 +38,20 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.Clock;
+import java.text.Collator;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 选题项目的对外分享链接。
@@ -253,17 +262,43 @@ public class ProjectShareService {
      * 站外的人没有理由拿到。</p>
      */
     public PageResponse<SharePhotoView> photos(ProjectShareLinkEntity link, int page, int pageSize,
-                                               String keyword) {
+                                               PhotoFilter requested) {
+        // 筛选条件与选题详情页那一排一致（src/photoTags.ts 的 filterPhotos）：标签同时包含、
+        // 拍摄者任意其一、拍摄日期两端都含整天、被引按本项目的 adoption 现查。站内是一次取回
+        // 全部图片在前端筛，访客通道是分页取的，所以放到服务端做。null 表示不筛选。
+        PhotoFilter filter = requested == null ? PhotoFilter.NONE : requested;
+        Long projectId = link.getProjectId();
+        String keyword = filter.keyword();
         String likeKeyword = LikeFilter.escape(keyword);
+        List<String> tags = PhotoTags.normalize(filter.tags());
+        List<String> photographers = filter.photographers() == null ? List.of()
+                : filter.photographers().stream().filter(StringUtils::hasText).distinct().toList();
+        LocalDate takenFrom = filter.takenFrom();
+        LocalDate takenTo = filter.takenTo();
+        // 标签存成 JSON 数组（有的驱动还会再包成 JSON 字符串），用 LIKE 拼不出"恰好是这个标签"，
+        // 所以和站内一样按 PhotoTags.parse 的结果比，先算出命中的 id。
+        Set<Long> tagMatches = tags.isEmpty() ? null : photoIdsWithAllTags(projectId, tags);
+        if (tagMatches != null && tagMatches.isEmpty()) {
+            return new PageResponse<>(List.of(), page, pageSize, 0, 0);
+        }
+        String adoptedIds = "SELECT photo_id FROM adoption WHERE deleted = 0 AND project_id = " + projectId;
         Page<PhotoEntity> result = photoMapper.selectPage(Page.of(page, pageSize),
                 Wrappers.<PhotoEntity>lambdaQuery()
                         .inSql(PhotoEntity::getId,
-                                "SELECT photo_id FROM photo_project WHERE project_id = " + link.getProjectId())
+                                "SELECT photo_id FROM photo_project WHERE project_id = " + projectId)
                         .eq(PhotoEntity::getStatus, PhotoStatus.AVAILABLE)
                         .and(StringUtils.hasText(keyword), q -> q
                                 .apply(LikeFilter.contains("title"), likeKeyword)
                                 .or().apply(LikeFilter.contains("description"), likeKeyword)
                                 .or().apply(LikeFilter.contains("tags_json"), likeKeyword))
+                        .in(tagMatches != null, PhotoEntity::getId, tagMatches)
+                        .in(!photographers.isEmpty(), PhotoEntity::getPhotographerName, photographers)
+                        .ge(takenFrom != null, PhotoEntity::getTakenAt,
+                                takenFrom == null ? null : takenFrom.atStartOfDay())
+                        .lt(takenTo != null, PhotoEntity::getTakenAt,
+                                takenTo == null ? null : takenTo.plusDays(1).atStartOfDay())
+                        .inSql(filter.adoption() == AdoptionFilter.ADOPTED, PhotoEntity::getId, adoptedIds)
+                        .notInSql(filter.adoption() == AdoptionFilter.NOT_ADOPTED, PhotoEntity::getId, adoptedIds)
                         .orderByDesc(PhotoEntity::getCreatedAt));
         Set<Long> adopted = adoptedPhotoIds(link.getProjectId(),
                 result.getRecords().stream().map(PhotoEntity::getId).toList());
@@ -275,6 +310,51 @@ public class ProjectShareService {
                 .toList(),
                 result.getCurrent(), result.getSize(), result.getTotal(), result.getPages());
     }
+
+    /**
+     * 访客页筛选下拉的候选，取自这条链接看得到的图片（项目相册里 AVAILABLE 的那些），
+     * 排序与站内 {@code collectTagOptions} / {@code collectPhotographers} 一致：
+     * 预设标签按定义顺序在前，其余按出现次数、再按中文排序；拍摄者按中文排序。
+     */
+    public FilterOptions filterOptions(ProjectShareLinkEntity link) {
+        Collator chinese = Collator.getInstance(Locale.CHINA);
+        Map<String, Integer> tagCounts = new HashMap<>();
+        Set<String> photographers = new HashSet<>();
+        for (SharedPhotoFacets facets : sharedPhotoFacets(link.getProjectId())) {
+            for (String tag : facets.tags()) tagCounts.merge(tag, 1, Integer::sum);
+            if (StringUtils.hasText(facets.photographerName())) photographers.add(facets.photographerName());
+        }
+        List<String> presets = projectService.presetTags(link.getProjectId());
+        List<String> tags = new ArrayList<>(presets);
+        tagCounts.entrySet().stream()
+                .filter(entry -> !presets.contains(entry.getKey()))
+                .sorted(Map.Entry.<String, Integer>comparingByValue().reversed()
+                        .thenComparing(Map.Entry::getKey, chinese))
+                .forEach(entry -> tags.add(entry.getKey()));
+        return new FilterOptions(List.copyOf(tags),
+                photographers.stream().sorted(chinese).toList());
+    }
+
+    private Set<Long> photoIdsWithAllTags(Long projectId, List<String> tags) {
+        return sharedPhotoFacets(projectId).stream()
+                .filter(facets -> facets.tags().containsAll(tags))
+                .map(SharedPhotoFacets::id)
+                .collect(Collectors.toSet());
+    }
+
+    private List<SharedPhotoFacets> sharedPhotoFacets(Long projectId) {
+        return jdbc.sql("""
+                        SELECT p.id, p.tags_json, p.photographer_name
+                        FROM photo p JOIN photo_project pp ON pp.photo_id = p.id
+                        WHERE pp.project_id = :projectId AND p.deleted = 0 AND p.status = 'AVAILABLE'
+                        """)
+                .param("projectId", projectId)
+                .query((rs, row) -> new SharedPhotoFacets(rs.getLong("id"),
+                        PhotoTags.parse(rs.getString("tags_json")), rs.getString("photographer_name")))
+                .list();
+    }
+
+    private record SharedPhotoFacets(Long id, List<String> tags, String photographerName) {}
 
     public PhotoService.DownloadUrl download(ProjectShareLinkEntity link, Long photoId) {
         requireDownloadAllowed(link);
@@ -476,4 +556,15 @@ public class ProjectShareService {
                                  String storedFileName, String thumbnailUrl, boolean adopted) {}
 
     public record SharePhotoAdoption(Long photoId, boolean adopted) {}
+
+    /** 被引筛选：本项目里有没有这张图的采用记录。{@code null} 表示不限。 */
+    public enum AdoptionFilter { ADOPTED, NOT_ADOPTED }
+
+    /** 访客图片列表的筛选条件，字段含义见 {@link #photos(ProjectShareLinkEntity, int, int, PhotoFilter)}。 */
+    public record PhotoFilter(String keyword, List<String> tags, LocalDate takenFrom, LocalDate takenTo,
+                              List<String> photographers, AdoptionFilter adoption) {
+        public static final PhotoFilter NONE = new PhotoFilter(null, List.of(), null, null, List.of(), null);
+    }
+
+    public record FilterOptions(List<String> tags, List<String> photographers) {}
 }

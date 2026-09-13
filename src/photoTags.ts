@@ -36,20 +36,37 @@ export interface ProjectPhotoFilters {
   takenTo?: string | null
   /** 拍摄者任意其一。 */
   photographers: string[]
+  /** 本选题里是否被引；null 表示不限。取值与后端 `ProjectShareService.AdoptionFilter` 一致。 */
+  adoption?: AdoptionFilter | null
 }
 
-export const emptyProjectPhotoFilters: ProjectPhotoFilters = { tags: [], takenFrom: null, takenTo: null, photographers: [] }
+export type AdoptionFilter = 'ADOPTED' | 'NOT_ADOPTED'
+
+export const adoptionFilterOptions: { value: AdoptionFilter; label: string }[] = [
+  { value: 'ADOPTED', label: '已被引' },
+  { value: 'NOT_ADOPTED', label: '未被引' },
+]
+
+export const emptyProjectPhotoFilters: ProjectPhotoFilters = {
+  tags: [], takenFrom: null, takenTo: null, photographers: [], adoption: null,
+}
 
 export function hasActiveFilters(filters: ProjectPhotoFilters): boolean {
-  return !!(filters.tags.length || filters.photographers.length || filters.takenFrom || filters.takenTo)
+  return !!(filters.tags.length || filters.photographers.length || filters.takenFrom || filters.takenTo
+    || filters.adoption)
 }
 
 /**
  * 选题详情页一次取回了全部项目图片，筛选直接在前端做。拍摄时间按「日」比较：
  * takenAt 是后端的 LocalDateTime（Asia/Shanghai，无时区后缀），取前 10 位即当地日期，
  * 不经过 Date 解析，避免浏览器时区把日期挪一天。
+ *
+ * 被引是「在这个选题里」的状态，图片自身带的 adoptionCount 是跨选题的总数，不能拿来判断，
+ * 所以由调用方按本选题的采用记录传入 isAdopted。分享页走服务端分页，同一套规则在
+ * `ProjectShareService.photos` 里实现。
  */
-export function filterPhotos<T extends TaggablePhoto>(photos: readonly T[], filters: ProjectPhotoFilters): T[] {
+export function filterPhotos<T extends TaggablePhoto>(photos: readonly T[], filters: ProjectPhotoFilters,
+  isAdopted: (photo: T) => boolean = () => false): T[] {
   const photographers = new Set(filters.photographers)
   return photos.filter(photo => {
     const tags = photo.tags || []
@@ -58,6 +75,7 @@ export function filterPhotos<T extends TaggablePhoto>(photos: readonly T[], filt
     const day = (photo.takenAt || '').slice(0, 10)
     if (filters.takenFrom && (!day || day < filters.takenFrom)) return false
     if (filters.takenTo && (!day || day > filters.takenTo)) return false
+    if (filters.adoption && isAdopted(photo) !== (filters.adoption === 'ADOPTED')) return false
     return true
   })
 }

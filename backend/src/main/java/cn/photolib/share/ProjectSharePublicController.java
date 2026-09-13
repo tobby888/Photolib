@@ -3,6 +3,7 @@ package cn.photolib.share;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.api.PageResponse;
 import cn.photolib.photo.PhotoService;
+import cn.photolib.photo.PhotoTags;
 import cn.photolib.statistics.ExportJobEntity;
 import cn.photolib.statistics.ExportService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -13,8 +14,10 @@ import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
 import java.util.List;
 
 /**
@@ -74,11 +77,27 @@ public class ProjectSharePublicController {
             @RequestParam(defaultValue = "1") @Min(1) int page,
             @RequestParam(defaultValue = "30") @Min(1) @Max(100) int pageSize,
             @RequestParam(required = false) @Size(max = 200) String keyword,
+            @RequestParam(required = false) @Size(max = PhotoTags.MAX_TAGS) List<String> tags,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate takenFrom,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate takenTo,
+            @RequestParam(required = false) @Size(max = 200) List<String> photographers,
+            @RequestParam(required = false) ProjectShareService.AdoptionFilter adoption,
             HttpServletRequest servletRequest) {
         rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.BROWSE, token,
                 servletRequest.getRemoteAddr());
-        return ApiResponse.ok(service.photos(service.resolveGuest(token, session),
-                page, pageSize, keyword));
+        return ApiResponse.ok(service.photos(service.resolveGuest(token, session), page, pageSize,
+                new ProjectShareService.PhotoFilter(keyword, tags, takenFrom, takenTo, photographers, adoption)));
+    }
+
+    /** 筛选下拉的候选：这条链接看得到的图片上的标签（含项目预设）和拍摄者。 */
+    @GetMapping("/photo-filter-options")
+    ApiResponse<ProjectShareService.FilterOptions> photoFilterOptions(
+            @PathVariable String token,
+            @RequestHeader(value = SESSION_HEADER, required = false) String session,
+            HttpServletRequest servletRequest) {
+        rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.BROWSE, token,
+                servletRequest.getRemoteAddr());
+        return ApiResponse.ok(service.filterOptions(service.resolveGuest(token, session)));
     }
 
     @PostMapping("/photos/{photoId}/download-url")
