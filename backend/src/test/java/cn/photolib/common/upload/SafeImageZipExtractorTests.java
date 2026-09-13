@@ -50,6 +50,52 @@ class SafeImageZipExtractorTests {
     }
 
     @Test
+    void skipsMacOsAppleDoubleFilesSoTheyNeverBecomePhotosOrCountAgainstTheQuota() throws Exception {
+        byte[] jpeg = {(byte) 0xff, (byte) 0xd8, (byte) 0xff, 1, 2, 3, 4};
+        // AppleDouble header: not a JPEG despite the extension.
+        byte[] appleDouble = {0x00, 0x05, 0x16, 0x07, 0x00, 0x02, 0x00, 0x00};
+        Map<String, byte[]> entries = new LinkedHashMap<>();
+        for (int index = 0; index < 100; index++) {
+            entries.put("活动/IMG_" + index + ".JPG", jpeg);
+            entries.put("__MACOSX/活动/._IMG_" + index + ".JPG", appleDouble);
+        }
+        entries.put("._IMG_4082.JPG", appleDouble);
+        entries.put("活动/._IMG_4083.png", appleDouble);
+        entries.put("__macosx/stray.jpg", appleDouble);
+
+        var result = extractor.extract(new ByteArrayInputStream(zip(entries)),
+                extension -> temporaryDirectory.resolve(UUID.randomUUID() + extension));
+
+        assertThat(result).hasSize(100);
+        assertThat(result).extracting(SafeImageZipExtractor.ExtractedImage::originalFileName)
+                .allSatisfy(name -> assertThat(name).startsWith("IMG_"));
+        for (var image : result) {
+            assertThat(Files.readAllBytes(image.localFile())).isEqualTo(jpeg);
+        }
+        try (var files = Files.list(temporaryDirectory)) {
+            assertThat(files).hasSize(100);
+        }
+    }
+
+    @Test
+    void anArchiveHoldingOnlyMacOsMetadataHasNoImages() {
+        assertThatThrownBy(() -> extractor.extract(
+                new ByteArrayInputStream(zip(Map.of("__MACOSX/._IMG_4082.JPG", new byte[] {0, 5, 22, 7}))),
+                extension -> temporaryDirectory.resolve(UUID.randomUUID() + extension)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("没有 JPG/PNG");
+    }
+
+    @Test
+    void keepsImagesWhoseNamesMerelyContainTheMetadataMarkers() {
+        assertThat(SafeImageZipExtractor.isMacOsMetadata("a._b.jpg")).isFalse();
+        assertThat(SafeImageZipExtractor.isMacOsMetadata("MACOSX/photo.jpg")).isFalse();
+        assertThat(SafeImageZipExtractor.isMacOsMetadata("__MACOSX_backup.jpg")).isFalse();
+        assertThat(SafeImageZipExtractor.isMacOsMetadata("_IMG_1.jpg")).isFalse();
+        assertThat(SafeImageZipExtractor.isMacOsMetadata("folder/._IMG_1.jpg")).isTrue();
+    }
+
+    @Test
     void rejectsAbsoluteTraversalUncDriveAndNulPaths() {
         assertThatThrownBy(() -> SafeImageZipExtractor.validateEntryPath("../photo.jpg"))
                 .isInstanceOf(IllegalArgumentException.class);
