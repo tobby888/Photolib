@@ -68,6 +68,7 @@ public class SafeImageZipExtractor {
             while ((entry = zip.getNextEntry()) != null) {
                 String entryName = validateEntryPath(decodeEntryName(entry.getName()));
                 if (entry.isDirectory() || entryName.endsWith("/")) continue;
+                if (isMacOsMetadata(entryName)) continue;
                 String baseName = baseName(entryName);
                 String originalFileName = maxDisplayNameCodePoints == null
                         ? ImageUploadPolicy.safeDisplayFileName(baseName)
@@ -169,6 +170,20 @@ public class SafeImageZipExtractor {
             }
         }
         return normalized;
+    }
+
+    /**
+     * macOS Finder "Compress" writes an AppleDouble companion ({@code ._IMG_4082.JPG}) for every
+     * file, usually under {@code __MACOSX/}. They carry the image's extension but hold resource-fork
+     * metadata, so treating them as images makes each one a photo that fails magic-number
+     * validation, and they count against the image quota. Skipped before the quota check.
+     */
+    static boolean isMacOsMetadata(String normalizedName) {
+        for (String segment : normalizedName.split("/")) {
+            if (segment.equalsIgnoreCase("__MACOSX")) return true;
+        }
+        int slash = normalizedName.lastIndexOf('/');
+        return normalizedName.startsWith("._", slash + 1);
     }
 
     private String baseName(String normalizedName) {
