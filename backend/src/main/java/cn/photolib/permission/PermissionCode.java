@@ -22,6 +22,7 @@ public enum PermissionCode {
     PHOTO_DOWNLOAD(PermissionCategory.PHOTO, "图库下载（含批量下载）"),
 
     WORKLOG_SUBMIT(PermissionCategory.WORKLOG, "工时申报"),
+    WORKLOG_SUBMIT_ANY(PermissionCategory.WORKLOG, "向任意需求申报工时（不必参与需求，选题结束后也可申报，仍限授权校区）"),
     WORKLOG_CONFIRM(PermissionCategory.WORKLOG, "工时确认和退回"),
     WORKLOG_EXPORT(PermissionCategory.WORKLOG, "工时导出"),
 

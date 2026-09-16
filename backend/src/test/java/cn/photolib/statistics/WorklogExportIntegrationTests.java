@@ -10,6 +10,7 @@ import org.apache.poi.ss.usermodel.CellType;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -17,6 +18,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,9 +38,41 @@ class WorklogExportIntegrationTests {
     @Autowired
     StatisticsService statistics;
 
+    private final List<Long> bases = new ArrayList<>();
+
+    private long newBase() {
+        long base = System.nanoTime() & Long.MAX_VALUE;
+        bases.add(base);
+        return base;
+    }
+
+    /**
+     * 本类不能用 @Transactional（导出在异步线程里读数据，必须提交），而 H2 内存库整轮测试共用。
+     * 不清掉的话，这里的 photo 行会被后面扫全表的照片测试（预览重建、批量上传等）看见，
+     * 启用的 app_user 也会被群发消息测试算进收件人。
+     */
+    @AfterEach
+    void cleanupTestData() {
+        for (long base : bases) {
+            for (String table : List.of("adoption", "photo", "worklog", "photo_request", "project")) {
+                jdbc.sql("DELETE FROM " + table + " WHERE id BETWEEN :min AND :max")
+                        .param("min", base).param("max", base + 99).update();
+            }
+            for (String table : List.of("export_job", "user_notification", "notification_log")) {
+                String column = table.equals("export_job") ? "created_by" : "user_id";
+                jdbc.sql("DELETE FROM " + table + " WHERE " + column + "=:userId")
+                        .param("userId", base).update();
+            }
+            jdbc.sql("DELETE FROM app_user WHERE id=:id").param("id", base).update();
+            jdbc.sql("DELETE FROM campus WHERE id BETWEEN :min AND :max")
+                    .param("min", base).param("max", base + 99).update();
+        }
+        bases.clear();
+    }
+
     @Test
     void exportsWorklogsAndCountsAdoptedPhotosByProjectCompletionRange() throws Exception {
-        long base = System.nanoTime() & Long.MAX_VALUE;
+        long base = newBase();
         long userId = base;
         long campusId = base + 1;
         long insideProjectId = base + 2;
@@ -139,7 +173,7 @@ class WorklogExportIntegrationTests {
 
     @Test
     void exportsAndAlertsWhenAdoptionHasNoMatchingConfirmedWorklog() throws Exception {
-        long base = System.nanoTime() & Long.MAX_VALUE;
+        long base = newBase();
         long userId = base;
         long campusId = base + 1;
         long projectId = base + 2;
@@ -203,7 +237,7 @@ class WorklogExportIntegrationTests {
 
     @Test
     void campusScopedStatisticsAndWorklogExportsOnlyIncludeAuthorizedCampuses() {
-        long base = System.nanoTime() & Long.MAX_VALUE;
+        long base = newBase();
         long userId = base;
         long campusA = base + 1;
         long campusB = base + 2;

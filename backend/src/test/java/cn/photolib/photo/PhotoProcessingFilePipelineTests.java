@@ -80,15 +80,16 @@ class PhotoProcessingFilePipelineTests {
             processing.submit(PHOTO_ID).get(30, TimeUnit.SECONDS);
 
             var photo = jdbc.sql("""
-                    SELECT status, size, width, height, thumbnail_size, original_delete_after
+                    SELECT status, size, width, height, thumbnail_size, original_delete_after, failure_reason
                     FROM photo WHERE id=:id
                     """).param("id", PHOTO_ID)
                     .query((rs, rowNum) -> new Object[]{
                             rs.getString("status"), rs.getLong("size"),
                             rs.getInt("width"), rs.getInt("height"),
-                            rs.getLong("thumbnail_size"), rs.getTimestamp("original_delete_after")})
+                            rs.getLong("thumbnail_size"), rs.getTimestamp("original_delete_after"),
+                            rs.getString("failure_reason")})
                     .single();
-            assertThat(photo[0]).isEqualTo("AVAILABLE");
+            assertThat(photo[0]).as("failure_reason=%s", photo[6]).isEqualTo("AVAILABLE");
             assertThat((long) photo[1]).isEqualTo(storage.stat(PHOTO_KEY).size());
             assertThat((int) photo[2]).isEqualTo(1200);
             assertThat((int) photo[3]).isEqualTo(800);
@@ -165,7 +166,7 @@ class PhotoProcessingFilePipelineTests {
             // The finished object uploaded fine, so the upload itself succeeded.
             // Only the preview is missing, and the gallery falls back to the
             // finished object until a repair pass regenerates it.
-            assertThat(photo[0]).isEqualTo("AVAILABLE");
+            assertThat(photo[0]).as("failure_reason=%s", photo[1]).isEqualTo("AVAILABLE");
             assertThat(photo[1]).isNull();
             assertThat(photo[2]).isNull();
             assertThat(photo[3]).isNull();

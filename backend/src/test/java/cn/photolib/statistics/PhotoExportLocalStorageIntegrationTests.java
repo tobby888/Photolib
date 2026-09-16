@@ -88,6 +88,15 @@ class PhotoExportLocalStorageIntegrationTests {
             zip.transferTo(extracted);
             assertThat(extracted.toByteArray()).isEqualTo(image);
             assertThat(zip.getNextEntry()).isNull();
+        } finally {
+            // 本类用独立的存储目录（另起一个 Spring 上下文），但 H2 内存库是整轮共用的：
+            // 留下这行 photo，后面的预览重建测试会去共享存储目录里找它的对象并报「本地对象不存在」；
+            // 留下这个启用账号，群发消息测试的收件人数也会多一个。
+            jdbc.sql("DELETE FROM photo WHERE id=:id").param("id", photoId).update();
+            jdbc.sql("DELETE FROM export_job WHERE created_by=:id").param("id", userId).update();
+            jdbc.sql("DELETE FROM user_notification WHERE user_id=:id").param("id", userId).update();
+            jdbc.sql("DELETE FROM notification_log WHERE user_id=:id").param("id", userId).update();
+            jdbc.sql("DELETE FROM app_user WHERE id=:id").param("id", userId).update();
         }
     }
 

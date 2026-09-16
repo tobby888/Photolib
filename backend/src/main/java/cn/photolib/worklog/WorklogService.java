@@ -51,7 +51,7 @@ public class WorklogService {
         requirePermission(user, PermissionCode.WORKLOG_SUBMIT);
         PhotoRequestEntity request = requestService.get(requestId);
         requireCampusAccess(request, user);
-        requireProjectOpen(request);
+        requireProjectOpen(request, user);
         requireParticipant(requestId, user);
         validate(command);
         CampusMemberEntity member = campusMemberService.getForWorklog(
@@ -97,7 +97,7 @@ public class WorklogService {
         validate(command);
         PhotoRequestEntity request = requestService.get(worklog.getRequestId());
         requireCampusAccess(request, user);
-        requireProjectOpen(request);
+        requireProjectOpen(request, user);
         CampusMemberEntity member = campusMemberService.getForWorklog(
                 command.memberContactId(), request.getCampusId());
         apply(worklog, command, member);
@@ -115,7 +115,7 @@ public class WorklogService {
         if (worklog.getStatus() != WorklogStatus.DRAFT && worklog.getStatus() != WorklogStatus.REJECTED) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "当前工时不可提交");
         }
-        requireProjectOpen(requestService.get(worklog.getRequestId()));
+        requireProjectOpen(requestService.get(worklog.getRequestId()), user);
         worklog.setStatus(WorklogStatus.SUBMITTED);
         worklog.setRejectReason(null);
         worklog.setVersion(version);
@@ -211,7 +211,10 @@ public class WorklogService {
     // 项目一旦完成或取消就不再计发工时，因此填报侧（新建、编辑、提交）都要挡住已结束项目下的
     // 需求；只挡新建的话，草稿仍能在项目结束后被提交上来。审核侧（确认、退回、删除）不受影响，
     // 否则项目结束时还没审完的工时会永远卡住。
-    private void requireProjectOpen(PhotoRequestEntity request) {
+    // 持有 WORKLOG_SUBMIT_ANY 的账号（默认只有管理员）用于项目结束后补录工时，不受这条限制；
+    // 但校区约束不放开：调用方仍要先过 requireCampusAccess，工作人员也只能取需求所属校区的通讯录。
+    private void requireProjectOpen(PhotoRequestEntity request, AuthenticatedUser user) {
+        if (user.hasPermission(PermissionCode.WORKLOG_SUBMIT_ANY)) return;
         ProjectEntity project = projectService.get(request.getProjectId());
         if (project.getStatus() == ProjectStatus.COMPLETED || project.getStatus() == ProjectStatus.CANCELLED) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "所属项目已结束，不能填报该需求的工时");
@@ -219,7 +222,7 @@ public class WorklogService {
     }
 
     private void requireParticipant(Long requestId, AuthenticatedUser user) {
-        if (user.isAdministrator()) return;
+        if (user.hasPermission(PermissionCode.WORKLOG_SUBMIT_ANY)) return;
         if (participantMapper.selectCount(Wrappers.<RequestParticipantEntity>lambdaQuery()
                 .eq(RequestParticipantEntity::getRequestId, requestId)
                 .eq(RequestParticipantEntity::getUserId, user.id())) == 0) {

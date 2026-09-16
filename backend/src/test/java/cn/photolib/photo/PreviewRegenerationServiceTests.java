@@ -61,15 +61,35 @@ class PreviewRegenerationServiceTests {
     private PhotoProcessingWorkspace workspace;
     @Autowired
     private TransactionTemplate transactions;
+    @Autowired
+    private PreviewProfileRepository profileRepository;
+
+    /**
+     * 应用启动核对写入的 preview_setting。本类每条用例都会删掉或改写它，而 H2 内存库整轮共用，
+     * 不还原的话后跑的上传流水线测试会因「数据库尚未保存预览图 profile」而处理失败。
+     */
+    private static PreviewProfileRepository.StoredProfile startupProfile;
 
     @BeforeEach
     void cleanBefore() {
+        if (startupProfile == null) {
+            startupProfile = profileRepository.findStored().orElse(null);
+        }
         cleanupTestData();
     }
 
     @AfterEach
     void cleanAfter() {
         cleanupTestData();
+        if (startupProfile != null) {
+            jdbc.sql("""
+                    INSERT INTO preview_setting (id, compression_ratio, generator_fingerprint)
+                    VALUES (1, :ratio, :fingerprint)
+                    """)
+                    .param("ratio", startupProfile.compressionRatio())
+                    .param("fingerprint", startupProfile.generatorFingerprint())
+                    .update();
+        }
     }
 
     @Test
