@@ -32,6 +32,7 @@ import BatchTagModal from '../BatchTagModal'
 import type { BatchTagMode } from '../BatchTagModal'
 import TagSelect from '../TagSelect'
 import { normalizeTags, tagRules } from '../photoTags'
+import { clearTagHistory, readRecentTags, recordTagSearch } from '../photoTagHistory'
 
 export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: boolean }) {
   const navigate = useNavigate()
@@ -65,17 +66,42 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
   const [projectPickerPhotos, setProjectPickerPhotos] = useState<Photo[]>([])
   const [favoriteUpdatingIds, setFavoriteUpdatingIds] = useState<Set<EntityId>>(() => new Set())
   const filters = readPhotoLibraryFilters(searchParams)
+  const tagHistoryScope = 'library-tags'
+  const [tagHistoryEpoch, setTagHistoryEpoch] = useState(0)
+  const tagSearchKey = JSON.stringify(filters.tags)
+  const recentTags = readRecentTags(tagHistoryScope)
   const [searchText, setSearchText] = useState(filters.keyword)
   const setFilters = (nextFilters: PhotoLibraryFilters) => {
     setSearchParams(writePhotoLibraryFilters(nextFilters), { replace: true })
   }
+  const setTagFilters = (tags: string[]) => {
+    const added = tags.filter(tag => !filters.tags.includes(tag))
+    if (added.length) recordTagSearch(tagHistoryScope, added)
+    setFilters({ ...filters, page: 1, tags })
+  }
+  const searchLabel = [
+    filters.keyword ? `关键词“${filters.keyword}”` : '',
+    filters.tags.length ? `标签 ${filters.tags.map(tag => `“${tag}”`).join('、')}` : '',
+  ].filter(Boolean).join(' 与 ')
   const selectedIds = selectedPhotos.map(photo => photo.id)
   const { data, setData, loading, error, reload, refresh } = useLoad(
-    () => api<PageData<Photo>>({
-      url: '/photos',
-      params: qs({ ...filters, pageSize: PHOTO_LIBRARY_PAGE_SIZE, favoritesOnly: favoritesOnly || undefined }),
-    }),
-    emptyPage<Photo>(), [filters.page, filters.keyword, filters.status, favoritesOnly],
+    () => {
+      const params: Record<string, unknown> = qs({
+        page: filters.page,
+        keyword: filters.keyword,
+        status: filters.status,
+        pageSize: PHOTO_LIBRARY_PAGE_SIZE,
+        favoritesOnly: favoritesOnly || undefined,
+      })
+      if (filters.tags.length) params.tags = filters.tags
+      return api<PageData<Photo>>({
+        url: '/photos',
+        params,
+        // 与选题分享页一致：多选条件发成 tags=a&tags=b，Spring 的 List 参数只认这种格式。
+        paramsSerializer: { indexes: null },
+      })
+    },
+    emptyPage<Photo>(), [filters.page, filters.keyword, filters.status, tagSearchKey, favoritesOnly],
   )
   useRefreshOnResume(refresh)
   useEffect(() => {
@@ -324,16 +350,34 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
         <Select value={filters.status} style={{ width: 150 }} options={[
           { value: 'AVAILABLE', label: '可用图片' }, { value: 'PROCESSING', label: '处理中' }, { value: 'ARCHIVED', label: '已归档' },
         ]} onChange={(status: PhotoLibraryStatus) => setFilters({ ...filters, page: 1, status })} />
+        <TagSelect presets={recentTags} value={filters.tags}
+          onChange={tags => setTagFilters(tags)}
+          placeholder="按标签筛选（回车添加，同时包含）" style={{ width: 280 }} />
       </Space>
+      {!!recentTags.length && <Space key={tagHistoryEpoch} size={4} wrap className="tag-history-chips">
+        <Typography.Text type="secondary">最近标签：</Typography.Text>
+        {recentTags.map(tag => <Tag key={tag} className="clickable-tag"
+          color={filters.tags.includes(tag) ? 'blue' : undefined}
+          onClick={() => setTagFilters(filters.tags.includes(tag)
+            ? filters.tags.filter(item => item !== tag)
+            : [...filters.tags, tag])}>
+          {tag}</Tag>)}
+        <Button type="link" size="small" onClick={() => {
+          clearTagHistory(tagHistoryScope)
+          setTagHistoryEpoch(current => current + 1)
+        }}>清空</Button>
+      </Space>}
       <Typography.Text type="secondary">共 {data.total} 张图片</Typography.Text>
     </Card>
     <DataState loading={loading} error={error} empty={!data.items.length} onRetry={reload}
-      emptyText={filters.keyword
-        ? `没有匹配“${filters.keyword}”的图片`
+      emptyText={searchLabel
+        ? `没有匹配 ${searchLabel} 的图片`
         : favoritesOnly ? '还没有收藏任何图片'
           : filters.status === 'AVAILABLE' ? '图库里还没有可用图片' : '这个状态下没有图片'}
-      emptyHint={filters.keyword
-        ? '标题、描述和标签都会被搜索，换个词或清空搜索框再看看。'
+      emptyHint={searchLabel
+        ? filters.tags.length
+          ? '图片必须同时包含所选标签，换个标签或清空筛选再看看。'
+          : '标题、描述和标签都会被搜索，换个词或清空搜索框再看看。'
         : favoritesOnly ? '在图片上点收藏，之后就能在这里集中查看。'
           : filters.status === 'AVAILABLE' ? '上传的图片处理完成后会出现在这里。' : '换一个状态筛选试试。'}>
       <Row gutter={[16, 20]} className="photo-grid">

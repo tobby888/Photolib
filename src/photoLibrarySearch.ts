@@ -12,12 +12,15 @@ export interface PhotoLibraryFilters {
   page: number
   keyword: string
   status: PhotoLibraryStatus
+  /** 同时包含全部所选标签；与后端的精确标签过滤对应。 */
+  tags: string[]
 }
 
 export const DEFAULT_PHOTO_LIBRARY_FILTERS: PhotoLibraryFilters = {
   page: 1,
   keyword: '',
   status: 'AVAILABLE',
+  tags: [],
 }
 
 export function readPhotoLibraryFilters(searchParams: URLSearchParams): PhotoLibraryFilters {
@@ -30,6 +33,7 @@ export function readPhotoLibraryFilters(searchParams: URLSearchParams): PhotoLib
     status: PHOTO_LIBRARY_STATUSES.includes(requestedStatus as PhotoLibraryStatus)
       ? requestedStatus as PhotoLibraryStatus
       : 'AVAILABLE',
+    tags: searchParams.getAll('tags').filter(Boolean),
   }
 }
 
@@ -38,6 +42,7 @@ export function writePhotoLibraryFilters(filters: PhotoLibraryFilters): URLSearc
   if (filters.keyword) searchParams.set('keyword', filters.keyword)
   if (filters.status !== DEFAULT_PHOTO_LIBRARY_FILTERS.status) searchParams.set('status', filters.status)
   if (filters.page > 1) searchParams.set('page', String(filters.page))
+  for (const tag of filters.tags ?? []) searchParams.append('tags', tag)
   return searchParams
 }
 

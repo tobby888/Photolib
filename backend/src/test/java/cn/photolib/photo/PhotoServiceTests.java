@@ -343,7 +343,7 @@ class PhotoServiceTests {
         linkPhotosToProjects();
         var result = photoService.list(
                 1, 20, null, testProject.getId(), null, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, false, false, managerUser);
+                null, null, PhotoStatus.AVAILABLE, false, false, false, List.of(), managerUser);
 
         // Then: 应该只看到自己上传的照片
         assertThat(result.items()).hasSize(1);
@@ -374,10 +374,48 @@ class PhotoServiceTests {
         linkPhotosToProjects();
         var result = photoService.list(
                 1, 20, null, testProject.getId(), null, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, false, false, adminUser);
+                null, null, PhotoStatus.AVAILABLE, false, false, false, List.of(), adminUser);
 
         // Then: 应该看到所有照片
         assertThat(result.items()).hasSizeGreaterThanOrEqualTo(2);
+    }
+
+    @Test
+    void listPhotos_byTags_shouldRequireAllTagsExactly() {
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, title, photographer_student_id, photographer_name, uploaded_by,
+                     campus_id, taken_at, tags_json, size, content_type, object_key, sha256, status)
+                VALUES
+                    (1701, '合影开幕', '20230001', '张三', :adminId, :campusId, NOW(),
+                     '["合影","开幕式"]', 1000, 'image/jpeg', 'photos/2026/tag-a.jpg', :sha1, 'AVAILABLE'),
+                    (1702, '只有合影', '20230001', '张三', :adminId, :campusId, NOW(),
+                     '["合影"]', 1000, 'image/jpeg', 'photos/2026/tag-b.jpg', :sha2, 'AVAILABLE'),
+                    (1703, '无关图片', '20230001', '张三', :adminId, :campusId, NOW(),
+                     '["颁奖"]', 1000, 'image/jpeg', 'photos/2026/tag-c.jpg', :sha3, 'AVAILABLE')
+                """)
+                .param("adminId", adminUser.id())
+                .param("campusId", testCampus.getId())
+                .param("sha1", "a".repeat(64))
+                .param("sha2", "b".repeat(64))
+                .param("sha3", "c".repeat(64))
+                .update();
+
+        var allTags = photoService.list(1, 20, null, null, null, null, null,
+                null, null, PhotoStatus.AVAILABLE, false, false, false,
+                List.of("合影", "开幕式"), adminUser);
+        assertThat(allTags.items()).extracting(PhotoService.PhotoView::id).containsExactly(1701L);
+
+        var singleTag = photoService.list(1, 20, null, null, null, null, null,
+                null, null, PhotoStatus.AVAILABLE, false, false, false,
+                List.of("合影"), adminUser);
+        assertThat(singleTag.items()).extracting(PhotoService.PhotoView::id)
+                .containsExactlyInAnyOrder(1701L, 1702L);
+
+        var none = photoService.list(1, 20, null, null, null, null, null,
+                null, null, PhotoStatus.AVAILABLE, false, false, false,
+                List.of("不存在的标签"), adminUser);
+        assertThat(none.items()).isEmpty();
     }
 
     @Test
@@ -407,16 +445,16 @@ class PhotoServiceTests {
         assertThat(photoService.get(1600L, ministerUser).favorited()).isFalse();
 
         var adminList = photoService.list(1, 20, null, null, null, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, false, false, adminUser);
+                null, null, PhotoStatus.AVAILABLE, false, false, false, List.of(), adminUser);
         assertThat(adminList.items()).filteredOn(photo -> photo.id().equals(1600L))
                 .singleElement().extracting(PhotoService.PhotoView::favorited).isEqualTo(true);
 
         var adminFavorites = photoService.list(1, 20, null, null, null, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, true, false, adminUser);
+                null, null, PhotoStatus.AVAILABLE, false, true, false, List.of(), adminUser);
         assertThat(adminFavorites.items()).extracting(PhotoService.PhotoView::id)
                 .containsExactly(1600L);
         var ministerFavorites = photoService.list(1, 20, null, null, null, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, true, false, ministerUser);
+                null, null, PhotoStatus.AVAILABLE, false, true, false, List.of(), ministerUser);
         assertThat(ministerFavorites.items()).isEmpty();
 
         photoService.favorite(1600L, ministerUser);
@@ -480,7 +518,7 @@ class PhotoServiceTests {
                 .hasMessageContaining("无权收藏其他成员");
 
         var favorites = photoService.list(1, 20, null, null, null, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, true, false, managerUser);
+                null, null, PhotoStatus.AVAILABLE, false, true, false, List.of(), managerUser);
         assertThat(favorites.items()).extracting(PhotoService.PhotoView::id)
                 .containsExactly(1601L);
         assertThat(jdbc.sql("SELECT COUNT(*) FROM photo_favorite WHERE user_id=:userId")
@@ -492,7 +530,7 @@ class PhotoServiceTests {
         jdbc.sql("INSERT INTO photo_favorite(user_id, photo_id) VALUES (:userId, 1603)")
                 .param("userId", managerUser.id()).update();
         var requestFavorites = photoService.list(1, 20, null, null, 2960L, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, true, false, managerUser);
+                null, null, PhotoStatus.AVAILABLE, false, true, false, List.of(), managerUser);
         assertThat(requestFavorites.items()).isEmpty();
 
         // A favorite relationship may outlive the photo's logical visibility.
@@ -502,7 +540,7 @@ class PhotoServiceTests {
         // Use a keyword to force a fresh MyBatis query after the out-of-band JDBC
         // update instead of reusing the transaction-local first-level cache.
         var favoritesAfterDelete = photoService.list(1, 20, "本人图片", null, null, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, true, false, managerUser);
+                null, null, PhotoStatus.AVAILABLE, false, true, false, List.of(), managerUser);
         assertThat(favoritesAfterDelete.items()).isEmpty();
         assertThat(favoritesAfterDelete.total()).isZero();
     }
@@ -516,7 +554,7 @@ class PhotoServiceTests {
 
         assertThatThrownBy(() -> photoService.list(
                 1, 20, null, testProject.getId(), null, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, true, false, projectOnly))
+                null, null, PhotoStatus.AVAILABLE, false, true, false, List.of(), projectOnly))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("无权访问收藏图片列表");
     }
@@ -658,7 +696,7 @@ class PhotoServiceTests {
         linkPhotosToProjects();
         var listed = photoService.list(
                 1, 20, null, testProject.getId(), null, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, false, false, adminUser);
+                null, null, PhotoStatus.AVAILABLE, false, false, false, List.of(), adminUser);
 
         assertThat(listed.items()).filteredOn(photo -> photo.id().equals(1012L))
                 .singleElement()
@@ -719,7 +757,7 @@ class PhotoServiceTests {
                 .update();
 
         var page = photoService.list(1, 20, "批量视图", null, null, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, false, false, adminUser);
+                null, null, PhotoStatus.AVAILABLE, false, false, false, List.of(), adminUser);
         assertThat(page.items()).extracting(PhotoService.PhotoView::id)
                 .containsExactlyInAnyOrder(2100L, 2101L, 2102L);
         var byId = page.items().stream().collect(java.util.stream.Collectors.toMap(
@@ -755,7 +793,7 @@ class PhotoServiceTests {
     @Test
     void listWithNoMatchingPhotosSkipsTheBatchLookups() {
         var empty = photoService.list(1, 20, "不存在的关键词-batch", null, null, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, false, false, adminUser);
+                null, null, PhotoStatus.AVAILABLE, false, false, false, List.of(), adminUser);
         assertThat(empty.items()).isEmpty();
         assertThat(empty.total()).isZero();
     }
@@ -892,7 +930,7 @@ class PhotoServiceTests {
 
     private List<Long> galleryIds(AuthenticatedUser user, boolean selectableOnly) {
         return photoService.list(1, 50, null, null, null, null, null, null, null,
-                        PhotoStatus.AVAILABLE, false, false, selectableOnly, user)
+                        PhotoStatus.AVAILABLE, false, false, selectableOnly, List.of(), user)
                 .items().stream().map(PhotoService.PhotoView::id).toList();
     }
 
@@ -1132,9 +1170,9 @@ class PhotoServiceTests {
 
         // When & Then: 两个项目的相册都能查到这张照片
         var inA = photoService.list(1, 20, null, testProject.getId(), null, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, false, false, adminUser);
+                null, null, PhotoStatus.AVAILABLE, false, false, false, List.of(), adminUser);
         var inB = photoService.list(1, 20, null, projectB.getId(), null, null, null,
-                null, null, PhotoStatus.AVAILABLE, false, false, false, adminUser);
+                null, null, PhotoStatus.AVAILABLE, false, false, false, List.of(), adminUser);
         assertThat(inA.items()).extracting(PhotoService.PhotoView::id).contains(1500L);
         assertThat(inB.items()).extracting(PhotoService.PhotoView::id).contains(1500L);
     }

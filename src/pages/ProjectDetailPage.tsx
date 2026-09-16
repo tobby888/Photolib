@@ -645,7 +645,8 @@ export default function ProjectDetailPage() {
         </Space>}
       >
         {!!data.photos.length && <ProjectPhotoFilterBar value={photoFilters} onChange={updatePhotoFilters}
-          tagOptions={tagFilterOptions} photographerOptions={photographerOptions} />}
+          tagOptions={tagFilterOptions} photographerOptions={photographerOptions}
+          historyScope={`project:${projectId}`} />}
         {filteredPhotos.length ? <>
           <Row gutter={[16, 20]} className="photo-grid">
             {pagedPhotos.map(photo => {

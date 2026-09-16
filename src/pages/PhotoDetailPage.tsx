@@ -94,6 +94,7 @@ export default function PhotoDetailPage({ favoritesOnly = false }: { favoritesOn
   // 「上一张 / 下一张」的顺序就是用户进来时那一屏图库的顺序：详情页 URL 里带着
   // 同一套筛选条件，照它重新取一页列表就能把当前图片定位回去（见 src/photoNeighbors.ts）。
   const libraryFilters = readPhotoLibraryFilters(new URLSearchParams(location.search))
+  const libraryTagKey = JSON.stringify(libraryFilters.tags)
   const libraryPageParams = (page: number) => qs({
     ...libraryFilters,
     page,
@@ -101,9 +102,13 @@ export default function PhotoDetailPage({ favoritesOnly = false }: { favoritesOn
     favoritesOnly: favoritesOnly || undefined,
   })
   const { data: libraryPage } = useLoad(
-    () => api<PageData<Photo>>({ url: '/photos', params: libraryPageParams(libraryFilters.page) }),
+    () => api<PageData<Photo>>({
+      url: '/photos',
+      params: libraryPageParams(libraryFilters.page),
+      paramsSerializer: { indexes: null },
+    }),
     emptyPage<Photo>(),
-    [libraryFilters.page, libraryFilters.keyword, libraryFilters.status, favoritesOnly],
+    [libraryFilters.page, libraryFilters.keyword, libraryFilters.status, libraryTagKey, favoritesOnly],
   )
   const neighbors = findPhotoNeighbors(libraryPage, photoId)
   const [movingTo, setMovingTo] = useState<'previous' | 'next' | null>(null)
@@ -115,7 +120,11 @@ export default function PhotoDetailPage({ favoritesOnly = false }: { favoritesOn
     try {
       // 同页内相邻图片的 ID 已经在手上，只有跨页才需要再取一页拿边上那张。
       const targetId = neighbor.id ?? pickEdgePhotoId(
-        await api<PageData<Photo>>({ url: '/photos', params: libraryPageParams(neighbor.page) }),
+        await api<PageData<Photo>>({
+          url: '/photos',
+          params: libraryPageParams(neighbor.page),
+          paramsSerializer: { indexes: null },
+        }),
         direction === 'previous' ? 'last' : 'first',
       )
       if (targetId === null) {

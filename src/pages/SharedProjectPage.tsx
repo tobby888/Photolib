@@ -363,7 +363,8 @@ export default function SharedProjectPage() {
         </Space>}
       >
         <ProjectPhotoFilterBar value={filters} onChange={changeFilters}
-          tagOptions={filterOptions.tags} photographerOptions={filterOptions.photographers} />
+          tagOptions={filterOptions.tags} photographerOptions={filterOptions.photographers}
+          historyScope={`share:${token}`} />
         {loadingPhotos ? <Skeleton active paragraph={{ rows: 6 }} />
           : photos.length ? <Row gutter={[16, 20]} className="photo-grid">
             {photos.map(photo => <Col xs={24} sm={12} lg={8} xxl={6} key={photo.id}>

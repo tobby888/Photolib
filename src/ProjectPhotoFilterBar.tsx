@@ -1,28 +1,56 @@
-import { Button, DatePicker, Select } from 'antd'
+import { Button, DatePicker, Select, Space, Tag, Typography } from 'antd'
 import { FilterOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
+import { useState } from 'react'
 import { adoptionFilterOptions, emptyProjectPhotoFilters, hasActiveFilters } from './photoTags'
 import type { AdoptionFilter, ProjectPhotoFilters } from './photoTags'
+import { clearTagHistory, readRecentTags, recordTagSearch } from './photoTagHistory'
 
 interface ProjectPhotoFilterBarProps {
   value: ProjectPhotoFilters
   onChange: (next: ProjectPhotoFilters) => void
   tagOptions: readonly string[]
   photographerOptions: readonly string[]
+  /** 记录最近标签历史的范围；不传则不显示历史，也不记录。 */
+  historyScope?: string
 }
 
 /**
  * 选题相册的一排筛选：标签、拍摄日期、拍摄者、被引状态。选题详情页（前端筛）和
  * 分享访客页（服务端筛）共用这一个组件，两边的筛选项因此不会各自漂移。
  */
-export default function ProjectPhotoFilterBar({ value, onChange, tagOptions, photographerOptions }: ProjectPhotoFilterBarProps) {
+export default function ProjectPhotoFilterBar(
+  { value, onChange, tagOptions, photographerOptions, historyScope }: ProjectPhotoFilterBarProps,
+) {
+  const [historyEpoch, setHistoryEpoch] = useState(0)
+  const recentTags = historyScope ? readRecentTags(historyScope) : []
+  const changeTags = (tags: string[]) => {
+    if (historyScope) {
+      const added = tags.filter(tag => !value.tags.includes(tag))
+      if (added.length) recordTagSearch(historyScope, added)
+    }
+    onChange({ ...value, tags })
+  }
   return <div className="project-photo-filters">
     <FilterOutlined className="project-photo-filters-icon" />
+    {!!recentTags.length && <Space key={historyEpoch} size={4} wrap className="tag-history-chips">
+      <Typography.Text type="secondary">最近标签：</Typography.Text>
+      {recentTags.map(tag => <Tag key={tag} className="clickable-tag"
+        color={value.tags.includes(tag) ? 'blue' : undefined}
+        onClick={() => changeTags(value.tags.includes(tag)
+          ? value.tags.filter(item => item !== tag)
+          : [...value.tags, tag])}>
+        {tag}</Tag>)}
+      <Button type="link" size="small" onClick={() => {
+        clearTagHistory(historyScope!)
+        setHistoryEpoch(current => current + 1)
+      }}>清空</Button>
+    </Space>}
     <Select mode="multiple" allowClear showSearch maxTagCount="responsive" style={{ minWidth: 220, flex: '1 1 220px' }}
       placeholder="按标签筛选（同时包含）" value={value.tags}
       options={tagOptions.map(tag => ({ value: tag, label: tag }))}
       notFoundContent="这些图片还没有标签"
-      onChange={tags => onChange({ ...value, tags })} />
+      onChange={changeTags} />
     <DatePicker.RangePicker allowEmpty={[true, true]} style={{ flex: '0 1 280px' }}
       placeholder={['拍摄开始日期', '拍摄结束日期']}
       value={[

@@ -19,6 +19,7 @@ import cn.photolib.project.model.ProjectStatus;
 import cn.photolib.storage.ObjectStorageService;
 import cn.photolib.storage.StorageProperties;
 import cn.photolib.permission.PermissionCode;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
@@ -159,10 +160,48 @@ public class PhotoService {
                                         Long requestId, String studentId, String photographerName,
                                         Long uploadedBy, Long campusId, PhotoStatus status,
                                         boolean includeAllStatuses, boolean favoritesOnly,
-                                        boolean selectableOnly, AuthenticatedUser user) {
+                                        boolean selectableOnly, List<String> tags,
+                                        AuthenticatedUser user) {
         requireListPermission(projectId, requestId, favoritesOnly, selectableOnly, user);
         if (requestId != null && user.isCampusScoped()) requestService.requireParticipantAccess(requestId, user);
         if (projectId != null) projectService.getVisible(projectId, user);
+        List<String> normalizedTags = PhotoTags.normalize(tags);
+        var query = buildListQuery(keyword, projectId, requestId, studentId, photographerName,
+                uploadedBy, campusId, status, includeAllStatuses, favoritesOnly, selectableOnly, user);
+        if (!normalizedTags.isEmpty()) {
+            Set<Long> tagMatches = photoIdsWithAllTags(buildListQuery(
+                    keyword, projectId, requestId, studentId, photographerName, uploadedBy,
+                    campusId, status, includeAllStatuses, favoritesOnly, selectableOnly, user),
+                    normalizedTags);
+            if (tagMatches.isEmpty()) {
+                return new PageResponse<>(List.of(), page, pageSize, 0, 0);
+            }
+            query.in(PhotoEntity::getId, tagMatches);
+        }
+        Page<PhotoEntity> result = mapper.selectPage(Page.of(page, pageSize), query);
+        List<Long> pagePhotoIds = result.getRecords().stream().map(PhotoEntity::getId).toList();
+        Set<Long> favoriteIds = pagePhotoIds.isEmpty() ? Set.of()
+                : Set.copyOf(favoriteMapper.findFavoritePhotoIds(user.id(), pagePhotoIds));
+        // 归属项目与被引数整页各查一次，不再逐张查（pageSize 最大 100，逐张查是 200 条额外 SQL）。
+        Map<Long, List<ProjectLink>> projectLinks = projectLinks(pagePhotoIds);
+        Map<Long, Long> adoptionCounts = adoptionCounts(pagePhotoIds);
+        return new PageResponse<>(result.getRecords().stream()
+                .map(photo -> toView(photo, favoriteIds.contains(photo.getId()),
+                        projectLinks.getOrDefault(photo.getId(), List.of()),
+                        adoptionCounts.getOrDefault(photo.getId(), 0L)))
+                .toList(),
+                result.getCurrent(), result.getSize(), result.getTotal(), result.getPages());
+    }
+
+    /**
+     * 拼出图片列表的基础查询（不包含分页与标签过滤）。标签过滤需要先在可见集合上做精确匹配，
+     * 所以这里单独抽出来，让 list 和 photoIdsWithAllTags 复用同一套可见范围规则。
+     */
+    private LambdaQueryWrapper<PhotoEntity> buildListQuery(
+            String keyword, Long projectId, Long requestId, String studentId,
+            String photographerName, Long uploadedBy, Long campusId, PhotoStatus status,
+            boolean includeAllStatuses, boolean favoritesOnly, boolean selectableOnly,
+            AuthenticatedUser user) {
         // selectableOnly 是好图精选选图弹窗用的：它要的是"这个账号能选用的图片"，而选图范围
         // 固定为授权校区（见 requireGallerySelectable），与权限组的图库可见范围无关。因此它
         // 既压过 SELF 的上传者过滤，也压过 GLOBAL 的跨校区放行——否则弹窗里会列出点下去必然
@@ -184,7 +223,7 @@ public class PhotoService {
                 : includeAllStatuses ? null : PhotoStatus.AVAILABLE;
         String likeKeyword = LikeFilter.escape(keyword);
         String likePhotographer = LikeFilter.escape(photographerName);
-        var query = Wrappers.<PhotoEntity>lambdaQuery()
+        return Wrappers.<PhotoEntity>lambdaQuery()
                 .and(StringUtils.hasText(keyword), q -> q
                         .apply(LikeFilter.contains("title"), likeKeyword)
                         .or().apply(LikeFilter.contains("description"), likeKeyword)
@@ -207,19 +246,21 @@ public class PhotoService {
                         "SELECT photo_id FROM photo_favorite WHERE user_id = " + user.id())
                 .eq(effectiveStatus != null, PhotoEntity::getStatus, effectiveStatus)
                 .orderByDesc(PhotoEntity::getCreatedAt);
-        Page<PhotoEntity> result = mapper.selectPage(Page.of(page, pageSize), query);
-        List<Long> pagePhotoIds = result.getRecords().stream().map(PhotoEntity::getId).toList();
-        Set<Long> favoriteIds = pagePhotoIds.isEmpty() ? Set.of()
-                : Set.copyOf(favoriteMapper.findFavoritePhotoIds(user.id(), pagePhotoIds));
-        // 归属项目与被引数整页各查一次，不再逐张查（pageSize 最大 100，逐张查是 200 条额外 SQL）。
-        Map<Long, List<ProjectLink>> projectLinks = projectLinks(pagePhotoIds);
-        Map<Long, Long> adoptionCounts = adoptionCounts(pagePhotoIds);
-        return new PageResponse<>(result.getRecords().stream()
-                .map(photo -> toView(photo, favoriteIds.contains(photo.getId()),
-                        projectLinks.getOrDefault(photo.getId(), List.of()),
-                        adoptionCounts.getOrDefault(photo.getId(), 0L)))
-                .toList(),
-                result.getCurrent(), result.getSize(), result.getTotal(), result.getPages());
+    }
+
+    /**
+     * 标签是 JSON 数组（H2 里还会被再包一层 JSON 字符串），用 LIKE 拼不出"恰好包含这个标签"，
+     * 所以和选题分享页同一套做法：先按可见范围查出候选的 id + tags_json，再在内存里精确比对。
+     */
+    private Set<Long> photoIdsWithAllTags(LambdaQueryWrapper<PhotoEntity> baseQuery, List<String> tags) {
+        baseQuery.select(PhotoEntity::getId, PhotoEntity::getTagsJson);
+        Set<Long> ids = new LinkedHashSet<>();
+        for (PhotoEntity photo : mapper.selectList(baseQuery)) {
+            if (PhotoTags.parse(photo.getTagsJson()).containsAll(tags)) {
+                ids.add(photo.getId());
+            }
+        }
+        return ids;
     }
 
     public PhotoView get(Long id, AuthenticatedUser user) {
