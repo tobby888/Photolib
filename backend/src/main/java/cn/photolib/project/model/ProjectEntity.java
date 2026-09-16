@@ -18,6 +18,8 @@ public class ProjectEntity extends BaseEntity {
     private String title;
     private String description;
     private ProjectStatus status;
+    /** 工作流程种类；存量选题一律是 {@link ProjectType#CREATION}。 */
+    private ProjectType type;
     private Long createdBy;
     private LocalDateTime completedAt;
     /** 预设标签的 JSON 数组；对外只暴露解析后的 {@link #getTags()}。 */

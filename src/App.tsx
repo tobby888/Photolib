@@ -23,6 +23,7 @@ const InitialPasswordPage = lazy(() => import('./pages/InitialPasswordPage'))
 const DashboardPage = lazy(() => import('./pages/DashboardPage'))
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage'))
 const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage'))
+const PhotoSelectionPage = lazy(() => import('./pages/PhotoSelectionPage'))
 const RequestsPage = lazy(() => import('./pages/RequestsPage'))
 const RequestDeliveryPage = lazy(() => import('./pages/RequestDeliveryPage'))
 const PhotosPage = lazy(() => import('./pages/PhotosPage'))
@@ -310,6 +311,11 @@ function Shell() {
             <Route path="/" element={<DashboardPage />} />
             <Route path="/projects" element={canViewProjects(user) ? <ProjectsPage /> : <Navigate to="/" />} />
             <Route path="/projects/:projectId" element={canViewProjects(user) ? <ProjectDetailPage /> : <Navigate to="/" />} />
+            {/*
+              活动选题的选片页。这里只挡「能不能进选题模块」，「是不是这个选题的选片人」
+              由后端的 /projects/{id}/selection/** 判定——前端藏按钮不是访问控制。
+            */}
+            <Route path="/projects/:projectId/select" element={canViewProjects(user) ? <PhotoSelectionPage /> : <Navigate to="/" />} />
             <Route path="/requests" element={hasPermission(user, 'REQUEST_VIEW') ? <RequestsPage /> : <Navigate to="/" />} />
             <Route path="/requests/:requestId" element={hasPermission(user, 'REQUEST_VIEW') ? <RequestDeliveryPage /> : <Navigate to="/" />} />
             <Route path="/photos" element={hasPermission(user, 'PHOTO_VIEW') ? <PhotosPage /> : <Navigate to="/" />} />

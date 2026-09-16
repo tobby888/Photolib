@@ -2604,3 +2604,270 @@ body {
   justify-content: center;
   padding-top: 18px;
 }
+
+/* ---------------------------------------------------------------------------
+   活动选题的选片工作台（issue #94）
+   布局照需求给的草图：外壳的侧边栏和顶栏照旧，内容区左边一列缩略图、右边大图。
+   两列都要自己滚动，所以整块用固定高度撑开而不是跟着页面流走——不然翻到第 300 张
+   时，左列已经把页面拉得几十屏长，右边的大图早被推出视野了。
+   --------------------------------------------------------------------------- */
+.selection-page { display: flex; flex-direction: column; gap: 12px; }
+.selection-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.selection-header h4.ant-typography { margin: 6px 0 2px; }
+.selection-header .ant-progress { max-width: 360px; margin-top: 6px; }
+.selection-alert { margin-bottom: 4px; }
+
+.selection-workspace {
+  display: grid;
+  grid-template-columns: 148px minmax(0, 1fr);
+  gap: 14px;
+  /* 顶栏 + 面包屑 + 页头 + 页脚一共约 400px（在 1440×900 上实测），剩下的全给工作区。
+     写成固定高度而不是让它跟着内容流走：翻到第 300 张时左列已经把页面拉得几十屏长，
+     右边的大图早被推出视野了。min-height 兜住小屏，那时页面允许整体滚动。 */
+  height: calc(100vh - 400px);
+  min-height: 420px;
+}
+
+.selection-filmstrip {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--studio-rule);
+  border-radius: 12px;
+  background: var(--studio-surface);
+}
+.selection-thumb {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 2;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #eceae3;
+  cursor: pointer;
+}
+.selection-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* 当前查看的这张用深色描边标出来（草图里的「深蓝色标注」）。 */
+.selection-thumb.is-current { border-color: #1d3f8f; box-shadow: 0 0 0 2px rgba(29, 63, 143, .22); }
+.selection-thumb.is-dropped img { opacity: .45; filter: grayscale(1); }
+.selection-thumb-index {
+  position: absolute; left: 4px; top: 4px;
+  padding: 0 5px; border-radius: 6px;
+  background: rgba(0, 0, 0, .55); color: #fff; font-size: 11px; line-height: 17px;
+}
+.selection-thumb-mark {
+  position: absolute; right: 4px; bottom: 4px;
+  display: grid; place-items: center; width: 19px; height: 19px;
+  border-radius: 50%; background: rgba(0, 0, 0, .55); color: #fff; font-size: 11px;
+}
+.selection-thumb-empty {
+  display: grid; place-items: center; width: 100%; height: 100%;
+  color: var(--studio-muted); font-size: 12px;
+}
+.selection-filmstrip-more { padding: 6px 2px; text-align: center; }
+
+/* `min-height: 0` 不是可选的：grid 项默认 `min-height: auto`（= min-content），
+   一张竖构图的原图会把这一格从 500px 顶成 1400px，工作区固定高度等于白写，
+   大图和工具栏一起被推到屏幕外。同理 min-width。 */
+.selection-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 12px;
+  border: 1px solid var(--studio-rule);
+  border-radius: 12px;
+  background: var(--studio-surface);
+}
+/* 大图区自己吃掉剩余高度，面板固定在下面，翻图时画面不会上下跳。
+   用 flex 而不是 grid + place-items:center：里面的 .selection-viewer 要**撑满**这块
+   （缩放和平移的边界按它的尺寸算），而 place-items:center 会把它缩成图片那么大，
+   于是缩放工具条贴着图片边缘、拖动范围也算错。居中交给 viewer 内部去做。 */
+.selection-stage-image {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  background: #14171a;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.selection-stage-image > .ant-empty { margin: auto; }
+/* grid 项默认 min-width/min-height: auto，对图片和画布来说那就是它的原始像素——
+   会把 max-*: 100% 顶掉，大图于是撑破工作区。整条链上每一层都要显式归零。 */
+.selection-stage-image img {
+  max-width: 100%;
+  max-height: 100%;
+  min-width: 0;
+  min-height: 0;
+  object-fit: contain;
+}
+/* 网格视角没有左边那一列，整块交给图墙。 */
+.selection-workspace.view-grid { grid-template-columns: minmax(0, 1fr); }
+
+/* 图墙。单元格统一比例、图片 object-fit: contain——选片要看的是整个画面，
+   cover 会把边角裁掉，而被裁掉的地方恰恰常是「有没有穿帮」的答案。
+   竖图于是在格子里显示成一条窄的，正好也把画幅方向直接透出来。 */
+.selection-grid {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+  align-content: start;
+  padding: 2px;
+}
+.selection-grid .selection-thumb { width: 100%; aspect-ratio: 4 / 3; }
+.selection-grid .selection-thumb img { object-fit: contain; background: #14171a; }
+.selection-grid-more { padding-top: 8px; text-align: center; }
+
+/* 可缩放的大图。frame 负责裁掉溢出的部分，img 自己带 transform。 */
+.selection-viewer { position: relative; flex: 1; min-width: 0; min-height: 0; display: flex; }
+.selection-viewer-frame {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: #14171a;
+  border-radius: 8px;
+  touch-action: none;
+}
+.selection-viewer-frame img {
+  max-width: 100%;
+  max-height: 100%;
+  min-width: 0;
+  min-height: 0;
+  object-fit: contain;
+  /* 放大之后按原始像素看清晰度，不要让浏览器再糊一层。 */
+  image-rendering: -webkit-optimize-contrast;
+  will-change: transform;
+}
+.selection-viewer-frame.is-zoomed { cursor: grab; }
+.selection-viewer-frame.is-dragging { cursor: grabbing; }
+.selection-viewer-tools {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(20, 23, 26, .72);
+  backdrop-filter: blur(6px);
+}
+.selection-viewer-scale { min-width: 46px; text-align: center; color: #fff; font-size: 12px; }
+.selection-viewer-hint {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  max-width: calc(100% - 140px);
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(20, 23, 26, .72);
+  font-size: 12px;
+}
+
+.selection-stage-panel { display: flex; flex-direction: column; gap: 10px; }
+.selection-stage-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.selection-stage-meta > div { display: flex; flex-direction: column; min-width: 0; }
+.selection-tag-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.selection-tag-row .ant-tag { cursor: pointer; user-select: none; }
+.selection-tag-key { margin-left: 6px; opacity: .55; font-size: 11px; }
+.selection-tag-deprecated.ant-tag-checkable-checked { background: #a8323a; }
+
+/* 编辑器是 .selection-stage（flex 列）的直接子元素，所以用 flex:1 吃掉剩余高度，
+   不能写 height:100%——百分比高度要求父元素有确定高度，而 flex 项的高度是 auto，
+   那条规则会被忽略，画布于是按原始像素撑出工作区（竖构图尤其明显）。 */
+.selection-editor { display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; }
+.selection-editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.selection-editor-canvas {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  background: #14171a;
+  border-radius: 8px;
+  overflow: hidden;
+}
+/* 这一层填满可用区域并让画布在其中居中缩放。不要改成 inline-flex 去「刚好包住画布」：
+   画布靠 max-width/max-height: 100% 等比缩小，而这两条百分比又要求父元素有确定尺寸，
+   两边互为前提，结果是画布按原始像素撑出容器（横图看不出来，竖过来立刻溢出）。
+   选框因此按量出来的画布盒子定位，见 PhotoCropEditor 里的 ResizeObserver。 */
+.selection-editor-frame {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+.selection-editor-frame.is-hidden { display: none; }
+.selection-editor-preview {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  min-width: 0;
+  min-height: 0;
+  object-fit: contain;
+  cursor: crosshair;
+  touch-action: none;
+}
+.selection-editor-crop {
+  position: absolute;
+  border: 2px dashed #e9ba70;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, .45);
+  pointer-events: none;
+}
+
+.empty-state { padding: 24px; text-align: center; color: var(--studio-muted); }
+
+@media (max-width: 991px) {
+  .selection-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 116px minmax(0, 1fr);
+    height: calc(100vh - 360px);
+  }
+  /* 网格视角在窄屏上没有缩略图条那一行，把那 116px 还给图墙——
+     否则底下的标签面板占掉大半，图墙只剩不到两行。 */
+  .selection-workspace.view-grid {
+    grid-template-rows: minmax(0, 1fr);
+    height: calc(100vh - 244px);
+  }
+  .selection-grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
+  /* 窄屏上缩略图改成横向一条，竖着摆会把大图挤没。
+     这条必须限定在 .selection-filmstrip 里：.selection-thumb 网格视角也在用，
+     不限定的话图墙的格子会被拉成 140px 宽的一条。 */
+  .selection-filmstrip { flex-direction: row; overflow-x: auto; overflow-y: hidden; }
+  .selection-filmstrip .selection-thumb { width: 140px; flex: 0 0 140px; height: 100%; aspect-ratio: auto; }
+}

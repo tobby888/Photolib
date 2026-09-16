@@ -5,6 +5,20 @@
 export const MAX_TAGS = 30
 export const MAX_TAG_LENGTH = 50
 
+/**
+ * 「这张图用不上」的保留标签（issue #94），与后端 `PhotoTags.DEPRECATED` 一致。
+ * 它不进选题预设，但在活动选题的选片页里永远可选；选题完成后由负责人确认，
+ * 打了它的图片会连同 OSS 对象一起删掉。
+ */
+export const DEPRECATED_TAG = 'deprecated'
+
+/** 界面上不直接显示 `deprecated` 这个英文串，但存的确实是它。 */
+export const DEPRECATED_TAG_LABEL = '不可用'
+
+export function isDeprecated(tags: readonly string[] | null | undefined): boolean {
+  return (tags || []).some(tag => tag.toLowerCase() === DEPRECATED_TAG)
+}
+
 export function normalizeTags(tags: readonly (string | null | undefined)[] | null | undefined): string[] {
   const result: string[] = []
   for (const tag of tags || []) {
