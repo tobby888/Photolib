@@ -24,7 +24,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * 已结束（已完成/已取消）项目下的需求不能再填报工时：新建、编辑、提交三个入口都要挡住，
- * 否则项目结束后还能补记工时，导出口径就对不上。
+ * 否则项目结束后还能补记工时，导出口径就对不上。持有 {@code WORKLOG_SUBMIT_ANY} 的账号例外，
+ * 但仍受需求校区约束。
  */
 @SpringBootTest
 @Transactional
@@ -40,11 +41,14 @@ class WorklogProjectStateTests {
     private long requestId;
     private long memberContactId;
     private AuthenticatedUser submitter;
+    private long base;
+    private long campusId;
 
     @BeforeEach
     void setUp() {
-        long base = System.nanoTime() & Long.MAX_VALUE;
+        base = System.nanoTime() & Long.MAX_VALUE;
         var campus = campuses.create("WL-PS-" + base, "工时项目状态校区");
+        campusId = campus.getId();
         long userId = base;
         projectId = base + 1;
         requestId = base + 2;
@@ -119,6 +123,67 @@ class WorklogProjectStateTests {
                 .hasMessageContaining("所属项目已结束");
         assertThat(jdbc.sql("SELECT status FROM worklog WHERE id=:id")
                 .param("id", draft.getId()).query(String.class).single()).isEqualTo("DRAFT");
+    }
+
+    @Test
+    void submitAnyPermissionFilesWorklogOnAnyRequestOfAnEndedProject() {
+        setProjectStatus("COMPLETED");
+        AuthenticatedUser admin = anyRequestSubmitter(base + 10, DataScope.GLOBAL, Set.of());
+
+        // 管理员不是该需求的参与人，项目也已完成，仍然可以新建、编辑、提交。
+        WorklogEntity draft = worklogs.create(requestId, command(WorklogStatus.DRAFT), admin);
+        WorklogEntity edited = worklogs.update(draft.getId(), command(WorklogStatus.DRAFT), 1, admin);
+        WorklogEntity submitted = worklogs.submit(edited.getId(), edited.getVersion(), admin);
+
+        assertThat(submitted.getStatus()).isEqualTo(WorklogStatus.SUBMITTED);
+        assertThat(submitted.getUserId()).isEqualTo(base + 10);
+
+        setProjectStatus("CANCELLED");
+        assertThat(worklogs.create(requestId, command(WorklogStatus.SUBMITTED), admin).getStatus())
+                .isEqualTo(WorklogStatus.SUBMITTED);
+    }
+
+    @Test
+    void submitAnyPermissionStillRequiresTheRequestCampusMember() {
+        setProjectStatus("COMPLETED");
+        AuthenticatedUser admin = anyRequestSubmitter(base + 10, DataScope.GLOBAL, Set.of());
+        var otherCampus = campuses.create("WL-PS-O-" + base, "工时项目状态其他校区");
+        long otherMember = base + 11;
+        jdbc.sql("""
+                INSERT INTO campus_member(id, campus_id, student_id, name, enabled)
+                VALUES (:id, :campusId, :studentId, '其他校区成员', TRUE)
+                """).param("id", otherMember).param("campusId", otherCampus.getId())
+                .param("studentId", "PS-O-" + base).update();
+
+        assertThatThrownBy(() -> worklogs.create(requestId, new WorklogService.WorklogCommand(
+                LocalDate.now(), otherMember, 60, 0, "跨校区成员", WorklogStatus.SUBMITTED), admin))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("需求所属校区通讯录");
+    }
+
+    @Test
+    void submitAnyPermissionDoesNotReachRequestsOutsideTheAuthorizedCampus() {
+        setProjectStatus("COMPLETED");
+        var otherCampus = campuses.create("WL-PS-S-" + base, "工时项目状态授权校区");
+        AuthenticatedUser scoped = anyRequestSubmitter(base + 12, DataScope.CAMPUS, Set.of(otherCampus.getId()));
+
+        assertThatThrownBy(() -> worklogs.create(requestId, command(WorklogStatus.SUBMITTED), scoped))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("无权访问该校区");
+
+        AuthenticatedUser inCampus = anyRequestSubmitter(base + 13, DataScope.CAMPUS, Set.of(campusId));
+        assertThat(worklogs.create(requestId, command(WorklogStatus.SUBMITTED), inCampus).getStatus())
+                .isEqualTo(WorklogStatus.SUBMITTED);
+    }
+
+    private AuthenticatedUser anyRequestSubmitter(long userId, DataScope scope, Set<Long> campusIds) {
+        jdbc.sql("""
+                INSERT INTO app_user(id, username, password_hash, display_name, role, enabled, must_change_password)
+                VALUES (:id, :username, 'hash', '补录工时账号', 'ADMIN', TRUE, FALSE)
+                """).param("id", userId).param("username", "worklog-any-" + userId).update();
+        return new AuthenticatedUser(userId, "worklog-any-" + userId, "补录工时账号",
+                UserRole.ADMIN, null, false, 92L, "CUSTOM", "补录工时组", scope,
+                Set.of(PermissionCode.WORKLOG_SUBMIT, PermissionCode.WORKLOG_SUBMIT_ANY), campusIds);
     }
 
     private void setProjectStatus(String status) {

@@ -43,6 +43,7 @@ export default function WorklogsPage() {
   const reviewer = hasPermission(user, 'WORKLOG_CONFIRM')
   const canExport = hasPermission(user, 'WORKLOG_EXPORT')
   const canSubmit = hasPermission(user, 'WORKLOG_SUBMIT')
+  const canSubmitAny = hasPermission(user, 'WORKLOG_SUBMIT_ANY')
   const { data, loading, error, reload } = useLoad(
     () => api<PageData<Worklog>>({ url: '/worklogs', params: qs({ ...filters, pageSize: 20 }) }),
     emptyPage<Worklog>(), [filters.page, filters.status],
@@ -50,6 +51,16 @@ export default function WorklogsPage() {
   const { data: requestOptions, loading: requestsLoading } = useLoad(
     async () => {
       if (!canSubmit || !user) return []
+      if (canSubmitAny) {
+        // 「向任意需求申报工时」不要求参与、也不看选题是否结束，所以列出所有看得到的需求；
+        // 校区范围由 /requests 按授权校区裁剪，后端填报时也会再校验一次。
+        const items: PhotoRequest[] = []
+        for (let page = 1; ; page++) {
+          const result = await api<PageData<PhotoRequest>>({ url: '/requests', params: { page, pageSize: 100 } })
+          items.push(...result.items)
+          if (result.items.length === 0 || items.length >= Number(result.total)) return items
+        }
+      }
       // 后端拒绝在已结束（已完成/已取消）项目的需求下填报工时，所以这里先把这些需求
       // 从下拉里去掉，别让人选完才吃一个报错。只查已结束的两种状态，是为了让 100 条的
       // 上限花在真正需要屏蔽的项目上；万一漏掉一个，后端仍会挡住。
@@ -65,7 +76,7 @@ export default function WorklogsPage() {
       return requests.items.filter(item =>
         item.status !== 'CANCELLED' && !endedProjectIds.has(item.projectId))
     },
-    [] as PhotoRequest[], [user?.id, canSubmit],
+    [] as PhotoRequest[], [user?.id, canSubmit, canSubmitAny],
   )
   const { data: directory, loading: directoryLoading } = useLoad(
     () => canSubmit
@@ -335,8 +346,8 @@ export default function WorklogsPage() {
             showSearch
             optionFilterProp="label"
             loading={requestsLoading}
-            placeholder={requestOptions.length ? '请选择已接受的需求' : '暂无可填报工时的需求'}
-            notFoundContent={requestsLoading ? '正在加载需求…' : '暂无可填报工时的需求（已结束项目的需求不会出现在这里）'}
+            placeholder={requestOptions.length ? (canSubmitAny ? '请选择需求' : '请选择已接受的需求') : '暂无可填报工时的需求'}
+            notFoundContent={requestsLoading ? '正在加载需求…' : canSubmitAny ? '暂无可填报工时的需求' : '暂无可填报工时的需求（已结束项目的需求不会出现在这里）'}
             options={requestSelectOptions(requestOptions, campuses)}
           />
         </Form.Item>
