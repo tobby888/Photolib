@@ -38,6 +38,7 @@ class EventProjectSelectionTests {
     private static final long OWNER_ID = 9600L;
     private static final long SELECTOR_ID = 9601L;
     private static final long OUTSIDER_ID = 9602L;
+    private static final long UPLOADER_ID = 9603L;
 
     @Autowired
     private ProjectService projectService;
@@ -51,6 +52,7 @@ class EventProjectSelectionTests {
     private AuthenticatedUser owner;
     private AuthenticatedUser selector;
     private AuthenticatedUser outsider;
+    private AuthenticatedUser uploader;
     private ProjectEntity event;
     private ProjectEntity creation;
     private int seed;
@@ -67,13 +69,18 @@ class EventProjectSelectionTests {
                 VALUES
                     (9600, 'evt-owner', 'hash', '活动负责人', 'MINISTER', null, true, false),
                     (9601, 'evt-selector', 'hash', '选片同学', 'CAMPUS_MANAGER', 9500, true, false),
-                    (9602, 'evt-outsider', 'hash', '路人甲', 'CAMPUS_MANAGER', 9500, true, false)
+                    (9602, 'evt-outsider', 'hash', '路人甲', 'CAMPUS_MANAGER', 9500, true, false),
+                    (9603, 'evt-uploader', 'hash', '只会传图的同学', 'CAMPUS_MANAGER', 9500, true, false)
                 """).update();
         owner = new AuthenticatedUser(OWNER_ID, "evt-owner", "活动负责人", UserRole.MINISTER, null, false);
         // 选片人刻意只有「看接到需求的选题」这一条权限：既没有 PROJECT_VIEW_ALL，
         // 也没有任何图库权限。能进选片页必须完全靠指派。
         selector = restrictedUser(SELECTOR_ID, "evt-selector", "选片同学");
         outsider = restrictedUser(OUTSIDER_ID, "evt-outsider", "路人甲");
+        // 一条 PROJECT_* 都没有的权限组：进得了系统，但进不了选题模块。
+        uploader = new AuthenticatedUser(UPLOADER_ID, "evt-uploader", "只会传图的同学",
+                UserRole.CAMPUS_MANAGER, CAMPUS_ID, false, -1L, "UPLOADER", "上传组",
+                DataScope.GLOBAL, Set.of(PermissionCode.PHOTO_UPLOAD), Set.of(CAMPUS_ID));
 
         event = projectService.create("校庆晚会", "说明", ProjectStatus.ACTIVE,
                 List.of("开幕", "合影", "颁奖"), ProjectType.EVENT, owner);
@@ -137,6 +144,23 @@ class EventProjectSelectionTests {
         // 没被指派的人一点都没多出来。
         assertThatThrownBy(() -> projectService.requireSelectionAccess(event.getId(), outsider))
                 .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void assignmentDoesNotSubstituteForTheProjectViewPermission() {
+        // 指派放行的是「看不看得到这一个选题」，不是「进不进得了选题模块」。
+        // 后者仍由权限组的 PROJECT_VIEW / PROJECT_VIEW_ALL 决定，且是三道门里的第一道
+        // （控制器的 @PreAuthorize、requireViewPermission、前端路由 canViewProjects）。
+        // 三个内置权限组都带 PROJECT_VIEW，所以只有自建的「无任何选题权限」权限组会撞上。
+        projectService.replaceSelectors(event.getId(), List.of(UPLOADER_ID), owner);
+        assertThat(projectService.isSelector(event.getId(), UPLOADER_ID)).isTrue();
+
+        assertThatThrownBy(() -> projectService.requireSelectionAccess(event.getId(), uploader))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("无权执行该选题操作");
+        assertThatThrownBy(() -> projectService.getDetail(event.getId(), uploader))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("无权执行该选题操作");
     }
 
     @Test

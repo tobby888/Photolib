@@ -852,7 +852,17 @@ export default function ProjectDetailPage() {
         onOk={saveSelectors} okText="保存名单" confirmLoading={saving}>
         <Typography.Paragraph type="secondary">
           选片人可以打开这个选题的选片页，逐张打标签、标记{DEPRECATED_TAG_LABEL}，并对图片做裁切和旋转。
-          被指派本身就是查看这个选题的凭据，不需要另外给权限。新加入的人会收到一条站内通知。
+          被指派本身就是查看这个选题的凭据——不必先让他接一条需求，也不需要图库权限。
+          新加入的人会收到一条站内通知。
+        </Typography.Paragraph>
+        {/*
+          唯一的前置条件，写在这里而不是等他打开页面报 403：指派放行的是「看不看得到
+          这一个选题」，不是「进不进得了选题模块」，后者仍由权限组决定。三个内置权限组
+          都带这条权限，所以只有自建的「无任何选题权限」权限组会撞上。
+        */}
+        <Typography.Paragraph type="secondary">
+          前提：对方的权限组要有「选题查看」权限。内置的管理员、部长和校区负责人都有；
+          若自建的权限组一条选题权限都没勾，他会打不开选片页。
         </Typography.Paragraph>
         <Select mode="multiple" style={{ width: '100%' }} loading={candidatesLoading}
           value={selectorIds} onChange={setSelectorIds} showSearch
