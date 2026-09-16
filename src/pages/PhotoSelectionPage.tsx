@@ -75,19 +75,34 @@ export default function PhotoSelectionPage() {
   const [savingEdit, setSavingEdit] = useState(false)
   const [taggingId, setTaggingId] = useState<string | null>(null)
   const filmstripRef = useRef<HTMLDivElement>(null)
+  // loader 要读「已经加载到第几页」，但它不能把 loadedPages 列进依赖——那会让
+  // 每加载一页都整页重取一次。用 ref 取当前值。
+  const loadedPagesRef = useRef(0)
+  loadedPagesRef.current = loadedPages
 
   const { data: project, loading, error, reload, refresh } = useLoad(
     async () => {
       const detail = await api<Project>({ url: `/projects/${projectId}` })
-      const first = await api<PageData<SelectionPhoto>>({
-        url: `/projects/${projectId}/selection/photos`,
-        params: { page: 1, pageSize: PAGE_SIZE },
-      })
-      setPhotos(first.items)
-      setTotal(first.total)
-      setLoadedPages(1)
-      setActiveId(current => (current && first.items.some(item => item.id === current))
-        ? current : (first.items[0]?.id ?? null))
+      // 重取已经加载过的那几页，而不是退回第一页：`useRefreshOnResume` 会在页面切回
+      // 前台时静默跑这个 loader（为的是换一批新的签名地址），而选片的人可能已经翻到
+      // 第 400 张——把他扔回第 1 张，比过期的图片地址更让人火大。
+      const pages = Math.max(1, loadedPagesRef.current)
+      const loaded: SelectionPhoto[] = []
+      let latestTotal = 0
+      for (let page = 1; page <= pages; page += 1) {
+        const result = await api<PageData<SelectionPhoto>>({
+          url: `/projects/${projectId}/selection/photos`,
+          params: { page, pageSize: PAGE_SIZE },
+        })
+        loaded.push(...result.items)
+        latestTotal = result.total
+        if (loaded.length >= result.total) break
+      }
+      setPhotos(loaded)
+      setTotal(latestTotal)
+      setLoadedPages(pages)
+      setActiveId(current => (current && loaded.some(item => String(item.id) === String(current)))
+        ? current : (loaded[0]?.id as string ?? null))
       return detail
     },
     null as Project | null,
