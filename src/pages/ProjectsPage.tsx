@@ -1,5 +1,5 @@
 import {
-  App, Button, Card, Col, Form, Input, Modal, Pagination, Row, Select, Space, Tag, Typography,
+  App, Button, Card, Col, Form, Input, Modal, Pagination, Radio, Row, Select, Space, Tag, Typography,
 } from 'antd'
 import { ArrowRightOutlined, FolderOpenOutlined, PlusOutlined, SearchOutlined, TagsOutlined } from '@ant-design/icons'
 import { useState } from 'react'
@@ -15,6 +15,15 @@ import { markdownExcerpt } from '../MarkdownRenderer'
 import { hasPermission } from '../permissions'
 import { normalizeTags, tagRules } from '../photoTags'
 import TagSelect from '../TagSelect'
+
+/**
+ * 选题类型（issue #94）。建立之后不可更改：类型决定了整条工作流程，
+ * 中途切换会让已经打好的标签和已经接下的需求处在两套规则之间。
+ */
+const typeOptions = [
+  { value: 'CREATION', label: '创作选题', hint: '原有流程：拆需求、接单、上传、标记被引' },
+  { value: 'EVENT', label: '活动选题', hint: '整批进库后由指定选片人打标签，结束后清理未选中的图片' },
+] as const
 
 const statusOptions = [
   { value: 'DRAFT', label: '草稿' }, { value: 'ACTIVE', label: '进行中' },
@@ -70,7 +79,12 @@ export default function ProjectsPage() {
       <Row gutter={[16, 16]} className="project-grid">
         {data.items.map((item) => <Col xs={24} md={12} xl={8} key={item.id}>
           <Card className="project-card" hoverable>
-            <div className="project-card-top"><div className="folder-icon"><FolderOpenOutlined /></div><StatusTag value={item.status} /></div>
+            <div className="project-card-top"><div className="folder-icon"><FolderOpenOutlined /></div>
+              <Space size={4}>
+                {item.type === 'EVENT' && <Tag color="purple" variant="filled">活动选题</Tag>}
+                <StatusTag value={item.status} />
+              </Space>
+            </div>
             <Typography.Title level={4}>{item.title}</Typography.Title>
             <Typography.Paragraph ellipsis={{ rows: 2 }}>{markdownExcerpt(item.description) || '尚未添加项目说明'}</Typography.Paragraph>
             {!!item.tags?.length && <div className="project-card-tags">
@@ -89,7 +103,12 @@ export default function ProjectsPage() {
     </DataState>
     <Modal title="新建选题项目" width={760} open={open} onCancel={() => setOpen(false)} onOk={create} confirmLoading={saving}
       okText="创建项目" cancelText="取消">
-      <Form form={form} layout="vertical" initialValues={{ status: 'DRAFT' }} requiredMark={false}>
+      <Form form={form} layout="vertical" initialValues={{ status: 'DRAFT', type: 'CREATION' }} requiredMark={false}>
+        <Form.Item label="选题类型" name="type" extra={typeOptions.map(option =>
+          `${option.label}——${option.hint}`).join('；')}>
+          <Radio.Group optionType="button" buttonStyle="solid"
+            options={typeOptions.map(option => ({ value: option.value, label: option.label }))} />
+        </Form.Item>
         <Form.Item label="项目名称" name="title" rules={[{ required: true, message: '请输入项目名称' }, { max: 200 }]}>
           <Input placeholder="例如：2026 毕业季" />
         </Form.Item>
@@ -97,7 +116,7 @@ export default function ProjectsPage() {
           <MarkdownEditor placeholder="使用 Markdown 说明选题方向、交付目标等；可直接上传说明图片" />
         </Form.Item>
         <Form.Item label="预设标签" name="tags" rules={tagRules}
-          extra="设置后，需求上传图片和在选题里给图片加标签时只能从这些标签中选择（也可以不加）；留空则允许上传者自定义标签。直接上传到图片库不受影响。">
+          extra="设置后，需求上传图片和在选题里给图片加标签时只能从这些标签中选择（也可以不加）；留空则允许上传者自定义标签。直接上传到图片库不受影响。活动选题的选片人就是从这组标签里挑，可以随时增删。">
           <TagSelect placeholder="输入后回车添加，例如：开幕式、合影、颁奖" />
         </Form.Item>
         <Form.Item label="初始状态" name="status"><Select options={statusOptions.slice(0, 2)} /></Form.Item>

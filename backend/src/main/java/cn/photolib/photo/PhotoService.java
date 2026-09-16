@@ -434,6 +434,68 @@ public class PhotoService {
         }
     }
 
+    /**
+     * 活动选题清理未选中图片时的删除入口（issue #94）。
+     *
+     * <p>刻意绕开 {@link #validateDelete}：那套规则问的是「这个账号能不能删这张图」，
+     * 而清理的凭据是「选题已完成 + 操作者是选题负责人」，逐张的上传者/校区/需求参与人
+     * 条件在这里既不适用也不该适用——活动选题的相册本来就是一整批别人拍的图。
+     * 「已被采用的图片不能删」这条仍然成立，由
+     * {@code ProjectSelectionService.cleanup} 在挑选待删图片时逐张跳过。</p>
+     */
+    @Transactional
+    public void deleteForSelectionCleanup(PhotoEntity photo) {
+        performDelete(photo);
+    }
+
+    /**
+     * 展示用的短期签名「大图」地址：指向成品图，不带 {@code Content-Disposition}，
+     * 因此浏览器会内联渲染而不是当附件下载（{@link #download} 恰恰相反）。
+     *
+     * <p>活动选题的选片人要靠它判断清晰度和构图，所以这里不能退回预览图——
+     * 480px 的 WebP 看不出虚焦。授权由调用方负责（见
+     * {@code ProjectSelectionController}），这里只负责签名。</p>
+     */
+    public DownloadUrl fullImageUrl(PhotoEntity photo) {
+        if (photo.getStatus() != PhotoStatus.AVAILABLE && photo.getStatus() != PhotoStatus.ARCHIVED) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "图片暂不可查看");
+        }
+        if (!StringUtils.hasText(photo.getObjectKey())) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "图片还没有可用的成品图");
+        }
+        ObjectStorageService.SignedUrl signed = storage.presignGet(
+                photo.getObjectKey(), null, properties.downloadUrlTtl());
+        return new DownloadUrl(signed.url().toString(), signed.expiresAt(), photo.getStoredFileName());
+    }
+
+    /** 给同包内的编辑流程用：按 id 取图片，不存在就 404。 */
+    PhotoEntity requireEntity(Long id) {
+        return require(id);
+    }
+
+    /** 给同包内的编辑流程用：把实体转成对外视图。 */
+    PhotoView viewOf(PhotoEntity photo, AuthenticatedUser user) {
+        return toView(photo, user);
+    }
+
+    /** 上传时的格式与体积校验，编辑保存复用同一套规则。 */
+    void requireSupportedImage(String fileName, String contentType, long size) {
+        validateFile(fileName, contentType, size);
+    }
+
+    /** 全库重复图片拦截，与单张上传 {@link #createTicket} 同一条规则；{@code exceptPhotoId} 是自己。 */
+    void requireUniqueSha256(String sha256Lower, Long exceptPhotoId) {
+        PhotoEntity existing = mapper.selectOne(Wrappers.<PhotoEntity>lambdaQuery()
+                .eq(PhotoEntity::getSha256, sha256Lower)
+                .eq(PhotoEntity::getDeleted, false)
+                .ne(exceptPhotoId != null, PhotoEntity::getId, exceptPhotoId)
+                .last("LIMIT 1"));
+        if (existing != null) {
+            throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE,
+                    "图库里已经有一张一模一样的图片（标题：" + existing.getTitle() + "）");
+        }
+    }
+
     private void performDelete(PhotoEntity photo) {
         mapper.deleteById(photo.getId());
         deleteObject(photo.getId(), "成品图", photo.getObjectKey());

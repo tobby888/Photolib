@@ -5,6 +5,7 @@ import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.api.PageResponse;
 import cn.photolib.project.model.ProjectEntity;
 import cn.photolib.project.model.ProjectStatus;
+import cn.photolib.project.model.ProjectType;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -30,7 +31,7 @@ public class ProjectController {
     ApiResponse<ProjectEntity> create(@Valid @RequestBody CreateRequest request,
                                       @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.create(request.title(), request.description(), request.status(),
-                request.tags(), user));
+                request.tags(), request.type(), user));
     }
 
     @GetMapping
@@ -87,8 +88,9 @@ public class ProjectController {
         return ApiResponse.ok();
     }
 
+    /** {@code type} 省略时按创作选题建立，与改动之前的行为一致。选题类型建立后不可改。 */
     record CreateRequest(@NotBlank @Size(max = 200) String title, @Size(max = 5000) String description,
-                         @NotNull ProjectStatus status,
+                         @NotNull ProjectStatus status, ProjectType type,
                          @Size(max = 30) List<@Size(max = 100) String> tags) {
     }
 

@@ -90,16 +90,80 @@ export interface BaseEntity {
   version: number
 }
 
+/**
+ * 选题的工作流程种类（issue #94）。`CREATION` 是原有流程；`EVENT` 是活动选题：
+ * 图片整批进库、由指定选片人打标签、结束后清理未选中的图片。
+ * 存量选题在后端按 `CREATION` 兜底，所以这个字段在旧响应里可能缺失。
+ */
+export type ProjectType = 'CREATION' | 'EVENT'
+
+/** 活动选题的选片人。 */
+export interface ProjectSelector {
+  userId: EntityId
+  displayName: string
+  username: string
+}
+
 export interface Project extends BaseEntity {
   title: string
   description: string
   status: 'DRAFT' | 'ACTIVE' | 'COMPLETED' | 'CANCELLED'
+  type?: ProjectType
   createdBy: EntityId
   /** 选题预设标签；为空表示上传者可以自定义标签。 */
   tags?: string[]
   requestCount?: number
   photoCount?: number
   adoptionCount?: number
+  /** 以下四项只在选题详情（GET /projects/{id}）里返回，列表接口没有。 */
+  selectors?: ProjectSelector[]
+  /** 当前账号能不能进这个选题的选片页。 */
+  canSelect?: boolean
+  /** 当前账号能不能改选片人、能不能清理未选中的图片。 */
+  canManageSelection?: boolean
+  /** 相册里打了 deprecated 的图片数。 */
+  deprecatedCount?: number
+}
+
+/** 选片页的图片。比 {@link Photo} 少：没有学号、上传者和校区。 */
+export interface SelectionPhoto {
+  id: EntityId
+  title: string
+  photographerName: string
+  takenAt: string
+  tags: string[]
+  width?: number
+  height?: number
+  size: number
+  contentType: string
+  /** 480px 预览图（省流量）。 */
+  thumbnailUrl?: string
+  /** 成品图的内联签名地址，就是选片时要看的「原图」。 */
+  imageUrl?: string
+  status: Photo['status']
+  version: number
+}
+
+/** 清理未选中图片前的预演。`ready` 为 false 表示选题还没完成，只能看数字。 */
+export interface SelectionCleanupPlan {
+  ready: boolean
+  deletableCount: number
+  adoptedSkippedCount: number
+}
+
+export interface SelectionCleanupResult {
+  deletedCount: number
+  skippedAdoptedCount: number
+}
+
+/** 选片页编辑保存用的直传票据。`sourceObjectKey` 要原样回传给 apply-edit。 */
+export interface PhotoEditTicket {
+  photoId: EntityId
+  sourceObjectKey: string
+  uploadUrl: string
+  method?: string
+  contentType: string
+  expiresAt: string
 }
 
 export interface PhotoRequest extends BaseEntity {

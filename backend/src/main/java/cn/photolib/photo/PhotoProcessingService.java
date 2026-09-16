@@ -278,7 +278,8 @@ public class PhotoProcessingService {
         }
     }
 
-    private void validateMagic(Path source, String contentType) throws Exception {
+    /** 包内可见：选片页的编辑保存（{@link PhotoImageEditService}）走同一道魔数校验。 */
+    static void validateMagic(Path source, String contentType) throws Exception {
         byte[] bytes = new byte[8];
         int length;
         try (InputStream input = Files.newInputStream(source)) {
@@ -294,7 +295,8 @@ public class PhotoProcessingService {
         }
     }
 
-    private String sha256(Path source) throws Exception {
+    /** 包内可见：编辑保存要用同一套哈希算法复核浏览器提交的 SHA-256。 */
+    static String sha256(Path source) throws Exception {
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         try (InputStream input = new DigestInputStream(Files.newInputStream(source), digest)) {
             input.transferTo(OutputStream.nullOutputStream());

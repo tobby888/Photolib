@@ -354,13 +354,53 @@ type BatchItemStatus = 'UPLOADING' | 'WAITING_METADATA' | 'PROCESSING' | 'SUCCEE
   "createdAt": "2026-07-24T10:00:00",
   "updatedAt": "2026-07-24T10:00:00",
   "version": 1,
+  "type": "CREATION",
   "requestCount": 3,
   "photoCount": 40,
-  "adoptionCount": 12
+  "adoptionCount": 12,
+  "tags": ["合影"],
+  "selectors": [],
+  "canSelect": false,
+  "canManageSelection": false,
+  "deprecatedCount": 0
 }
 ```
 
 项目相册归属和 `photoCount` 以多对多表为准。一张图片可以属于多个项目；`Photo.projectId` 只是主/来源项目。
+
+`type` 是选题的工作流程种类（issue #94）：`CREATION`（创作选题，原有流程）或 `EVENT`（活动选题）。
+建立时由 `POST /projects` 的 `type` 决定，省略即 `CREATION`，**建立后不可更改**。
+`selectors`、`canSelect`、`canManageSelection`、`deprecatedCount` 只对活动选题有意义，
+创作选题分别是空数组、`false`、`false`、`0`。
+
+### 4.3.1 活动选题的选片接口
+
+全部挂在 `/projects/{projectId}` 下，方法级权限是 `PROJECT_VIEW|PROJECT_VIEW_ALL`，
+但真正的授权在服务层：读写选片要求调用者是这个选题的**选片人**、选题创建者或管理员；
+改名单和清理图片额外要求 `PROJECT_CREATE` 且是选题创建者或管理员。
+
+| 接口 | 授权 | 请求 | 响应 |
+| --- | --- | --- | --- |
+| `GET /projects/{id}/selectors` | 能看这个选题 | — | `Selector[]` |
+| `GET /projects/{id}/selector-candidates` | 选题负责人 | — | `Selector[]`（全部已启用账号） |
+| `PUT /projects/{id}/selectors` | 选题负责人 | `{ userIds: [] }` | `Selector[]`，整组替换 |
+| `GET /projects/{id}/selection/photos` | 选片人 | `page`、`pageSize`（≤200） | `PageData<SelectionPhoto>` |
+| `GET /projects/{id}/selection/photos/{photoId}/image-url` | 选片人 | — | `{ downloadUrl, expiresAt, fileName }` |
+| `POST /projects/{id}/selection/tags` | 选片人 | `{ photoIds, addTags?, removeTags? }` | `TaggedPhoto[]` |
+| `POST /projects/{id}/selection/photos/{photoId}/edit-tickets` | 选片人 | `{ contentType, size }` | `EditTicket` |
+| `POST /projects/{id}/selection/photos/{photoId}/apply-edit` | 选片人 | `{ sourceObjectKey, contentType, size, sha256 }` | `PhotoView` |
+| `GET /projects/{id}/selection/cleanup` | 选题负责人 | — | `{ ready, deletableCount, adoptedSkippedCount }` |
+| `POST /projects/{id}/selection/cleanup` | 选题负责人 | — | `{ deletedCount, skippedAdoptedCount }` |
+
+- `Selector` = `{ userId, displayName, username }`。
+- `SelectionPhoto` 比 `PhotoView` 少：没有学号、上传者和校区；多一个 `imageUrl`——成品图的
+  **内联**签名地址（不带 `Content-Disposition`），也就是选片时要看的「原图」，和 `thumbnailUrl`
+  （480px 预览）一起返回，省得逐张再请求一次。只返回 `AVAILABLE`/`ARCHIVED` 的图片，按 id 升序。
+- 标签规则与 §预设标签一致，另加一条：保留标签 `deprecated` 永远可加，且永远不会出现在选题预设里。
+- `apply-edit` 会**就地替换成品图**：新的 `objectKey`（全新 UUID）、新的 `sha256`/`size`/`width`/`height`，
+  重新生成预览，并删掉被替换掉的旧对象。任何一步失败，图片记录保持原样。
+- `POST .../cleanup` 会永久删除打了 `deprecated` 的图片及其 OSS 对象，**不可撤销**；
+  仅在选题 `COMPLETED` 之后可用，已被引（`adoption`）的图片一律跳过。先调 `GET` 拿预演数字再确认。
 
 ### 4.4 图片需求 `PhotoRequestEntity`
 
@@ -712,7 +752,7 @@ function parseTags(value?: string | null): string[] {
 
 | 方法与路径 | 权限 | 请求/查询 | 返回 |
 | --- | --- | --- | --- |
-| `POST /projects` | A/M | `{ title, description?, status }` | `ProjectEntity` |
+| `POST /projects` | A/M | `{ title, description?, status, type?, tags? }` | `ProjectEntity` |
 | `GET /projects` | A/M/C | `page`、`pageSize`、`keyword?`、`status?` | `PageData<ProjectEntity>` |
 | `GET /projects/{id}` | A/M/C | — | `ProjectDetail` |
 | `POST /projects/{id}/photos` | A/M/C | `{ photoIds }` | `data: null` |
@@ -720,6 +760,7 @@ function parseTags(value?: string | null): string[] {
 | `POST /projects/{id}/status` | A/M | `{ status, version }` | `ProjectEntity` |
 | `POST /projects/{id}/reopen` | A | `{ reason, version }` | `ProjectEntity` |
 | `DELETE /projects/{id}` | A/M | — | `data: null` |
+| 活动选题选片接口 | 见 §4.3.1 | | |
 | `GET /projects/{id}/share-links` | `PROJECT_SHARE` | — | `ProjectShareLink[]` |
 | `POST /projects/{id}/share-links` | `PROJECT_SHARE` | 见 §19 | `{ link, password }` |
 | `PUT /projects/{id}/share-links/{linkId}` | `PROJECT_SHARE` | 见 §19 | `ProjectShareLink` |

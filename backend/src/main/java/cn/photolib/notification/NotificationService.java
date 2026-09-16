@@ -287,6 +287,7 @@ public class NotificationService {
         if (event == null) return null;
         if (event.startsWith("REQUEST_")) return "/requests";
         if (event.startsWith("WORKLOG_")) return "/worklogs";
+        if (event.startsWith("PROJECT_")) return "/projects";
         return null;
     }
 

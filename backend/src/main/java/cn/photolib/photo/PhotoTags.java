@@ -25,6 +25,16 @@ import java.util.Set;
 public final class PhotoTags {
     public static final int MAX_TAGS = 30;
     public static final int MAX_LENGTH = 50;
+
+    /**
+     * 「这张图用不上」的保留标签（issue #94）。活动选题的选片人无论选题有没有预设标签
+     * 都能打上它，选题完成后由人工确认再把这些图片从图库和 OSS 里清掉。
+     *
+     * <p>它不能作为选题预设标签存在（{@link #normalizeProjectPresets} 会剔掉），
+     * 否则「预设里有没有它」就会变成一个需要在每个读取点重答的问题，而它的语义
+     * 恰恰是全站固定的。</p>
+     */
+    public static final String DEPRECATED = "deprecated";
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private PhotoTags() {
@@ -48,6 +58,19 @@ public final class PhotoTags {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "标签最多 " + MAX_TAGS + " 个");
         }
         return List.copyOf(result);
+    }
+
+    /** 是否为全站保留标签。保留标签永远允许添加，也永远不进选题预设。 */
+    public static boolean isReserved(String tag) {
+        return DEPRECATED.equalsIgnoreCase(tag);
+    }
+
+    /**
+     * 选题预设标签的规范化：在 {@link #normalize} 之上再剔掉保留标签。
+     * 部长把「deprecated」手敲进预设里不该报错——它本来就已经可用了，静默去重即可。
+     */
+    public static List<String> normalizeProjectPresets(Collection<String> tags) {
+        return normalize(tags).stream().filter(tag -> !isReserved(tag)).toList();
     }
 
     public static String toJson(List<String> tags) {

@@ -3,16 +3,19 @@ import {
   Modal, Pagination, Radio, Row, Select, Space, Statistic, Tag, Typography,
 } from 'antd'
 import {
-  ArrowLeftOutlined, CameraOutlined, CheckCircleOutlined, DownloadOutlined, EditOutlined, FileImageOutlined,
-  LinkOutlined, MinusCircleOutlined, PlusOutlined, RocketOutlined, ShareAltOutlined, StopOutlined,
-  TagsOutlined, UnorderedListOutlined,
+  ArrowLeftOutlined, CameraOutlined, CheckCircleOutlined, DeleteOutlined, DownloadOutlined, EditOutlined,
+  FileImageOutlined, LinkOutlined, MinusCircleOutlined, PlusOutlined, RocketOutlined, ScissorOutlined,
+  ShareAltOutlined, StopOutlined, TagsOutlined, TeamOutlined, UnorderedListOutlined,
 } from '@ant-design/icons'
 import { lazy, memo, Suspense, useCallback, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { useAuth } from '../auth'
 import { api, emptyPage } from '../api'
-import type { Adoption, BatchPublishResult, Campus, PageData, Photo, PhotoRequest, Project, TaggedPhoto } from '../types'
+import type {
+  Adoption, BatchPublishResult, Campus, PageData, Photo, PhotoRequest, Project, ProjectSelector,
+  SelectionCleanupPlan, SelectionCleanupResult, TaggedPhoto,
+} from '../types'
 import { DataState, StatusTag } from '../components'
 import { ContentFitTable } from '../ContentFitTable'
 import { useLoad, useRefreshOnResume, useStableCallback } from '../hooks'
@@ -27,8 +30,8 @@ import BatchTagModal from '../BatchTagModal'
 import type { BatchTagMode } from '../BatchTagModal'
 import TagSelect from '../TagSelect'
 import {
-  collectPhotographers, collectTagOptions, emptyProjectPhotoFilters, filterPhotos, hasActiveFilters,
-  normalizeTags, tagRules,
+  DEPRECATED_TAG_LABEL, collectPhotographers, collectTagOptions, emptyProjectPhotoFilters, filterPhotos,
+  hasActiveFilters, normalizeTags, tagRules,
 } from '../photoTags'
 import type { ProjectPhotoFilters } from '../photoTags'
 import ProjectPhotoFilterBar from '../ProjectPhotoFilterBar'
@@ -207,6 +210,11 @@ export default function ProjectDetailPage() {
   const [photoPage, setPhotoPage] = useState({ current: 1, pageSize: DEFAULT_PHOTO_PAGE_SIZE })
   const galleryRef = useRef<HTMLDivElement>(null)
   const [tagMode, setTagMode] = useState<BatchTagMode | null>(null)
+  // 活动选题的选片人维护。候选账号只在弹窗打开时才去取——它是一条全量用户列表，
+  // 对只是来看看选题的人没有必要。
+  const [selectorsOpen, setSelectorsOpen] = useState(false)
+  const [selectorIds, setSelectorIds] = useState<string[]>([])
+  const [cleanupPlan, setCleanupPlan] = useState<SelectionCleanupPlan | null>(null)
   const [batchDownloading, setBatchDownloading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [markingPhotoId, setMarkingPhotoId] = useState<string | null>(null)
@@ -260,6 +268,13 @@ export default function ProjectDetailPage() {
     adoptions: [] as Adoption[],
   }, [projectId, user?.dataScope, canViewRequests])
   useRefreshOnResume(refresh)
+  const { data: selectorCandidates, loading: candidatesLoading } = useLoad(
+    () => selectorsOpen
+      ? api<ProjectSelector[]>({ url: `/projects/${projectId}/selector-candidates` })
+      : Promise.resolve([] as ProjectSelector[]),
+    [] as ProjectSelector[], [selectorsOpen, projectId],
+  )
+
   const { data: galleryPhotos, loading: galleryLoading } = useLoad(
     () => galleryOpen && hasPermission(user, 'PROJECT_ADOPT') && hasPermission(user, 'PHOTO_VIEW')
       ? api<PageData<Photo>>({
@@ -526,7 +541,58 @@ export default function ProjectDetailPage() {
     }
   }
 
+  const saveSelectors = async () => {
+    setSaving(true)
+    try {
+      await api<ProjectSelector[]>({
+        method: 'PUT',
+        url: `/projects/${projectId}/selectors`,
+        data: { userIds: selectorIds },
+      })
+      message.success('选片人已更新')
+      setSelectorsOpen(false)
+      await reload()
+    } catch (reason) { message.error((reason as Error).message) } finally { setSaving(false) }
+  }
+
+  // 清理不可撤销，所以先向后端要一份预演（要删几张、跳过几张），把数字写进确认框里。
+  const confirmCleanup = async () => {
+    let plan = cleanupPlan
+    try {
+      plan = await api<SelectionCleanupPlan>({ url: `/projects/${projectId}/selection/cleanup` })
+      setCleanupPlan(plan)
+    } catch (reason) {
+      message.error((reason as Error).message)
+      return
+    }
+    if (!plan.deletableCount) {
+      message.info(plan.adoptedSkippedCount
+        ? `没有可清理的图片：${plan.adoptedSkippedCount} 张虽然标记为${DEPRECATED_TAG_LABEL}，但已经被引用`
+        : `没有图片被标记为${DEPRECATED_TAG_LABEL}`)
+      return
+    }
+    modal.confirm({
+      title: '确认清理未选中的图片？',
+      content: <div>
+        <p>将永久删除 <strong>{plan.deletableCount}</strong> 张标记为{DEPRECATED_TAG_LABEL}的图片，
+          包括它们在对象存储里的原图、成品图和预览图。<strong>此操作不可撤销。</strong></p>
+        {!!plan.adoptedSkippedCount && <p>另有 {plan.adoptedSkippedCount} 张已经被引用，会被跳过。</p>}
+      </div>,
+      okText: `确认删除 ${plan.deletableCount} 张`,
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        const result = await api<SelectionCleanupResult>({
+          method: 'POST', url: `/projects/${projectId}/selection/cleanup` })
+        message.success(`已删除 ${result.deletedCount} 张`
+          + (result.skippedAdoptedCount ? `，跳过已被引用的 ${result.skippedAdoptedCount} 张` : ''))
+        setCleanupPlan(null)
+        await reload()
+      },
+    })
+  }
+
   const project = data.project
+  const isEvent = project?.type === 'EVENT'
   const canEdit = hasPermission(user, 'PROJECT_CREATE')
   const canCreateRequest = hasPermission(user, 'REQUEST_CREATE')
   const canComplete = hasPermission(user, 'PROJECT_COMPLETE')
@@ -556,7 +622,10 @@ export default function ProjectDetailPage() {
         <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/projects')}>返回项目列表</Button>
         <div className="project-detail-heading">
           <div>
-            <Space><Tag variant="filled">PROJECT {project.id}</Tag><StatusTag value={project.status} /></Space>
+            <Space><Tag variant="filled">PROJECT {project.id}</Tag>
+              <Tag color={isEvent ? 'purple' : 'default'} variant="filled">
+                {isEvent ? '活动选题' : '创作选题'}</Tag>
+              <StatusTag value={project.status} /></Space>
             <Typography.Title>{project.title}</Typography.Title>
             {project.description
               ? <MarkdownRenderer value={project.description} />
@@ -567,10 +636,25 @@ export default function ProjectDetailPage() {
                 ? presetTags.map(tag => <Tag key={tag} color="blue" variant="filled" className="clickable-tag"
                     onClick={() => onPhotoTagClick(tag)}>
                     {tag}</Tag>)
-                : <Typography.Text type="secondary">未设置，上传者可以自定义标签</Typography.Text>}
+                : <Typography.Text type="secondary">
+                    {isEvent ? '未设置。活动选题的选片人只能从预设标签里挑，请先定义一组' : '未设置，上传者可以自定义标签'}
+                  </Typography.Text>}
             </div>
+            {isEvent && <div className="project-preset-tags">
+              <Typography.Text type="secondary"><TeamOutlined /> 选片人</Typography.Text>
+              {project.selectors?.length
+                ? project.selectors.map(selector => <Tag key={String(selector.userId)} variant="filled">
+                    {selector.displayName}</Tag>)
+                : <Typography.Text type="secondary">尚未指定</Typography.Text>}
+            </div>}
           </div>
           <Space wrap>
+            {project.canSelect && <Button type="primary" icon={<ScissorOutlined />}
+              onClick={() => navigate(`/projects/${projectId}/select`)}>进入选片</Button>}
+            {project.canManageSelection && <Button icon={<TeamOutlined />} onClick={() => {
+              setSelectorIds((project.selectors || []).map(selector => String(selector.userId)))
+              setSelectorsOpen(true)
+            }}>指定选片人</Button>}
             {canAdopt && project.status === 'ACTIVE' &&
               <Button icon={<FileImageOutlined />} onClick={() => setGalleryOpen(true)}>从图库添加图片</Button>}
             {canShare && <Button icon={<ShareAltOutlined />} onClick={() => setShareOpen(true)}>分享链接</Button>}
@@ -606,6 +690,9 @@ export default function ProjectDetailPage() {
           {canEdit && ['DRAFT', 'ACTIVE'].includes(project.status) && <Button danger icon={<StopOutlined />}
             onClick={() => modal.confirm({ title: '确认取消这个项目？', content: '取消后不能再创建需求，已有记录会继续保留。',
               okText: '确认取消', okButtonProps: { danger: true }, onOk: () => changeStatus('CANCELLED') })}>取消项目</Button>}
+          {project.canManageSelection && project.status === 'COMPLETED' &&
+            <Button danger icon={<DeleteOutlined />} onClick={() => void confirmCleanup()}>
+              清理未选中的图片{project.deprecatedCount ? `（${project.deprecatedCount}）` : ''}</Button>}
           {project.status === 'COMPLETED' && user?.permissionGroupCode === 'ADMIN' && <Button type="primary" onClick={reopen}>重新开放</Button>}
         </Space>
       </Card>
@@ -761,6 +848,21 @@ export default function ProjectDetailPage() {
             ]} />
         </Space>
       </Modal>
+      <Modal title="指定选片人" width={620} open={selectorsOpen} onCancel={() => setSelectorsOpen(false)}
+        onOk={saveSelectors} okText="保存名单" confirmLoading={saving}>
+        <Typography.Paragraph type="secondary">
+          选片人可以打开这个选题的选片页，逐张打标签、标记{DEPRECATED_TAG_LABEL}，并对图片做裁切和旋转。
+          被指派本身就是查看这个选题的凭据，不需要另外给权限。新加入的人会收到一条站内通知。
+        </Typography.Paragraph>
+        <Select mode="multiple" style={{ width: '100%' }} loading={candidatesLoading}
+          value={selectorIds} onChange={setSelectorIds} showSearch
+          optionFilterProp="label" maxCount={50} allowClear placeholder="搜索姓名或账号"
+          options={selectorCandidates.map(candidate => ({
+            value: String(candidate.userId),
+            label: `${candidate.displayName}（${candidate.username}）`,
+          }))} />
+      </Modal>
+
       <BatchTagModal mode={tagMode} photos={selectedAlbumPhotos} projectId={projectId}
         presets={presetTags} onClose={() => setTagMode(null)} onDone={applyTaggedPhotos} />
       {shareOpen && <Suspense fallback={null}>
