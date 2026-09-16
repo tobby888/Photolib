@@ -2,8 +2,8 @@ import {
   App, Alert, Breadcrumb, Button, Empty, Progress, Segmented, Space, Spin, Tag, Tooltip, Typography,
 } from 'antd'
 import {
-  ArrowLeftOutlined, CheckCircleOutlined, ExpandOutlined, LeftOutlined, RightOutlined, ScissorOutlined,
-  StopOutlined,
+  AppstoreOutlined, ArrowLeftOutlined, CheckCircleOutlined, ExpandOutlined, LeftOutlined, PictureOutlined,
+  RightOutlined, ScissorOutlined, StopOutlined,
 } from '@ant-design/icons'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
@@ -18,6 +18,7 @@ import { uploadToObjectStorage } from '../storageUpload'
 import { sha256Hex } from '../photoEdit'
 
 const PhotoCropEditor = lazy(() => import('../PhotoCropEditor'))
+const ZoomableImage = lazy(() => import('../ZoomableImage'))
 
 /** 一次取回的张数。活动选题动辄几千张，整批拉回来会让首屏等到天荒地老。 */
 const PAGE_SIZE = 120
@@ -25,6 +26,12 @@ const PAGE_SIZE = 120
 const PREFETCH_MARGIN = 20
 
 type QualityMode = 'preview' | 'original'
+/**
+ * 两种看片视角，选片人随时切换（issue #94 追加）：
+ * `single` 是逐张过（左边缩略图列 + 右边大图），`grid` 是整墙小图一次扫过去。
+ * 两边共用同一个「当前这张」和同一套标签操作，切换视角不会丢掉进度。
+ */
+type ViewMode = 'single' | 'grid'
 type SelectionFilter = 'ALL' | 'PENDING' | 'PICKED' | 'DROPPED'
 
 const filterOptions: { value: SelectionFilter; label: string }[] = [
@@ -71,10 +78,13 @@ export default function PhotoSelectionPage() {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [filter, setFilter] = useState<SelectionFilter>('ALL')
   const [quality, setQuality] = useState<QualityMode>('preview')
+  const [view, setView] = useState<ViewMode>('single')
   const [editing, setEditing] = useState(false)
   const [savingEdit, setSavingEdit] = useState(false)
   const [taggingId, setTaggingId] = useState<string | null>(null)
-  const filmstripRef = useRef<HTMLDivElement>(null)
+  // 两种视角各有一个滚动容器，但「把当前这张滚进可视范围」是同一件事，
+  // 所以 ref 挂在当下渲染的那一个上。
+  const browserRef = useRef<HTMLDivElement>(null)
   // loader 要读「已经加载到第几页」，但它不能把 loadedPages 列进依赖——那会让
   // 每加载一页都整页重取一次。用 ref 取当前值。
   const loadedPagesRef = useRef(0)
@@ -147,10 +157,10 @@ export default function PhotoSelectionPage() {
   // 当前这张要始终留在左列可视范围内，否则用键盘翻几张之后就看不见自己在哪了。
   useEffect(() => {
     if (!active) return
-    filmstripRef.current
+    browserRef.current
       ?.querySelector(`[data-photo-id="${active.id}"]`)
       ?.scrollIntoView({ block: 'nearest' })
-  }, [active])
+  }, [active, view])
 
   const step = useCallback((delta: number) => {
     if (!visible.length) return
@@ -271,6 +281,32 @@ export default function PhotoSelectionPage() {
   const stageSrc = active ? (quality === 'original' ? active.imageUrl : active.thumbnailUrl) : undefined
   const editable = project?.status === 'ACTIVE'
 
+  /*
+    缩略图在「逐张」的左列和「网格」里长得不一样（尺寸、排布由 CSS 决定），
+    但行为完全一致：点一下选中、双击进逐张细看、当前这张描深色边、
+    打过标签的角上挂个记号。所以只写一份。
+  */
+  const renderThumb = (photo: SelectionPhoto, index: number) => {
+    const dropped = isDeprecated(photo.tags)
+    const current = !!active && String(photo.id) === String(active.id)
+    const src = quality === 'original' ? photo.imageUrl : photo.thumbnailUrl
+    return <button type="button" key={photo.id} data-photo-id={photo.id}
+      className={`selection-thumb${current ? ' is-current' : ''}${dropped ? ' is-dropped' : ''}`}
+      onClick={() => setActiveId(photo.id as string)}
+      onDoubleClick={() => { setActiveId(photo.id as string); setView('single') }}
+      aria-current={current ? 'true' : undefined}
+      aria-label={`第 ${index + 1} 张：${photo.title || '未命名图片'}`}>
+      {src
+        ? <PreviewPhotoImg src={src} alt={photo.title || '选片图片'} loading="lazy" decoding="async"
+            refresh={() => refreshImageUrl(photo.id as string)} />
+        : <span className="selection-thumb-empty">无预览</span>}
+      <span className="selection-thumb-index">{index + 1}</span>
+      {!!photo.tags.length && <span className="selection-thumb-mark">
+        {dropped ? <StopOutlined /> : <CheckCircleOutlined />}
+      </span>}
+    </button>
+  }
+
   return <DataState loading={loading} error={error} empty={!project} onRetry={reload}
     emptyText="找不到这个选题" emptyHint="它可能已经被删除，或者你不是这个选题的选片人。">
     {project && <div className="selection-page">
@@ -287,6 +323,7 @@ export default function PhotoSelectionPage() {
           <Typography.Text type="secondary">
             已处理 {decided} / 已加载 {photos.length}（共 {total} 张）
             ．方向键翻图，空格标记{DEPRECATED_TAG_LABEL}，数字键 1–9 套用预设标签
+            {view === 'single' && '．滚轮缩放，放大后可拖动，双击切换 1:1，按 0 回到适应窗口'}
           </Typography.Text>
           <Progress percent={photos.length ? Math.round(decided / photos.length * 100) : 0}
             size="small" showInfo={false} />
@@ -297,6 +334,12 @@ export default function PhotoSelectionPage() {
               value: option.value,
               label: `${option.label}（${photos.filter(p => matchesFilter(p, option.value)).length}）`,
             }))} />
+          <Tooltip title="逐张：左边缩略图列 + 右边大图，适合细看；网格：整墙小图，适合快速扫一遍">
+            <Segmented<ViewMode> value={view} onChange={setView} options={[
+              { value: 'single', label: '逐张', icon: <PictureOutlined /> },
+              { value: 'grid', label: '网格', icon: <AppstoreOutlined /> },
+            ]} />
+          </Tooltip>
           <Tooltip title="原图按成品图渲染，看得清细节但更费流量；预览图是 480px 的压缩图">
             <Segmented<QualityMode> value={quality} onChange={setQuality} options={[
               { value: 'preview', label: '小图（预览）', icon: <CheckCircleOutlined /> },
@@ -309,27 +352,13 @@ export default function PhotoSelectionPage() {
       {project.status !== 'ACTIVE' && <Alert type="info" showIcon className="selection-alert"
         message="这个选题不在进行中，选片和编辑都已锁定" />}
 
-      <div className="selection-workspace">
-        <aside className="selection-filmstrip" ref={filmstripRef}>
-          {visible.map((photo, index) => {
-            const dropped = isDeprecated(photo.tags)
-            const current = active && String(photo.id) === String(active.id)
-            const src = quality === 'original' ? photo.imageUrl : photo.thumbnailUrl
-            return <button type="button" key={photo.id} data-photo-id={photo.id}
-              className={`selection-thumb${current ? ' is-current' : ''}${dropped ? ' is-dropped' : ''}`}
-              onClick={() => setActiveId(photo.id as string)}
-              aria-current={current ? 'true' : undefined}
-              aria-label={`第 ${index + 1} 张：${photo.title || '未命名图片'}`}>
-              {src
-                ? <PreviewPhotoImg src={src} alt={photo.title || '选片图片'} loading="lazy" decoding="async"
-                    refresh={() => refreshImageUrl(photo.id as string)} />
-                : <span className="selection-thumb-empty">无预览</span>}
-              <span className="selection-thumb-index">{index + 1}</span>
-              {!!photo.tags.length && <span className="selection-thumb-mark">
-                {dropped ? <StopOutlined /> : <CheckCircleOutlined />}
-              </span>}
-            </button>
-          })}
+      {/*
+        两种视角共用同一个「当前这张」和同一套标签面板，切换只换浏览方式，
+        不会打断手上的活；网格里点一下是选中（不是跳走），双击才进逐张细看。
+      */}
+      <div className={`selection-workspace view-${view}`}>
+        {view === 'single' && <aside className="selection-filmstrip" ref={browserRef}>
+          {visible.map((photo, index) => renderThumb(photo, index))}
           {photos.length < total && <div className="selection-filmstrip-more">
             <Button type="link" loading={loadingMore} onClick={() => void loadMore()}>
               继续加载（还有 {total - photos.length} 张）</Button>
@@ -337,62 +366,82 @@ export default function PhotoSelectionPage() {
           {!visible.length && <div className="selection-filmstrip-more">
             <Typography.Text type="secondary">没有符合筛选条件的图片</Typography.Text>
           </div>}
-        </aside>
+        </aside>}
 
         <section className="selection-stage">
-          {!active && <Empty description={total ? '换个筛选条件看看' : '这个选题相册里还没有可选的图片'} />}
-          {active && editing && active.imageUrl && <Suspense
-            fallback={<div className="empty-state">正在打开编辑器…</div>}>
-            <PhotoCropEditor imageUrl={active.imageUrl} contentType={active.contentType}
-              refresh={() => refreshImageUrl(active.id as string)} saving={savingEdit}
-              onCancel={() => setEditing(false)} onSave={blob => void saveEdit(blob)} />
-          </Suspense>}
-          {active && !editing && <>
-            <div className="selection-stage-image">
-              {stageSrc
-                ? <PreviewPhotoImg src={stageSrc} alt={active.title || '选片图片'} decoding="async"
-                    refresh={() => refreshImageUrl(active.id as string)} />
-                : <Empty description="这张图片暂时没有可展示的画面" />}
+          {view === 'grid' && <>
+            <div className="selection-grid" ref={browserRef}>
+              {visible.map((photo, index) => renderThumb(photo, index))}
+              {!visible.length && <div className="empty-state">
+                {total ? '没有符合筛选条件的图片' : '这个选题相册里还没有可选的图片'}
+              </div>}
             </div>
-            <div className="selection-stage-panel">
-              <div className="selection-stage-meta">
-                <Space wrap>
-                  <Button icon={<LeftOutlined />} disabled={activeIndex <= 0}
-                    onClick={() => step(-1)}>上一张</Button>
-                  <Button icon={<RightOutlined />} disabled={activeIndex >= visible.length - 1}
-                    onClick={() => step(1)}>下一张</Button>
-                </Space>
-                <div>
-                  <strong>{active.title || '未命名图片'}</strong>
-                  <Typography.Text type="secondary">
-                    {active.photographerName} · {dayjs(active.takenAt).format('YYYY-MM-DD HH:mm')}
-                    {active.width && active.height ? ` · ${active.width}×${active.height}` : ''}
-                  </Typography.Text>
-                </div>
-                <Button icon={<ScissorOutlined />} disabled={!editable || !active.imageUrl}
-                  onClick={() => setEditing(true)}>裁切 / 旋转</Button>
-              </div>
-              <div className="selection-tag-row">
-                <Typography.Text type="secondary">标签</Typography.Text>
-                {presetTags.length
-                  ? presetTags.map((tag, index) => <Tag.CheckableTag key={tag}
-                      checked={active.tags.includes(tag)}
-                      onChange={() => { if (editable) void toggleTag(active, tag) }}>
-                      {tag}<span className="selection-tag-key">{index < 9 ? index + 1 : ''}</span>
-                    </Tag.CheckableTag>)
-                  : <Typography.Text type="secondary">
-                      这个选题还没有预设标签，请让选题负责人在选题里先定义一组</Typography.Text>}
-                <Tag.CheckableTag checked={isDeprecated(active.tags)}
-                  className="selection-tag-deprecated"
-                  onChange={() => { if (editable) void toggleTag(active, DEPRECATED_TAG) }}>
-                  <StopOutlined /> {DEPRECATED_TAG_LABEL}<span className="selection-tag-key">空格</span>
-                </Tag.CheckableTag>
-                {taggingId === active.id && <Spin size="small" />}
-              </div>
-              {isDeprecated(active.tags) && <Alert type="warning" showIcon
-                message={`标记为${DEPRECATED_TAG_LABEL}的图片会在选题完成、负责人确认后从图库和对象存储中删除`} />}
-            </div>
+            {photos.length < total && <div className="selection-grid-more">
+              <Button type="link" loading={loadingMore} onClick={() => void loadMore()}>
+                继续加载（还有 {total - photos.length} 张）</Button>
+            </div>}
           </>}
+
+          {view === 'single' && <>
+            {!active && <Empty description={total ? '换个筛选条件看看' : '这个选题相册里还没有可选的图片'} />}
+            {active && editing && active.imageUrl && <Suspense
+              fallback={<div className="empty-state">正在打开编辑器…</div>}>
+              <PhotoCropEditor imageUrl={active.imageUrl} contentType={active.contentType}
+                refresh={() => refreshImageUrl(active.id as string)} saving={savingEdit}
+                onCancel={() => setEditing(false)} onSave={blob => void saveEdit(blob)} />
+            </Suspense>}
+            {active && !editing && <div className="selection-stage-image">
+              {stageSrc
+                ? <Suspense fallback={<div className="empty-state">正在加载图片…</div>}>
+                  <ZoomableImage src={stageSrc} alt={active.title || '选片图片'}
+                    refresh={() => refreshImageUrl(active.id as string)}
+                    resetKey={`${active.id}-${quality}`}
+                    previewHint={quality === 'preview'
+                      ? '当前是 480px 预览图，放大后会糊；要判清晰度请切到「大图（原图）」'
+                      : undefined} />
+                </Suspense>
+                : <Empty description="这张图片暂时没有可展示的画面" />}
+            </div>}
+          </>}
+
+          {active && !editing && <div className="selection-stage-panel">
+            <div className="selection-stage-meta">
+              <Space wrap>
+                <Button icon={<LeftOutlined />} disabled={activeIndex <= 0}
+                  onClick={() => step(-1)}>上一张</Button>
+                <Button icon={<RightOutlined />} disabled={activeIndex >= visible.length - 1}
+                  onClick={() => step(1)}>下一张</Button>
+              </Space>
+              <div>
+                <strong>{active.title || '未命名图片'}</strong>
+                <Typography.Text type="secondary">
+                  {active.photographerName} · {dayjs(active.takenAt).format('YYYY-MM-DD HH:mm')}
+                  {active.width && active.height ? ` · ${active.width}×${active.height}` : ''}
+                </Typography.Text>
+              </div>
+              <Button icon={<ScissorOutlined />} disabled={!editable || !active.imageUrl}
+                onClick={() => { setView('single'); setEditing(true) }}>裁切 / 旋转</Button>
+            </div>
+            <div className="selection-tag-row">
+              <Typography.Text type="secondary">标签</Typography.Text>
+              {presetTags.length
+                ? presetTags.map((tag, index) => <Tag.CheckableTag key={tag}
+                    checked={active.tags.includes(tag)}
+                    onChange={() => { if (editable) void toggleTag(active, tag) }}>
+                    {tag}<span className="selection-tag-key">{index < 9 ? index + 1 : ''}</span>
+                  </Tag.CheckableTag>)
+                : <Typography.Text type="secondary">
+                    这个选题还没有预设标签，请让选题负责人在选题里先定义一组</Typography.Text>}
+              <Tag.CheckableTag checked={isDeprecated(active.tags)}
+                className="selection-tag-deprecated"
+                onChange={() => { if (editable) void toggleTag(active, DEPRECATED_TAG) }}>
+                <StopOutlined /> {DEPRECATED_TAG_LABEL}<span className="selection-tag-key">空格</span>
+              </Tag.CheckableTag>
+              {taggingId === active.id && <Spin size="small" />}
+            </div>
+            {isDeprecated(active.tags) && <Alert type="warning" showIcon
+              message={`标记为${DEPRECATED_TAG_LABEL}的图片会在选题完成、负责人确认后从图库和对象存储中删除`} />}
+          </div>}
         </section>
       </div>
     </div>}

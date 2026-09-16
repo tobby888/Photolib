@@ -2692,16 +2692,20 @@ body {
   border-radius: 12px;
   background: var(--studio-surface);
 }
-/* 大图区自己吃掉剩余高度，面板固定在下面，翻图时画面不会上下跳。 */
+/* 大图区自己吃掉剩余高度，面板固定在下面，翻图时画面不会上下跳。
+   用 flex 而不是 grid + place-items:center：里面的 .selection-viewer 要**撑满**这块
+   （缩放和平移的边界按它的尺寸算），而 place-items:center 会把它缩成图片那么大，
+   于是缩放工具条贴着图片边缘、拖动范围也算错。居中交给 viewer 内部去做。 */
 .selection-stage-image {
   flex: 1;
+  min-width: 0;
   min-height: 0;
-  display: grid;
-  place-items: center;
+  display: flex;
   background: #14171a;
   border-radius: 8px;
   overflow: hidden;
 }
+.selection-stage-image > .ant-empty { margin: auto; }
 /* grid 项默认 min-width/min-height: auto，对图片和画布来说那就是它的原始像素——
    会把 max-*: 100% 顶掉，大图于是撑破工作区。整条链上每一层都要显式归零。 */
 .selection-stage-image img {
@@ -2711,6 +2715,76 @@ body {
   min-height: 0;
   object-fit: contain;
 }
+/* 网格视角没有左边那一列，整块交给图墙。 */
+.selection-workspace.view-grid { grid-template-columns: minmax(0, 1fr); }
+
+/* 图墙。单元格统一比例、图片 object-fit: contain——选片要看的是整个画面，
+   cover 会把边角裁掉，而被裁掉的地方恰恰常是「有没有穿帮」的答案。
+   竖图于是在格子里显示成一条窄的，正好也把画幅方向直接透出来。 */
+.selection-grid {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+  align-content: start;
+  padding: 2px;
+}
+.selection-grid .selection-thumb { width: 100%; aspect-ratio: 4 / 3; }
+.selection-grid .selection-thumb img { object-fit: contain; background: #14171a; }
+.selection-grid-more { padding-top: 8px; text-align: center; }
+
+/* 可缩放的大图。frame 负责裁掉溢出的部分，img 自己带 transform。 */
+.selection-viewer { position: relative; flex: 1; min-width: 0; min-height: 0; display: flex; }
+.selection-viewer-frame {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: #14171a;
+  border-radius: 8px;
+  touch-action: none;
+}
+.selection-viewer-frame img {
+  max-width: 100%;
+  max-height: 100%;
+  min-width: 0;
+  min-height: 0;
+  object-fit: contain;
+  /* 放大之后按原始像素看清晰度，不要让浏览器再糊一层。 */
+  image-rendering: -webkit-optimize-contrast;
+  will-change: transform;
+}
+.selection-viewer-frame.is-zoomed { cursor: grab; }
+.selection-viewer-frame.is-dragging { cursor: grabbing; }
+.selection-viewer-tools {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(20, 23, 26, .72);
+  backdrop-filter: blur(6px);
+}
+.selection-viewer-scale { min-width: 46px; text-align: center; color: #fff; font-size: 12px; }
+.selection-viewer-hint {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  max-width: calc(100% - 140px);
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(20, 23, 26, .72);
+  font-size: 12px;
+}
+
 .selection-stage-panel { display: flex; flex-direction: column; gap: 10px; }
 .selection-stage-meta {
   display: flex;
@@ -2784,7 +2858,16 @@ body {
     grid-template-rows: 116px minmax(0, 1fr);
     height: calc(100vh - 360px);
   }
-  /* 窄屏上缩略图改成横向一条，竖着摆会把大图挤没。 */
+  /* 网格视角在窄屏上没有缩略图条那一行，把那 116px 还给图墙——
+     否则底下的标签面板占掉大半，图墙只剩不到两行。 */
+  .selection-workspace.view-grid {
+    grid-template-rows: minmax(0, 1fr);
+    height: calc(100vh - 244px);
+  }
+  .selection-grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
+  /* 窄屏上缩略图改成横向一条，竖着摆会把大图挤没。
+     这条必须限定在 .selection-filmstrip 里：.selection-thumb 网格视角也在用，
+     不限定的话图墙的格子会被拉成 140px 宽的一条。 */
   .selection-filmstrip { flex-direction: row; overflow-x: auto; overflow-y: hidden; }
-  .selection-thumb { width: 140px; flex: 0 0 140px; height: 100%; aspect-ratio: auto; }
+  .selection-filmstrip .selection-thumb { width: 140px; flex: 0 0 140px; height: 100%; aspect-ratio: auto; }
 }
