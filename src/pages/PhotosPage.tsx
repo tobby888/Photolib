@@ -4,7 +4,7 @@ import {
 } from 'antd'
 import {
   CloudUploadOutlined, DeleteOutlined, DownloadOutlined, FolderAddOutlined, InboxOutlined, MinusCircleOutlined,
-  SearchOutlined, StarFilled, StarOutlined, TagsOutlined,
+  EyeOutlined, SearchOutlined, StarFilled, StarOutlined, TagsOutlined,
 } from '@ant-design/icons'
 import { useEffect, useReducer, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
@@ -35,6 +35,9 @@ import TagSelect from '../TagSelect'
 import { MAX_TAG_LENGTH, normalizeTags, tagRules } from '../photoTags'
 import { readRecentTags, recordTagSearch } from '../photoTagHistory'
 import RecentTagChips from '../RecentTagChips'
+import { selectPhotoRange } from '../photoSelection'
+import { usePhotoCardClick } from '../usePhotoCardClick'
+import { matchPhotoCardShortcut, photoCardHint, usePhotoCardShortcuts } from '../photoCardShortcuts'
 
 export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: boolean }) {
   const navigate = useNavigate()
@@ -60,6 +63,8 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
   const [uploadPhase, setUploadPhase] = useState<'uploading' | 'processing' | null>(null)
   const [uploadPercent, setUploadPercent] = useState(0)
   const [selectedPhotos, setSelectedPhotos] = useState<Photo[]>([])
+  const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null)
+  const shortcuts = usePhotoCardShortcuts()
   const [batchDownloading, setBatchDownloading] = useState(false)
   const [projectPickerOpen, setProjectPickerOpen] = useState(false)
   const [projectSaving, setProjectSaving] = useState(false)
@@ -220,10 +225,44 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
     }
   }
   const toggleSelected = (photo: Photo, checked: boolean) => {
+    if (checked && selectedIds.length >= 200 && !selectedIds.includes(photo.id)) {
+      message.info('单次最多选择 200 张，已选到上限')
+      return
+    }
     setSelectedPhotos(current => checked
       ? current.some(item => item.id === photo.id) ? current : [...current, photo].slice(0, 200)
       : current.filter(item => item.id !== photo.id))
+    if (checked) setSelectionAnchor(photo.id)
   }
+  const selectRangeTo = (photoId: string) => {
+    // 只在可勾选的图片里连选：处理中 / 失败的图片没有勾选框，被连选进去就取消不掉。
+    const orderedIds = data.items.filter(canSelectPhoto).map(item => item.id)
+    if (!selectionAnchor || !orderedIds.includes(selectionAnchor)) {
+      const target = data.items.find(item => item.id === photoId)
+      if (target) toggleSelected(target, !selectedIds.includes(photoId))
+      return
+    }
+    const result = selectPhotoRange(selectedIds, orderedIds, selectionAnchor, photoId, 200)
+    const candidates = new Map([...selectedPhotos, ...data.items].map(item => [item.id, item]))
+    setSelectedPhotos(result.selected
+      .map(id => candidates.get(id))
+      .filter((item): item is Photo => Boolean(item)))
+    setSelectionAnchor(result.anchorId)
+    if (result.truncated) message.info('单次最多选择 200 张，已选到上限')
+  }
+  const { click: queuePhotoSelect, doubleClick: openPhotoDetail } = usePhotoCardClick<Photo>(
+    photo => toggleSelected(photo, !selectedIds.includes(photo.id)),
+    photo => navigate(withPhotoLibrarySearch(`${libraryRoot}/${photo.id}`, location.search)),
+  )
+  useEffect(() => {
+    setSelectionAnchor(null)
+  }, [filters.page, filters.keyword, filters.status, tagSearchKey, favoritesOnly])
+  useEffect(() => {
+    if (!selectedPhotos.length) setSelectionAnchor(null)
+  }, [selectedPhotos.length])
+  const canSelectPhoto = (photo: Photo) =>
+    (canAddToProject || canDownload || canDelete || canTag)
+    && (photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED')
   const batchDownload = async () => {
     if (!selectedIds.length) return
     setBatchDownloading(true)
@@ -367,13 +406,39 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
       <Row gutter={[16, 20]} className="photo-grid">
         {data.items.map(photo => <Col xs={24} sm={12} lg={8} xxl={6} key={photo.id}>
           <Card className={`photo-card${selectedIds.includes(photo.id) ? ' photo-card-selected' : ''}`} hoverable cover={<div
-            className="photo-cover" role="link" tabIndex={0}
-            aria-label={`查看图片详情：${photo.title || photo.id}`}
-            onClick={() => navigate(withPhotoLibrarySearch(
-              `${libraryRoot}/${photo.id}`, location.search))}
+            className="photo-cover" role="button" tabIndex={0}
+            aria-pressed={selectedIds.includes(photo.id)}
+            aria-label={`${canSelectPhoto(photo) ? '选择' : '查看'}图片：${photo.title || photo.id}`}
+            title={canSelectPhoto(photo) ? photoCardHint(shortcuts, '查看详情') : '查看图片详情'}
+            onClick={event => {
+              if (!canSelectPhoto(photo)) {
+                navigate(withPhotoLibrarySearch(`${libraryRoot}/${photo.id}`, location.search))
+                return
+              }
+              if (event.shiftKey) {
+                event.preventDefault()
+                selectRangeTo(photo.id)
+                return
+              }
+              queuePhotoSelect(photo)
+            }}
+            onDoubleClick={event => {
+              event.preventDefault()
+              openPhotoDetail(photo)
+            }}
             onKeyDown={event => {
-              if (event.key === 'Enter' && event.target === event.currentTarget) navigate(withPhotoLibrarySearch(
-                `${libraryRoot}/${photo.id}`, location.search))
+              if (event.target !== event.currentTarget) return
+              // 键盘没有双击：「打开」键进详情，「选择」键勾选（Shift 连选），键位由用户设置。
+              const action = matchPhotoCardShortcut(event, shortcuts)
+              if (!action) return
+              event.preventDefault()
+              if (action === 'open' || !canSelectPhoto(photo)) {
+                navigate(withPhotoLibrarySearch(`${libraryRoot}/${photo.id}`, location.search))
+              } else if (event.shiftKey) {
+                selectRangeTo(photo.id)
+              } else {
+                toggleSelected(photo, !selectedIds.includes(photo.id))
+              }
             }}>
             {/* 取不回来时先向后端重取一次签名地址（见 src/previewRetry.ts），
                 仍然取不回来才让占位图顶上。 */}
@@ -385,6 +450,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
                 <span>{photo.title?.slice(0, 1) || '图'}</span>
               </PhotoPlaceholder>}
             <div className="photo-overlay" onClick={event => event.stopPropagation()}
+              onDoubleClick={event => event.stopPropagation()}
               onKeyDown={event => event.stopPropagation()}>
               {(canAddToProject || canDownload || canDelete || canTag) && (photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED') && <Checkbox
                 className="photo-select-checkbox"
@@ -394,6 +460,14 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
                 onChange={event => toggleSelected(photo, event.target.checked)}
                 aria-label={`选择图片 ${photo.title || photo.id}`} />}
               <Space size={8} className="photo-card-actions">
+                {/* 触屏上没有可靠的双击，单击又用来选图，详情得有个看得见的入口。 */}
+                {canSelectPhoto(photo) && <Button className="photo-view-button" shape="circle" icon={<EyeOutlined />}
+                  aria-label={`查看图片详情 ${photo.title || photo.id}`} title="查看详情"
+                  onClick={event => {
+                    event.stopPropagation()
+                    navigate(withPhotoLibrarySearch(`${libraryRoot}/${photo.id}`, location.search))
+                  }}
+                  onKeyDown={event => event.stopPropagation()} />}
                 <Button className={`photo-favorite-button${photo.favorited ? ' is-favorited' : ''}`}
                   shape="circle" icon={photo.favorited ? <StarFilled /> : <StarOutlined />}
                   loading={favoriteUpdatingIds.has(photo.id)} aria-pressed={photo.favorited}

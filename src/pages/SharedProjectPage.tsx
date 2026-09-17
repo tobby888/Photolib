@@ -1,9 +1,9 @@
 import {
   App, Button, Card, Checkbox, Col, Empty, Form, Input, Result, Row, Skeleton, Space, Tag, Typography,
 } from 'antd'
-import { DownloadOutlined, LinkOutlined, LockOutlined } from '@ant-design/icons'
+import { DownloadOutlined, EyeOutlined, KeyOutlined, LinkOutlined, LockOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { ApiError } from '../api'
 import { BrandGlyph, useBranding } from '../branding'
@@ -19,7 +19,12 @@ import { emptyProjectPhotoFilters, hasActiveFilters } from '../photoTags'
 import type { ProjectPhotoFilters } from '../photoTags'
 import ProjectPhotoFilterBar from '../ProjectPhotoFilterBar'
 import { shareTagHistoryScope } from '../photoTagHistory'
+import { selectPhotoRange } from '../photoSelection'
 import { MAX_SHARE_BATCH, dropFromSelection, isFullySelected, mergeSelection } from '../shareSelection'
+import { isPortalEvent, selectablePreview, usePhotoCardClick } from '../usePhotoCardClick'
+import { matchPhotoCardShortcut, photoCardHint, usePhotoCardShortcuts } from '../photoCardShortcuts'
+
+const PhotoCardShortcutsModal = lazy(() => import('../PhotoCardShortcutsModal'))
 import type { ShareGuestAccess, SharePhoto } from '../types'
 
 const PAGE_SIZE = 60
@@ -57,6 +62,10 @@ export default function SharedProjectPage() {
   const [filterOptions, setFilterOptions] = useState<ShareFilterOptions>({ tags: [], photographers: [] })
   const [loadingPhotos, setLoadingPhotos] = useState(false)
   const [selected, setSelected] = useState<string[]>([])
+  const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null)
+  const [previewPhotoId, setPreviewPhotoId] = useState<string | null>(null)
+  const [shortcutSettingsOpen, setShortcutSettingsOpen] = useState(false)
+  const shortcuts = usePhotoCardShortcuts()
   const [selectingAll, setSelectingAll] = useState(false)
   const [batchDownloading, setBatchDownloading] = useState(false)
   const [markingPhotoId, setMarkingPhotoId] = useState<string | null>(null)
@@ -202,10 +211,44 @@ export default function SharedProjectPage() {
     message.info(`单次最多下载 ${MAX_SHARE_BATCH} 张，已选到上限`)
 
   const toggleSelected = (photoId: string, checked: boolean) => {
+    if (checked && selected.length >= MAX_SHARE_BATCH && !selectedIds.has(photoId)) {
+      notifyTruncated()
+      return
+    }
     setSelected(current => checked
       ? mergeSelection(current, [photoId]).selected
       : dropFromSelection(current, [photoId]))
+    if (checked) setSelectionAnchor(photoId)
   }
+
+  const selectRangeTo = (photoId: string) => {
+    if (!access?.allowDownload) return
+    if (!selectionAnchor || !pageIds.includes(selectionAnchor)) {
+      toggleSelected(photoId, !selectedIds.has(photoId))
+      return
+    }
+    const result = selectPhotoRange(selected, pageIds, selectionAnchor, photoId, MAX_SHARE_BATCH)
+    setSelected(result.selected)
+    setSelectionAnchor(result.anchorId)
+    if (result.truncated) notifyTruncated()
+  }
+  const selecting = !!access?.allowDownload && !batchDownloading && !selectingAll
+  const openPreview = (photo: SharePhoto) => {
+    if (photo.thumbnailUrl) setPreviewPhotoId(photo.id)
+  }
+  const { click: queuePhotoSelect, doubleClick: handlePhotoDoubleClick } = usePhotoCardClick<SharePhoto>(
+    photo => {
+      if (!access?.allowDownload || batchDownloading || selectingAll) return
+      toggleSelected(photo.id, !selectedIds.has(photo.id))
+    },
+    openPreview,
+  )
+  useEffect(() => {
+    setSelectionAnchor(null)
+  }, [page, keyword, filters])
+  useEffect(() => {
+    if (!selected.length) setSelectionAnchor(null)
+  }, [selected.length])
 
   const downloadOne = async (photo: SharePhoto) => {
     if (!session) return
@@ -349,6 +392,8 @@ export default function SharedProjectPage() {
           <Input.Search allowClear placeholder="搜索图片标题、描述或标签" style={{ maxWidth: 260 }}
             onSearch={value => { setKeyword(value); setPage(1) }} />
           {access?.allowDownload && <>
+            {/* 访客没有账号菜单，快捷键设置从这里进。 */}
+            <Button type="link" icon={<KeyOutlined />} onClick={() => setShortcutSettingsOpen(true)}>快捷键</Button>
             <Button type="link" disabled={!photos.length || batchDownloading || selectingAll}
               onClick={togglePageSelection}>{pageFullySelected ? '取消本页' : '全选本页'}</Button>
             {total > photos.length && <Button type="link" loading={selectingAll}
@@ -370,24 +415,65 @@ export default function SharedProjectPage() {
           : photos.length ? <Row gutter={[16, 20]} className="photo-grid">
             {photos.map(photo => <Col xs={24} sm={12} lg={8} xxl={6} key={photo.id}>
               <Card className={`photo-card${selectedIds.has(photo.id) ? ' photo-card-selected' : ''}`}
-                cover={<div className="photo-cover">
+                cover={<div className="photo-cover"
+                  role={access?.allowDownload ? 'button' : undefined}
+                  tabIndex={access?.allowDownload ? 0 : undefined}
+                  aria-pressed={access?.allowDownload ? selectedIds.has(photo.id) : undefined}
+                  aria-label={access?.allowDownload ? `选择图片 ${photo.title || photo.id}` : undefined}
+                  title={access?.allowDownload ? photoCardHint(shortcuts, '查看大图') : undefined}
+                  onClick={event => {
+                    if (!selecting || isPortalEvent(event)) return
+                    if (event.shiftKey) {
+                      event.preventDefault()
+                      selectRangeTo(photo.id)
+                      return
+                    }
+                    queuePhotoSelect(photo)
+                  }}
+                  onDoubleClick={event => {
+                    if (!selecting || isPortalEvent(event)) return
+                    event.preventDefault()
+                    handlePhotoDoubleClick(photo)
+                  }}
+                  onKeyDown={event => {
+                    if (event.target !== event.currentTarget || !selecting) return
+                    // 键盘没有双击：「打开」键看大图，「选择」键勾选（Shift 连选），键位由用户设置。
+                    const action = matchPhotoCardShortcut(event, shortcuts)
+                    if (!action) return
+                    event.preventDefault()
+                    if (action === 'open') openPreview(photo)
+                    else if (event.shiftKey) selectRangeTo(photo.id)
+                    else toggleSelected(photo.id, !selectedIds.has(photo.id))
+                  }}>
                   {photo.thumbnailUrl
                     ? <PreviewPhoto src={photo.thumbnailUrl} alt={photo.title || '项目图片'}
+                        preview={selecting
+                          ? selectablePreview(previewPhotoId === photo.id, () => setPreviewPhotoId(null))
+                          : undefined}
                         refresh={() => refreshPreviewUrl(photo.id)}
                         fallback={pickPlaceholderImage(placeholderImages, photo.id)} />
                     : <PhotoPlaceholder seed={photo.id}>
                       <span>{photo.title?.slice(0, 1) || '图'}</span>
                     </PhotoPlaceholder>}
-                  <div className="photo-overlay">
+                  <div className="photo-overlay" onClick={event => event.stopPropagation()}
+                    onDoubleClick={event => event.stopPropagation()}
+                    onKeyDown={event => event.stopPropagation()}>
                     {access?.allowDownload && <>
                       <Checkbox className="photo-select-checkbox" checked={selectedIds.has(photo.id)}
                         disabled={batchDownloading || selectingAll
                           || (selected.length >= MAX_SHARE_BATCH && !selectedIds.has(photo.id))}
                         onChange={event => toggleSelected(photo.id, event.target.checked)}
                         aria-label={`选择图片 ${photo.title || photo.id}`} />
-                      <Button className="photo-download-button" shape="circle" icon={<DownloadOutlined />}
-                        aria-label={`下载图片 ${photo.title || photo.id}`}
-                        onClick={() => void downloadOne(photo)} />
+                      <Space size={8} className="photo-card-actions">
+                        {/* 触屏上没有可靠的双击，单击又用来选图，看大图得有个看得见的入口。 */}
+                        {selecting && photo.thumbnailUrl &&
+                          <Button className="photo-view-button" shape="circle" icon={<EyeOutlined />}
+                            aria-label={`查看大图 ${photo.title || photo.id}`} title="查看大图"
+                            onClick={() => openPreview(photo)} />}
+                        <Button className="photo-download-button" shape="circle" icon={<DownloadOutlined />}
+                          aria-label={`下载图片 ${photo.title || photo.id}`}
+                          onClick={() => void downloadOne(photo)} />
+                      </Space>
                     </>}
                   </div>
                   {photo.adopted && <div className="photo-badges"><Tag color="gold">已被引</Tag></div>}
@@ -425,5 +511,8 @@ export default function SharedProjectPage() {
       </Card>
     </div>
     <SiteFooter />
+    {shortcutSettingsOpen && <Suspense fallback={null}>
+      <PhotoCardShortcutsModal open onClose={() => setShortcutSettingsOpen(false)} />
+    </Suspense>}
   </main>
 }
