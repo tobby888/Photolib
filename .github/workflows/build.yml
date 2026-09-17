@@ -190,3 +190,82 @@ jobs:
             --generate-notes \
             $prerelease \
             "release/photolib-backend-$GITHUB_REF_NAME.jar"
+
+  deploy:
+    name: 部署到生产
+    # 只有 master 上的推送（或在 master 上手动触发）才部署；PR 和 v* tag 不部署。
+    # 直接用 package job 上传的 JAR，不重新构建，保证上线的就是跑过测试和产物校验的那一个。
+    needs: [frontend, package]
+    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # 部署串行执行，且不取消正在进行的部署，避免半途停服。
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    env:
+      DEPLOY_DIR: /opt/Photolib
+      SERVER_HOST: ${{ secrets.SERVER_HOST }}
+      SERVER_USER: ${{ secrets.SERVER_USER || 'root' }}
+      # sshpass -e 从环境变量读密码，不会出现在进程参数里。
+      SSHPASS: ${{ secrets.SSH_SECRET }}
+    steps:
+      - name: 下载打包产物
+        uses: actions/download-artifact@v4
+        with:
+          name: photolib-backend-jar
+          path: dist-jar
+
+      - name: 准备 SSH
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends sshpass
+          jar=$(ls dist-jar/photolib-backend-*.jar)
+          echo "JAR_PATH=$jar" >> "$GITHUB_ENV"
+          echo "JAR_NAME=$(basename "$jar")" >> "$GITHUB_ENV"
+          echo "SSH_OPTS=-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$RUNNER_TEMP/known_hosts -o ServerAliveInterval=15" >> "$GITHUB_ENV"
+
+      # 先把新 JAR 传到部署目录下的临时文件名（不匹配 photolib-backend*），
+      # 这样上传失败时线上服务完全不受影响，停服窗口也只剩替换文件的那一下。
+      - name: 上传新 JAR
+        run: |
+          set -euo pipefail
+          sshpass -e scp $SSH_OPTS "$JAR_PATH" \
+            "$SERVER_USER@$SERVER_HOST:$DEPLOY_DIR/.upload-$GITHUB_RUN_ID.jar"
+
+      - name: 切换版本并重启服务
+        run: |
+          set -euo pipefail
+          sshpass -e ssh $SSH_OPTS "$SERVER_USER@$SERVER_HOST" \
+            "DEPLOY_DIR='$DEPLOY_DIR' JAR_NAME='$JAR_NAME' RUN_ID='$GITHUB_RUN_ID' bash -s" <<'REMOTE'
+          set -euo pipefail
+          # maint-on/maint-off 定义在 ~/.bashrc 里，非交互 shell 不会加载，
+          # 所以用交互式 bash 调用；</dev/null 防止它吃掉本脚本的 stdin。
+          echo ">>> maint-on"
+          bash -ic 'maint-on' </dev/null
+
+          echo ">>> systemctl stop photolib"
+          systemctl stop photolib
+
+          echo ">>> 删除旧 JAR"
+          rm -fv "$DEPLOY_DIR"/photolib-backend*
+
+          echo ">>> 放入新 JAR: $JAR_NAME"
+          mv "$DEPLOY_DIR/.upload-$RUN_ID.jar" "$DEPLOY_DIR/$JAR_NAME"
+
+          echo ">>> systemctl start photolib"
+          systemctl start photolib
+
+          sleep 10
+
+          echo ">>> maint-off"
+          bash -ic 'maint-off' </dev/null
+
+          if ! systemctl is-active --quiet photolib; then
+            echo "photolib 服务启动后未处于 active 状态" >&2
+            journalctl -u photolib -n 80 --no-pager >&2 || true
+            exit 1
+          fi
+          systemctl status photolib --no-pager | head -n 5
+          REMOTE
