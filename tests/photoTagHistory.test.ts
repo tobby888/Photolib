@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  clearTagHistory, readRecentTags, recordTagSearch, TAG_HISTORY_LIMIT,
+  clearTagHistory, readRecentTags, recordTagSearch, shareTagHistoryScope, TAG_HISTORY_LIMIT,
 } from '../src/photoTagHistory.ts'
 
 function installLocalStorage() {
@@ -46,4 +46,14 @@ test('clearTagHistory removes only that scope', () => {
 
   assert.deepEqual(readRecentTags('a'), [])
   assert.deepEqual(readRecentTags('b'), ['颁奖'])
+})
+
+test('share history scope never contains the share token', () => {
+  const token = 'Zk3pQ9vLr2XbT8mYw4Hc'
+  const scope = shareTagHistoryScope(token)
+
+  assert.ok(scope.startsWith('share:'))
+  assert.ok(!scope.includes(token))
+  assert.equal(shareTagHistoryScope(token), scope)
+  assert.notEqual(shareTagHistoryScope(`${token}x`), scope)
 })

@@ -20,7 +20,7 @@ import { refreshPhotoPreviewUrl } from '../previewRefresh'
 import { PhotoPlaceholder } from '../photoPlaceholder'
 import type { EntityId, PageData, Photo, Project } from '../types'
 import {
-  PHOTO_LIBRARY_PAGE_SIZE, readPhotoLibraryFilters, withPhotoLibrarySearch, writePhotoLibraryFilters,
+  photoLibraryRequestParams, readPhotoLibraryFilters, withPhotoLibrarySearch, writePhotoLibraryFilters,
 } from '../photoLibrarySearch'
 import { findPhotoNeighbors, pickEdgePhotoId } from '../photoNeighbors'
 
@@ -95,18 +95,9 @@ export default function PhotoDetailPage({ favoritesOnly = false }: { favoritesOn
   // 同一套筛选条件，照它重新取一页列表就能把当前图片定位回去（见 src/photoNeighbors.ts）。
   const libraryFilters = readPhotoLibraryFilters(new URLSearchParams(location.search))
   const libraryTagKey = JSON.stringify(libraryFilters.tags)
-  const libraryPageParams = (page: number) => qs({
-    ...libraryFilters,
-    page,
-    pageSize: PHOTO_LIBRARY_PAGE_SIZE,
-    favoritesOnly: favoritesOnly || undefined,
-  })
+  const libraryPageParams = (page: number) => photoLibraryRequestParams(libraryFilters, { page, favoritesOnly })
   const { data: libraryPage } = useLoad(
-    () => api<PageData<Photo>>({
-      url: '/photos',
-      params: libraryPageParams(libraryFilters.page),
-      paramsSerializer: { indexes: null },
-    }),
+    () => api<PageData<Photo>>({ url: '/photos', params: libraryPageParams(libraryFilters.page) }),
     emptyPage<Photo>(),
     [libraryFilters.page, libraryFilters.keyword, libraryFilters.status, libraryTagKey, favoritesOnly],
   )
@@ -120,11 +111,7 @@ export default function PhotoDetailPage({ favoritesOnly = false }: { favoritesOn
     try {
       // 同页内相邻图片的 ID 已经在手上，只有跨页才需要再取一页拿边上那张。
       const targetId = neighbor.id ?? pickEdgePhotoId(
-        await api<PageData<Photo>>({
-          url: '/photos',
-          params: libraryPageParams(neighbor.page),
-          paramsSerializer: { indexes: null },
-        }),
+        await api<PageData<Photo>>({ url: '/photos', params: libraryPageParams(neighbor.page) }),
         direction === 'previous' ? 'last' : 'first',
       )
       if (targetId === null) {

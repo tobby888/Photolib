@@ -245,15 +245,27 @@ public class PhotoService {
                 .inSql(favoritesOnly, PhotoEntity::getId,
                         "SELECT photo_id FROM photo_favorite WHERE user_id = " + user.id())
                 .eq(effectiveStatus != null, PhotoEntity::getStatus, effectiveStatus)
-                .orderByDesc(PhotoEntity::getCreatedAt);
+                // 批量上传常有同一秒入库的图片，只按 created_at 排时分页边界上的顺序不稳定，
+                // 翻页会重复或漏图，详情页「上一张 / 下一张」也会跳号；用 id 兜底成全序。
+                .orderByDesc(PhotoEntity::getCreatedAt)
+                .orderByDesc(PhotoEntity::getId);
     }
 
     /**
      * 标签是 JSON 数组（H2 里还会被再包一层 JSON 字符串），用 LIKE 拼不出"恰好包含这个标签"，
-     * 所以和选题分享页同一套做法：先按可见范围查出候选的 id + tags_json，再在内存里精确比对。
+     * 所以分两步：先对每个标签用 LIKE 粗筛出 tags_json 文本里出现过它的行，再在内存里精确比对。
+     * 图库是全库范围，不粗筛就会把整个可见图库的 tags_json 读进内存，且详情页翻上一张 / 下一张
+     * 都会重跑一遍。
      */
     private Set<Long> photoIdsWithAllTags(LambdaQueryWrapper<PhotoEntity> baseQuery, List<String> tags) {
         baseQuery.select(PhotoEntity::getId, PhotoEntity::getTagsJson);
+        for (String tag : tags) {
+            // 含引号、反斜杠或控制字符的标签在 JSON 文本里会被转义（H2 双层时还会转义两次），
+            // 原文 LIKE 会漏掉它们；这类标签不粗筛，只靠下面的精确比对，结果不变。
+            if (appearsVerbatimInJson(tag)) {
+                baseQuery.apply(LikeFilter.contains("tags_json"), LikeFilter.escape(tag));
+            }
+        }
         Set<Long> ids = new LinkedHashSet<>();
         for (PhotoEntity photo : mapper.selectList(baseQuery)) {
             if (PhotoTags.parse(photo.getTagsJson()).containsAll(tags)) {
@@ -261,6 +273,10 @@ public class PhotoService {
             }
         }
         return ids;
+    }
+
+    private static boolean appearsVerbatimInJson(String tag) {
+        return tag.chars().noneMatch(ch -> ch == '"' || ch == '\\' || ch < 0x20);
     }
 
     public PhotoView get(Long id, AuthenticatedUser user) {

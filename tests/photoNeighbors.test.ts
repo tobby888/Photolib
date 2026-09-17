@@ -145,8 +145,10 @@ test('the photo detail page wires the previous/next buttons to the resolved neig
 
   // 详情页定位用的分页必须和图库列表严格一致，否则翻页会跳号。
   assert.match(searchSource, /export const PHOTO_LIBRARY_PAGE_SIZE = 24/)
+  // 两边的列表请求都走 photoLibraryRequestParams，分页大小只在那里设一次。
+  assert.match(searchSource, /params\.set\('pageSize', String\(PHOTO_LIBRARY_PAGE_SIZE\)\)/)
   for (const source of [detailSource, librarySource]) {
-    assert.match(source, /pageSize: PHOTO_LIBRARY_PAGE_SIZE/)
+    assert.match(source, /photoLibraryRequestParams\((filters|libraryFilters), \{/)
     assert.doesNotMatch(source, /pageSize: 24/)
   }
   assert.match(librarySource, /pageSize=\{PHOTO_LIBRARY_PAGE_SIZE\}/)

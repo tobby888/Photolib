@@ -15,6 +15,23 @@ export function tagHistoryStorageKey(scope: string): string {
   return `photolib_tag_history_${scope}`
 }
 
+/**
+ * 分享访客页的历史范围。分享 token 是访问凭据，不能明文写进访客 localStorage 的键名，
+ * 所以只取一个不可逆的短摘要（cyrb53，53 位）；这里只用来区分链接，不需要密码学强度。
+ */
+export function shareTagHistoryScope(token: string): string {
+  let h1 = 0xdeadbeef
+  let h2 = 0x41c6ce57
+  for (let index = 0; index < token.length; index++) {
+    const code = token.charCodeAt(index)
+    h1 = Math.imul(h1 ^ code, 2654435761)
+    h2 = Math.imul(h2 ^ code, 1597334677)
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909)
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909)
+  return `share:${(4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36)}`
+}
+
 function storage(): Storage | null {
   try {
     const candidate = globalThis.localStorage

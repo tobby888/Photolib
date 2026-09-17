@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import {
   DEFAULT_PHOTO_LIBRARY_FILTERS,
+  isTagTooLong,
+  photoLibraryRequestParams,
   readPhotoLibraryFilters,
   withPhotoLibrarySearch,
   writePhotoLibraryFilters,
@@ -85,7 +87,6 @@ test('photo and favorites pages wire the controlled search field and preserved r
   assert.match(librarySource, /value=\{searchText\} onChange=\{event => setSearchText\(event\.target\.value\)\}/)
   assert.match(librarySource, /const libraryRoot = favoritesOnly \? '\/favorites' : '\/photos'/)
   assert.match(librarySource, /`\$\{libraryRoot\}\/\$\{photo\.id\}`/)
-  assert.match(librarySource, /favoritesOnly: favoritesOnly \|\| undefined/)
   assert.match(librarySource, /const operationViewKey = currentViewKeyRef\.current/)
   assert.match(librarySource, /currentViewKeyRef\.current === operationViewKey/)
   assert.match(detailSource, /withPhotoLibrarySearch\(libraryRoot, location\.search\)/)
@@ -95,11 +96,31 @@ test('photo and favorites pages wire the controlled search field and preserved r
   assert.match(appSource, /path="\/favorites\/:photoId".*<PhotoDetailPage favoritesOnly \/>/)
 })
 
-test('photo library wires the tag filter to repeated params and recent-tag suggestions', async () => {
-  const source = await readFile(new URL('../src/pages/PhotosPage.tsx', import.meta.url), 'utf8')
+test('library request params repeat tags and match between the list and detail pages', () => {
+  const filters = {
+    page: 3,
+    status: 'AVAILABLE' as const,
+    keyword: '',
+    tags: ['合影', '颁奖/闭幕'],
+  }
 
-  assert.match(source, /paramsSerializer: \{ indexes: null \}/)
-  assert.match(source, /if \(filters\.tags\.length\) params\.tags = filters\.tags/)
-  assert.match(source, /<TagSelect presets=\{recentTags\} value=\{filters\.tags\}/)
-  assert.match(source, /recordTagSearch\(tagHistoryScope, added\)/)
+  assert.equal(
+    photoLibraryRequestParams(filters).toString(),
+    'page=3&pageSize=24&status=AVAILABLE&tags=%E5%90%88%E5%BD%B1&tags=%E9%A2%81%E5%A5%96%2F%E9%97%AD%E5%B9%95',
+  )
+  const neighbor = photoLibraryRequestParams(filters, { page: 4, favoritesOnly: true })
+  assert.equal(neighbor.get('page'), '4')
+  assert.deepEqual(neighbor.getAll('tags'), filters.tags)
+  assert.equal(neighbor.get('favoritesOnly'), 'true')
+  assert.equal(photoLibraryRequestParams(filters, { favoritesOnly: false }).has('favoritesOnly'), false)
+})
+
+test('library filters read from the URL drop blank, duplicate and over-long tags', () => {
+  const tooLong = '长'.repeat(51)
+  const searchParams = new URLSearchParams()
+  for (const tag of [' 合影 ', '合影', '', tooLong, '😀'.repeat(50)]) searchParams.append('tags', tag)
+
+  assert.deepEqual(readPhotoLibraryFilters(searchParams).tags, ['合影', '😀'.repeat(50)])
+  assert.equal(isTagTooLong('😀'.repeat(50)), false)
+  assert.equal(isTagTooLong(tooLong), true)
 })

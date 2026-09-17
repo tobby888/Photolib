@@ -419,6 +419,104 @@ class PhotoServiceTests {
     }
 
     @Test
+    void listPhotos_byTags_shouldPaginateOverExactMatchesOnly() {
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, title, photographer_student_id, photographer_name, uploaded_by,
+                     campus_id, taken_at, tags_json, size, content_type, object_key, sha256, status)
+                VALUES
+                    (1711, '合影一', '20230001', '张三', :adminId, :campusId, NOW(),
+                     '["合影","开幕式"]', 1000, 'image/jpeg', 'photos/2026/tag-page-a.jpg', :sha1, 'AVAILABLE'),
+                    (1712, '合影二', '20230001', '张三', :adminId, :campusId, NOW(),
+                     '["开幕式","合影"]', 1000, 'image/jpeg', 'photos/2026/tag-page-b.jpg', :sha2, 'AVAILABLE'),
+                    (1713, '只是文本里包含', '20230001', '张三', :adminId, :campusId, NOW(),
+                     '["合影留念","开幕式"]', 1000, 'image/jpeg', 'photos/2026/tag-page-c.jpg', :sha3, 'AVAILABLE')
+                """)
+                .param("adminId", adminUser.id())
+                .param("campusId", testCampus.getId())
+                .param("sha1", "1".repeat(64))
+                .param("sha2", "2".repeat(64))
+                .param("sha3", "3".repeat(64))
+                .update();
+
+        // LIKE 粗筛会带上 1713（文本里有"合影"），精确比对必须把它剔掉，total / pages 按精确结果算。
+        var first = photoService.list(1, 1, null, null, null, null, null,
+                null, null, PhotoStatus.AVAILABLE, false, false, false,
+                List.of("合影", "开幕式"), adminUser);
+        var second = photoService.list(2, 1, null, null, null, null, null,
+                null, null, PhotoStatus.AVAILABLE, false, false, false,
+                List.of("合影", "开幕式"), adminUser);
+
+        assertThat(first.total()).isEqualTo(2);
+        assertThat(first.totalPages()).isEqualTo(2);
+        assertThat(first.items()).hasSize(1);
+        assertThat(second.items()).hasSize(1);
+        assertThat(java.util.stream.Stream.concat(first.items().stream(), second.items().stream())
+                .map(PhotoService.PhotoView::id))
+                .containsExactlyInAnyOrder(1711L, 1712L);
+    }
+
+    @Test
+    void listPhotos_byTags_shouldStayWithinTheCampusScope() {
+        CampusEntity otherCampus = campusService.create("TAG-OTHER", "标签外校区");
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, title, photographer_student_id, photographer_name, uploaded_by,
+                     campus_id, taken_at, tags_json, size, content_type, object_key, sha256, status)
+                VALUES
+                    (1721, '本校区合影', '20230001', '张三', :adminId, :campusId, NOW(),
+                     '["合影"]', 1000, 'image/jpeg', 'photos/2026/tag-scope-a.jpg', :sha1, 'AVAILABLE'),
+                    (1722, '外校区合影', '20230001', '张三', :adminId, :otherCampusId, NOW(),
+                     '["合影"]', 1000, 'image/jpeg', 'photos/2026/tag-scope-b.jpg', :sha2, 'AVAILABLE')
+                """)
+                .param("adminId", adminUser.id())
+                .param("campusId", testCampus.getId())
+                .param("otherCampusId", otherCampus.getId())
+                .param("sha1", "4".repeat(64))
+                .param("sha2", "5".repeat(64))
+                .update();
+
+        var result = photoService.list(1, 20, null, null, null, null, null,
+                null, null, PhotoStatus.AVAILABLE, false, false, false,
+                List.of("合影"), campusReader(PhotoVisibility.CAMPUS, testCampus));
+
+        assertThat(result.items()).extracting(PhotoService.PhotoView::id).containsExactly(1721L);
+        assertThat(result.total()).isEqualTo(1);
+    }
+
+    @Test
+    void listPhotos_byTags_shouldMatchTagsWithLikeWildcardsAndJsonEscapes() {
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, title, photographer_student_id, photographer_name, uploaded_by,
+                     campus_id, taken_at, tags_json, size, content_type, object_key, sha256, status)
+                VALUES
+                    (1731, '下划线', '20230001', '张三', :adminId, :campusId, NOW(),
+                     '["A_1"]', 1000, 'image/jpeg', 'photos/2026/tag-esc-a.jpg', :sha1, 'AVAILABLE'),
+                    (1732, '通配符误伤', '20230001', '张三', :adminId, :campusId, NOW(),
+                     '["AB1"]', 1000, 'image/jpeg', 'photos/2026/tag-esc-b.jpg', :sha2, 'AVAILABLE'),
+                    (1733, '引号', '20230001', '张三', :adminId, :campusId, NOW(),
+                     :quoted, 1000, 'image/jpeg', 'photos/2026/tag-esc-c.jpg', :sha3, 'AVAILABLE')
+                """)
+                .param("adminId", adminUser.id())
+                .param("campusId", testCampus.getId())
+                .param("quoted", PhotoTags.toJson(List.of("说\"好\"的")))
+                .param("sha1", "6".repeat(64))
+                .param("sha2", "7".repeat(64))
+                .param("sha3", "8".repeat(64))
+                .update();
+
+        assertThat(photoService.list(1, 20, null, null, null, null, null,
+                null, null, PhotoStatus.AVAILABLE, false, false, false,
+                List.of("A_1"), adminUser).items())
+                .extracting(PhotoService.PhotoView::id).containsExactly(1731L);
+        assertThat(photoService.list(1, 20, null, null, null, null, null,
+                null, null, PhotoStatus.AVAILABLE, false, false, false,
+                List.of("说\"好\"的"), adminUser).items())
+                .extracting(PhotoService.PhotoView::id).containsExactly(1733L);
+    }
+
+    @Test
     void favorites_shouldBeIdempotentUserIsolatedAndReflectedInViews() {
         jdbc.sql("""
                 INSERT INTO photo
