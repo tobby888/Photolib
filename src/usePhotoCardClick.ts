@@ -1,4 +1,22 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, type SyntheticEvent } from 'react'
+
+/**
+ * React 事件会顺着组件树穿过 Portal 冒泡：封面里 antd 大图预览弹层上的点击、双击、按键，
+ * 也会跑到封面的处理函数里。这类事件的 DOM 目标不在封面节点内，封面要忽略它们，
+ * 否则点预览里的关闭 / 缩放按钮会把图片勾上或取消。
+ */
+export const isPortalEvent = (event: SyntheticEvent<HTMLElement>) =>
+  !event.currentTarget.contains(event.target as Node)
+
+/**
+ * 单击用来选图时，大图预览改成受控：单击缩略图不再弹出（否则一下既选中又打开预览），
+ * 只由双击、Enter 或「查看大图」按钮打开；关闭仍交给预览自己。`cover: false` 去掉悬停时的「预览」遮罩。
+ */
+export const selectablePreview = (open: boolean, onClose: () => void) => ({
+  open,
+  cover: false as const,
+  onOpenChange: (next: boolean) => { if (!next) onClose() },
+})
 
 /**
  * 区分图片卡片的单击和双击。单击延迟执行，双击时取消待执行的单击，

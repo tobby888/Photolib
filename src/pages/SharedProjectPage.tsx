@@ -1,7 +1,7 @@
 import {
   App, Button, Card, Checkbox, Col, Empty, Form, Input, Result, Row, Skeleton, Space, Tag, Typography,
 } from 'antd'
-import { DownloadOutlined, LinkOutlined, LockOutlined } from '@ant-design/icons'
+import { DownloadOutlined, EyeOutlined, LinkOutlined, LockOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
@@ -21,7 +21,7 @@ import ProjectPhotoFilterBar from '../ProjectPhotoFilterBar'
 import { shareTagHistoryScope } from '../photoTagHistory'
 import { selectPhotoRange } from '../photoSelection'
 import { MAX_SHARE_BATCH, dropFromSelection, isFullySelected, mergeSelection } from '../shareSelection'
-import { usePhotoCardClick } from '../usePhotoCardClick'
+import { isPortalEvent, selectablePreview, usePhotoCardClick } from '../usePhotoCardClick'
 import type { ShareGuestAccess, SharePhoto } from '../types'
 
 const PAGE_SIZE = 60
@@ -60,6 +60,7 @@ export default function SharedProjectPage() {
   const [loadingPhotos, setLoadingPhotos] = useState(false)
   const [selected, setSelected] = useState<string[]>([])
   const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null)
+  const [previewPhotoId, setPreviewPhotoId] = useState<string | null>(null)
   const [selectingAll, setSelectingAll] = useState(false)
   const [batchDownloading, setBatchDownloading] = useState(false)
   const [markingPhotoId, setMarkingPhotoId] = useState<string | null>(null)
@@ -226,11 +227,16 @@ export default function SharedProjectPage() {
     setSelectionAnchor(result.anchorId)
     if (result.truncated) notifyTruncated()
   }
+  const selecting = !!access?.allowDownload && !batchDownloading && !selectingAll
+  const openPreview = (photo: SharePhoto) => {
+    if (photo.thumbnailUrl) setPreviewPhotoId(photo.id)
+  }
   const { click: queuePhotoSelect, doubleClick: handlePhotoDoubleClick } = usePhotoCardClick<SharePhoto>(
     photo => {
       if (!access?.allowDownload || batchDownloading || selectingAll) return
       toggleSelected(photo.id, !selectedIds.has(photo.id))
     },
+    openPreview,
   )
   useEffect(() => {
     setSelectionAnchor(null)
@@ -407,9 +413,9 @@ export default function SharedProjectPage() {
                   tabIndex={access?.allowDownload ? 0 : undefined}
                   aria-pressed={access?.allowDownload ? selectedIds.has(photo.id) : undefined}
                   aria-label={access?.allowDownload ? `选择图片 ${photo.title || photo.id}` : undefined}
-                  title={access?.allowDownload ? '单击选择' : undefined}
+                  title={access?.allowDownload ? '单击或空格选择，双击或 Enter 查看大图' : undefined}
                   onClick={event => {
-                    if (!access?.allowDownload || batchDownloading || selectingAll) return
+                    if (!selecting || isPortalEvent(event)) return
                     if (event.shiftKey) {
                       event.preventDefault()
                       selectRangeTo(photo.id)
@@ -418,19 +424,24 @@ export default function SharedProjectPage() {
                     queuePhotoSelect(photo)
                   }}
                   onDoubleClick={event => {
+                    if (!selecting || isPortalEvent(event)) return
                     event.preventDefault()
                     handlePhotoDoubleClick(photo)
                   }}
                   onKeyDown={event => {
-                    if (event.target !== event.currentTarget || !access?.allowDownload
-                      || batchDownloading || selectingAll) return
+                    if (event.target !== event.currentTarget || !selecting) return
                     if (event.key !== 'Enter' && event.key !== ' ') return
                     event.preventDefault()
-                    if (event.shiftKey) selectRangeTo(photo.id)
+                    // 键盘没有双击：Enter 看大图，空格勾选（Shift+空格连选）。
+                    if (event.key === 'Enter') openPreview(photo)
+                    else if (event.shiftKey) selectRangeTo(photo.id)
                     else toggleSelected(photo.id, !selectedIds.has(photo.id))
                   }}>
                   {photo.thumbnailUrl
                     ? <PreviewPhoto src={photo.thumbnailUrl} alt={photo.title || '项目图片'}
+                        preview={selecting
+                          ? selectablePreview(previewPhotoId === photo.id, () => setPreviewPhotoId(null))
+                          : undefined}
                         refresh={() => refreshPreviewUrl(photo.id)}
                         fallback={pickPlaceholderImage(placeholderImages, photo.id)} />
                     : <PhotoPlaceholder seed={photo.id}>
@@ -445,9 +456,16 @@ export default function SharedProjectPage() {
                           || (selected.length >= MAX_SHARE_BATCH && !selectedIds.has(photo.id))}
                         onChange={event => toggleSelected(photo.id, event.target.checked)}
                         aria-label={`选择图片 ${photo.title || photo.id}`} />
-                      <Button className="photo-download-button" shape="circle" icon={<DownloadOutlined />}
-                        aria-label={`下载图片 ${photo.title || photo.id}`}
-                        onClick={() => void downloadOne(photo)} />
+                      <Space size={8} className="photo-card-actions">
+                        {/* 触屏上没有可靠的双击，单击又用来选图，看大图得有个看得见的入口。 */}
+                        {selecting && photo.thumbnailUrl &&
+                          <Button className="photo-view-button" shape="circle" icon={<EyeOutlined />}
+                            aria-label={`查看大图 ${photo.title || photo.id}`} title="查看大图"
+                            onClick={() => openPreview(photo)} />}
+                        <Button className="photo-download-button" shape="circle" icon={<DownloadOutlined />}
+                          aria-label={`下载图片 ${photo.title || photo.id}`}
+                          onClick={() => void downloadOne(photo)} />
+                      </Space>
                     </>}
                   </div>
                   {photo.adopted && <div className="photo-badges"><Tag color="gold">已被引</Tag></div>}

@@ -3,7 +3,7 @@ import {
   Result, Row, Select, Space, Statistic, Tag, Typography, Upload,
 } from 'antd'
 import {
-  ArrowLeftOutlined, CheckCircleOutlined, CloudUploadOutlined, DeleteOutlined, DownloadOutlined,
+  ArrowLeftOutlined, CheckCircleOutlined, CloudUploadOutlined, DeleteOutlined, DownloadOutlined, EyeOutlined,
   InboxOutlined, PictureOutlined, SendOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
@@ -26,7 +26,7 @@ import { preparePhotoBatchDownload } from '../photoBatchDownload'
 import { selectPhotoRange } from '../photoSelection'
 import TagSelect from '../TagSelect'
 import { normalizeTags, tagRules } from '../photoTags'
-import { usePhotoCardClick } from '../usePhotoCardClick'
+import { isPortalEvent, selectablePreview, usePhotoCardClick } from '../usePhotoCardClick'
 
 type UploadValues = {
   files: { originFileObj?: File }[]
@@ -56,6 +56,7 @@ export default function RequestDeliveryPage() {
   const [actioning, setActioning] = useState(false)
   const [selectedPhotoIds, setSelectedPhotoIds] = useState<EntityId[]>([])
   const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null)
+  const [previewPhotoId, setPreviewPhotoId] = useState<string | null>(null)
   const [batchWorking, setBatchWorking] = useState(false)
 
   const requestState = useLoad(async () => {
@@ -118,7 +119,8 @@ export default function RequestDeliveryPage() {
     if (checked) setSelectionAnchor(photoId)
   }
   const selectDeliveryRange = (photoId: string) => {
-    const orderedIds = photosState.data.items.map(photo => photo.id)
+    // 只在可勾选的图片里连选：处理中的图片没有勾选框，被连选进去就取消不掉。
+    const orderedIds = photosState.data.items.filter(canSelectPhoto).map(photo => photo.id)
     if (!selectionAnchor || !orderedIds.includes(selectionAnchor)) {
       toggleDeliveryPhoto(photoId, !selectedPhotoIds.includes(photoId))
       return
@@ -128,11 +130,15 @@ export default function RequestDeliveryPage() {
     setSelectionAnchor(result.anchorId)
     if (result.truncated) message.info('单次最多选择 200 张，已选到上限')
   }
+  const openPreview = (photo: Photo) => {
+    if (photo.thumbnailUrl) setPreviewPhotoId(photo.id)
+  }
   const { click: queuePhotoSelect, doubleClick: handlePhotoDoubleClick } = usePhotoCardClick<Photo>(
     photo => {
       if (!canSelectPhoto(photo)) return
       toggleDeliveryPhoto(photo.id, !selectedPhotoIds.includes(photo.id))
     },
+    openPreview,
   )
   useEffect(() => {
     setSelectionAnchor(null)
@@ -325,9 +331,9 @@ export default function RequestDeliveryPage() {
                     tabIndex={canSelectPhoto(photo) ? 0 : undefined}
                     aria-pressed={canSelectPhoto(photo) ? selectedPhotoIds.includes(photo.id) : undefined}
                     aria-label={canSelectPhoto(photo) ? `选择图片 ${photo.title || photo.id}` : undefined}
-                    title={canSelectPhoto(photo) ? '单击选择' : undefined}
+                    title={canSelectPhoto(photo) ? '单击或空格选择，双击或 Enter 查看大图' : undefined}
                     onClick={event => {
-                      if (!canSelectPhoto(photo)) return
+                      if (!canSelectPhoto(photo) || isPortalEvent(event)) return
                       if (event.shiftKey) {
                         event.preventDefault()
                         selectDeliveryRange(photo.id)
@@ -336,7 +342,8 @@ export default function RequestDeliveryPage() {
                       queuePhotoSelect(photo)
                     }}
                     onDoubleClick={event => {
-                      if ((event.target as HTMLElement).closest('.ant-checkbox-wrapper')) return
+                      if (!canSelectPhoto(photo) || isPortalEvent(event)) return
+                      if ((event.target as HTMLElement).closest('.ant-checkbox-wrapper, .delivery-view-button')) return
                       event.preventDefault()
                       handlePhotoDoubleClick(photo)
                     }}
@@ -344,7 +351,9 @@ export default function RequestDeliveryPage() {
                       if (event.target !== event.currentTarget || !canSelectPhoto(photo)) return
                       if (event.key !== 'Enter' && event.key !== ' ') return
                       event.preventDefault()
-                      if (event.shiftKey) selectDeliveryRange(photo.id)
+                      // 键盘没有双击：Enter 看大图，空格勾选（Shift+空格连选）。
+                      if (event.key === 'Enter') openPreview(photo)
+                      else if (event.shiftKey) selectDeliveryRange(photo.id)
                       else toggleDeliveryPhoto(photo.id, !selectedPhotoIds.includes(photo.id))
                     }}>
                     {canManagePhotos && (photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED') &&
@@ -352,8 +361,16 @@ export default function RequestDeliveryPage() {
                         disabled={selectedPhotoIds.length >= 200 && !selectedPhotoIds.includes(photo.id)}
                         onClick={event => event.stopPropagation()}
                         onChange={event => toggleDeliveryPhoto(photo.id, event.target.checked)} />}
+                    {/* 触屏上没有可靠的双击，单击又用来选图，看大图得有个看得见的入口。 */}
+                    {canSelectPhoto(photo) && photo.thumbnailUrl &&
+                      <Button className="delivery-view-button" size="small" shape="circle" icon={<EyeOutlined />}
+                        aria-label={`查看大图 ${photo.title || photo.id}`} title="查看大图"
+                        onClick={event => { event.stopPropagation(); openPreview(photo) }}
+                        onKeyDown={event => event.stopPropagation()} />}
                     {photo.thumbnailUrl
-                      ? <PreviewPhoto preview
+                      ? <PreviewPhoto preview={canSelectPhoto(photo)
+                          ? selectablePreview(previewPhotoId === photo.id, () => setPreviewPhotoId(null))
+                          : true}
                           src={photo.thumbnailUrl} alt={photo.title}
                           refresh={() => refreshPhotoPreviewUrl(photo.id)}
                           fallback={pickPlaceholderImage(placeholderImages, photo.id)} />

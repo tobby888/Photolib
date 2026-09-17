@@ -3,7 +3,7 @@ import {
   Modal, Pagination, Radio, Row, Select, Space, Statistic, Tag, Typography,
 } from 'antd'
 import {
-  ArrowLeftOutlined, CameraOutlined, CheckCircleOutlined, DeleteOutlined, DownloadOutlined, EditOutlined,
+  ArrowLeftOutlined, CameraOutlined, CheckCircleOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, EyeOutlined,
   FileImageOutlined, LinkOutlined, MinusCircleOutlined, PlusOutlined, RocketOutlined, ScissorOutlined,
   ShareAltOutlined, StopOutlined, TagsOutlined, TeamOutlined, UnorderedListOutlined,
 } from '@ant-design/icons'
@@ -28,7 +28,7 @@ import { selectPhotoRange } from '../photoSelection'
 import PreviewPhoto from '../PreviewPhoto'
 import { refreshPhotoPreviewUrl } from '../previewRefresh'
 import { PhotoPlaceholder, pickPlaceholderImage, usePlaceholderImages } from '../photoPlaceholder'
-import { usePhotoCardClick } from '../usePhotoCardClick'
+import { isPortalEvent, selectablePreview, usePhotoCardClick } from '../usePhotoCardClick'
 import BatchTagModal from '../BatchTagModal'
 import type { BatchTagMode } from '../BatchTagModal'
 import TagSelect from '../TagSelect'
@@ -103,26 +103,32 @@ const ProjectPhotoCard = memo(function ProjectPhotoCard({
   marking, activeTags, placeholderImages, onToggleSelect, onSelectRange, onOpenDetail,
   onDownload, onToggleAdoption, onTagClick,
 }: ProjectPhotoCardProps) {
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const selecting = selectable && !selectDisabled
+  // 有详情权限去详情页，没有就打开大图预览（原先单击缩略图的行为）。
+  const openPhoto = (item: Photo) => {
+    if (onOpenDetail) onOpenDetail(item)
+    else if (photo.thumbnailUrl) setPreviewOpen(true)
+  }
   const { click, doubleClick } = usePhotoCardClick<Photo>(
     item => {
       if (selectable && !selectDisabled) onToggleSelect(item.id, !selected)
     },
-    onOpenDetail ? item => onOpenDetail(item) : undefined,
+    openPhoto,
   )
+  const openLabel = onOpenDetail ? '查看详情' : '查看大图'
   return <Card
     className={`photo-card${selected ? ' photo-card-selected' : ''}`}
     cover={<div className="photo-cover"
-      role={selectable && !selectDisabled ? 'button' : undefined}
-      tabIndex={selectable && !selectDisabled ? 0 : undefined}
-      aria-pressed={selectable && !selectDisabled ? selected : undefined}
-      aria-label={selectable && !selectDisabled
+      role={selecting ? 'button' : undefined}
+      tabIndex={selecting ? 0 : undefined}
+      aria-pressed={selecting ? selected : undefined}
+      aria-label={selecting
         ? `选择项目图片 ${photo.title || photo.id}`
         : undefined}
-      title={selectable && !selectDisabled
-        ? onOpenDetail ? '单击选择，双击查看详情' : '单击选择'
-        : undefined}
+      title={selecting ? `单击或空格选择，双击或 Enter ${openLabel}` : undefined}
       onClick={event => {
-        if (!selectable || selectDisabled) return
+        if (!selecting || isPortalEvent(event)) return
         if (event.shiftKey) {
           event.preventDefault()
           onSelectRange(photo.id)
@@ -131,18 +137,22 @@ const ProjectPhotoCard = memo(function ProjectPhotoCard({
         click(photo)
       }}
       onDoubleClick={event => {
+        if (!selecting || isPortalEvent(event)) return
         event.preventDefault()
         doubleClick(photo)
       }}
       onKeyDown={event => {
-        if (event.target !== event.currentTarget || !selectable || selectDisabled) return
+        if (event.target !== event.currentTarget || !selecting) return
         if (event.key !== 'Enter' && event.key !== ' ') return
         event.preventDefault()
-        if (event.shiftKey) onSelectRange(photo.id)
+        // 键盘没有双击：Enter 打开，空格勾选（Shift+空格连选）。
+        if (event.key === 'Enter') openPhoto(photo)
+        else if (event.shiftKey) onSelectRange(photo.id)
         else onToggleSelect(photo.id, !selected)
       }}>
       {photo.thumbnailUrl
         ? <PreviewPhoto src={photo.thumbnailUrl} alt={photo.title || '需求图片'} loading="lazy" decoding="async"
+            preview={selecting ? selectablePreview(previewOpen, () => setPreviewOpen(false)) : undefined}
             refresh={() => refreshPhotoPreviewUrl(photo.id)}
             fallback={pickPlaceholderImage(placeholderImages, photo.id)} />
         : <PhotoPlaceholder seed={photo.id}>
@@ -158,10 +168,17 @@ const ProjectPhotoCard = memo(function ProjectPhotoCard({
             disabled={selectDisabled}
             onChange={event => onToggleSelect(photo.id, event.target.checked)}
             aria-label={`选择项目图片 ${photo.title || photo.id}`} />}
-        {downloadable &&
-          <Button className="photo-download-button" shape="circle" icon={<DownloadOutlined />}
-            aria-label={`下载项目图片 ${photo.title || photo.id}`}
-            onClick={() => onDownload(photo)} />}
+        {/* 触屏上没有可靠的双击，单击又用来选图，打开大图 / 详情得有个看得见的入口。 */}
+        {(selecting && (onOpenDetail || photo.thumbnailUrl) || downloadable) && <Space size={8} className="photo-card-actions">
+          {selecting && (onOpenDetail || photo.thumbnailUrl) &&
+            <Button className="photo-view-button" shape="circle" icon={<EyeOutlined />}
+              aria-label={`${openLabel} ${photo.title || photo.id}`} title={openLabel}
+              onClick={() => openPhoto(photo)} />}
+          {downloadable &&
+            <Button className="photo-download-button" shape="circle" icon={<DownloadOutlined />}
+              aria-label={`下载项目图片 ${photo.title || photo.id}`}
+              onClick={() => onDownload(photo)} />}
+        </Space>}
       </div>
       <div className="photo-badges"><Space size={4}>
         <StatusTag value={photo.status} />
@@ -542,7 +559,8 @@ export default function ProjectDetailPage() {
   }
 
   const selectAlbumRange = (photoId: string) => {
-    const orderedIds = pagedPhotos.map(photo => photo.id)
+    // 只在可勾选的图片里连选，和「全选」一样按 isDownloadableStatus 过滤：不可下载的图片没有勾选框，连选进去就取消不掉。
+    const orderedIds = pagedPhotos.filter(photo => isDownloadableStatus(photo.status)).map(photo => photo.id)
     if (!albumSelectionAnchor || !orderedIds.includes(albumSelectionAnchor)) {
       toggleAlbumPhoto(photoId, !selectedAlbumIdSet.has(photoId))
       return

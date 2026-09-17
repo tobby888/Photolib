@@ -4,7 +4,7 @@ import {
 } from 'antd'
 import {
   CloudUploadOutlined, DeleteOutlined, DownloadOutlined, FolderAddOutlined, InboxOutlined, MinusCircleOutlined,
-  SearchOutlined, StarFilled, StarOutlined, TagsOutlined,
+  EyeOutlined, SearchOutlined, StarFilled, StarOutlined, TagsOutlined,
 } from '@ant-design/icons'
 import { useEffect, useReducer, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
@@ -233,7 +233,8 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
     if (checked) setSelectionAnchor(photo.id)
   }
   const selectRangeTo = (photoId: string) => {
-    const orderedIds = data.items.map(item => item.id)
+    // 只在可勾选的图片里连选：处理中 / 失败的图片没有勾选框，被连选进去就取消不掉。
+    const orderedIds = data.items.filter(canSelectPhoto).map(item => item.id)
     if (!selectionAnchor || !orderedIds.includes(selectionAnchor)) {
       const target = data.items.find(item => item.id === photoId)
       if (target) toggleSelected(target, !selectedIds.includes(photoId))
@@ -406,7 +407,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
             className="photo-cover" role="button" tabIndex={0}
             aria-pressed={selectedIds.includes(photo.id)}
             aria-label={`${canSelectPhoto(photo) ? '选择' : '查看'}图片：${photo.title || photo.id}`}
-            title={canSelectPhoto(photo) ? '单击选择，双击查看详情' : '查看图片详情'}
+            title={canSelectPhoto(photo) ? '单击或空格选择，双击或 Enter 查看详情' : '查看图片详情'}
             onClick={event => {
               if (!canSelectPhoto(photo)) {
                 navigate(withPhotoLibrarySearch(`${libraryRoot}/${photo.id}`, location.search))
@@ -427,7 +428,8 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
               if (event.target !== event.currentTarget) return
               if (event.key !== 'Enter' && event.key !== ' ') return
               event.preventDefault()
-              if (!canSelectPhoto(photo)) {
+              // 键盘没有双击：Enter 打开详情，空格勾选（Shift+空格连选）。
+              if (event.key === 'Enter' || !canSelectPhoto(photo)) {
                 navigate(withPhotoLibrarySearch(`${libraryRoot}/${photo.id}`, location.search))
               } else if (event.shiftKey) {
                 selectRangeTo(photo.id)
@@ -455,6 +457,14 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
                 onChange={event => toggleSelected(photo, event.target.checked)}
                 aria-label={`选择图片 ${photo.title || photo.id}`} />}
               <Space size={8} className="photo-card-actions">
+                {/* 触屏上没有可靠的双击，单击又用来选图，详情得有个看得见的入口。 */}
+                {canSelectPhoto(photo) && <Button className="photo-view-button" shape="circle" icon={<EyeOutlined />}
+                  aria-label={`查看图片详情 ${photo.title || photo.id}`} title="查看详情"
+                  onClick={event => {
+                    event.stopPropagation()
+                    navigate(withPhotoLibrarySearch(`${libraryRoot}/${photo.id}`, location.search))
+                  }}
+                  onKeyDown={event => event.stopPropagation()} />}
                 <Button className={`photo-favorite-button${photo.favorited ? ' is-favorited' : ''}`}
                   shape="circle" icon={photo.favorited ? <StarFilled /> : <StarOutlined />}
                   loading={favoriteUpdatingIds.has(photo.id)} aria-pressed={photo.favorited}
