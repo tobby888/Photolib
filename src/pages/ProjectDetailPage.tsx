@@ -24,6 +24,8 @@ import MarkdownRenderer, { markdownExcerpt } from '../MarkdownRenderer'
 import RequestAssigneeSelect from '../RequestAssigneeSelect'
 import { preparePhotoBatchDownload } from '../photoBatchDownload'
 import { hasPermission } from '../permissions'
+import { groupPhotoRequests, selectedRequestFor } from '../requestBatch'
+import type { RequestBatchRow } from '../requestBatch'
 import PreviewPhoto from '../PreviewPhoto'
 import { refreshPhotoPreviewUrl } from '../previewRefresh'
 import { PhotoPlaceholder, pickPlaceholderImage, usePlaceholderImages } from '../photoPlaceholder'
@@ -164,26 +166,46 @@ const ProjectRequestTable = memo(function ProjectRequestTable({ requests, campus
   emptyText: string
   onOpen: (request: PhotoRequest) => void
 }) {
+  const [selectedRequestByBatch, setSelectedRequestByBatch] = useState<Record<string, string>>({})
+  const batches = useMemo(() => groupPhotoRequests(requests), [requests])
   const columns = useMemo(() => {
     const campusNames = new Map(campuses.map(campus => [String(campus.id), campus.name]))
+    const selectedRequest = (batch: RequestBatchRow) =>
+      selectedRequestFor(batch, selectedRequestByBatch)
+    const selectRequest = (batch: RequestBatchRow, requestId: string) =>
+      setSelectedRequestByBatch(current => ({ ...current, [batch.key]: requestId }))
     return [
-      { title: '需求', dataIndex: 'title', render: (value: unknown, item: PhotoRequest) => {
-        const title = String(value || '未命名需求')
+      { title: '需求', render: (_: unknown, batch: RequestBatchRow) => {
+        const item = batch.representative
+        const title = item.title || '未命名需求'
         const description = markdownExcerpt(item.description) || '暂无拍摄说明'
         return <div className="table-title">
           <strong className="table-ellipsis-text" style={{ maxWidth: 360 }} title={title}>{title}</strong>
           <span className="table-ellipsis-text" style={{ maxWidth: 360 }} title={description}>{description}</span>
         </div>
       } },
-      { title: '校区', dataIndex: 'campusId', render: (value: PhotoRequest['campusId']) =>
-        campusNames.get(String(value)) || `校区 #${value}` },
-      { title: '截止时间', dataIndex: 'deadline', render: (value: string) => dayjs(value).format('YYYY-MM-DD HH:mm') },
-      { title: '状态', dataIndex: 'status', render: (value: string) => <StatusTag value={value} /> },
-      { title: '操作', render: (_: unknown, item: PhotoRequest) =>
-        <Button type="link" onClick={() => onOpen(item)}>查看需求</Button> },
+      { title: '校区', render: (_: unknown, batch: RequestBatchRow) => {
+        if (batch.requests.length === 1) {
+          const item = batch.representative
+          return campusNames.get(String(item.campusId)) || `校区 #${item.campusId}`
+        }
+        const item = selectedRequest(batch)
+        return <Select size="small" style={{ minWidth: 150 }} value={item.id}
+          options={batch.requests.map(request => ({
+            value: request.id,
+            label: campusNames.get(String(request.campusId)) || `校区 #${request.campusId}`,
+          }))}
+          onChange={requestId => selectRequest(batch, requestId)} />
+      } },
+      { title: '截止时间', render: (_: unknown, batch: RequestBatchRow) =>
+        dayjs(batch.representative.deadline).format('YYYY-MM-DD HH:mm') },
+      { title: '状态', render: (_: unknown, batch: RequestBatchRow) =>
+        <StatusTag value={selectedRequest(batch).status} /> },
+      { title: '操作', render: (_: unknown, batch: RequestBatchRow) =>
+        <Button type="link" onClick={() => onOpen(selectedRequest(batch))}>查看需求</Button> },
     ]
-  }, [campuses, onOpen])
-  return <ContentFitTable<PhotoRequest> rowKey="id" dataSource={requests} pagination={false}
+  }, [campuses, onOpen, selectedRequestByBatch])
+  return <ContentFitTable<RequestBatchRow> rowKey="key" dataSource={batches} pagination={false}
     locale={{ emptyText }} columns={columns} />
 })
 

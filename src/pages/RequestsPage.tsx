@@ -5,12 +5,14 @@ import {
 import {
   CheckOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, RollbackOutlined, SearchOutlined,
 } from '@ant-design/icons'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { api, emptyPage, qs } from '../api'
 import { useAuth } from '../auth'
-import type { BatchPublishResult, Campus, PageData, PhotoRequest, Project } from '../types'
+import type { BatchPublishResult, Campus, EntityId, PageData, PhotoRequest, Project } from '../types'
+import { groupPhotoRequests, selectedRequestFor } from '../requestBatch'
+import type { RequestBatchRow } from '../requestBatch'
 import { DataState, PageTitle, StatusTag } from '../components'
 import { ContentFitTable } from '../ContentFitTable'
 import { useLoad } from '../hooks'
@@ -40,6 +42,7 @@ export default function RequestsPage() {
   const canDelete = hasPermission(user, 'REQUEST_DELETE')
   const [open, setOpen] = useState(false)
   const [detail, setDetail] = useState<PhotoRequest | null>(null)
+  const [selectedRequestByBatch, setSelectedRequestByBatch] = useState<Record<string, EntityId>>({})
   const [saving, setSaving] = useState(false)
   const [filters, setFilters] = useState({
     page: 1,
@@ -50,6 +53,7 @@ export default function RequestsPage() {
     () => api<PageData<PhotoRequest>>({ url: '/requests', params: qs({ ...filters, pageSize: 20 }) }),
     emptyPage<PhotoRequest>(), [filters.page, filters.status, filters.projectId],
   )
+  const batches = useMemo(() => groupPhotoRequests(data.items), [data.items])
   const { data: options } = useLoad(async () => {
     const [projects, campuses] = await Promise.all([
       canViewProjects(user)
@@ -63,6 +67,12 @@ export default function RequestsPage() {
     const requestId = searchParams.get('requestId')
     if (requestId) setDetail(data.items.find(item => item.id === requestId) || null)
   }, [data.items, searchParams])
+
+  const selectedRequest = (batch: RequestBatchRow) =>
+    selectedRequestFor(batch, selectedRequestByBatch)
+  const selectRequest = (batch: RequestBatchRow, requestId: EntityId) => {
+    setSelectedRequestByBatch(current => ({ ...current, [batch.key]: requestId }))
+  }
 
   const create = async () => {
     const values = await form.validateFields()
@@ -212,13 +222,31 @@ export default function RequestsPage() {
           : campusScoped
             ? '部长发布新的拍摄任务后，会出现在这里，你可以直接接单。'
             : '先在选题项目里建一个需求，再发布给对应校区。'}>
-        <ContentFitTable rowKey="id" dataSource={data.items} pagination={false} columns={[
-          { title: '需求', dataIndex: 'title', render: (value, item) => <div className="table-title"><strong>{value}</strong><span>项目 #{item.projectId}</span></div> },
-          { title: '校区', dataIndex: 'campusId', render: value => options.campuses.find(c => c.id === value)?.name || `校区 #${value}` },
-          { title: '截止时间', dataIndex: 'deadline', render: value => <span className={dayjs(value).isBefore(dayjs()) ? 'danger-text' : ''}>{dayjs(value).format('MM-DD HH:mm')}</span> },
-          { title: '状态', dataIndex: 'status', render: value => <StatusTag value={value} /> },
+        <ContentFitTable<RequestBatchRow> rowKey="key" dataSource={batches} pagination={false} columns={[
+          { title: '需求', render: (_, batch) => {
+            const item = batch.representative
+            return <div className="table-title"><strong>{item.title}</strong><span>项目 #{item.projectId}</span></div>
+          } },
+          { title: '校区', render: (_, batch) => {
+            if (batch.requests.length === 1) {
+              const item = batch.representative
+              return options.campuses.find(c => c.id === item.campusId)?.name || `校区 #${item.campusId}`
+            }
+            const item = selectedRequest(batch)
+            return <Select size="small" style={{ minWidth: 150 }} value={item.id}
+              options={batch.requests.map(request => ({
+                value: request.id,
+                label: options.campuses.find(c => c.id === request.campusId)?.name || `校区 #${request.campusId}`,
+              }))}
+              onChange={requestId => selectRequest(batch, requestId)} />
+          } },
+          { title: '截止时间', render: (_, batch) => {
+            const value = batch.representative.deadline
+            return <span className={dayjs(value).isBefore(dayjs()) ? 'danger-text' : ''}>{dayjs(value).format('MM-DD HH:mm')}</span>
+          } },
+          { title: '状态', render: (_, batch) => <StatusTag value={selectedRequest(batch).status} /> },
           { title: '操作', key: 'action', fixed: 'right', minWidth: REQUEST_ACTION_MIN_WIDTH,
-            className: 'table-action-cell', render: (_, item) => actions(item) },
+            className: 'table-action-cell', render: (_, batch) => actions(selectedRequest(batch)) },
         ]} />
         <Pagination current={filters.page} total={data.total} pageSize={20} hideOnSinglePage onChange={page => setFilters({ ...filters, page })} />
       </DataState>

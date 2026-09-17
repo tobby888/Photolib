@@ -4,6 +4,7 @@ import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.PageResponse;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
+import cn.photolib.common.util.PublicId;
 import cn.photolib.project.ProjectService;
 import cn.photolib.notification.NotificationService;
 import cn.photolib.project.model.ProjectEntity;
@@ -79,6 +80,7 @@ public class RequestService {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "截止时间不能早于当前时间");
         }
 
+        String batchId = PublicId.next();
         Set<Long> seenCampuses = new HashSet<>();
         return command.campusIds().stream().map(campusId -> {
             if (!user.canAccessCampus(campusId)) {
@@ -89,7 +91,7 @@ public class RequestService {
                         "不能重复选择同一校区");
             }
             try {
-                PhotoRequestEntity request = batchPublisher.publish(projectId, campusId, command, user);
+                PhotoRequestEntity request = batchPublisher.publish(projectId, campusId, command, user, batchId);
                 return BatchPublishResult.success(campusId, request);
             } catch (BusinessException exception) {
                 return BatchPublishResult.failure(campusId, exception.getCode(), exception.getMessage());

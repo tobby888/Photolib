@@ -31,6 +31,7 @@ class RequestBatchPublishIntegrationTests {
     void failedCampus_shouldNotPreventLaterCampusFromCommitting() {
         long suffix = System.nanoTime();
         var campus = campusService.create("B" + suffix, "批量发布测试校区");
+        var secondCampus = campusService.create("D" + suffix, "批量发布测试校区二");
         Long userId = -Math.abs(suffix);
         jdbc.sql("""
                 INSERT INTO app_user
@@ -44,15 +45,20 @@ class RequestBatchPublishIntegrationTests {
         try {
             var command = new RequestService.BatchPublishCommand(
                     "多校区毕业季拍摄", "## 拍摄说明\n\n请拍摄校园地标。",
-                    List.of(999999L, campus.getId()), null, LocalDateTime.now().plusDays(7));
+                    List.of(999999L, campus.getId(), secondCampus.getId()), null,
+                    LocalDateTime.now().plusDays(7));
 
             var results = requestService.batchPublish(project.getId(), command, user);
 
-            assertThat(results).hasSize(2);
+            assertThat(results).hasSize(3);
             assertThat(results.get(0).success()).isFalse();
             assertThat(results.get(0).errorCode()).isEqualTo("RESOURCE_NOT_FOUND");
             assertThat(results.get(1).success()).isTrue();
             assertThat(results.get(1).request().getStatus()).isEqualTo(RequestStatus.PUBLISHED);
+            assertThat(results.get(1).request().getBatchId()).isNotBlank();
+            assertThat(results.get(2).success()).isTrue();
+            assertThat(results.get(2).request().getBatchId())
+                    .isEqualTo(results.get(1).request().getBatchId());
             assertThat(requestService.get(results.get(1).request().getId()).getDescription())
                     .contains("## 拍摄说明");
         } finally {
@@ -60,7 +66,8 @@ class RequestBatchPublishIntegrationTests {
                     .param("projectId", project.getId()).update();
             jdbc.sql("DELETE FROM project WHERE id=:projectId").param("projectId", project.getId()).update();
             jdbc.sql("DELETE FROM app_user WHERE id=:userId").param("userId", userId).update();
-            jdbc.sql("DELETE FROM campus WHERE id=:campusId").param("campusId", campus.getId()).update();
+            jdbc.sql("DELETE FROM campus WHERE id IN (:ids)")
+                    .param("ids", List.of(campus.getId(), secondCampus.getId())).update();
         }
     }
 
@@ -94,6 +101,7 @@ class RequestBatchPublishIntegrationTests {
             assertThat(results.get(0).success()).isTrue();
             assertThat(results.get(0).request().getStatus()).isEqualTo(RequestStatus.ACCEPTED);
             assertThat(results.get(0).request().getAssigneeId()).isEqualTo(assigneeId);
+            assertThat(results.get(0).request().getBatchId()).isNotBlank();
             assertThat(requestService.participants(results.get(0).request().getId()))
                     .extracting(p -> p.getUserId()).containsExactly(assigneeId);
             assertThat(results.get(1).success()).isFalse();
