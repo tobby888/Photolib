@@ -253,6 +253,10 @@ jobs:
 
           echo ">>> 放入新 JAR: $JAR_NAME"
           mv "$DEPLOY_DIR/.upload-$RUN_ID.jar" "$DEPLOY_DIR/$JAR_NAME"
+          # 上传是以 SSH 用户（默认 root）身份进行的，而服务以 photolib 用户运行；
+          # 显式改属主和权限，免得服务读不到 JAR。
+          chown photolib:photolib "$DEPLOY_DIR/$JAR_NAME"
+          chmod 644 "$DEPLOY_DIR/$JAR_NAME"
 
           echo ">>> systemctl start photolib"
           systemctl start photolib
