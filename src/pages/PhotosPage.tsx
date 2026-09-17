@@ -445,6 +445,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
                 <span>{photo.title?.slice(0, 1) || '图'}</span>
               </PhotoPlaceholder>}
             <div className="photo-overlay" onClick={event => event.stopPropagation()}
+              onDoubleClick={event => event.stopPropagation()}
               onKeyDown={event => event.stopPropagation()}>
               {(canAddToProject || canDownload || canDelete || canTag) && (photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED') && <Checkbox
                 className="photo-select-checkbox"

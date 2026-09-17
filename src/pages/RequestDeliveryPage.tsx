@@ -336,6 +336,7 @@ export default function RequestDeliveryPage() {
                       queuePhotoSelect(photo)
                     }}
                     onDoubleClick={event => {
+                      if ((event.target as HTMLElement).closest('.ant-checkbox-wrapper')) return
                       event.preventDefault()
                       handlePhotoDoubleClick(photo)
                     }}

@@ -437,6 +437,7 @@ export default function SharedProjectPage() {
                       <span>{photo.title?.slice(0, 1) || '图'}</span>
                     </PhotoPlaceholder>}
                   <div className="photo-overlay" onClick={event => event.stopPropagation()}
+                    onDoubleClick={event => event.stopPropagation()}
                     onKeyDown={event => event.stopPropagation()}>
                     {access?.allowDownload && <>
                       <Checkbox className="photo-select-checkbox" checked={selectedIds.has(photo.id)}
