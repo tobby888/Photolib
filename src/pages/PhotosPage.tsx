@@ -6,7 +6,7 @@ import {
   CloudUploadOutlined, DeleteOutlined, DownloadOutlined, FolderAddOutlined, InboxOutlined, MinusCircleOutlined,
   SearchOutlined, StarFilled, StarOutlined, TagsOutlined,
 } from '@ant-design/icons'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useReducer, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { api, emptyPage, qs } from '../api'
@@ -24,14 +24,17 @@ import PreviewPhoto from '../PreviewPhoto'
 import { refreshPhotoPreviewUrl } from '../previewRefresh'
 import { PhotoPlaceholder, pickPlaceholderImage, usePlaceholderImages } from '../photoPlaceholder'
 import {
-  PHOTO_LIBRARY_PAGE_SIZE, readPhotoLibraryFilters, writePhotoLibraryFilters, withPhotoLibrarySearch,
+  PHOTO_LIBRARY_PAGE_SIZE, isTagTooLong, photoLibraryRequestParams, readPhotoLibraryFilters, writePhotoLibraryFilters,
+  withPhotoLibrarySearch,
 } from '../photoLibrarySearch'
 import type { PhotoLibraryFilters, PhotoLibraryStatus } from '../photoLibrarySearch'
 import { updateFavoritePage } from '../photoFavorites'
 import BatchTagModal from '../BatchTagModal'
 import type { BatchTagMode } from '../BatchTagModal'
 import TagSelect from '../TagSelect'
-import { normalizeTags, tagRules } from '../photoTags'
+import { MAX_TAG_LENGTH, normalizeTags, tagRules } from '../photoTags'
+import { readRecentTags, recordTagSearch } from '../photoTagHistory'
+import RecentTagChips from '../RecentTagChips'
 
 export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: boolean }) {
   const navigate = useNavigate()
@@ -65,17 +68,35 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
   const [projectPickerPhotos, setProjectPickerPhotos] = useState<Photo[]>([])
   const [favoriteUpdatingIds, setFavoriteUpdatingIds] = useState<Set<EntityId>>(() => new Set())
   const filters = readPhotoLibraryFilters(searchParams)
+  const tagHistoryScope = 'library-tags'
+  // 清空历史后让下拉框的候选（同一份历史）也跟着刷新。
+  const [, rerenderTagHistory] = useReducer((count: number) => count + 1, 0)
+  const tagSearchKey = JSON.stringify(filters.tags)
+  const recentTags = readRecentTags(tagHistoryScope)
   const [searchText, setSearchText] = useState(filters.keyword)
   const setFilters = (nextFilters: PhotoLibraryFilters) => {
     setSearchParams(writePhotoLibraryFilters(nextFilters), { replace: true })
   }
+  const setTagFilters = (tags: string[]) => setFilters({ ...filters, page: 1, tags })
+  // 下拉框是 tags 模式，可以随便敲；超长的标签后端会 400，整页变成加载出错，所以先在这里拦下。
+  // 只有下拉框里新加的标签才记进历史，点「最近标签」不记，免得刚点的标签被挪到最前面。
+  const selectTags = (input: string[]) => {
+    const normalized = normalizeTags(input)
+    const tooLong = normalized.filter(isTagTooLong)
+    if (tooLong.length) message.warning(`标签不能超过 ${MAX_TAG_LENGTH} 个字：${tooLong.join('、')}`)
+    const tags = normalized.filter(tag => !isTagTooLong(tag))
+    const added = tags.filter(tag => !filters.tags.includes(tag))
+    if (added.length) recordTagSearch(tagHistoryScope, added)
+    setTagFilters(tags)
+  }
+  const searchLabel = [
+    filters.keyword ? `关键词“${filters.keyword}”` : '',
+    filters.tags.length ? `标签 ${filters.tags.map(tag => `“${tag}”`).join('、')}` : '',
+  ].filter(Boolean).join(' 与 ')
   const selectedIds = selectedPhotos.map(photo => photo.id)
   const { data, setData, loading, error, reload, refresh } = useLoad(
-    () => api<PageData<Photo>>({
-      url: '/photos',
-      params: qs({ ...filters, pageSize: PHOTO_LIBRARY_PAGE_SIZE, favoritesOnly: favoritesOnly || undefined }),
-    }),
-    emptyPage<Photo>(), [filters.page, filters.keyword, filters.status, favoritesOnly],
+    () => api<PageData<Photo>>({ url: '/photos', params: photoLibraryRequestParams(filters, { favoritesOnly }) }),
+    emptyPage<Photo>(), [filters.page, filters.keyword, filters.status, tagSearchKey, favoritesOnly],
   )
   useRefreshOnResume(refresh)
   useEffect(() => {
@@ -324,16 +345,23 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
         <Select value={filters.status} style={{ width: 150 }} options={[
           { value: 'AVAILABLE', label: '可用图片' }, { value: 'PROCESSING', label: '处理中' }, { value: 'ARCHIVED', label: '已归档' },
         ]} onChange={(status: PhotoLibraryStatus) => setFilters({ ...filters, page: 1, status })} />
+        <TagSelect presets={recentTags} value={filters.tags}
+          onChange={selectTags}
+          placeholder="按标签筛选（回车添加，同时包含）" style={{ width: 280 }} />
       </Space>
+      <RecentTagChips scope={tagHistoryScope} selected={filters.tags} onChange={setTagFilters}
+        onClear={rerenderTagHistory} />
       <Typography.Text type="secondary">共 {data.total} 张图片</Typography.Text>
     </Card>
     <DataState loading={loading} error={error} empty={!data.items.length} onRetry={reload}
-      emptyText={filters.keyword
-        ? `没有匹配“${filters.keyword}”的图片`
+      emptyText={searchLabel
+        ? `没有匹配 ${searchLabel} 的图片`
         : favoritesOnly ? '还没有收藏任何图片'
           : filters.status === 'AVAILABLE' ? '图库里还没有可用图片' : '这个状态下没有图片'}
-      emptyHint={filters.keyword
-        ? '标题、描述和标签都会被搜索，换个词或清空搜索框再看看。'
+      emptyHint={searchLabel
+        ? filters.tags.length
+          ? '图片必须同时包含所选标签，换个标签或清空筛选再看看。'
+          : '标题、描述和标签都会被搜索，换个词或清空搜索框再看看。'
         : favoritesOnly ? '在图片上点收藏，之后就能在这里集中查看。'
           : filters.status === 'AVAILABLE' ? '上传的图片处理完成后会出现在这里。' : '换一个状态筛选试试。'}>
       <Row gutter={[16, 20]} className="photo-grid">

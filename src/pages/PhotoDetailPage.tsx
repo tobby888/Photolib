@@ -20,7 +20,7 @@ import { refreshPhotoPreviewUrl } from '../previewRefresh'
 import { PhotoPlaceholder } from '../photoPlaceholder'
 import type { EntityId, PageData, Photo, Project } from '../types'
 import {
-  PHOTO_LIBRARY_PAGE_SIZE, readPhotoLibraryFilters, withPhotoLibrarySearch, writePhotoLibraryFilters,
+  photoLibraryRequestParams, readPhotoLibraryFilters, withPhotoLibrarySearch, writePhotoLibraryFilters,
 } from '../photoLibrarySearch'
 import { findPhotoNeighbors, pickEdgePhotoId } from '../photoNeighbors'
 
@@ -94,16 +94,12 @@ export default function PhotoDetailPage({ favoritesOnly = false }: { favoritesOn
   // 「上一张 / 下一张」的顺序就是用户进来时那一屏图库的顺序：详情页 URL 里带着
   // 同一套筛选条件，照它重新取一页列表就能把当前图片定位回去（见 src/photoNeighbors.ts）。
   const libraryFilters = readPhotoLibraryFilters(new URLSearchParams(location.search))
-  const libraryPageParams = (page: number) => qs({
-    ...libraryFilters,
-    page,
-    pageSize: PHOTO_LIBRARY_PAGE_SIZE,
-    favoritesOnly: favoritesOnly || undefined,
-  })
+  const libraryTagKey = JSON.stringify(libraryFilters.tags)
+  const libraryPageParams = (page: number) => photoLibraryRequestParams(libraryFilters, { page, favoritesOnly })
   const { data: libraryPage } = useLoad(
     () => api<PageData<Photo>>({ url: '/photos', params: libraryPageParams(libraryFilters.page) }),
     emptyPage<Photo>(),
-    [libraryFilters.page, libraryFilters.keyword, libraryFilters.status, favoritesOnly],
+    [libraryFilters.page, libraryFilters.keyword, libraryFilters.status, libraryTagKey, favoritesOnly],
   )
   const neighbors = findPhotoNeighbors(libraryPage, photoId)
   const [movingTo, setMovingTo] = useState<'previous' | 'next' | null>(null)

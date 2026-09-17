@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import {
   DEFAULT_PHOTO_LIBRARY_FILTERS,
+  isTagTooLong,
+  photoLibraryRequestParams,
   readPhotoLibraryFilters,
   withPhotoLibrarySearch,
   writePhotoLibraryFilters,
@@ -18,6 +20,7 @@ test('photo library filters use safe defaults for empty or invalid query paramet
     page: 1,
     status: 'AVAILABLE',
     keyword: '校庆',
+    tags: [],
   })
 })
 
@@ -26,11 +29,13 @@ test('photo library filters round-trip Unicode and reserved characters', () => {
     page: 3,
     status: 'ARCHIVED' as const,
     keyword: '毕业典礼 A&B / 夜景',
+    tags: ['合影', '颁奖/闭幕'],
   }
   const searchParams = writePhotoLibraryFilters(filters)
 
   assert.deepEqual(readPhotoLibraryFilters(searchParams), filters)
   assert.equal(searchParams.get('keyword'), filters.keyword)
+  assert.deepEqual(searchParams.getAll('tags'), filters.tags)
 })
 
 test('default filter values stay out of the URL', () => {
@@ -39,6 +44,10 @@ test('default filter values stay out of the URL', () => {
     ...DEFAULT_PHOTO_LIBRARY_FILTERS,
     keyword: '运动会',
   }).toString(), 'keyword=%E8%BF%90%E5%8A%A8%E4%BC%9A')
+  assert.equal(writePhotoLibraryFilters({
+    ...DEFAULT_PHOTO_LIBRARY_FILTERS,
+    tags: ['合影', '开幕式'],
+  }).toString(), 'tags=%E5%90%88%E5%BD%B1&tags=%E5%BC%80%E5%B9%95%E5%BC%8F')
 })
 
 test('photo detail and list paths preserve the complete library query', () => {
@@ -46,6 +55,7 @@ test('photo detail and list paths preserve the complete library query', () => {
     page: 2,
     status: 'PROCESSING',
     keyword: '新闻 图',
+    tags: [],
   })}`
 
   assert.equal(
@@ -77,7 +87,6 @@ test('photo and favorites pages wire the controlled search field and preserved r
   assert.match(librarySource, /value=\{searchText\} onChange=\{event => setSearchText\(event\.target\.value\)\}/)
   assert.match(librarySource, /const libraryRoot = favoritesOnly \? '\/favorites' : '\/photos'/)
   assert.match(librarySource, /`\$\{libraryRoot\}\/\$\{photo\.id\}`/)
-  assert.match(librarySource, /favoritesOnly: favoritesOnly \|\| undefined/)
   assert.match(librarySource, /const operationViewKey = currentViewKeyRef\.current/)
   assert.match(librarySource, /currentViewKeyRef\.current === operationViewKey/)
   assert.match(detailSource, /withPhotoLibrarySearch\(libraryRoot, location\.search\)/)
@@ -85,4 +94,33 @@ test('photo and favorites pages wire the controlled search field and preserved r
   assert.match(appSource, /key: '\/favorites'.*label: '收藏图片'/)
   assert.match(appSource, /path="\/favorites".*<PhotosPage favoritesOnly \/>/)
   assert.match(appSource, /path="\/favorites\/:photoId".*<PhotoDetailPage favoritesOnly \/>/)
+})
+
+test('library request params repeat tags and match between the list and detail pages', () => {
+  const filters = {
+    page: 3,
+    status: 'AVAILABLE' as const,
+    keyword: '',
+    tags: ['合影', '颁奖/闭幕'],
+  }
+
+  assert.equal(
+    photoLibraryRequestParams(filters).toString(),
+    'page=3&pageSize=24&status=AVAILABLE&tags=%E5%90%88%E5%BD%B1&tags=%E9%A2%81%E5%A5%96%2F%E9%97%AD%E5%B9%95',
+  )
+  const neighbor = photoLibraryRequestParams(filters, { page: 4, favoritesOnly: true })
+  assert.equal(neighbor.get('page'), '4')
+  assert.deepEqual(neighbor.getAll('tags'), filters.tags)
+  assert.equal(neighbor.get('favoritesOnly'), 'true')
+  assert.equal(photoLibraryRequestParams(filters, { favoritesOnly: false }).has('favoritesOnly'), false)
+})
+
+test('library filters read from the URL drop blank, duplicate and over-long tags', () => {
+  const tooLong = '长'.repeat(51)
+  const searchParams = new URLSearchParams()
+  for (const tag of [' 合影 ', '合影', '', tooLong, '😀'.repeat(50)]) searchParams.append('tags', tag)
+
+  assert.deepEqual(readPhotoLibraryFilters(searchParams).tags, ['合影', '😀'.repeat(50)])
+  assert.equal(isTagTooLong('😀'.repeat(50)), false)
+  assert.equal(isTagTooLong(tooLong), true)
 })

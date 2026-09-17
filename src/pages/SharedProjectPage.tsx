@@ -18,6 +18,7 @@ import type { ShareFilterOptions } from '../projectShare'
 import { emptyProjectPhotoFilters, hasActiveFilters } from '../photoTags'
 import type { ProjectPhotoFilters } from '../photoTags'
 import ProjectPhotoFilterBar from '../ProjectPhotoFilterBar'
+import { shareTagHistoryScope } from '../photoTagHistory'
 import { MAX_SHARE_BATCH, dropFromSelection, isFullySelected, mergeSelection } from '../shareSelection'
 import type { ShareGuestAccess, SharePhoto } from '../types'
 
@@ -363,7 +364,8 @@ export default function SharedProjectPage() {
         </Space>}
       >
         <ProjectPhotoFilterBar value={filters} onChange={changeFilters}
-          tagOptions={filterOptions.tags} photographerOptions={filterOptions.photographers} />
+          tagOptions={filterOptions.tags} photographerOptions={filterOptions.photographers}
+          historyScope={shareTagHistoryScope(token)} />
         {loadingPhotos ? <Skeleton active paragraph={{ rows: 6 }} />
           : photos.length ? <Row gutter={[16, 20]} className="photo-grid">
             {photos.map(photo => <Col xs={24} sm={12} lg={8} xxl={6} key={photo.id}>

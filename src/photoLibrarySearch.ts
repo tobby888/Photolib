@@ -1,3 +1,5 @@
+import { MAX_TAG_LENGTH, MAX_TAGS, normalizeTags } from './photoTags.ts'
+
 /**
  * 图库每页图片数。详情页的「上一张 / 下一张」按同一套筛选条件重新取列表来定位
  * 当前图片（`src/photoNeighbors.ts`），两边的分页必须严格一致，否则翻页会跳号。
@@ -12,12 +14,15 @@ export interface PhotoLibraryFilters {
   page: number
   keyword: string
   status: PhotoLibraryStatus
+  /** 同时包含全部所选标签；与后端的精确标签过滤对应。 */
+  tags: string[]
 }
 
 export const DEFAULT_PHOTO_LIBRARY_FILTERS: PhotoLibraryFilters = {
   page: 1,
   keyword: '',
   status: 'AVAILABLE',
+  tags: [],
 }
 
 export function readPhotoLibraryFilters(searchParams: URLSearchParams): PhotoLibraryFilters {
@@ -30,7 +35,32 @@ export function readPhotoLibraryFilters(searchParams: URLSearchParams): PhotoLib
     status: PHOTO_LIBRARY_STATUSES.includes(requestedStatus as PhotoLibraryStatus)
       ? requestedStatus as PhotoLibraryStatus
       : 'AVAILABLE',
+    // URL 可能被手改：超长的标签后端会直接 400，这里先丢掉，页面按剩下的条件正常加载。
+    tags: normalizeTags(searchParams.getAll('tags')).filter(tag => !isTagTooLong(tag)).slice(0, MAX_TAGS),
   }
+}
+
+/** 按「字」计长度（与后端 codePointCount 一致），一个 emoji 算一个字。 */
+export function isTagTooLong(tag: string): boolean {
+  return [...tag].length > MAX_TAG_LENGTH
+}
+
+/**
+ * 图库列表请求的查询参数。图库页和详情页的「上一张 / 下一张」必须发同一套参数，否则定位会错位。
+ * 多个标签发成 `tags=a&tags=b`：Spring 的 List 参数只认这种格式，不认 axios 默认的 `tags[]=`。
+ */
+export function photoLibraryRequestParams(
+  filters: PhotoLibraryFilters,
+  options: { page?: number; favoritesOnly?: boolean } = {},
+): URLSearchParams {
+  const params = new URLSearchParams()
+  params.set('page', String(options.page ?? filters.page))
+  params.set('pageSize', String(PHOTO_LIBRARY_PAGE_SIZE))
+  if (filters.keyword) params.set('keyword', filters.keyword)
+  params.set('status', filters.status)
+  for (const tag of filters.tags) params.append('tags', tag)
+  if (options.favoritesOnly) params.set('favoritesOnly', 'true')
+  return params
 }
 
 export function writePhotoLibraryFilters(filters: PhotoLibraryFilters): URLSearchParams {
@@ -38,6 +68,7 @@ export function writePhotoLibraryFilters(filters: PhotoLibraryFilters): URLSearc
   if (filters.keyword) searchParams.set('keyword', filters.keyword)
   if (filters.status !== DEFAULT_PHOTO_LIBRARY_FILTERS.status) searchParams.set('status', filters.status)
   if (filters.page > 1) searchParams.set('page', String(filters.page))
+  for (const tag of filters.tags ?? []) searchParams.append('tags', tag)
   return searchParams
 }
 
