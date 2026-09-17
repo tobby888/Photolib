@@ -36,6 +36,7 @@ public class RequestService {
     private final RequestParticipantMapper participantMapper;
     private final ProjectService projectService;
     private final BatchRequestPublisher batchPublisher;
+    private final RequestAssignment assignment;
     private final NotificationService notifications;
     private final JdbcClient jdbc;
 
@@ -52,6 +53,7 @@ public class RequestService {
         if (command.deadline().isBefore(LocalDateTime.now())) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "截止时间不能早于当前时间");
         }
+        assignment.requireAssignable(command.assigneeId(), command.campusId());
         PhotoRequestEntity request = new PhotoRequestEntity();
         request.setProjectId(projectId);
         request.setTitle(command.title());
@@ -61,6 +63,7 @@ public class RequestService {
         request.setDeadline(command.deadline());
         request.setStatus(RequestStatus.DRAFT);
         request.setCreatedBy(user.id());
+        request.setAssigneeId(command.assigneeId());
         mapper.insert(request);
         return request;
     }
@@ -96,6 +99,15 @@ public class RequestService {
                         "需求发布失败，请稍后单独重试");
             }
         }).toList();
+    }
+
+    /** 新建需求时可以指派的用户：能同时接收所选全部校区需求的账号。 */
+    public List<AssignableUser> assignableUsers(List<Long> campusIds, AuthenticatedUser user) {
+        requirePermission(user, PermissionCode.REQUEST_CREATE);
+        if (!campusIds.stream().allMatch(user::canAccessCampus)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权在该校区创建需求");
+        }
+        return assignment.candidates(Set.copyOf(campusIds));
     }
 
     public PageResponse<PhotoRequestEntity> list(int page, int pageSize, Long projectId,
@@ -183,10 +195,21 @@ public class RequestService {
         if (project.getStatus() != ProjectStatus.ACTIVE || request.getStatus() != RequestStatus.DRAFT) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "仅进行中项目的草稿需求可发布");
         }
+        // 草稿存下来之后被指派人的权限或校区授权可能已经变了，发布前再核一次。
+        if (request.getAssigneeId() != null
+                && !assignment.canBeAssigned(request.getAssigneeId(), request.getCampusId())) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                    "被指派人已不能接收该需求，请修改指派后再发布");
+        }
         request.setStatus(RequestStatus.PUBLISHED);
         request.setVersion(version);
         updateChecked(request);
-        notifyCampusManagers(request);
+        if (request.getAssigneeId() != null) {
+            // 已指派的需求不再广播给校区负责人：它发布即被接走，其他负责人的列表里本来也看不到。
+            assignment.applyOnPublish(id);
+        } else {
+            notifyCampusManagers(request);
+        }
         return get(id);
     }
 
@@ -201,11 +224,13 @@ public class RequestService {
         if (request.getStatus() != RequestStatus.DRAFT) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "仅草稿需求可编辑");
         }
+        assignment.requireAssignable(command.assigneeId(), command.campusId());
         request.setTitle(command.title());
         request.setDescription(command.description());
         request.setCampusId(command.campusId());
         request.setRequiredCount(command.requiredCount());
         request.setDeadline(command.deadline());
+        request.setAssigneeId(command.assigneeId());
         request.setVersion(version);
         updateChecked(request);
         return get(id);
@@ -451,12 +476,23 @@ public class RequestService {
     public record TagOptions(boolean restricted, List<String> tags) {
     }
 
+    public record AssignableUser(Long id, String username, String displayName) {
+    }
+
     public record CreateCommand(String title, String description, Long campusId,
-                                Integer requiredCount, LocalDateTime deadline) {
+                                Integer requiredCount, LocalDateTime deadline, Long assigneeId) {
+        public CreateCommand(String title, String description, Long campusId,
+                             Integer requiredCount, LocalDateTime deadline) {
+            this(title, description, campusId, requiredCount, deadline, null);
+        }
     }
 
     public record BatchPublishCommand(String title, String description, List<Long> campusIds,
-                                      Integer requiredCount, LocalDateTime deadline) {
+                                      Integer requiredCount, LocalDateTime deadline, Long assigneeId) {
+        public BatchPublishCommand(String title, String description, List<Long> campusIds,
+                                   Integer requiredCount, LocalDateTime deadline) {
+            this(title, description, campusIds, requiredCount, deadline, null);
+        }
     }
 
     public record BatchPublishResult(Long campusId, boolean success, PhotoRequestEntity request,

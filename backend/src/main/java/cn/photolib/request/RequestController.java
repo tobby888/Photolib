@@ -28,7 +28,7 @@ public class RequestController {
                                            @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.create(projectId, new RequestService.CreateCommand(
                 request.title(), request.description(), request.campusId(),
-                request.requiredCount(), request.deadline()), user));
+                request.requiredCount(), request.deadline(), request.assigneeId()), user));
     }
 
     @PostMapping("/projects/{projectId}/requests/batch-publish")
@@ -39,7 +39,15 @@ public class RequestController {
             @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.batchPublish(projectId, new RequestService.BatchPublishCommand(
                 request.title(), request.description(), request.campusIds(),
-                request.requiredCount(), request.deadline()), user));
+                request.requiredCount(), request.deadline(), request.assigneeId()), user));
+    }
+
+    @GetMapping("/requests/assignable-users")
+    @PreAuthorize("hasAuthority('REQUEST_CREATE')")
+    ApiResponse<List<RequestService.AssignableUser>> assignableUsers(
+            @RequestParam @NotEmpty @Size(max = 50) List<@NotNull Long> campusIds,
+            @AuthenticationPrincipal AuthenticatedUser user) {
+        return ApiResponse.ok(service.assignableUsers(campusIds, user));
     }
 
     @GetMapping("/requests")
@@ -68,7 +76,7 @@ public class RequestController {
                                            @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.update(id, new RequestService.CreateCommand(
                 request.title(), request.description(), request.campusId(),
-                request.requiredCount(), request.deadline()), request.version(), user));
+                request.requiredCount(), request.deadline(), request.assigneeId()), request.version(), user));
     }
 
     @PostMapping("/requests/{id}/publish")
@@ -148,14 +156,16 @@ public class RequestController {
                          @Size(max = 5000) String description,
                          @NotNull Long campusId,
                          @Min(1) Integer requiredCount,
-                         @NotNull @Future LocalDateTime deadline) {
+                         @NotNull @Future LocalDateTime deadline,
+                         Long assigneeId) {
     }
 
     record BatchPublishRequest(@NotBlank @Size(max = 200) String title,
                                @Size(max = 5000) String description,
                                @NotEmpty @Size(max = 50) List<@NotNull Long> campusIds,
                                @Min(1) Integer requiredCount,
-                               @NotNull @Future LocalDateTime deadline) {
+                               @NotNull @Future LocalDateTime deadline,
+                               Long assigneeId) {
     }
 
     record VersionRequest(@Min(1) int version) {
@@ -166,6 +176,7 @@ public class RequestController {
                          @NotNull Long campusId,
                          @Min(1) Integer requiredCount,
                          @NotNull @Future LocalDateTime deadline,
+                         Long assigneeId,
                          @Min(1) int version) {}
 
     record CancelRequest(@NotBlank @Size(max = 500) String reason, @Min(1) int version) {

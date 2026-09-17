@@ -24,6 +24,7 @@ class BatchRequestPublisher {
     private final CampusService campusService;
     private final JdbcClient jdbc;
     private final NotificationService notifications;
+    private final RequestAssignment assignment;
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public PhotoRequestEntity publish(Long projectId, Long campusId,
@@ -36,6 +37,10 @@ class BatchRequestPublisher {
         if (!Boolean.TRUE.equals(campusService.get(campusId).getEnabled())) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "不能向已停用校区发布需求");
         }
+        if (command.assigneeId() != null && !assignment.canBeAssigned(command.assigneeId(), campusId)) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                    "被指派人没有「需求访问、接受和提交」权限，或无权访问该校区");
+        }
 
         PhotoRequestEntity request = new PhotoRequestEntity();
         request.setProjectId(projectId);
@@ -46,7 +51,14 @@ class BatchRequestPublisher {
         request.setDeadline(command.deadline());
         request.setStatus(RequestStatus.PUBLISHED);
         request.setCreatedBy(user.id());
+        request.setAssigneeId(command.assigneeId());
         mapper.insert(request);
+
+        if (command.assigneeId() != null) {
+            // 与 RequestService.publish 一致：指派了人就直接成为参与人，不再广播给校区负责人。
+            assignment.applyOnPublish(request.getId());
+            return mapper.selectById(request.getId());
+        }
 
         jdbc.sql("""
                 SELECT DISTINCT u.id
