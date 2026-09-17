@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { groupPhotoRequests, selectedRequestFor } from '../src/requestBatch.ts'
+import { batchStatusCounts, groupPhotoRequests, selectedRequestFor } from '../src/requestBatch.ts'
 import type { PhotoRequest } from '../src/types.ts'
 
 const request = (id: string, batchId: string | null): PhotoRequest => ({
@@ -42,4 +42,18 @@ test('没有保存的校区选择时回退到批次的第一个需求，保存�
 
   assert.equal(selectedRequestFor(row, {}).id, 'r1')
   assert.equal(selectedRequestFor(row, { 'batch-batch-a': 'r2' }).id, 'r2')
+})
+
+test('批次内状态不一致时按首次出现顺序统计各状态数量', () => {
+  const row = groupPhotoRequests([
+    { ...request('r1', 'batch-a'), status: 'PUBLISHED' },
+    { ...request('r2', 'batch-a'), status: 'SUBMITTED' },
+    { ...request('r3', 'batch-a'), status: 'PUBLISHED' },
+  ])[0]
+
+  assert.deepEqual(batchStatusCounts(row), [
+    { status: 'PUBLISHED', count: 2 },
+    { status: 'SUBMITTED', count: 1 },
+  ])
+  assert.equal(batchStatusCounts(groupPhotoRequests([request('r4', 'batch-b')])[0]).length, 1)
 })

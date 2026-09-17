@@ -52,3 +52,17 @@ export function selectedRequestFor(
   const selectedId = selectedIds[row.key]
   return row.requests.find(request => request.id === selectedId) ?? row.representative
 }
+
+export interface BatchStatusCount {
+  status: string
+  count: number
+}
+
+/** 批次内各状态的需求数，按首次出现的顺序；只有一项说明批次内状态一致。 */
+export function batchStatusCounts(row: RequestBatchRow): BatchStatusCount[] {
+  const counts = new Map<string, number>()
+  for (const request of row.requests) {
+    counts.set(request.status, (counts.get(request.status) ?? 0) + 1)
+  }
+  return [...counts].map(([status, count]) => ({ status, count }))
+}

@@ -39,7 +39,7 @@ public class RequestController {
             @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.batchPublish(projectId, new RequestService.BatchPublishCommand(
                 request.title(), request.description(), request.campusIds(),
-                request.requiredCount(), request.deadline(), request.assigneeId()), user));
+                request.requiredCount(), request.deadline(), request.assigneeId(), request.batchId()), user));
     }
 
     @GetMapping("/requests/assignable-users")
@@ -165,7 +165,9 @@ public class RequestController {
                                @NotEmpty @Size(max = 50) List<@NotNull Long> campusIds,
                                @Min(1) Integer requiredCount,
                                @NotNull @Future LocalDateTime deadline,
-                               Long assigneeId) {
+                               Long assigneeId,
+                               // 仅在部分校区失败后重试时传入第一次返回的批次号。
+                               @Pattern(regexp = "[0-9A-Z]{26}") String batchId) {
     }
 
     record VersionRequest(@Min(1) int version) {

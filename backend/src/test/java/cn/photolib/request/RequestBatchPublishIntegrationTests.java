@@ -2,6 +2,8 @@ package cn.photolib.request;
 
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.campus.CampusService;
+import cn.photolib.common.error.BusinessException;
+import cn.photolib.common.error.ErrorCode;
 import cn.photolib.project.ProjectService;
 import cn.photolib.project.model.ProjectStatus;
 import cn.photolib.request.model.RequestStatus;
@@ -15,6 +17,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest
 class RequestBatchPublishIntegrationTests {
@@ -123,6 +126,71 @@ class RequestBatchPublishIntegrationTests {
                     .param("ids", List.of(ministerId, assigneeId)).update();
             jdbc.sql("DELETE FROM campus WHERE id IN (:ids)")
                     .param("ids", List.of(campus.getId(), otherCampus.getId())).update();
+        }
+    }
+    @Test
+    void retryWithBatchId_shouldJoinOriginalBatchAndRejectForeignBatches() {
+        long suffix = System.nanoTime();
+        var campus = campusService.create("E" + suffix, "重试批次校区一");
+        var retryCampus = campusService.create("F" + suffix, "重试批次校区二");
+        Long ownerId = -Math.abs(suffix);
+        Long otherId = ownerId - 1;
+        jdbc.sql("""
+                INSERT INTO app_user
+                    (id, username, password_hash, display_name, role, campus_id, enabled, must_change_password)
+                VALUES (:ownerId, :ownerName, 'hash', '重试批次部长', 'MINISTER', null, true, false),
+                       (:otherId, :otherName, 'hash', '另一位部长', 'MINISTER', null, true, false)
+                """).param("ownerId", ownerId).param("ownerName", "retry-owner-" + suffix)
+                .param("otherId", otherId).param("otherName", "retry-other-" + suffix).update();
+        var owner = new AuthenticatedUser(ownerId, "retry-owner-" + suffix, "重试批次部长",
+                UserRole.MINISTER, null, false);
+        var other = new AuthenticatedUser(otherId, "retry-other-" + suffix, "另一位部长",
+                UserRole.MINISTER, null, false);
+        var project = projectService.create("批量发布重试测试", "说明", ProjectStatus.ACTIVE, owner);
+        var otherProject = projectService.create("批量发布重试测试二", "说明", ProjectStatus.ACTIVE, owner);
+        LocalDateTime deadline = LocalDateTime.now().plusDays(7);
+
+        try {
+            var first = requestService.batchPublish(project.getId(), new RequestService.BatchPublishCommand(
+                    "重试拍摄", "说明", List.of(campus.getId(), 999999L), null, deadline), owner);
+            assertThat(first.get(0).success()).isTrue();
+            assertThat(first.get(1).success()).isFalse();
+            String batchId = first.get(0).request().getBatchId();
+
+            var retry = requestService.batchPublish(project.getId(), new RequestService.BatchPublishCommand(
+                    "重试拍摄", "说明", List.of(retryCampus.getId(), campus.getId()), null, deadline,
+                    null, batchId), owner);
+            assertThat(retry.get(0).success()).isTrue();
+            assertThat(retry.get(0).request().getBatchId()).isEqualTo(batchId);
+            assertThat(retry.get(1).success()).isFalse();
+            assertThat(retry.get(1).errorCode()).isEqualTo("VALIDATION_ERROR");
+
+            assertThatThrownBy(() -> requestService.batchPublish(project.getId(),
+                    new RequestService.BatchPublishCommand("重试拍摄", "说明", List.of(retryCampus.getId()),
+                            null, deadline, null, batchId), other))
+                    .isInstanceOfSatisfying(BusinessException.class,
+                            e -> assertThat(e.getCode()).isEqualTo(ErrorCode.FORBIDDEN));
+            assertThatThrownBy(() -> requestService.batchPublish(otherProject.getId(),
+                    new RequestService.BatchPublishCommand("重试拍摄", "说明", List.of(retryCampus.getId()),
+                            null, deadline, null, batchId), owner))
+                    .isInstanceOfSatisfying(BusinessException.class,
+                            e -> assertThat(e.getCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));
+            assertThatThrownBy(() -> requestService.batchPublish(project.getId(),
+                    new RequestService.BatchPublishCommand("重试拍摄", "说明", List.of(retryCampus.getId()),
+                            null, deadline, null, "0000000000000000000000000Z"), owner))
+                    .isInstanceOfSatisfying(BusinessException.class,
+                            e -> assertThat(e.getCode()).isEqualTo(ErrorCode.RESOURCE_NOT_FOUND));
+            assertThat(jdbc.sql("SELECT COUNT(*) FROM photo_request WHERE batch_id=:batchId")
+                    .param("batchId", batchId).query(Long.class).single()).isEqualTo(2);
+        } finally {
+            jdbc.sql("DELETE FROM photo_request WHERE project_id IN (:ids)")
+                    .param("ids", List.of(project.getId(), otherProject.getId())).update();
+            jdbc.sql("DELETE FROM project WHERE id IN (:ids)")
+                    .param("ids", List.of(project.getId(), otherProject.getId())).update();
+            jdbc.sql("DELETE FROM app_user WHERE id IN (:ids)")
+                    .param("ids", List.of(ownerId, otherId)).update();
+            jdbc.sql("DELETE FROM campus WHERE id IN (:ids)")
+                    .param("ids", List.of(campus.getId(), retryCampus.getId())).update();
         }
     }
 }

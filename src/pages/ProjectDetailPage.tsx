@@ -13,7 +13,7 @@ import dayjs from 'dayjs'
 import { useAuth } from '../auth'
 import { api, emptyPage } from '../api'
 import type {
-  Adoption, BatchPublishResult, Campus, PageData, Photo, PhotoRequest, Project, ProjectSelector,
+  Adoption, BatchPublishResult, Campus, EntityId, PageData, Photo, PhotoRequest, Project, ProjectSelector,
   SelectionCleanupPlan, SelectionCleanupResult, TaggedPhoto,
 } from '../types'
 import { DataState, StatusTag } from '../components'
@@ -26,6 +26,7 @@ import { preparePhotoBatchDownload } from '../photoBatchDownload'
 import { hasPermission } from '../permissions'
 import { groupPhotoRequests, selectedRequestFor } from '../requestBatch'
 import type { RequestBatchRow } from '../requestBatch'
+import { RequestBatchCampusCell, RequestBatchStatusCell } from '../RequestBatchCells'
 import PreviewPhoto from '../PreviewPhoto'
 import { refreshPhotoPreviewUrl } from '../previewRefresh'
 import { PhotoPlaceholder, pickPlaceholderImage, usePlaceholderImages } from '../photoPlaceholder'
@@ -170,6 +171,7 @@ const ProjectRequestTable = memo(function ProjectRequestTable({ requests, campus
   const batches = useMemo(() => groupPhotoRequests(requests), [requests])
   const columns = useMemo(() => {
     const campusNames = new Map(campuses.map(campus => [String(campus.id), campus.name]))
+    const campusName = (campusId: EntityId) => campusNames.get(String(campusId)) || `校区 #${campusId}`
     const selectedRequest = (batch: RequestBatchRow) =>
       selectedRequestFor(batch, selectedRequestByBatch)
     const selectRequest = (batch: RequestBatchRow, requestId: string) =>
@@ -184,23 +186,13 @@ const ProjectRequestTable = memo(function ProjectRequestTable({ requests, campus
           <span className="table-ellipsis-text" style={{ maxWidth: 360 }} title={description}>{description}</span>
         </div>
       } },
-      { title: '校区', render: (_: unknown, batch: RequestBatchRow) => {
-        if (batch.requests.length === 1) {
-          const item = batch.representative
-          return campusNames.get(String(item.campusId)) || `校区 #${item.campusId}`
-        }
-        const item = selectedRequest(batch)
-        return <Select size="small" style={{ minWidth: 150 }} value={item.id}
-          options={batch.requests.map(request => ({
-            value: request.id,
-            label: campusNames.get(String(request.campusId)) || `校区 #${request.campusId}`,
-          }))}
-          onChange={requestId => selectRequest(batch, requestId)} />
-      } },
+      { title: '校区', render: (_: unknown, batch: RequestBatchRow) =>
+        <RequestBatchCampusCell batch={batch} selected={selectedRequest(batch)} campusName={campusName}
+          onSelect={requestId => selectRequest(batch, requestId)} /> },
       { title: '截止时间', render: (_: unknown, batch: RequestBatchRow) =>
         dayjs(batch.representative.deadline).format('YYYY-MM-DD HH:mm') },
       { title: '状态', render: (_: unknown, batch: RequestBatchRow) =>
-        <StatusTag value={selectedRequest(batch).status} /> },
+        <RequestBatchStatusCell batch={batch} selected={selectedRequest(batch)} /> },
       { title: '操作', render: (_: unknown, batch: RequestBatchRow) =>
         <Button type="link" onClick={() => onOpen(selectedRequest(batch))}>查看需求</Button> },
     ]
@@ -240,6 +232,8 @@ export default function ProjectDetailPage() {
   const [selectorIds, setSelectorIds] = useState<string[]>([])
   const [cleanupPlan, setCleanupPlan] = useState<SelectionCleanupPlan | null>(null)
   const [batchDownloading, setBatchDownloading] = useState(false)
+  // 部分校区发布失败时记下已成功的那一批；重试时带回这个批次号，重试成功的校区才会并进同一行。
+  const [retryBatch, setRetryBatch] = useState<{ projectId: string; batchId: string } | null>(null)
   const [saving, setSaving] = useState(false)
   const [markingPhotoId, setMarkingPhotoId] = useState<string | null>(null)
   const { data, setData, loading, error, reload, refresh } = useLoad(async () => {
@@ -250,7 +244,8 @@ export default function ProjectDetailPage() {
       canViewRequests
         ? api<PageData<PhotoRequest>>({ url: '/requests', params: { page: 1, pageSize: 100, projectId } })
         : Promise.resolve(emptyPage<PhotoRequest>()),
-      api<Campus[]>({ url: '/campuses', params: { enabled: true } }),
+      // 需求表要显示已停用校区的名字，这里不按 enabled 过滤；发布表单的可选校区再单独筛。
+      api<Campus[]>({ url: '/campuses' }),
       api<PageData<Photo>>({ url: '/photos', params: { page: 1, pageSize: 100, projectId, includeAllStatuses: true } }),
       user?.dataScope === 'CAMPUS'
         ? Promise.resolve(emptyPage<Adoption>())
@@ -400,18 +395,22 @@ export default function ProjectDetailPage() {
           data: { title, description, campusId: campusIds[0], assigneeId, deadline: deadline.format('YYYY-MM-DDTHH:mm:ss') },
         })
         message.success('图片需求草稿已创建')
+        setRetryBatch(null)
         setRequestOpen(false)
         requestForm.resetFields()
         await reload()
         return
       }
+      const batchId = retryBatch?.projectId === projectId ? retryBatch.batchId : undefined
       const results = await api<BatchPublishResult[]>({
         method: 'POST', url: `/projects/${projectId}/requests/batch-publish`,
-        data: { title, description, campusIds, assigneeId, deadline: deadline.format('YYYY-MM-DDTHH:mm:ss') },
+        data: { title, description, campusIds, assigneeId, batchId, deadline: deadline.format('YYYY-MM-DDTHH:mm:ss') },
       })
       const succeeded = results.filter(item => item.success)
       const failed = results.filter(item => !item.success)
       if (failed.length) {
+        const nextBatchId = succeeded.find(item => item.request?.batchId)?.request?.batchId || batchId
+        setRetryBatch(nextBatchId ? { projectId, batchId: nextBatchId } : null)
         requestForm.setFieldValue('campusIds', failed.map(item => item.campusId))
         const details = failed.map(item => {
           const campus = data.campuses.find(value => value.id === item.campusId)
@@ -420,6 +419,7 @@ export default function ProjectDetailPage() {
         message.warning({ content: `已成功发布 ${succeeded.length} 个，失败 ${failed.length} 个。${details}`, duration: 8 })
       } else {
         message.success(`已向 ${succeeded.length} 个校区分别发布需求`)
+        setRetryBatch(null)
         setRequestOpen(false)
         requestForm.resetFields()
       }
@@ -818,7 +818,7 @@ export default function ProjectDetailPage() {
             rules={[{ required: true, message: '请至少选择一个校区' }]}>
             <Select mode="multiple" maxCount={publishMode === 'draft' ? 1 : undefined}
               showSearch optionFilterProp="label" maxTagCount="responsive"
-              options={data.campuses.map(c => ({ value: c.id, label: c.name }))}
+              options={data.campuses.filter(c => c.enabled).map(c => ({ value: c.id, label: c.name }))}
               placeholder={publishMode === 'publish' ? '可同时选择多个校区' : '选择一个校区'} />
           </Form.Item>
           <Form.Item label="指派给" name="assigneeId"
