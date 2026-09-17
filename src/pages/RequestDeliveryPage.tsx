@@ -59,7 +59,8 @@ export default function RequestDeliveryPage() {
     const request = await api<PhotoRequest>({ url: `/requests/${requestId}` })
     const [project, campuses] = await Promise.all([
       api<Project>({ url: `/projects/${request.projectId}` }).catch(() => null),
-      api<Campus[]>({ url: '/campuses', params: { enabled: true } }),
+      // 只用来显示校区名，已停用校区的需求也要显示真实名称。
+      api<Campus[]>({ url: '/campuses' }),
     ])
     return { request, project, campuses }
   }, { request: null as PhotoRequest | null, project: null as Project | null,

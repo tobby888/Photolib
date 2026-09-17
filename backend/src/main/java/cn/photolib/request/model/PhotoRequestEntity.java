@@ -16,6 +16,8 @@ public class PhotoRequestEntity extends BaseEntity {
     private Long projectId;
     private String title;
     private String description;
+    /** 多校区批量发布时，同一批次的每个校区需求共享同一个 batchId。 */
+    private String batchId;
     private Long campusId;
     private Integer requiredCount;
     private LocalDateTime deadline;

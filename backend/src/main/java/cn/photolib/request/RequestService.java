@@ -4,6 +4,7 @@ import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.PageResponse;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
+import cn.photolib.common.util.PublicId;
 import cn.photolib.project.ProjectService;
 import cn.photolib.notification.NotificationService;
 import cn.photolib.project.model.ProjectEntity;
@@ -27,6 +28,7 @@ import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -79,6 +81,10 @@ public class RequestService {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "截止时间不能早于当前时间");
         }
 
+        // 部分校区失败后重试时，前端带回第一次的 batchId，让重试成功的校区并进同一批。
+        String batchId = command.batchId() == null ? PublicId.next() : command.batchId();
+        Set<Long> batchCampuses = command.batchId() == null ? Set.of()
+                : requireRetryableBatch(projectId, command.batchId(), user);
         Set<Long> seenCampuses = new HashSet<>();
         return command.campusIds().stream().map(campusId -> {
             if (!user.canAccessCampus(campusId)) {
@@ -88,8 +94,12 @@ public class RequestService {
                 return BatchPublishResult.failure(campusId, ErrorCode.VALIDATION_ERROR,
                         "不能重复选择同一校区");
             }
+            if (batchCampuses.contains(campusId)) {
+                return BatchPublishResult.failure(campusId, ErrorCode.VALIDATION_ERROR,
+                        "该校区已在本批次中发布过需求");
+            }
             try {
-                PhotoRequestEntity request = batchPublisher.publish(projectId, campusId, command, user);
+                PhotoRequestEntity request = batchPublisher.publish(projectId, campusId, command, user, batchId);
                 return BatchPublishResult.success(campusId, request);
             } catch (BusinessException exception) {
                 return BatchPublishResult.failure(campusId, exception.getCode(), exception.getMessage());
@@ -99,6 +109,26 @@ public class RequestService {
                         "需求发布失败，请稍后单独重试");
             }
         }).toList();
+    }
+
+    /**
+     * 往已有批次追加校区前的校验：批次必须存在、属于同一项目，并且是调用人自己发的（管理员除外），
+     * 免得把需求挂到别人的批次上。返回批次里已经有需求的校区。
+     */
+    private Set<Long> requireRetryableBatch(Long projectId, String batchId, AuthenticatedUser user) {
+        List<PhotoRequestEntity> batch = mapper.selectList(Wrappers.<PhotoRequestEntity>lambdaQuery()
+                .eq(PhotoRequestEntity::getBatchId, batchId));
+        if (batch.isEmpty()) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "需求批次不存在");
+        }
+        if (batch.stream().anyMatch(request -> !request.getProjectId().equals(projectId))) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "需求批次不属于该项目");
+        }
+        if (!user.isAdministrator()
+                && batch.stream().anyMatch(request -> !request.getCreatedBy().equals(user.id()))) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权向该需求批次追加校区");
+        }
+        return batch.stream().map(PhotoRequestEntity::getCampusId).collect(Collectors.toSet());
     }
 
     /** 新建需求时可以指派的用户：能同时接收所选全部校区需求的账号。 */
@@ -488,10 +518,16 @@ public class RequestService {
     }
 
     public record BatchPublishCommand(String title, String description, List<Long> campusIds,
-                                      Integer requiredCount, LocalDateTime deadline, Long assigneeId) {
+                                      Integer requiredCount, LocalDateTime deadline, Long assigneeId,
+                                      String batchId) {
         public BatchPublishCommand(String title, String description, List<Long> campusIds,
                                    Integer requiredCount, LocalDateTime deadline) {
-            this(title, description, campusIds, requiredCount, deadline, null);
+            this(title, description, campusIds, requiredCount, deadline, null, null);
+        }
+
+        public BatchPublishCommand(String title, String description, List<Long> campusIds,
+                                   Integer requiredCount, LocalDateTime deadline, Long assigneeId) {
+            this(title, description, campusIds, requiredCount, deadline, assigneeId, null);
         }
     }
 

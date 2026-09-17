@@ -170,6 +170,7 @@ export interface PhotoRequest extends BaseEntity {
   projectId: EntityId
   title: string
   description: string
+  batchId?: string | null
   campusId: EntityId
   requiredCount?: number | null
   deadline: string

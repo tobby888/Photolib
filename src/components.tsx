@@ -19,6 +19,10 @@ const statusMap: Record<string, { text: string; color: string }> = {
   DELETED: { text: '已删除', color: 'red' },
 }
 
+export function statusText(value: string) {
+  return statusMap[value]?.text || value
+}
+
 export function StatusTag({ value }: { value: string }) {
   const item = statusMap[value] || { text: value, color: 'default' }
   return <Tag color={item.color} variant="filled">{item.text}</Tag>
