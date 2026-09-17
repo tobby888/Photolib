@@ -29,7 +29,7 @@ class BatchRequestPublisher {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public PhotoRequestEntity publish(Long projectId, Long campusId,
                                       RequestService.BatchPublishCommand command,
-                                      AuthenticatedUser user) {
+                                      AuthenticatedUser user, String batchId) {
         if (projectService.get(projectId).getStatus() != ProjectStatus.ACTIVE) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
                     "项目已不再进行中，当前校区需求未发布");
@@ -46,6 +46,7 @@ class BatchRequestPublisher {
         request.setProjectId(projectId);
         request.setTitle(command.title());
         request.setDescription(command.description());
+        request.setBatchId(batchId);
         request.setCampusId(campusId);
         request.setRequiredCount(command.requiredCount());
         request.setDeadline(command.deadline());

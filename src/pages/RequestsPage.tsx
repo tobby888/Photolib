@@ -5,12 +5,15 @@ import {
 import {
   CheckOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, RollbackOutlined, SearchOutlined,
 } from '@ant-design/icons'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { api, emptyPage, qs } from '../api'
 import { useAuth } from '../auth'
-import type { BatchPublishResult, Campus, PageData, PhotoRequest, Project } from '../types'
+import type { BatchPublishResult, Campus, EntityId, PageData, PhotoRequest, Project } from '../types'
+import { groupPhotoRequests, selectedRequestFor } from '../requestBatch'
+import type { RequestBatchRow } from '../requestBatch'
+import { RequestBatchCampusCell, RequestBatchStatusCell } from '../RequestBatchCells'
 import { DataState, PageTitle, StatusTag } from '../components'
 import { ContentFitTable } from '../ContentFitTable'
 import { useLoad } from '../hooks'
@@ -40,6 +43,9 @@ export default function RequestsPage() {
   const canDelete = hasPermission(user, 'REQUEST_DELETE')
   const [open, setOpen] = useState(false)
   const [detail, setDetail] = useState<PhotoRequest | null>(null)
+  const [selectedRequestByBatch, setSelectedRequestByBatch] = useState<Record<string, EntityId>>({})
+  // 部分校区发布失败时记下已成功的那一批；重试时带回这个批次号，重试成功的校区才会并进同一行。
+  const [retryBatch, setRetryBatch] = useState<{ projectId: EntityId; batchId: string } | null>(null)
   const [saving, setSaving] = useState(false)
   const [filters, setFilters] = useState({
     page: 1,
@@ -50,12 +56,15 @@ export default function RequestsPage() {
     () => api<PageData<PhotoRequest>>({ url: '/requests', params: qs({ ...filters, pageSize: 20 }) }),
     emptyPage<PhotoRequest>(), [filters.page, filters.status, filters.projectId],
   )
+  const batches = useMemo(() => groupPhotoRequests(data.items), [data.items])
   const { data: options } = useLoad(async () => {
     const [projects, campuses] = await Promise.all([
       canViewProjects(user)
         ? api<PageData<Project>>({ url: '/projects', params: { page: 1, pageSize: 100 } })
         : Promise.resolve(emptyPage<Project>()),
-      canCreate ? api<Campus[]>({ url: '/campuses', params: { enabled: true } }) : Promise.resolve([] as Campus[]),
+      // 列表要给所有能看需求的人显示校区名（含已停用校区），所以不按创建权限或 enabled 过滤；
+      // 发布表单里的可选校区另从这里筛出启用的。
+      api<Campus[]>({ url: '/campuses' }),
     ])
     return { projects: projects.items, campuses }
   }, { projects: [] as Project[], campuses: [] as Campus[] }, [canCreate, user?.permissionGroupId])
@@ -63,6 +72,14 @@ export default function RequestsPage() {
     const requestId = searchParams.get('requestId')
     if (requestId) setDetail(data.items.find(item => item.id === requestId) || null)
   }, [data.items, searchParams])
+
+  const campusName = (campusId: EntityId) =>
+    options.campuses.find(campus => campus.id === campusId)?.name || `校区 #${campusId}`
+  const selectedRequest = (batch: RequestBatchRow) =>
+    selectedRequestFor(batch, selectedRequestByBatch)
+  const selectRequest = (batch: RequestBatchRow, requestId: EntityId) => {
+    setSelectedRequestByBatch(current => ({ ...current, [batch.key]: requestId }))
+  }
 
   const create = async () => {
     const values = await form.validateFields()
@@ -79,26 +96,28 @@ export default function RequestsPage() {
           data: { title, description, campusId: campusIds[0], assigneeId, deadline: deadline.format('YYYY-MM-DDTHH:mm:ss') },
         })
         message.success('需求草稿已创建')
+        setRetryBatch(null)
         setOpen(false)
         form.resetFields()
         await reload()
         return
       }
+      const batchId = retryBatch && retryBatch.projectId === projectId ? retryBatch.batchId : undefined
       const results = await api<BatchPublishResult[]>({
         method: 'POST', url: `/projects/${projectId}/requests/batch-publish`,
-        data: { title, description, campusIds, assigneeId, deadline: deadline.format('YYYY-MM-DDTHH:mm:ss') },
+        data: { title, description, campusIds, assigneeId, batchId, deadline: deadline.format('YYYY-MM-DDTHH:mm:ss') },
       })
       const succeeded = results.filter(item => item.success)
       const failed = results.filter(item => !item.success)
       if (failed.length) {
+        const nextBatchId = succeeded.find(item => item.request?.batchId)?.request?.batchId || batchId
+        setRetryBatch(nextBatchId ? { projectId, batchId: nextBatchId } : null)
         form.setFieldValue('campusIds', failed.map(item => item.campusId))
-        const details = failed.map(item => {
-          const campus = options.campuses.find(value => value.id === item.campusId)
-          return `${campus?.name || `校区 #${item.campusId}`}：${item.message || '发布失败'}`
-        }).join('；')
+        const details = failed.map(item => `${campusName(item.campusId)}：${item.message || '发布失败'}`).join('；')
         message.warning({ content: `已成功发布 ${succeeded.length} 个，失败 ${failed.length} 个。${details}`, duration: 8 })
       } else {
         message.success(`已向 ${succeeded.length} 个校区分别发布需求`)
+        setRetryBatch(null)
         setOpen(false)
         form.resetFields()
       }
@@ -212,13 +231,21 @@ export default function RequestsPage() {
           : campusScoped
             ? '部长发布新的拍摄任务后，会出现在这里，你可以直接接单。'
             : '先在选题项目里建一个需求，再发布给对应校区。'}>
-        <ContentFitTable rowKey="id" dataSource={data.items} pagination={false} columns={[
-          { title: '需求', dataIndex: 'title', render: (value, item) => <div className="table-title"><strong>{value}</strong><span>项目 #{item.projectId}</span></div> },
-          { title: '校区', dataIndex: 'campusId', render: value => options.campuses.find(c => c.id === value)?.name || `校区 #${value}` },
-          { title: '截止时间', dataIndex: 'deadline', render: value => <span className={dayjs(value).isBefore(dayjs()) ? 'danger-text' : ''}>{dayjs(value).format('MM-DD HH:mm')}</span> },
-          { title: '状态', dataIndex: 'status', render: value => <StatusTag value={value} /> },
+        <ContentFitTable<RequestBatchRow> rowKey="key" dataSource={batches} pagination={false} columns={[
+          { title: '需求', render: (_, batch) => {
+            const item = batch.representative
+            return <div className="table-title"><strong>{item.title}</strong><span>项目 #{item.projectId}</span></div>
+          } },
+          { title: '校区', render: (_, batch) =>
+            <RequestBatchCampusCell batch={batch} selected={selectedRequest(batch)} campusName={campusName}
+              onSelect={requestId => selectRequest(batch, requestId)} /> },
+          { title: '截止时间', render: (_, batch) => {
+            const value = batch.representative.deadline
+            return <span className={dayjs(value).isBefore(dayjs()) ? 'danger-text' : ''}>{dayjs(value).format('MM-DD HH:mm')}</span>
+          } },
+          { title: '状态', render: (_, batch) => <RequestBatchStatusCell batch={batch} selected={selectedRequest(batch)} /> },
           { title: '操作', key: 'action', fixed: 'right', minWidth: REQUEST_ACTION_MIN_WIDTH,
-            className: 'table-action-cell', render: (_, item) => actions(item) },
+            className: 'table-action-cell', render: (_, batch) => actions(selectedRequest(batch)) },
         ]} />
         <Pagination current={filters.page} total={data.total} pageSize={20} hideOnSinglePage onChange={page => setFilters({ ...filters, page })} />
       </DataState>
@@ -244,7 +271,7 @@ export default function RequestsPage() {
           rules={[{ required: true, message: '请至少选择一个校区' }]}>
           <Select mode="multiple" maxCount={publishMode === 'draft' ? 1 : undefined}
             showSearch optionFilterProp="label" maxTagCount="responsive"
-            options={options.campuses.map(c => ({ value: c.id, label: c.name }))}
+            options={options.campuses.filter(c => c.enabled).map(c => ({ value: c.id, label: c.name }))}
             placeholder={publishMode === 'publish' ? '可同时选择多个校区' : '选择一个校区'} />
         </Form.Item>
         <Form.Item label="指派给" name="assigneeId"
@@ -265,7 +292,7 @@ export default function RequestsPage() {
         <Descriptions column={1} bordered size="small" items={[
           { key: 'status', label: '状态', children: <StatusTag value={detail.status} /> },
           { key: 'project', label: '所属项目', children: `#${detail.projectId}` },
-          { key: 'campus', label: '拍摄校区', children: options.campuses.find(c => c.id === detail.campusId)?.name || `#${detail.campusId}` },
+          { key: 'campus', label: '拍摄校区', children: campusName(detail.campusId) },
           { key: 'deadline', label: '截止时间', children: dayjs(detail.deadline).format('YYYY 年 M 月 D 日 HH:mm') },
           ...(detail.status === 'ACCEPTED' && detail.returnReason ? [{
             key: 'returnReason', label: '最近退回原因',
