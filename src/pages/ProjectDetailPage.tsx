@@ -21,6 +21,7 @@ import { ContentFitTable } from '../ContentFitTable'
 import { useLoad, useRefreshOnResume, useStableCallback } from '../hooks'
 import MarkdownEditor from '../MarkdownEditor'
 import MarkdownRenderer, { markdownExcerpt } from '../MarkdownRenderer'
+import RequestAssigneeSelect from '../RequestAssigneeSelect'
 import { preparePhotoBatchDownload } from '../photoBatchDownload'
 import { hasPermission } from '../permissions'
 import PreviewPhoto from '../PreviewPhoto'
@@ -197,6 +198,7 @@ export default function ProjectDetailPage() {
   const placeholderImages = usePlaceholderImages()
   const [requestForm] = Form.useForm()
   const publishMode = Form.useWatch('publishMode', requestForm) || 'publish'
+  const requestCampusIds = Form.useWatch('campusIds', requestForm)
   const [editForm] = Form.useForm()
   const [requestOpen, setRequestOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
@@ -369,11 +371,11 @@ export default function ProjectDetailPage() {
     }
     setSaving(true)
     try {
-      const { deadline, title, description, campusIds } = values
+      const { deadline, title, description, campusIds, assigneeId } = values
       if (values.publishMode === 'draft') {
         await api({
           method: 'POST', url: `/projects/${projectId}/requests`,
-          data: { title, description, campusId: campusIds[0], deadline: deadline.format('YYYY-MM-DDTHH:mm:ss') },
+          data: { title, description, campusId: campusIds[0], assigneeId, deadline: deadline.format('YYYY-MM-DDTHH:mm:ss') },
         })
         message.success('图片需求草稿已创建')
         setRequestOpen(false)
@@ -383,7 +385,7 @@ export default function ProjectDetailPage() {
       }
       const results = await api<BatchPublishResult[]>({
         method: 'POST', url: `/projects/${projectId}/requests/batch-publish`,
-        data: { title, description, campusIds, deadline: deadline.format('YYYY-MM-DDTHH:mm:ss') },
+        data: { title, description, campusIds, assigneeId, deadline: deadline.format('YYYY-MM-DDTHH:mm:ss') },
       })
       const succeeded = results.filter(item => item.success)
       const failed = results.filter(item => !item.success)
@@ -795,6 +797,10 @@ export default function ProjectDetailPage() {
               showSearch optionFilterProp="label" maxTagCount="responsive"
               options={data.campuses.map(c => ({ value: c.id, label: c.name }))}
               placeholder={publishMode === 'publish' ? '可同时选择多个校区' : '选择一个校区'} />
+          </Form.Item>
+          <Form.Item label="指派给" name="assigneeId"
+            extra="可选。被指派人需有「需求访问、接受和提交」权限并能访问所选校区；发布后直接成为参与人">
+            <RequestAssigneeSelect campusIds={requestCampusIds} />
           </Form.Item>
           <Form.Item label="截止时间" name="deadline" rules={[{ required: true, message: '请选择截止时间' }]}>
             <DatePicker showTime format="YYYY-MM-DD HH:mm" disabledDate={date => date.isBefore(dayjs(), 'day')} style={{ width: '100%' }} />

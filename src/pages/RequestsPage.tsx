@@ -16,6 +16,7 @@ import { ContentFitTable } from '../ContentFitTable'
 import { useLoad } from '../hooks'
 import MarkdownEditor from '../MarkdownEditor'
 import MarkdownRenderer from '../MarkdownRenderer'
+import RequestAssigneeSelect from '../RequestAssigneeSelect'
 import { canViewProjects, hasPermission } from '../permissions'
 import { REQUEST_ACTION_MIN_WIDTH } from '../tableActionWidths'
 
@@ -31,6 +32,7 @@ export default function RequestsPage() {
   const [searchParams] = useSearchParams()
   const [form] = Form.useForm()
   const publishMode = Form.useWatch('publishMode', form) || 'publish'
+  const requestCampusIds = Form.useWatch('campusIds', form)
   const campusScoped = user?.dataScope === 'CAMPUS'
   const canCreate = hasPermission(user, 'REQUEST_CREATE')
   const canConfirm = hasPermission(user, 'REQUEST_CONFIRM')
@@ -70,11 +72,11 @@ export default function RequestsPage() {
     }
     setSaving(true)
     try {
-      const { projectId, deadline, title, description, campusIds } = values
+      const { projectId, deadline, title, description, campusIds, assigneeId } = values
       if (values.publishMode === 'draft') {
         await api({
           method: 'POST', url: `/projects/${projectId}/requests`,
-          data: { title, description, campusId: campusIds[0], deadline: deadline.format('YYYY-MM-DDTHH:mm:ss') },
+          data: { title, description, campusId: campusIds[0], assigneeId, deadline: deadline.format('YYYY-MM-DDTHH:mm:ss') },
         })
         message.success('需求草稿已创建')
         setOpen(false)
@@ -84,7 +86,7 @@ export default function RequestsPage() {
       }
       const results = await api<BatchPublishResult[]>({
         method: 'POST', url: `/projects/${projectId}/requests/batch-publish`,
-        data: { title, description, campusIds, deadline: deadline.format('YYYY-MM-DDTHH:mm:ss') },
+        data: { title, description, campusIds, assigneeId, deadline: deadline.format('YYYY-MM-DDTHH:mm:ss') },
       })
       const succeeded = results.filter(item => item.success)
       const failed = results.filter(item => !item.success)
@@ -244,6 +246,10 @@ export default function RequestsPage() {
             showSearch optionFilterProp="label" maxTagCount="responsive"
             options={options.campuses.map(c => ({ value: c.id, label: c.name }))}
             placeholder={publishMode === 'publish' ? '可同时选择多个校区' : '选择一个校区'} />
+        </Form.Item>
+        <Form.Item label="指派给" name="assigneeId"
+          extra="可选。被指派人需有「需求访问、接受和提交」权限并能访问所选校区；发布后直接成为参与人">
+          <RequestAssigneeSelect campusIds={requestCampusIds} />
         </Form.Item>
         <Form.Item label="截止时间" name="deadline" rules={[{ required: true, message: '请选择截止时间' }]}>
           <DatePicker showTime format="YYYY-MM-DD HH:mm" disabledDate={date => date.isBefore(dayjs(), 'day')} style={{ width: '100%' }} />

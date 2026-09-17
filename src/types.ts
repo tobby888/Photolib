@@ -175,10 +175,17 @@ export interface PhotoRequest extends BaseEntity {
   deadline: string
   status: 'DRAFT' | 'PUBLISHED' | 'ACCEPTED' | 'SUBMITTED' | 'COMPLETED' | 'CANCELLED'
   createdBy: EntityId
+  assigneeId?: EntityId | null
   firstAcceptedAt?: string
   returnReason?: string | null
   returnedBy?: EntityId | null
   returnedAt?: string | null
+}
+
+export interface AssignableUser {
+  id: EntityId
+  username: string
+  displayName: string
 }
 
 export interface BatchPublishResult {

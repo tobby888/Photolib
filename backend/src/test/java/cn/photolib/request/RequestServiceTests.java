@@ -448,6 +448,113 @@ class RequestServiceTests {
         assertThat(requestService.get(request.getId())).isNotNull();
     }
 
+    @Test
+    void assignedDraft_whenPublished_shouldMakeAssigneeAParticipant() {
+        var draft = requestService.create(activeProject.getId(), new RequestService.CreateCommand(
+                "指派需求", "描述", testCampus.getId(), null,
+                LocalDateTime.now().plusDays(1), managerUser.id()), ministerUser);
+        assertThat(draft.getStatus()).isEqualTo(RequestStatus.DRAFT);
+        assertThat(draft.getAssigneeId()).isEqualTo(managerUser.id());
+        assertThat(requestService.participants(draft.getId())).isEmpty();
+
+        var published = requestService.publish(draft.getId(), requestService.get(draft.getId()).getVersion(), ministerUser);
+
+        assertThat(published.getStatus()).isEqualTo(RequestStatus.ACCEPTED);
+        assertThat(published.getFirstAcceptedAt()).isNotNull();
+        assertThat(requestService.participants(draft.getId()))
+                .extracting(p -> p.getUserId()).containsExactly(managerUser.id());
+        assertThat(notificationCount(managerUser.id(), "REQUEST_ASSIGNED")).isEqualTo(1);
+        // 发布即被接走的需求不再广播给校区负责人。
+        assertThat(notificationCount(managerUser.id(), "REQUEST_PUBLISHED")).isZero();
+        // 被指派人和自己接单一样能提交。
+        var submitted = requestService.submit(published.getId(), published.getVersion(), managerUser);
+        assertThat(submitted.getStatus()).isEqualTo(RequestStatus.SUBMITTED);
+    }
+
+    @Test
+    void assigneeWithoutRequestViewPermission_shouldBeRejectedAndNotListed() {
+        jdbc.sql("""
+                INSERT INTO permission_group(id, code, name, data_scope, built_in, lowest)
+                VALUES (900, 'NO_REQUEST_VIEW', '无需求权限', 'GLOBAL', false, false)
+                """).update();
+        jdbc.sql("""
+                INSERT INTO permission_group_permission(group_id, permission_code)
+                VALUES (900, 'PHOTO_VIEW'), (900, 'REQUEST_PHOTO_MANAGE')
+                """).update();
+        jdbc.sql("""
+                INSERT INTO app_user
+                    (id, username, password_hash, display_name, role, permission_group_id, enabled, must_change_password)
+                VALUES (404, 'no-request-view', 'hash', '无需求权限用户', 'CAMPUS_MANAGER', 900, true, false)
+                """).update();
+
+        assertThatThrownBy(() -> requestService.create(activeProject.getId(), new RequestService.CreateCommand(
+                "指派给无权限用户", "描述", testCampus.getId(), null,
+                LocalDateTime.now().plusDays(1), 404L), ministerUser))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("需求访问、接受和提交");
+        assertThat(requestService.assignableUsers(java.util.List.of(testCampus.getId()), ministerUser))
+                .extracting(RequestService.AssignableUser::id)
+                .contains(managerUser.id(), ministerUser.id())
+                .doesNotContain(404L);
+    }
+
+    @Test
+    void assigneeOutsideRequestCampus_shouldBeRejectedAndNotListed() {
+        var otherCampus = campusService.create("OTHER", "其他校区");
+        jdbc.sql("""
+                INSERT INTO app_user
+                    (id, username, password_hash, display_name, role, campus_id, enabled, must_change_password)
+                VALUES (405, 'other-manager', 'hash', '其他校区负责人', 'CAMPUS_MANAGER', :campusId, true, false)
+                """).param("campusId", otherCampus.getId()).update();
+
+        assertThatThrownBy(() -> requestService.create(activeProject.getId(), new RequestService.CreateCommand(
+                "跨校区指派", "描述", testCampus.getId(), null,
+                LocalDateTime.now().plusDays(1), 405L), ministerUser))
+                .isInstanceOf(BusinessException.class);
+        assertThat(requestService.assignableUsers(java.util.List.of(testCampus.getId()), ministerUser))
+                .extracting(RequestService.AssignableUser::id)
+                .contains(managerUser.id()).doesNotContain(405L);
+        // 多个校区时只列出每个校区都能接收的人。
+        assertThat(requestService.assignableUsers(
+                java.util.List.of(testCampus.getId(), otherCampus.getId()), ministerUser))
+                .extracting(RequestService.AssignableUser::id)
+                .contains(ministerUser.id()).doesNotContain(managerUser.id(), 405L);
+    }
+
+    @Test
+    void publishingAssignedDraft_shouldRecheckAssigneeEligibility() {
+        var draft = requestService.create(activeProject.getId(), new RequestService.CreateCommand(
+                "指派后被停用", "描述", testCampus.getId(), null,
+                LocalDateTime.now().plusDays(1), managerUser.id()), ministerUser);
+        jdbc.sql("UPDATE app_user SET enabled=false WHERE id=:id").param("id", managerUser.id()).update();
+
+        assertThatThrownBy(() -> requestService.publish(draft.getId(), requestService.get(draft.getId()).getVersion(), ministerUser))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("被指派人");
+        assertThat(requestService.get(draft.getId()).getStatus()).isEqualTo(RequestStatus.DRAFT);
+    }
+
+    @Test
+    void updatingDraft_canClearAssignee() {
+        var draft = requestService.create(activeProject.getId(), new RequestService.CreateCommand(
+                "清空指派", "描述", testCampus.getId(), null,
+                LocalDateTime.now().plusDays(1), managerUser.id()), ministerUser);
+
+        var updated = requestService.update(draft.getId(), new RequestService.CreateCommand(
+                "清空指派", "描述", testCampus.getId(), null,
+                LocalDateTime.now().plusDays(1), null), requestService.get(draft.getId()).getVersion(), ministerUser);
+        assertThat(updated.getAssigneeId()).isNull();
+
+        var published = requestService.publish(updated.getId(), updated.getVersion(), ministerUser);
+        assertThat(published.getStatus()).isEqualTo(RequestStatus.PUBLISHED);
+        assertThat(requestService.participants(draft.getId())).isEmpty();
+    }
+
+    private long notificationCount(Long userId, String eventType) {
+        return jdbc.sql("SELECT COUNT(*) FROM user_notification WHERE user_id=:userId AND event_type=:eventType")
+                .param("userId", userId).param("eventType", eventType).query(Long.class).single();
+    }
+
     private PhotoRequestEntity createSubmittedRequest() {
         RequestService.CreateCommand create = new RequestService.CreateCommand(
                 "待确认需求", "描述", testCampus.getId(), null,
