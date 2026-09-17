@@ -2290,6 +2290,22 @@ body {
   background: var(--app-background, #f5f8fb);
 }
 
+/* 图片快捷键设置（src/PhotoCardShortcutsModal.tsx） */
+.shortcut-settings { display: grid; gap: 10px; margin-bottom: 12px; }
+.shortcut-settings-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; }
+.shortcut-settings-row kbd {
+  min-width: 72px;
+  padding: 3px 10px;
+  border: 1px solid var(--porcelain-rule-strong, #c9d3dd);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: var(--app-background, #f5f8fb);
+  font-family: inherit;
+  text-align: center;
+}
+.shortcut-settings-row kbd.is-recording { border-color: var(--porcelain-blue, #4682b4); color: var(--porcelain-blue, #4682b4); }
+.shortcut-settings-alert { margin-top: 12px; }
+
 /* Standalone photo detail and client-side exposure analysis */
 .photo-cover[role="link"],
 .photo-cover[role="button"],

@@ -37,6 +37,7 @@ import { readRecentTags, recordTagSearch } from '../photoTagHistory'
 import RecentTagChips from '../RecentTagChips'
 import { selectPhotoRange } from '../photoSelection'
 import { usePhotoCardClick } from '../usePhotoCardClick'
+import { matchPhotoCardShortcut, photoCardHint, usePhotoCardShortcuts } from '../photoCardShortcuts'
 
 export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: boolean }) {
   const navigate = useNavigate()
@@ -63,6 +64,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
   const [uploadPercent, setUploadPercent] = useState(0)
   const [selectedPhotos, setSelectedPhotos] = useState<Photo[]>([])
   const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null)
+  const shortcuts = usePhotoCardShortcuts()
   const [batchDownloading, setBatchDownloading] = useState(false)
   const [projectPickerOpen, setProjectPickerOpen] = useState(false)
   const [projectSaving, setProjectSaving] = useState(false)
@@ -407,7 +409,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
             className="photo-cover" role="button" tabIndex={0}
             aria-pressed={selectedIds.includes(photo.id)}
             aria-label={`${canSelectPhoto(photo) ? '选择' : '查看'}图片：${photo.title || photo.id}`}
-            title={canSelectPhoto(photo) ? '单击或空格选择，双击或 Enter 查看详情' : '查看图片详情'}
+            title={canSelectPhoto(photo) ? photoCardHint(shortcuts, '查看详情') : '查看图片详情'}
             onClick={event => {
               if (!canSelectPhoto(photo)) {
                 navigate(withPhotoLibrarySearch(`${libraryRoot}/${photo.id}`, location.search))
@@ -426,10 +428,11 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
             }}
             onKeyDown={event => {
               if (event.target !== event.currentTarget) return
-              if (event.key !== 'Enter' && event.key !== ' ') return
+              // 键盘没有双击：「打开」键进详情，「选择」键勾选（Shift 连选），键位由用户设置。
+              const action = matchPhotoCardShortcut(event, shortcuts)
+              if (!action) return
               event.preventDefault()
-              // 键盘没有双击：Enter 打开详情，空格勾选（Shift+空格连选）。
-              if (event.key === 'Enter' || !canSelectPhoto(photo)) {
+              if (action === 'open' || !canSelectPhoto(photo)) {
                 navigate(withPhotoLibrarySearch(`${libraryRoot}/${photo.id}`, location.search))
               } else if (event.shiftKey) {
                 selectRangeTo(photo.id)

@@ -1,9 +1,9 @@
 import {
   App, Button, Card, Checkbox, Col, Empty, Form, Input, Result, Row, Skeleton, Space, Tag, Typography,
 } from 'antd'
-import { DownloadOutlined, EyeOutlined, LinkOutlined, LockOutlined } from '@ant-design/icons'
+import { DownloadOutlined, EyeOutlined, KeyOutlined, LinkOutlined, LockOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { ApiError } from '../api'
 import { BrandGlyph, useBranding } from '../branding'
@@ -22,6 +22,9 @@ import { shareTagHistoryScope } from '../photoTagHistory'
 import { selectPhotoRange } from '../photoSelection'
 import { MAX_SHARE_BATCH, dropFromSelection, isFullySelected, mergeSelection } from '../shareSelection'
 import { isPortalEvent, selectablePreview, usePhotoCardClick } from '../usePhotoCardClick'
+import { matchPhotoCardShortcut, photoCardHint, usePhotoCardShortcuts } from '../photoCardShortcuts'
+
+const PhotoCardShortcutsModal = lazy(() => import('../PhotoCardShortcutsModal'))
 import type { ShareGuestAccess, SharePhoto } from '../types'
 
 const PAGE_SIZE = 60
@@ -61,6 +64,8 @@ export default function SharedProjectPage() {
   const [selected, setSelected] = useState<string[]>([])
   const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null)
   const [previewPhotoId, setPreviewPhotoId] = useState<string | null>(null)
+  const [shortcutSettingsOpen, setShortcutSettingsOpen] = useState(false)
+  const shortcuts = usePhotoCardShortcuts()
   const [selectingAll, setSelectingAll] = useState(false)
   const [batchDownloading, setBatchDownloading] = useState(false)
   const [markingPhotoId, setMarkingPhotoId] = useState<string | null>(null)
@@ -387,6 +392,8 @@ export default function SharedProjectPage() {
           <Input.Search allowClear placeholder="搜索图片标题、描述或标签" style={{ maxWidth: 260 }}
             onSearch={value => { setKeyword(value); setPage(1) }} />
           {access?.allowDownload && <>
+            {/* 访客没有账号菜单，快捷键设置从这里进。 */}
+            <Button type="link" icon={<KeyOutlined />} onClick={() => setShortcutSettingsOpen(true)}>快捷键</Button>
             <Button type="link" disabled={!photos.length || batchDownloading || selectingAll}
               onClick={togglePageSelection}>{pageFullySelected ? '取消本页' : '全选本页'}</Button>
             {total > photos.length && <Button type="link" loading={selectingAll}
@@ -413,7 +420,7 @@ export default function SharedProjectPage() {
                   tabIndex={access?.allowDownload ? 0 : undefined}
                   aria-pressed={access?.allowDownload ? selectedIds.has(photo.id) : undefined}
                   aria-label={access?.allowDownload ? `选择图片 ${photo.title || photo.id}` : undefined}
-                  title={access?.allowDownload ? '单击或空格选择，双击或 Enter 查看大图' : undefined}
+                  title={access?.allowDownload ? photoCardHint(shortcuts, '查看大图') : undefined}
                   onClick={event => {
                     if (!selecting || isPortalEvent(event)) return
                     if (event.shiftKey) {
@@ -430,10 +437,11 @@ export default function SharedProjectPage() {
                   }}
                   onKeyDown={event => {
                     if (event.target !== event.currentTarget || !selecting) return
-                    if (event.key !== 'Enter' && event.key !== ' ') return
+                    // 键盘没有双击：「打开」键看大图，「选择」键勾选（Shift 连选），键位由用户设置。
+                    const action = matchPhotoCardShortcut(event, shortcuts)
+                    if (!action) return
                     event.preventDefault()
-                    // 键盘没有双击：Enter 看大图，空格勾选（Shift+空格连选）。
-                    if (event.key === 'Enter') openPreview(photo)
+                    if (action === 'open') openPreview(photo)
                     else if (event.shiftKey) selectRangeTo(photo.id)
                     else toggleSelected(photo.id, !selectedIds.has(photo.id))
                   }}>
@@ -503,5 +511,8 @@ export default function SharedProjectPage() {
       </Card>
     </div>
     <SiteFooter />
+    {shortcutSettingsOpen && <Suspense fallback={null}>
+      <PhotoCardShortcutsModal open onClose={() => setShortcutSettingsOpen(false)} />
+    </Suspense>}
   </main>
 }

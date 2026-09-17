@@ -29,6 +29,7 @@ import PreviewPhoto from '../PreviewPhoto'
 import { refreshPhotoPreviewUrl } from '../previewRefresh'
 import { PhotoPlaceholder, pickPlaceholderImage, usePlaceholderImages } from '../photoPlaceholder'
 import { isPortalEvent, selectablePreview, usePhotoCardClick } from '../usePhotoCardClick'
+import { matchPhotoCardShortcut, photoCardHint, usePhotoCardShortcuts } from '../photoCardShortcuts'
 import BatchTagModal from '../BatchTagModal'
 import type { BatchTagMode } from '../BatchTagModal'
 import TagSelect from '../TagSelect'
@@ -104,6 +105,7 @@ const ProjectPhotoCard = memo(function ProjectPhotoCard({
   onDownload, onToggleAdoption, onTagClick,
 }: ProjectPhotoCardProps) {
   const [previewOpen, setPreviewOpen] = useState(false)
+  const shortcuts = usePhotoCardShortcuts()
   const selecting = selectable && !selectDisabled
   // 有详情权限去详情页，没有就打开大图预览（原先单击缩略图的行为）。
   const openPhoto = (item: Photo) => {
@@ -126,7 +128,7 @@ const ProjectPhotoCard = memo(function ProjectPhotoCard({
       aria-label={selecting
         ? `选择项目图片 ${photo.title || photo.id}`
         : undefined}
-      title={selecting ? `单击或空格选择，双击或 Enter ${openLabel}` : undefined}
+      title={selecting ? photoCardHint(shortcuts, openLabel) : undefined}
       onClick={event => {
         if (!selecting || isPortalEvent(event)) return
         if (event.shiftKey) {
@@ -143,10 +145,11 @@ const ProjectPhotoCard = memo(function ProjectPhotoCard({
       }}
       onKeyDown={event => {
         if (event.target !== event.currentTarget || !selecting) return
-        if (event.key !== 'Enter' && event.key !== ' ') return
+        // 键盘没有双击：「打开」键打开，「选择」键勾选（Shift 连选），键位由用户设置。
+        const action = matchPhotoCardShortcut(event, shortcuts)
+        if (!action) return
         event.preventDefault()
-        // 键盘没有双击：Enter 打开，空格勾选（Shift+空格连选）。
-        if (event.key === 'Enter') openPhoto(photo)
+        if (action === 'open') openPhoto(photo)
         else if (event.shiftKey) onSelectRange(photo.id)
         else onToggleSelect(photo.id, !selected)
       }}>

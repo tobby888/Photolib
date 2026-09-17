@@ -3,7 +3,7 @@ import {
 } from 'antd'
 import {
   BarChartOutlined, BellOutlined, BookOutlined, CameraOutlined, ContactsOutlined,
-  DashboardOutlined, EnvironmentOutlined, FolderOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SettingOutlined,
+  DashboardOutlined, EnvironmentOutlined, FolderOutlined, KeyOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SettingOutlined,
   MessageOutlined, ReadOutlined, StarOutlined, TeamOutlined, TrophyOutlined,
   UnorderedListOutlined, UserOutlined,
 } from '@ant-design/icons'
@@ -46,6 +46,7 @@ const RecruitmentsPage = lazy(() => import('./pages/RecruitmentsPage'))
 const RecruitmentDetailPage = lazy(() => import('./pages/RecruitmentDetailPage'))
 const RecruitmentApplicationDetailPage = lazy(() => import('./pages/RecruitmentApplicationDetailPage'))
 const AvatarSettingsModal = lazy(() => import('./AvatarSettingsModal'))
+const PhotoCardShortcutsModal = lazy(() => import('./PhotoCardShortcutsModal'))
 const NotificationPanel = lazy(() => import('./NotificationPanel'))
 
 const { Header, Sider, Content } = Layout
@@ -101,6 +102,7 @@ function Shell() {
   const [unreadCount, setUnreadCount] = useState(0)
   const [notificationOpen, setNotificationOpen] = useState(false)
   const [avatarSettingsOpen, setAvatarSettingsOpen] = useState(false)
+  const [shortcutSettingsOpen, setShortcutSettingsOpen] = useState(false)
   const [previewStatus, setPreviewStatus] = useState<PreviewGenerationStatus | null>(null)
   const previousPreviewState = useRef<PreviewGenerationStatus['status'] | undefined>(undefined)
   const mobile = !screens.md
@@ -281,6 +283,7 @@ function Shell() {
           </Popover>
           <Dropdown menu={{ items: [
             { key: 'profile', icon: <UserOutlined />, label: '个人头像', onClick: () => setAvatarSettingsOpen(true) },
+            { key: 'shortcuts', icon: <KeyOutlined />, label: '图片快捷键', onClick: () => setShortcutSettingsOpen(true) },
             { type: 'divider' },
             { key: 'logout', icon: <LogoutOutlined />, label: '退出登录', danger: true,
               onClick: async () => { await logout(); message.success('已安全退出'); navigate('/login') } },
@@ -346,6 +349,9 @@ function Shell() {
     </Layout>
     {avatarSettingsOpen && <Suspense fallback={null}>
       <AvatarSettingsModal open onClose={() => setAvatarSettingsOpen(false)} />
+    </Suspense>}
+    {shortcutSettingsOpen && <Suspense fallback={null}>
+      <PhotoCardShortcutsModal open onClose={() => setShortcutSettingsOpen(false)} />
     </Suspense>}
   </Layout>
 }

@@ -53,7 +53,7 @@ test('Shift 连选只在可勾选的图片里取范围', async () => {
   assert.match(delivery, /const orderedIds = photosState\.data\.items\.filter\(canSelectPhoto\)/)
 })
 
-test('键盘和触屏也能打开详情 / 大图：Enter 打开，卡片上有查看按钮', async () => {
+test('键盘和触屏也能打开详情 / 大图：按用户设置的快捷键打开，卡片上有查看按钮', async () => {
   const pages = await Promise.all([
     read('pages/PhotosPage.tsx'),
     read('pages/ProjectDetailPage.tsx'),
@@ -62,9 +62,22 @@ test('键盘和触屏也能打开详情 / 大图：Enter 打开，卡片上有�
   ])
 
   for (const page of pages) {
-    assert.match(page, /event\.key === 'Enter'/)
+    assert.match(page, /const shortcuts = usePhotoCardShortcuts\(\)/)
+    assert.match(page, /matchPhotoCardShortcut\(event, shortcuts\)/)
+    assert.match(page, /photoCardHint\(shortcuts, /)
+    // 键位不能再写死在页面里。
+    assert.doesNotMatch(page, /event\.key [!=]== '(Enter| )'/)
     assert.match(page, /className="(photo|delivery)-view-button"/)
   }
+})
+
+test('快捷键设置入口：账号菜单和分享页（访客没有账号菜单）', async () => {
+  const [app, shared] = await Promise.all([read('App.tsx'), read('pages/SharedProjectPage.tsx')])
+
+  assert.match(app, /key: 'shortcuts'[^\n]*setShortcutSettingsOpen\(true\)/)
+  assert.match(app, /<PhotoCardShortcutsModal open onClose=/)
+  assert.match(shared, /setShortcutSettingsOpen\(true\)\}>快捷键<\/Button>/)
+  assert.match(shared, /<PhotoCardShortcutsModal open onClose=/)
 })
 
 test('需求交付页的图片也一样单击选取', async () => {

@@ -27,6 +27,7 @@ import { selectPhotoRange } from '../photoSelection'
 import TagSelect from '../TagSelect'
 import { normalizeTags, tagRules } from '../photoTags'
 import { isPortalEvent, selectablePreview, usePhotoCardClick } from '../usePhotoCardClick'
+import { matchPhotoCardShortcut, photoCardHint, usePhotoCardShortcuts } from '../photoCardShortcuts'
 
 type UploadValues = {
   files: { originFileObj?: File }[]
@@ -57,6 +58,7 @@ export default function RequestDeliveryPage() {
   const [selectedPhotoIds, setSelectedPhotoIds] = useState<EntityId[]>([])
   const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null)
   const [previewPhotoId, setPreviewPhotoId] = useState<string | null>(null)
+  const shortcuts = usePhotoCardShortcuts()
   const [batchWorking, setBatchWorking] = useState(false)
 
   const requestState = useLoad(async () => {
@@ -331,7 +333,7 @@ export default function RequestDeliveryPage() {
                     tabIndex={canSelectPhoto(photo) ? 0 : undefined}
                     aria-pressed={canSelectPhoto(photo) ? selectedPhotoIds.includes(photo.id) : undefined}
                     aria-label={canSelectPhoto(photo) ? `选择图片 ${photo.title || photo.id}` : undefined}
-                    title={canSelectPhoto(photo) ? '单击或空格选择，双击或 Enter 查看大图' : undefined}
+                    title={canSelectPhoto(photo) ? photoCardHint(shortcuts, '查看大图') : undefined}
                     onClick={event => {
                       if (!canSelectPhoto(photo) || isPortalEvent(event)) return
                       if (event.shiftKey) {
@@ -349,10 +351,11 @@ export default function RequestDeliveryPage() {
                     }}
                     onKeyDown={event => {
                       if (event.target !== event.currentTarget || !canSelectPhoto(photo)) return
-                      if (event.key !== 'Enter' && event.key !== ' ') return
+                      // 键盘没有双击：「打开」键看大图，「选择」键勾选（Shift 连选），键位由用户设置。
+                      const action = matchPhotoCardShortcut(event, shortcuts)
+                      if (!action) return
                       event.preventDefault()
-                      // 键盘没有双击：Enter 看大图，空格勾选（Shift+空格连选）。
-                      if (event.key === 'Enter') openPreview(photo)
+                      if (action === 'open') openPreview(photo)
                       else if (event.shiftKey) selectDeliveryRange(photo.id)
                       else toggleDeliveryPhoto(photo.id, !selectedPhotoIds.includes(photo.id))
                     }}>
