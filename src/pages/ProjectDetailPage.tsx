@@ -7,7 +7,7 @@ import {
   FileImageOutlined, LinkOutlined, MinusCircleOutlined, PlusOutlined, RocketOutlined, ScissorOutlined,
   ShareAltOutlined, StopOutlined, TagsOutlined, TeamOutlined, UnorderedListOutlined,
 } from '@ant-design/icons'
-import { lazy, memo, Suspense, useCallback, useMemo, useRef, useState } from 'react'
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { useAuth } from '../auth'
@@ -24,9 +24,11 @@ import MarkdownRenderer, { markdownExcerpt } from '../MarkdownRenderer'
 import RequestAssigneeSelect from '../RequestAssigneeSelect'
 import { preparePhotoBatchDownload } from '../photoBatchDownload'
 import { hasPermission } from '../permissions'
+import { selectPhotoRange } from '../photoSelection'
 import PreviewPhoto from '../PreviewPhoto'
 import { refreshPhotoPreviewUrl } from '../previewRefresh'
 import { PhotoPlaceholder, pickPlaceholderImage, usePlaceholderImages } from '../photoPlaceholder'
+import { usePhotoCardClick } from '../usePhotoCardClick'
 import BatchTagModal from '../BatchTagModal'
 import type { BatchTagMode } from '../BatchTagModal'
 import TagSelect from '../TagSelect'
@@ -82,6 +84,8 @@ interface ProjectPhotoCardProps {
   activeTags: string[]
   placeholderImages: string[]
   onToggleSelect: (photoId: string, checked: boolean) => void
+  onSelectRange: (photoId: string) => void
+  onOpenDetail?: (photo: Photo) => void
   onDownload: (photo: Photo) => void
   onToggleAdoption: (photo: Photo) => void
   onTagClick: (tag: string) => void
@@ -96,11 +100,47 @@ interface ProjectPhotoCardProps {
  */
 const ProjectPhotoCard = memo(function ProjectPhotoCard({
   photo, requestLabel, adopted, selected, selectable, selectDisabled, downloadable, canAdopt, adoptDisabled,
-  marking, activeTags, placeholderImages, onToggleSelect, onDownload, onToggleAdoption, onTagClick,
+  marking, activeTags, placeholderImages, onToggleSelect, onSelectRange, onOpenDetail,
+  onDownload, onToggleAdoption, onTagClick,
 }: ProjectPhotoCardProps) {
+  const { click, doubleClick } = usePhotoCardClick<Photo>(
+    item => {
+      if (selectable && !selectDisabled) onToggleSelect(item.id, !selected)
+    },
+    onOpenDetail ? item => onOpenDetail(item) : undefined,
+  )
   return <Card
     className={`photo-card${selected ? ' photo-card-selected' : ''}`}
-    cover={<div className="photo-cover">
+    cover={<div className="photo-cover"
+      role={selectable && !selectDisabled ? 'button' : undefined}
+      tabIndex={selectable && !selectDisabled ? 0 : undefined}
+      aria-pressed={selectable && !selectDisabled ? selected : undefined}
+      aria-label={selectable && !selectDisabled
+        ? `选择项目图片 ${photo.title || photo.id}`
+        : undefined}
+      title={selectable && !selectDisabled
+        ? onOpenDetail ? '单击选择，双击查看详情' : '单击选择'
+        : undefined}
+      onClick={event => {
+        if (!selectable || selectDisabled) return
+        if (event.shiftKey) {
+          event.preventDefault()
+          onSelectRange(photo.id)
+          return
+        }
+        click(photo)
+      }}
+      onDoubleClick={event => {
+        event.preventDefault()
+        doubleClick(photo)
+      }}
+      onKeyDown={event => {
+        if (event.target !== event.currentTarget || !selectable || selectDisabled) return
+        if (event.key !== 'Enter' && event.key !== ' ') return
+        event.preventDefault()
+        if (event.shiftKey) onSelectRange(photo.id)
+        else onToggleSelect(photo.id, !selected)
+      }}>
       {photo.thumbnailUrl
         ? <PreviewPhoto src={photo.thumbnailUrl} alt={photo.title || '需求图片'} loading="lazy" decoding="async"
             refresh={() => refreshPhotoPreviewUrl(photo.id)}
@@ -108,7 +148,8 @@ const ProjectPhotoCard = memo(function ProjectPhotoCard({
         : <PhotoPlaceholder seed={photo.id}>
           <span>{photo.title?.slice(0, 1) || '图'}</span>
         </PhotoPlaceholder>}
-      <div className="photo-overlay">
+      <div className="photo-overlay" onClick={event => event.stopPropagation()}
+        onKeyDown={event => event.stopPropagation()}>
         {selectable &&
           <Checkbox
             className="photo-select-checkbox"
@@ -208,6 +249,7 @@ export default function ProjectDetailPage() {
   const [selectedPhotoIds, setSelectedPhotoIds] = useState<string[]>([])
   // 项目相册里的勾选：打包下载和批量改标签共用一份选择。
   const [selectedAlbumPhotoIds, setSelectedAlbumPhotoIds] = useState<string[]>([])
+  const [albumSelectionAnchor, setAlbumSelectionAnchor] = useState<string | null>(null)
   const [photoFilters, setPhotoFilters] = useState<ProjectPhotoFilters>(emptyProjectPhotoFilters)
   const [photoPage, setPhotoPage] = useState({ current: 1, pageSize: DEFAULT_PHOTO_PAGE_SIZE })
   const galleryRef = useRef<HTMLDivElement>(null)
@@ -442,9 +484,14 @@ export default function ProjectDetailPage() {
   }
 
   const toggleAlbumPhoto = (photoId: string, checked: boolean) => {
+    if (checked && selectedAlbumPhotoIds.length >= 200 && !selectedAlbumPhotoIds.includes(photoId)) {
+      message.info('单次最多选择 200 张，已选到上限')
+      return
+    }
     setSelectedAlbumPhotoIds(current => checked
       ? current.includes(photoId) ? current : [...current, photoId].slice(0, 200)
       : current.filter(id => id !== photoId))
+    if (checked) setAlbumSelectionAnchor(photoId)
   }
 
   const downloadPhoto = async (photo: Photo) => {
@@ -493,14 +540,34 @@ export default function ProjectDetailPage() {
     setSelectedAlbumPhotoIds(current => current.filter(id => visibleIds.has(id)))
   }
 
+  const selectAlbumRange = (photoId: string) => {
+    const orderedIds = pagedPhotos.map(photo => photo.id)
+    if (!albumSelectionAnchor || !orderedIds.includes(albumSelectionAnchor)) {
+      toggleAlbumPhoto(photoId, !selectedAlbumIdSet.has(photoId))
+      return
+    }
+    const result = selectPhotoRange(selectedAlbumPhotoIds, orderedIds, albumSelectionAnchor, photoId, 200)
+    setSelectedAlbumPhotoIds(result.selected)
+    setAlbumSelectionAnchor(result.anchorId)
+    if (result.truncated) message.info('单次最多选择 200 张，已选到上限')
+  }
+
   // 传给 memo 卡片的回调必须引用稳定，否则每次渲染都是新函数，memo 等于没加。
   const onToggleAlbumPhoto = useStableCallback(toggleAlbumPhoto)
+  const onSelectAlbumRange = useStableCallback(selectAlbumRange)
+  const onOpenPhotoDetail = useStableCallback((photo: Photo) => navigate(`/photos/${photo.id}`))
   const onDownloadPhoto = useStableCallback((photo: Photo) => void downloadPhoto(photo))
   const onToggleAdoption = useStableCallback((photo: Photo) => void toggleAdoption(photo))
   const onPhotoTagClick = useStableCallback((tag: string) => updatePhotoFilters({ ...photoFilters,
     tags: photoFilters.tags.includes(tag) ? photoFilters.tags : [...photoFilters.tags, tag] }))
   const onOpenRequest = useStableCallback((request: PhotoRequest) =>
     navigate(`/requests?projectId=${projectId}&requestId=${request.id}`))
+  useEffect(() => {
+    setAlbumSelectionAnchor(null)
+  }, [currentPhotoPage, photoPage.pageSize, photoFilters])
+  useEffect(() => {
+    if (!selectedAlbumPhotoIds.length) setAlbumSelectionAnchor(null)
+  }, [selectedAlbumPhotoIds.length])
 
   const selectAllVisiblePhotos = () => {
     const selectableIds = filteredPhotos
@@ -757,6 +824,8 @@ export default function ProjectDetailPage() {
                   activeTags={photoFilters.tags}
                   placeholderImages={placeholderImages}
                   onToggleSelect={onToggleAlbumPhoto}
+                  onSelectRange={onSelectAlbumRange}
+                  onOpenDetail={hasPermission(user, 'PHOTO_VIEW') ? onOpenPhotoDetail : undefined}
                   onDownload={onDownloadPhoto}
                   onToggleAdoption={onToggleAdoption}
                   onTagClick={onPhotoTagClick} />

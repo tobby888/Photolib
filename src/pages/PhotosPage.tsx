@@ -35,6 +35,8 @@ import TagSelect from '../TagSelect'
 import { MAX_TAG_LENGTH, normalizeTags, tagRules } from '../photoTags'
 import { readRecentTags, recordTagSearch } from '../photoTagHistory'
 import RecentTagChips from '../RecentTagChips'
+import { selectPhotoRange } from '../photoSelection'
+import { usePhotoCardClick } from '../usePhotoCardClick'
 
 export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: boolean }) {
   const navigate = useNavigate()
@@ -60,6 +62,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
   const [uploadPhase, setUploadPhase] = useState<'uploading' | 'processing' | null>(null)
   const [uploadPercent, setUploadPercent] = useState(0)
   const [selectedPhotos, setSelectedPhotos] = useState<Photo[]>([])
+  const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null)
   const [batchDownloading, setBatchDownloading] = useState(false)
   const [projectPickerOpen, setProjectPickerOpen] = useState(false)
   const [projectSaving, setProjectSaving] = useState(false)
@@ -220,10 +223,43 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
     }
   }
   const toggleSelected = (photo: Photo, checked: boolean) => {
+    if (checked && selectedIds.length >= 200 && !selectedIds.includes(photo.id)) {
+      message.info('单次最多选择 200 张，已选到上限')
+      return
+    }
     setSelectedPhotos(current => checked
       ? current.some(item => item.id === photo.id) ? current : [...current, photo].slice(0, 200)
       : current.filter(item => item.id !== photo.id))
+    if (checked) setSelectionAnchor(photo.id)
   }
+  const selectRangeTo = (photoId: string) => {
+    const orderedIds = data.items.map(item => item.id)
+    if (!selectionAnchor || !orderedIds.includes(selectionAnchor)) {
+      const target = data.items.find(item => item.id === photoId)
+      if (target) toggleSelected(target, !selectedIds.includes(photoId))
+      return
+    }
+    const result = selectPhotoRange(selectedIds, orderedIds, selectionAnchor, photoId, 200)
+    const candidates = new Map([...selectedPhotos, ...data.items].map(item => [item.id, item]))
+    setSelectedPhotos(result.selected
+      .map(id => candidates.get(id))
+      .filter((item): item is Photo => Boolean(item)))
+    setSelectionAnchor(result.anchorId)
+    if (result.truncated) message.info('单次最多选择 200 张，已选到上限')
+  }
+  const { click: queuePhotoSelect, doubleClick: openPhotoDetail } = usePhotoCardClick<Photo>(
+    photo => toggleSelected(photo, !selectedIds.includes(photo.id)),
+    photo => navigate(withPhotoLibrarySearch(`${libraryRoot}/${photo.id}`, location.search)),
+  )
+  useEffect(() => {
+    setSelectionAnchor(null)
+  }, [filters.page, filters.keyword, filters.status, tagSearchKey, favoritesOnly])
+  useEffect(() => {
+    if (!selectedPhotos.length) setSelectionAnchor(null)
+  }, [selectedPhotos.length])
+  const canSelectPhoto = (photo: Photo) =>
+    (canAddToProject || canDownload || canDelete || canTag)
+    && (photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED')
   const batchDownload = async () => {
     if (!selectedIds.length) return
     setBatchDownloading(true)
@@ -367,13 +403,37 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
       <Row gutter={[16, 20]} className="photo-grid">
         {data.items.map(photo => <Col xs={24} sm={12} lg={8} xxl={6} key={photo.id}>
           <Card className={`photo-card${selectedIds.includes(photo.id) ? ' photo-card-selected' : ''}`} hoverable cover={<div
-            className="photo-cover" role="link" tabIndex={0}
-            aria-label={`查看图片详情：${photo.title || photo.id}`}
-            onClick={() => navigate(withPhotoLibrarySearch(
-              `${libraryRoot}/${photo.id}`, location.search))}
+            className="photo-cover" role="button" tabIndex={0}
+            aria-pressed={selectedIds.includes(photo.id)}
+            aria-label={`${canSelectPhoto(photo) ? '选择' : '查看'}图片：${photo.title || photo.id}`}
+            title={canSelectPhoto(photo) ? '单击选择，双击查看详情' : '查看图片详情'}
+            onClick={event => {
+              if (!canSelectPhoto(photo)) {
+                navigate(withPhotoLibrarySearch(`${libraryRoot}/${photo.id}`, location.search))
+                return
+              }
+              if (event.shiftKey) {
+                event.preventDefault()
+                selectRangeTo(photo.id)
+                return
+              }
+              queuePhotoSelect(photo)
+            }}
+            onDoubleClick={event => {
+              event.preventDefault()
+              openPhotoDetail(photo)
+            }}
             onKeyDown={event => {
-              if (event.key === 'Enter' && event.target === event.currentTarget) navigate(withPhotoLibrarySearch(
-                `${libraryRoot}/${photo.id}`, location.search))
+              if (event.target !== event.currentTarget) return
+              if (event.key !== 'Enter' && event.key !== ' ') return
+              event.preventDefault()
+              if (!canSelectPhoto(photo)) {
+                navigate(withPhotoLibrarySearch(`${libraryRoot}/${photo.id}`, location.search))
+              } else if (event.shiftKey) {
+                selectRangeTo(photo.id)
+              } else {
+                toggleSelected(photo, !selectedIds.includes(photo.id))
+              }
             }}>
             {/* 取不回来时先向后端重取一次签名地址（见 src/previewRetry.ts），
                 仍然取不回来才让占位图顶上。 */}

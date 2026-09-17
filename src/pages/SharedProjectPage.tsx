@@ -19,7 +19,9 @@ import { emptyProjectPhotoFilters, hasActiveFilters } from '../photoTags'
 import type { ProjectPhotoFilters } from '../photoTags'
 import ProjectPhotoFilterBar from '../ProjectPhotoFilterBar'
 import { shareTagHistoryScope } from '../photoTagHistory'
+import { selectPhotoRange } from '../photoSelection'
 import { MAX_SHARE_BATCH, dropFromSelection, isFullySelected, mergeSelection } from '../shareSelection'
+import { usePhotoCardClick } from '../usePhotoCardClick'
 import type { ShareGuestAccess, SharePhoto } from '../types'
 
 const PAGE_SIZE = 60
@@ -57,6 +59,7 @@ export default function SharedProjectPage() {
   const [filterOptions, setFilterOptions] = useState<ShareFilterOptions>({ tags: [], photographers: [] })
   const [loadingPhotos, setLoadingPhotos] = useState(false)
   const [selected, setSelected] = useState<string[]>([])
+  const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null)
   const [selectingAll, setSelectingAll] = useState(false)
   const [batchDownloading, setBatchDownloading] = useState(false)
   const [markingPhotoId, setMarkingPhotoId] = useState<string | null>(null)
@@ -202,10 +205,39 @@ export default function SharedProjectPage() {
     message.info(`单次最多下载 ${MAX_SHARE_BATCH} 张，已选到上限`)
 
   const toggleSelected = (photoId: string, checked: boolean) => {
+    if (checked && selected.length >= MAX_SHARE_BATCH && !selectedIds.has(photoId)) {
+      notifyTruncated()
+      return
+    }
     setSelected(current => checked
       ? mergeSelection(current, [photoId]).selected
       : dropFromSelection(current, [photoId]))
+    if (checked) setSelectionAnchor(photoId)
   }
+
+  const selectRangeTo = (photoId: string) => {
+    if (!access?.allowDownload) return
+    if (!selectionAnchor || !pageIds.includes(selectionAnchor)) {
+      toggleSelected(photoId, !selectedIds.has(photoId))
+      return
+    }
+    const result = selectPhotoRange(selected, pageIds, selectionAnchor, photoId, MAX_SHARE_BATCH)
+    setSelected(result.selected)
+    setSelectionAnchor(result.anchorId)
+    if (result.truncated) notifyTruncated()
+  }
+  const { click: queuePhotoSelect, doubleClick: handlePhotoDoubleClick } = usePhotoCardClick<SharePhoto>(
+    photo => {
+      if (!access?.allowDownload || batchDownloading || selectingAll) return
+      toggleSelected(photo.id, !selectedIds.has(photo.id))
+    },
+  )
+  useEffect(() => {
+    setSelectionAnchor(null)
+  }, [page, keyword, filters])
+  useEffect(() => {
+    if (!selected.length) setSelectionAnchor(null)
+  }, [selected.length])
 
   const downloadOne = async (photo: SharePhoto) => {
     if (!session) return
@@ -370,7 +402,33 @@ export default function SharedProjectPage() {
           : photos.length ? <Row gutter={[16, 20]} className="photo-grid">
             {photos.map(photo => <Col xs={24} sm={12} lg={8} xxl={6} key={photo.id}>
               <Card className={`photo-card${selectedIds.has(photo.id) ? ' photo-card-selected' : ''}`}
-                cover={<div className="photo-cover">
+                cover={<div className="photo-cover"
+                  role={access?.allowDownload ? 'button' : undefined}
+                  tabIndex={access?.allowDownload ? 0 : undefined}
+                  aria-pressed={access?.allowDownload ? selectedIds.has(photo.id) : undefined}
+                  aria-label={access?.allowDownload ? `选择图片 ${photo.title || photo.id}` : undefined}
+                  title={access?.allowDownload ? '单击选择' : undefined}
+                  onClick={event => {
+                    if (!access?.allowDownload || batchDownloading || selectingAll) return
+                    if (event.shiftKey) {
+                      event.preventDefault()
+                      selectRangeTo(photo.id)
+                      return
+                    }
+                    queuePhotoSelect(photo)
+                  }}
+                  onDoubleClick={event => {
+                    event.preventDefault()
+                    handlePhotoDoubleClick(photo)
+                  }}
+                  onKeyDown={event => {
+                    if (event.target !== event.currentTarget || !access?.allowDownload
+                      || batchDownloading || selectingAll) return
+                    if (event.key !== 'Enter' && event.key !== ' ') return
+                    event.preventDefault()
+                    if (event.shiftKey) selectRangeTo(photo.id)
+                    else toggleSelected(photo.id, !selectedIds.has(photo.id))
+                  }}>
                   {photo.thumbnailUrl
                     ? <PreviewPhoto src={photo.thumbnailUrl} alt={photo.title || '项目图片'}
                         refresh={() => refreshPreviewUrl(photo.id)}
@@ -378,7 +436,8 @@ export default function SharedProjectPage() {
                     : <PhotoPlaceholder seed={photo.id}>
                       <span>{photo.title?.slice(0, 1) || '图'}</span>
                     </PhotoPlaceholder>}
-                  <div className="photo-overlay">
+                  <div className="photo-overlay" onClick={event => event.stopPropagation()}
+                    onKeyDown={event => event.stopPropagation()}>
                     {access?.allowDownload && <>
                       <Checkbox className="photo-select-checkbox" checked={selectedIds.has(photo.id)}
                         disabled={batchDownloading || selectingAll

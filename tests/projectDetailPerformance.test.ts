@@ -33,12 +33,13 @@ test('相册分页展示，而不是把全部图片一次挂成卡片', async ()
 test('图片卡片是 memo 组件，回调引用稳定，勾选一张只重渲染一张', async () => {
   const detail = await read('pages/ProjectDetailPage.tsx')
   cardSource(detail)
-  for (const handler of ['onToggleAlbumPhoto', 'onDownloadPhoto', 'onToggleAdoption', 'onPhotoTagClick']) {
+  for (const handler of ['onToggleAlbumPhoto', 'onSelectAlbumRange', 'onDownloadPhoto', 'onToggleAdoption', 'onPhotoTagClick']) {
     assert.match(detail, new RegExp(`const ${handler} = useStableCallback\\(`), `${handler} 必须是稳定回调`)
   }
   // 卡片上的回调只能传这些稳定引用，传内联箭头函数会让 memo 失效。
   const usage = detail.slice(detail.indexOf('<ProjectPhotoCard\n'))
   assert.match(usage, /onToggleSelect=\{onToggleAlbumPhoto\}/)
+  assert.match(usage, /onSelectRange=\{onSelectAlbumRange\}/)
   assert.match(usage, /onDownload=\{onDownloadPhoto\}/)
   assert.match(usage, /onToggleAdoption=\{onToggleAdoption\}/)
   assert.match(usage, /onTagClick=\{onPhotoTagClick\}/)

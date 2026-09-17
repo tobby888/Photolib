@@ -7,7 +7,7 @@ import {
   InboxOutlined, PictureOutlined, SendOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, emptyPage } from '../api'
 import { readTakenAt } from '../exif'
@@ -23,8 +23,10 @@ import PreviewPhoto from '../PreviewPhoto'
 import { refreshPhotoPreviewUrl } from '../previewRefresh'
 import { PhotoPlaceholder, pickPlaceholderImage, usePlaceholderImages } from '../photoPlaceholder'
 import { preparePhotoBatchDownload } from '../photoBatchDownload'
+import { selectPhotoRange } from '../photoSelection'
 import TagSelect from '../TagSelect'
 import { normalizeTags, tagRules } from '../photoTags'
+import { usePhotoCardClick } from '../usePhotoCardClick'
 
 type UploadValues = {
   files: { originFileObj?: File }[]
@@ -53,6 +55,7 @@ export default function RequestDeliveryPage() {
   const [progress, setProgress] = useState(0)
   const [actioning, setActioning] = useState(false)
   const [selectedPhotoIds, setSelectedPhotoIds] = useState<EntityId[]>([])
+  const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null)
   const [batchWorking, setBatchWorking] = useState(false)
 
   const requestState = useLoad(async () => {
@@ -101,6 +104,42 @@ export default function RequestDeliveryPage() {
   const campusName = useMemo(() => request
     ? requestState.data.campuses.find(campus => campus.id === request.campusId)?.name || `校区 #${request.campusId}`
     : '', [request, requestState.data.campuses])
+
+  const canSelectPhoto = (photo: Photo) =>
+    canManagePhotos && (photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED')
+  const toggleDeliveryPhoto = (photoId: string, checked: boolean) => {
+    if (checked && selectedPhotoIds.length >= 200 && !selectedPhotoIds.includes(photoId)) {
+      message.info('单次最多选择 200 张，已选到上限')
+      return
+    }
+    setSelectedPhotoIds(current => checked
+      ? [...new Set([...current, photoId])].slice(0, 200)
+      : current.filter(id => id !== photoId))
+    if (checked) setSelectionAnchor(photoId)
+  }
+  const selectDeliveryRange = (photoId: string) => {
+    const orderedIds = photosState.data.items.map(photo => photo.id)
+    if (!selectionAnchor || !orderedIds.includes(selectionAnchor)) {
+      toggleDeliveryPhoto(photoId, !selectedPhotoIds.includes(photoId))
+      return
+    }
+    const result = selectPhotoRange(selectedPhotoIds, orderedIds, selectionAnchor, photoId, 200)
+    setSelectedPhotoIds(result.selected)
+    setSelectionAnchor(result.anchorId)
+    if (result.truncated) message.info('单次最多选择 200 张，已选到上限')
+  }
+  const { click: queuePhotoSelect, doubleClick: handlePhotoDoubleClick } = usePhotoCardClick<Photo>(
+    photo => {
+      if (!canSelectPhoto(photo)) return
+      toggleDeliveryPhoto(photo.id, !selectedPhotoIds.includes(photo.id))
+    },
+  )
+  useEffect(() => {
+    setSelectionAnchor(null)
+  }, [photoStatus])
+  useEffect(() => {
+    if (!selectedPhotoIds.length) setSelectionAnchor(null)
+  }, [selectedPhotoIds.length])
 
   const accept = async () => {
     if (!request) return
@@ -281,13 +320,37 @@ export default function RequestDeliveryPage() {
               emptyHint="上传交付图片后，会先进入“处理中”，压缩完成才变成可用图片。">
               <div className="delivery-gallery">
                 {photosState.data.items.map(photo => <article key={photo.id}>
-                  <div>
+                  <div
+                    role={canSelectPhoto(photo) ? 'button' : undefined}
+                    tabIndex={canSelectPhoto(photo) ? 0 : undefined}
+                    aria-pressed={canSelectPhoto(photo) ? selectedPhotoIds.includes(photo.id) : undefined}
+                    aria-label={canSelectPhoto(photo) ? `选择图片 ${photo.title || photo.id}` : undefined}
+                    title={canSelectPhoto(photo) ? '单击选择' : undefined}
+                    onClick={event => {
+                      if (!canSelectPhoto(photo)) return
+                      if (event.shiftKey) {
+                        event.preventDefault()
+                        selectDeliveryRange(photo.id)
+                        return
+                      }
+                      queuePhotoSelect(photo)
+                    }}
+                    onDoubleClick={event => {
+                      event.preventDefault()
+                      handlePhotoDoubleClick(photo)
+                    }}
+                    onKeyDown={event => {
+                      if (event.target !== event.currentTarget || !canSelectPhoto(photo)) return
+                      if (event.key !== 'Enter' && event.key !== ' ') return
+                      event.preventDefault()
+                      if (event.shiftKey) selectDeliveryRange(photo.id)
+                      else toggleDeliveryPhoto(photo.id, !selectedPhotoIds.includes(photo.id))
+                    }}>
                     {canManagePhotos && (photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED') &&
                       <Checkbox checked={selectedPhotoIds.includes(photo.id)}
                         disabled={selectedPhotoIds.length >= 200 && !selectedPhotoIds.includes(photo.id)}
-                        onChange={event => setSelectedPhotoIds(current => event.target.checked
-                          ? [...new Set([...current, photo.id])].slice(0, 200)
-                          : current.filter(id => id !== photo.id))} />}
+                        onClick={event => event.stopPropagation()}
+                        onChange={event => toggleDeliveryPhoto(photo.id, event.target.checked)} />}
                     {photo.thumbnailUrl
                       ? <PreviewPhoto preview
                           src={photo.thumbnailUrl} alt={photo.title}

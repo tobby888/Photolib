@@ -2284,8 +2284,12 @@ body {
 }
 
 /* Standalone photo detail and client-side exposure analysis */
-.photo-cover[role="link"] { cursor: pointer; }
-.photo-cover[role="link"]:focus-visible {
+.photo-cover[role="link"],
+.photo-cover[role="button"],
+.delivery-gallery article > div[role="button"] { cursor: pointer; }
+.photo-cover[role="link"]:focus-visible,
+.photo-cover[role="button"]:focus-visible,
+.delivery-gallery article > div[role="button"]:focus-visible {
   outline: 3px solid var(--porcelain-blue, #4682b4);
   outline-offset: -3px;
 }
