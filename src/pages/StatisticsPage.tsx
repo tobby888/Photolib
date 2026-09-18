@@ -1,11 +1,11 @@
-import { App, Button, Card, Col, DatePicker, Progress, Row, Space, Statistic, Typography } from 'antd'
+import { App, Button, Card, Col, DatePicker, Descriptions, Modal, Progress, Row, Space, Statistic, Typography } from 'antd'
 import { CameraOutlined, ClockCircleOutlined, DownloadOutlined, FolderOutlined, TrophyOutlined } from '@ant-design/icons'
 import { useState } from 'react'
 import dayjs from 'dayjs'
 import { api } from '../api'
-import type { MemberStats } from '../types'
+import type { MemberStats, MemberWorklogDetail } from '../types'
 import { DataState, PageTitle } from '../components'
-import { ContentFitTable } from '../ContentFitTable'
+import { ContentFitTable, TableEllipsisText } from '../ContentFitTable'
 import { useLoad } from '../hooks'
 
 interface ExportJobView {
@@ -20,6 +20,10 @@ export default function StatisticsPage() {
   const { message } = App.useApp()
   const [range, setRange] = useState<[string, string]>([dayjs().startOf('year').format('YYYY-MM-DD'), dayjs().format('YYYY-MM-DD')])
   const [exporting, setExporting] = useState(false)
+  const [detailMember, setDetailMember] = useState<MemberStats | null>(null)
+  const [details, setDetails] = useState<MemberWorklogDetail[]>([])
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState('')
   const { data, loading, error, reload } = useLoad(async () => {
     const params = { from: range[0], to: range[1] }
     const [overview, members] = await Promise.all([
@@ -28,6 +32,18 @@ export default function StatisticsPage() {
     ])
     return { overview, members }
   }, { overview: {} as Record<string, number>, members: [] as MemberStats[] }, [range[0], range[1]])
+  // 明细按学号取：统计表的一行本来就是按学号归并出来的，同一个人在几个校区的工时算在一起。
+  const openDetail = async (member: MemberStats) => {
+    setDetailMember(member)
+    setDetails([])
+    setDetailError('')
+    setDetailLoading(true)
+    try {
+      setDetails(await api<MemberWorklogDetail[]>({ url: '/statistics/members/worklogs',
+        params: { studentId: member.studentId, from: range[0], to: range[1] } }))
+    } catch (e) { setDetailError((e as Error).message) }
+    finally { setDetailLoading(false) }
+  }
   const exportData = async () => {
     setExporting(true)
     try {
@@ -66,22 +82,48 @@ export default function StatisticsPage() {
       </Row>
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={9}><Card title="采纳贡献">
-          <div className="ranking-list">{data.members.slice().sort((a,b) => b.adoptedCount - a.adoptedCount).slice(0, 6).map((member, index) => <div className="ranking-item" key={`${member.studentId}-${member.campus}`}>
+          <div className="ranking-list">{data.members.slice().sort((a,b) => b.adoptedCount - a.adoptedCount).slice(0, 6).map((member, index) => <div className="ranking-item" key={member.studentId}>
             <span className={`rank rank-${index + 1}`}>{index + 1}</span><div><strong>{member.displayName}</strong><Typography.Text type="secondary">{member.campus}</Typography.Text></div>
             <Progress percent={Math.round(member.adoptedCount / maxAdopted * 100)} showInfo={false} strokeColor="#4682B4" />
             <strong>{member.adoptedCount} 张</strong>
           </div>)}</div>
         </Card></Col>
         <Col xs={24} xl={15}><Card title="成员工作统计">
-          <ContentFitTable rowKey={member => `${member.studentId}-${member.campus}`} dataSource={data.members} pagination={false} columns={[
+          <ContentFitTable rowKey={member => member.studentId} dataSource={data.members} pagination={false} columns={[
             { title: '成员', dataIndex: 'displayName' }, { title: '学号', dataIndex: 'studentId' }, { title: '校区', dataIndex: 'campus' },
             { title: '已采纳', dataIndex: 'adoptedCount', render: value => `${value} 张`, sorter: (a,b) => a.adoptedCount - b.adoptedCount },
             { title: '拍摄（小时）', dataIndex: 'shootingMinutes', render: formatHours },
             { title: '修图（小时）', dataIndex: 'retouchingMinutes', render: formatHours },
             { title: '合计（小时）', dataIndex: 'totalMinutes', render: value => <strong>{formatHours(value)}</strong> },
+            { title: '工时详情', key: 'detail', render: (_, member) =>
+              <Button type="link" size="small" onClick={() => void openDetail(member)}>查看</Button> },
           ]} />
         </Card></Col>
       </Row>
     </DataState>
+    <Modal open={detailMember !== null} width={880} onCancel={() => setDetailMember(null)}
+      title={detailMember ? `${detailMember.displayName}的工时详情` : '工时详情'}
+      footer={<Button onClick={() => setDetailMember(null)}>关闭</Button>}>
+      {detailMember && <Descriptions size="small" column={3} style={{ marginBottom: 16 }} items={[
+        { key: 'studentId', label: '学号', children: detailMember.studentId },
+        { key: 'campus', label: '校区', children: detailMember.campus || '—' },
+        { key: 'total', label: '合计工时', children: formatHours(detailMember.totalMinutes) },
+      ]} />}
+      <DataState loading={detailLoading} error={detailError}
+        onRetry={() => { if (detailMember) void openDetail(detailMember) }}
+        empty={details.length === 0} emptyText="这个时间范围内没有已确认的工时"
+        emptyHint="统计只看已确认工时，且需求所属选题要在所选结束时间范围内结束。">
+        <ContentFitTable rowKey={detail => detail.worklogId} dataSource={details}
+          pagination={details.length > 10 ? { pageSize: 10, size: 'small' } : false} columns={[
+          { title: '工作日期', dataIndex: 'workDate' },
+          { title: '需求', dataIndex: 'requestTitle', render: value => <TableEllipsisText value={value} maxWidth={220} /> },
+          { title: '所属选题', dataIndex: 'projectTitle', render: value => <TableEllipsisText value={value} maxWidth={220} /> },
+          { title: '校区', dataIndex: 'campus' },
+          { title: '拍摄（小时）', dataIndex: 'shootingMinutes', render: formatHours },
+          { title: '修图（小时）', dataIndex: 'retouchingMinutes', render: formatHours },
+          { title: '合计（小时）', dataIndex: 'totalMinutes', render: value => <strong>{formatHours(value)}</strong> },
+        ]} />
+      </DataState>
+    </Modal>
   </>
 }

@@ -30,6 +30,11 @@ public class StatisticsService {
         return members(from, to, projectId, campusId, userId, principal.scopedCampusIds());
     }
 
+    /**
+     * 成员维度只按**学号**归并：同一个人在几个校区的通讯录里各有一行，姓名快照由各校区
+     * 分别录入，多打一个空格就会让同一个学号裂成两行工时。校区列因此聚合出全部校区名，
+     * 而不是取其中一个——取一个会让跨校区的人看起来只在一个校区干过活。
+     */
     public List<MemberStatistics> members(LocalDate from, LocalDate to, Long projectId,
                                           Long campusId, Long userId, Set<Long> allowedCampusIds) {
         Set<Long> scopedIds = normalizedCampusIds(allowedCampusIds);
@@ -52,7 +57,8 @@ public class StatisticsService {
                       AND (:campusScoped=FALSE OR p.campus_id IN (:campusIds))
                     GROUP BY a.photographer_student_id
                 )
-                SELECT MIN(w.user_id), w.member_student_id, w.member_name, MIN(c.name),
+                SELECT MIN(w.user_id), w.member_student_id, MIN(w.member_name),
+                       GROUP_CONCAT(DISTINCT c.name ORDER BY c.name SEPARATOR '、'),
                        COALESCE(SUM(w.shooting_minutes),0),
                        COALESCE(SUM(w.retouching_minutes),0),
                        COALESCE(MAX(a.adopted_count),0)
@@ -65,8 +71,8 @@ public class StatisticsService {
                   AND (:campusId=0 OR r.campus_id=:campusId)
                   AND (:campusScoped=FALSE OR r.campus_id IN (:campusIds))
                   AND (:userId=0 OR w.user_id=:userId)
-                GROUP BY w.member_student_id,w.member_name
-                ORDER BY w.member_name
+                GROUP BY w.member_student_id
+                ORDER BY MIN(w.member_name)
                 """).param("fromDate", from == null ? LocalDate.of(1900,1,1) : from)
                 .param("toExclusive", to == null ? LocalDate.of(3000,1,1) : to.plusDays(1))
                 .param("projectId", projectId == null ? 0L : projectId)
@@ -79,6 +85,57 @@ public class StatisticsService {
                     int retouching = rs.getInt(6);
                     return new MemberStatistics(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4),
                             shooting, retouching, shooting + retouching, rs.getLong(7));
+                }).list();
+    }
+
+    public List<MemberWorklogDetail> memberWorklogs(String studentId, LocalDate from, LocalDate to,
+                                                   Long projectId, Long campusId,
+                                                   AuthenticatedUser principal) {
+        if (principal.isCampusScoped() && campusId != null && !principal.canAccessCampus(campusId)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权查看该校区的统计数据");
+        }
+        return memberWorklogs(studentId, from, to, projectId, campusId, principal.scopedCampusIds());
+    }
+
+    /**
+     * 某位成员在统计口径内的逐条已确认工时，用于统计面板的工时明细。
+     *
+     * <p>筛选条件必须和 {@link #members} 完全一致（同样按项目 `completed_at` 落区间的已完成
+     * 项目取，同样不看 `photo_request.deleted`），否则明细各行加起来对不上表里那一行的合计。</p>
+     */
+    public List<MemberWorklogDetail> memberWorklogs(String studentId, LocalDate from, LocalDate to,
+                                                    Long projectId, Long campusId,
+                                                    Set<Long> allowedCampusIds) {
+        Set<Long> scopedIds = normalizedCampusIds(allowedCampusIds);
+        boolean campusScoped = allowedCampusIds != null && !allowedCampusIds.isEmpty();
+        return jdbc.sql("""
+                SELECT w.id, w.work_date, r.id, r.title, p.id, p.title, c.name,
+                       w.shooting_minutes, w.retouching_minutes
+                FROM worklog w
+                JOIN photo_request r ON r.id=w.request_id
+                JOIN project p ON p.id=r.project_id
+                LEFT JOIN campus c ON c.id=r.campus_id
+                WHERE w.deleted=0 AND w.status='CONFIRMED'
+                  AND w.member_student_id=:studentId
+                  AND p.deleted=0 AND p.status='COMPLETED'
+                  AND p.completed_at >= :fromDate AND p.completed_at < :toExclusive
+                  AND (:projectId=0 OR p.id=:projectId)
+                  AND (:campusId=0 OR r.campus_id=:campusId)
+                  AND (:campusScoped=FALSE OR r.campus_id IN (:campusIds))
+                ORDER BY w.work_date DESC, w.id DESC
+                """).param("studentId", studentId)
+                .param("fromDate", from == null ? LocalDate.of(1900,1,1) : from)
+                .param("toExclusive", to == null ? LocalDate.of(3000,1,1) : to.plusDays(1))
+                .param("projectId", projectId == null ? 0L : projectId)
+                .param("campusId", campusId == null ? 0L : campusId)
+                .param("campusScoped", campusScoped)
+                .param("campusIds", scopedIds)
+                .query((rs, n) -> {
+                    int shooting = rs.getInt(8);
+                    int retouching = rs.getInt(9);
+                    return new MemberWorklogDetail(rs.getLong(1), rs.getObject(2, LocalDate.class),
+                            rs.getLong(3), rs.getString(4), rs.getLong(5), rs.getString(6),
+                            rs.getString(7), shooting, retouching, shooting + retouching);
                 }).list();
     }
 
@@ -287,9 +344,14 @@ public class StatisticsService {
         return allowedCampusIds == null || allowedCampusIds.isEmpty() ? Set.of(-1L) : allowedCampusIds;
     }
 
+    /** {@code campus} 是该成员本期有工时的**全部**校区，跨校区时形如「甲校区、乙校区」。 */
     public record MemberStatistics(Long userId, String studentId, String displayName, String campus,
                                    int shootingMinutes, int retouchingMinutes, int totalMinutes,
                                    long adoptedCount) {}
+    public record MemberWorklogDetail(Long worklogId, LocalDate workDate, Long requestId,
+                                      String requestTitle, Long projectId, String projectTitle,
+                                      String campus, int shootingMinutes, int retouchingMinutes,
+                                      int totalMinutes) {}
     public record AdoptionStatistics(String photographerStudentId, String photographerName,
                                      long adoptedCount) {}
     public record WorklogExportRow(String memberName, String studentId, String campus,

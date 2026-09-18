@@ -33,6 +33,18 @@ public class StatisticsController {
         return ApiResponse.ok(statistics.members(from, to, projectId, campusId, userId, principal));
     }
 
+    /** 统计面板里点开某位成员的工时明细：这条工时来自哪个需求、哪个项目、哪个校区。 */
+    @GetMapping("/statistics/members/worklogs")
+    @PreAuthorize("hasAuthority('STATISTICS_DOWNLOAD')")
+    ApiResponse<List<StatisticsService.MemberWorklogDetail>> memberWorklogs(
+            @RequestParam String studentId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) Long projectId, @RequestParam(required = false) Long campusId,
+            @AuthenticationPrincipal AuthenticatedUser principal) {
+        return ApiResponse.ok(statistics.memberWorklogs(studentId, from, to, projectId, campusId, principal));
+    }
+
     @GetMapping("/statistics/overview")
     @PreAuthorize("hasAuthority('STATISTICS_DOWNLOAD')")
     ApiResponse<Map<String, Long>> overview(
