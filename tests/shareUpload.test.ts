@@ -2,7 +2,9 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import {
-  MAX_QUEUE_SIZE, MAX_UPLOAD_BYTES, addToQueue, rejectReason, runQueue, summarize,
+  MAX_ARCHIVE_BYTES, MAX_IMAGES_PER_ARCHIVE, MAX_QUEUE_SIZE, MAX_UPLOAD_BYTES, addToQueue,
+  describeBatchOutcome, isTerminalBatchStatus, rejectArchiveReason, rejectReason, runQueue,
+  summarize,
 } from '../src/shareUpload.ts'
 import type { ShareUploadItem } from '../src/shareUpload.ts'
 
@@ -78,6 +80,80 @@ test('队列按给定并发跑完每一张，且不会超发', async () => {
 
   assert.deepEqual(started.sort((a, b) => a - b), items)
   assert.ok(peak <= 3, `并发峰值 ${peak} 超过了上限`)
+})
+
+test('ZIP 的前端校验与后端同一套：只收 .zip，且不超过 1.5 GB', () => {
+  assert.equal(rejectArchiveReason({ name: '活动.zip', size: 1024 }), null)
+  assert.equal(rejectArchiveReason({ name: '活动.ZIP', size: 1024 }), null)
+  assert.match(String(rejectArchiveReason({ name: '活动.rar', size: 1024 })), /只能上传 \.zip/)
+  assert.match(String(rejectArchiveReason({ name: '活动.zip', size: 0 })), /空的/)
+  assert.match(String(rejectArchiveReason({ name: '活动.zip', size: MAX_ARCHIVE_BYTES + 1 })), /1\.5 GB/)
+})
+
+test('批次终态的判定和站内那套状态一致', () => {
+  assert.equal(isTerminalBatchStatus('SUCCEEDED'), true)
+  assert.equal(isTerminalBatchStatus('PARTIALLY_SUCCEEDED'), true)
+  assert.equal(isTerminalBatchStatus('FAILED'), true)
+  // 这三个都还在后台动，值得再问一次。
+  assert.equal(isTerminalBatchStatus('UPLOADING'), false)
+  assert.equal(isTerminalBatchStatus('PROCESSING'), false)
+  assert.equal(isTerminalBatchStatus('WAITING_METADATA'), false)
+})
+
+test('部分成功要把失败的张数说出来，不能只说"完成了"', () => {
+  // 访客手里那一包是他自己的，少掉的那几张没有人会再替他去找。
+  const partial = describeBatchOutcome({
+    status: 'PARTIALLY_SUCCEEDED', successCount: 8, failureCount: 2,
+  })
+  assert.equal(partial.tone, 'warning')
+  assert.match(partial.message, /8 张/)
+  assert.match(partial.message, /2 张/)
+
+  const ok = describeBatchOutcome({ status: 'SUCCEEDED', successCount: 10, failureCount: 0 })
+  assert.equal(ok.tone, 'success')
+  assert.match(ok.message, /10 张/)
+
+  // 解包失败时把后端给的原因原样带出来（不是 ZIP、里面没有图片、超限额）。
+  const failed = describeBatchOutcome({
+    status: 'FAILED', successCount: 0, failureCount: 0, failureReason: 'ZIP 中没有 JPG/PNG 图片',
+  })
+  assert.equal(failed.tone, 'error')
+  assert.equal(failed.message, 'ZIP 中没有 JPG/PNG 图片')
+
+  // 还没跑完就被问到结果：后台仍在处理，不能说成失败。
+  assert.equal(describeBatchOutcome({
+    status: 'PROCESSING', successCount: 0, failureCount: 0,
+  }).tone, 'warning')
+})
+
+test('ZIP 限额的文案和后端常量对得上', async () => {
+  const [policy, page] = await Promise.all([
+    readFile(new URL('../backend/src/main/java/cn/photolib/common/upload/ImageUploadPolicy.java',
+      import.meta.url), 'utf8'),
+    read('pages/SharedUploadPage.tsx'),
+  ])
+
+  // 站外不另开一套阈值：松的那一套就是被用来打进来的那一套。
+  assert.match(policy, /MAX_ARCHIVE_BYTES = 1_500_000_000L/)
+  assert.match(policy, /MAX_IMAGE_COUNT = 100/)
+  assert.equal(MAX_ARCHIVE_BYTES, 1_500_000_000)
+  assert.equal(MAX_IMAGES_PER_ARCHIVE, 100)
+  assert.match(page, /1\.5 GB/)
+})
+
+test('访客的 ZIP 走的是站内那条批次通道', async () => {
+  const [service, client] = await Promise.all([
+    readBackend('share/ProjectShareUploadService.java'),
+    read('projectShare.ts'),
+  ])
+
+  // 建批次、解包、落照片全部复用 BatchUploadService，这里只加一层访客的授权。
+  assert.match(service, /batchService\.createZipBatch/)
+  assert.match(service, /batchService\.completeZipBatch/)
+  assert.match(service, /batchService\.finishAllWithSnapshot/)
+  // 批次归属只认 share_link_id：created_by 记的是链接创建者，对访客不是凭据。
+  assert.match(service, /link\.getId\(\)\.equals\(batch\.getShareLinkId\(\)\)/)
+  assert.match(client, /upload-batches/)
 })
 
 test('上传页是未登录可达的独立路由，且后端 forward 与 permitAll 都补上了', async () => {

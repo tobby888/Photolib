@@ -2,7 +2,7 @@ import { api, qs } from './api'
 import type { ProjectPhotoFilters } from './photoTags'
 import type {
   EntityId, PageData, ShareGuestAccess, ShareGuestSession, SharePhoto, ShareLinkPurpose,
-  ShareUploadTicket, ShareUploadedPhoto,
+  ShareUploadBatch, ShareUploadTicket, ShareUploadedPhoto,
 } from './types'
 
 /** 访客图片列表的查询条件：分页、关键字，加上与选题详情页同一组筛选。 */
@@ -144,6 +144,30 @@ export const shareUploadApi = {
   status: (token: string, session: string, photoId: EntityId) =>
     api<ShareUploadedPhoto>({
       url: `/public/shares/${token}/uploads/${photoId}`, ...guest(session),
+    }),
+
+  // ZIP 批量：建批次 → PUT 压缩包 → complete（后台解包）→ 轮询到待整理 → finish。
+  // 与站内需求批量上传是同一条通道和同一套限额，区别只在访客没有元数据要填。
+  createBatch: (token: string, session: string, archive: { archiveFileName: string; archiveSize: number }) =>
+    api<{ batchId: string; tickets: ShareUploadTicket[] }>({
+      method: 'POST', url: `/public/shares/${token}/upload-batches`, data: archive, ...guest(session),
+    }),
+
+  completeBatch: (token: string, session: string, batchId: string) =>
+    api<ShareUploadBatch>({
+      method: 'POST', url: `/public/shares/${token}/upload-batches/${batchId}/complete`,
+      ...guest(session),
+    }),
+
+  batchStatus: (token: string, session: string, batchId: string) =>
+    api<ShareUploadBatch>({
+      url: `/public/shares/${token}/upload-batches/${batchId}`, ...guest(session),
+    }),
+
+  finishBatch: (token: string, session: string, batchId: string, takenAt?: string | null) =>
+    api<ShareUploadBatch>({
+      method: 'POST', url: `/public/shares/${token}/upload-batches/${batchId}/finish`,
+      data: { takenAt: takenAt ?? null }, ...guest(session),
     }),
 }
 

@@ -4,6 +4,7 @@ import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.api.PageResponse;
 import cn.photolib.photo.PhotoService;
 import cn.photolib.photo.PhotoTags;
+import cn.photolib.photo.batch.BatchUploadService;
 import cn.photolib.statistics.ExportJobEntity;
 import cn.photolib.statistics.ExportService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -196,6 +197,65 @@ public class ProjectSharePublicController {
         return ApiResponse.ok(uploadService.status(
                 service.resolveGuestContext(token, session), photoId));
     }
+
+    /**
+     * ZIP 批量上传：建批次并签出压缩包的上传地址。限额与站内需求批量上传完全一致，
+     * 见 {@link ProjectShareUploadService#createZipTicket}。
+     */
+    @PostMapping("/upload-batches")
+    ApiResponse<BatchUploadService.BatchTicket> createUploadBatch(
+            @PathVariable String token,
+            @RequestHeader(value = SESSION_HEADER, required = false) String session,
+            @Valid @RequestBody UploadBatchRequest request, HttpServletRequest servletRequest) {
+        rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.UPLOAD, token,
+                servletRequest.getRemoteAddr());
+        return ApiResponse.ok(uploadService.createZipTicket(
+                service.resolveGuestContext(token, session),
+                new ProjectShareUploadService.ZipCommand(
+                        request.archiveFileName(), request.archiveSize())));
+    }
+
+    /** 压缩包已经传完，交给解包（异步）。 */
+    @PostMapping("/upload-batches/{batchId}/complete")
+    ApiResponse<ProjectShareUploadService.GuestBatch> completeUploadBatch(
+            @PathVariable String token, @PathVariable String batchId,
+            @RequestHeader(value = SESSION_HEADER, required = false) String session,
+            HttpServletRequest servletRequest) {
+        rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.UPLOAD, token,
+                servletRequest.getRemoteAddr());
+        return ApiResponse.ok(uploadService.completeZip(
+                service.resolveGuestContext(token, session), batchId));
+    }
+
+    /** 轮询解包与处理结果；解包失败的原因也从这里回。 */
+    @GetMapping("/upload-batches/{batchId}")
+    ApiResponse<ProjectShareUploadService.GuestBatch> uploadBatchStatus(
+            @PathVariable String token, @PathVariable String batchId,
+            @RequestHeader(value = SESSION_HEADER, required = false) String session,
+            HttpServletRequest servletRequest) {
+        rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.UPLOAD_STATUS, token,
+                servletRequest.getRemoteAddr());
+        return ApiResponse.ok(uploadService.batchStatus(
+                service.resolveGuestContext(token, session), batchId));
+    }
+
+    /** 解包完成后把这一批落成照片。访客没有元数据要填，拍摄者来自会话身份。 */
+    @PostMapping("/upload-batches/{batchId}/finish")
+    ApiResponse<ProjectShareUploadService.GuestBatch> finishUploadBatch(
+            @PathVariable String token, @PathVariable String batchId,
+            @RequestHeader(value = SESSION_HEADER, required = false) String session,
+            @Valid @RequestBody UploadBatchFinishRequest request, HttpServletRequest servletRequest) {
+        rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.UPLOAD, token,
+                servletRequest.getRemoteAddr());
+        return ApiResponse.ok(uploadService.finishZip(
+                service.resolveGuestContext(token, session), batchId, request.takenAt()));
+    }
+
+    record UploadBatchRequest(@NotBlank @Size(max = 255) String archiveFileName,
+                              @NotNull @Min(1) Long archiveSize) {}
+
+    /** 拍摄时间留空按当前时间算，与单张上传同一条规则。 */
+    record UploadBatchFinishRequest(LocalDateTime takenAt) {}
 
     record PasswordRequest(@NotNull @Size(max = ProjectShareService.MAX_PASSWORD_LENGTH) String password,
                            @Size(max = ProjectShareService.MAX_UPLOADER_NAME_LENGTH) String uploaderName,

@@ -1,7 +1,10 @@
-import type { EntityId } from './types'
+import type { BatchUploadStatus, EntityId } from './types'
 
 /** 与后端 `StorageProperties.imageMaxBytes()` 的默认值一致（100 MiB）。 */
 export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024
+/** ZIP 的限额与站内需求批量上传同一份（后端 `ImageUploadPolicy`）。 */
+export const MAX_ARCHIVE_BYTES = 1_500_000_000
+export const MAX_IMAGES_PER_ARCHIVE = 100
 /** 一次最多往队列里放多少张。再多应该分几批，否则一个误点整目录会让页面卡住。 */
 export const MAX_QUEUE_SIZE = 300
 /** 同时进行的上传数。活动现场多是几十上百张，串行太慢；并发太高又会互相抢带宽。 */
@@ -93,6 +96,54 @@ export function summarize(items: ShareUploadItem[]): ShareUploadSummary {
     done: items.filter(item => item.stage === 'done').length,
     failed: items.filter(item => item.stage === 'failed').length,
   }
+}
+
+/** ZIP 的前端校验，与后端 `ProjectShareUploadService.createZipTicket` 同一套规则。 */
+export function rejectArchiveReason(file: { name: string; size: number }): string | null {
+  if (!file.name.toLowerCase().endsWith('.zip')) return '只能上传 .zip 压缩包'
+  if (file.size <= 0) return '这个压缩包是空的'
+  if (file.size > MAX_ARCHIVE_BYTES) return 'ZIP 压缩包不得超过 1.5 GB'
+  return null
+}
+
+/** 批次跑到头了没有。终态之外都还在后台动，值得再问一次。 */
+export function isTerminalBatchStatus(status: BatchUploadStatus) {
+  return status === 'SUCCEEDED' || status === 'PARTIALLY_SUCCEEDED' || status === 'FAILED'
+}
+
+export interface BatchOutcome {
+  tone: 'success' | 'warning' | 'error'
+  message: string
+}
+
+/**
+ * 把批次的终态翻译成一句给访客看的话。
+ *
+ * <p>「部分成功」必须说成功了几张、失败了几张：访客手里那一包是他自己的，
+ * 只说"完成了"会让他以为整包都进去了，而少掉的那几张没有人会再去找。</p>
+ */
+export function describeBatchOutcome(batch: {
+  status: BatchUploadStatus; successCount: number; failureCount: number; failureReason?: string | null
+}): BatchOutcome {
+  if (batch.status === 'SUCCEEDED') {
+    return { tone: 'success', message: `压缩包里的 ${batch.successCount} 张图片已经全部上传完成` }
+  }
+  if (batch.status === 'PARTIALLY_SUCCEEDED') {
+    return {
+      tone: 'warning',
+      message: `已完成 ${batch.successCount} 张，有 ${batch.failureCount} 张没能处理成功`
+        + '（多半是文件本身损坏），需要的话把这几张单独再传一次',
+    }
+  }
+  if (batch.status === 'FAILED') {
+    return {
+      tone: 'error',
+      message: batch.failureReason
+        || '压缩包没能解开。请确认它是完整的 .zip，里面有 JPG / PNG 图片，然后重新上传。',
+    }
+  }
+  // 还没跑完就被问到结果：后台仍在处理，不要说成失败。
+  return { tone: 'warning', message: '图片仍在后台处理，稍后可以问发给你链接的同学确认' }
 }
 
 /**

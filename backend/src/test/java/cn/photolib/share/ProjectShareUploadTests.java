@@ -2,6 +2,8 @@ package cn.photolib.share;
 
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.error.BusinessException;
+import cn.photolib.common.upload.ImageUploadPolicy;
+import cn.photolib.common.util.PublicId;
 import cn.photolib.photo.model.PhotoStatus;
 import cn.photolib.project.ProjectService;
 import cn.photolib.project.model.ProjectEntity;
@@ -226,6 +228,118 @@ class ProjectShareUploadTests {
                 new ProjectShareUploadService.CompleteCommand(null, null)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("已经提交过了");
+    }
+
+    // ------------------------------------------------------------------ ZIP 批量
+    //
+    // 解包本身（同一个 SafeImageZipExtractor、同一套限额）在 ProjectShareZipUploadTests
+    // 里端到端跑，那边不能带事务。这里验的是访客这一侧的边界。
+
+    /** 解包的结果，直接照 BatchProcessingService 写回的形态造，省掉一次真解包。 */
+    private String extractedBatch(ProjectShareService.CreatedShareLink created, int items) {
+        // 批次 id 是 VARCHAR(26)，与线上一样用 PublicId 生成。
+        String batchId = PublicId.next();
+        jdbc.sql("""
+                INSERT INTO photo_upload_batch
+                    (id, mode, project_id, created_by, share_link_id, status,
+                     total_count, success_count, failure_count)
+                VALUES (:id, 'ZIP', :project, :user, :link, 'WAITING_METADATA', :total, 0, 0)
+                """).param("id", batchId).param("project", event.getId()).param("user", MINISTER_ID)
+                .param("link", created.link().id()).param("total", items).update();
+        for (int index = 1; index <= items; index++) {
+            jdbc.sql("""
+                    INSERT INTO photo_upload_item
+                        (batch_id, original_file_name, temp_object_key, content_type, size, status)
+                    VALUES (:batch, :name, :key, 'image/jpeg', 1024, 'WAITING_METADATA')
+                    """).param("batch", batchId).param("name", "现场" + index + ".jpg")
+                    .param("key", "temporary/batches/" + batchId + "/" + index + ".jpg").update();
+        }
+        return batchId;
+    }
+
+    @Test
+    void aFinishedZipLandsAsPhotosCarryingTheSessionIdentityAndTheLink() {
+        ProjectShareService.CreatedShareLink created = uploadLink();
+        ProjectShareService.GuestContext context = guest(created);
+        String batchId = extractedBatch(created, 2);
+
+        uploadService.finishZip(context, batchId, LocalDateTime.now().minusDays(1));
+
+        // 标题取包内原文件名——那是访客和选片人之间唯一的共同语言。
+        assertThat(jdbc.sql("""
+                        SELECT p.title FROM photo p JOIN photo_project pp ON pp.photo_id = p.id
+                        WHERE pp.project_id = :project ORDER BY p.id
+                        """).param("project", event.getId()).query(String.class).list())
+                .containsExactly("现场1", "现场2");
+        assertThat(jdbc.sql("SELECT photographer_name FROM photo WHERE share_link_id = :link")
+                .param("link", created.link().id()).query(String.class).list())
+                .containsOnly("张小拍");
+        assertThat(shareService.list(event.getId(), minister).stream()
+                .filter(view -> view.id().equals(created.link().id()))
+                .findFirst().orElseThrow().uploadCount()).isEqualTo(2);
+    }
+
+    @Test
+    void oneLinkCannotTouchAnotherLinksBatch() {
+        ProjectShareService.CreatedShareLink first = uploadLink();
+        ProjectShareService.GuestContext second = guest(uploadLink());
+        String batchId = extractedBatch(first, 1);
+
+        // 批次的 created_by 是链接创建者（两条链接是同一个人开的），所以只认 share_link_id。
+        assertThatThrownBy(() -> uploadService.batchStatus(second, batchId))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("不属于这条链接");
+        assertThatThrownBy(() -> uploadService.finishZip(second, batchId, null))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("不属于这条链接");
+    }
+
+    @Test
+    void theZipLimitsAreTheOnesTheInAppBatchUploadUses() {
+        ProjectShareService.GuestContext context = guest(uploadLink());
+
+        assertThatThrownBy(() -> uploadService.createZipTicket(context,
+                new ProjectShareUploadService.ZipCommand("活动.zip",
+                        ImageUploadPolicy.MAX_ARCHIVE_BYTES + 1)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("1.5 GB");
+        // 这条通道只收压缩包；单张图片走 upload-tickets 那一条。
+        assertThatThrownBy(() -> uploadService.createZipTicket(context,
+                new ProjectShareUploadService.ZipCommand("活动.rar", 1024L)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining(".zip");
+    }
+
+    @Test
+    void aFinishedZipCannotSlipPastTheLinkCapacity() {
+        ProjectShareService.CreatedShareLink created = uploadLink();
+        ProjectShareService.GuestContext context = guest(created);
+        String batchId = extractedBatch(created, 3);
+        jdbc.sql("UPDATE project_share_link SET upload_count = :count WHERE id = :id")
+                .param("count", ProjectShareUploadService.MAX_UPLOADS_PER_LINK - 2)
+                .param("id", created.link().id()).update();
+
+        // 剩 2 张额度，这一批有 3 张：整批拒掉，而不是传一半。
+        assertThatThrownBy(() -> uploadService.finishZip(context, batchId, null))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("装不下这一批");
+    }
+
+    @Test
+    void aClosedProjectStopsZipBatchesToo() {
+        ProjectShareService.CreatedShareLink created = uploadLink();
+        ProjectShareService.GuestContext context = guest(created);
+        String batchId = extractedBatch(created, 1);
+        projectService.changeStatus(event.getId(), ProjectStatus.COMPLETED,
+                projectService.get(event.getId()).getVersion(), minister);
+
+        assertThatThrownBy(() -> uploadService.createZipTicket(context,
+                new ProjectShareUploadService.ZipCommand("活动.zip", 1024L)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("不再接收上传");
+        assertThatThrownBy(() -> uploadService.finishZip(context, batchId, null))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("不再接收上传");
     }
 
     // ------------------------------------------------------------------ 选题状态

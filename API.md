@@ -2194,6 +2194,10 @@ interface ProjectShareLink {
 | POST | `/public/shares/{token}/upload-tickets` | 仅 `UPLOAD`：`{ fileName, contentType, size, sha256, takenAt? }` → `{ photoId, uploadUrl, method, contentType, expiresAt }` |
 | POST | `/public/shares/{token}/uploads/{photoId}/complete` | 仅 `UPLOAD`：`{ title?, description? }`，确认对象已就位并交给压缩管线 |
 | GET | `/public/shares/{token}/uploads/{photoId}` | 仅 `UPLOAD`：`{ photoId, title, status, failureReason }`，轮询处理结果 |
+| POST | `/public/shares/{token}/upload-batches` | 仅 `UPLOAD`：`{ archiveFileName, archiveSize }` → `{ batchId, tickets: [ZIP 的上传地址] }` |
+| POST | `/public/shares/{token}/upload-batches/{batchId}/complete` | 压缩包已传完，交给后台解包 |
+| GET | `/public/shares/{token}/upload-batches/{batchId}` | `{ batchId, status, totalCount, successCount, failureCount, failureReason }` |
+| POST | `/public/shares/{token}/upload-batches/{batchId}/finish` | 解包完成后把这一批落成照片，`{ takenAt? }` |
 
 **用途互斥**：上传链接调浏览侧的任何接口（含 `/photos`）一律 `403`，浏览链接调上传侧同样 `403`。客户端拿到 `purpose` 后应把访客领到对应的页面，而不是先发一次注定被拒的请求——那会被当成会话失效。
 
@@ -2202,6 +2206,22 @@ interface ProjectShareLink {
 - 拍摄者取自**会话**上的 `uploaderName` / `uploaderStudentId`（进门时填一次，整场会话共用），而不是通讯录——拿着链接的人按定义在通讯录之外，把通讯录摆给站外的人挑也会泄露姓名和学号。
 - 照片的 `uploadedBy` 记链接创建者（站内唯一可追责的成员），`shareLinkId` 记是哪条链接放进来的；`complete` 的归属判定只认后者。
 - 每次请求都重判选题是否仍在收图：选题一旦完成，已经拿着会话的人立刻传不进来（`access.allowUpload` 同步变 `false`）。
+
+ZIP 批量走的是**站内需求批量上传的同一条通道**（`photo_upload_batch` / `photo_upload_item` +
+`SafeImageZipExtractor`），限额一份不改（`ImageUploadPolicy`）：
+
+| 限制 | 值 |
+| --- | --- |
+| 压缩包大小 | ≤ 1.5 GB（签票据按客户端自报的 size 判一次，`complete` 再按对象存储上的真实大小判一次） |
+| 包内图片张数 | ≤ 100 |
+| 包内单张大小 | ≤ 100 MiB |
+| 解压总大小 | ≤ 10 GiB（zip bomb 的闸） |
+| 包内文件类型 | 只取 JPG / PNG，其余条目静默跳过；带路径穿越的条目直接判包失败 |
+
+访客这一侧的差别只有两处：批次归属认 `share_link_id`（`created_by` 记的是链接创建者，对访客
+不是凭据），以及最后一步不填元数据——拍摄者取会话身份、标题取包内原文件名、标签留空由选片人
+后续按预设打，所以前端轮到 `WAITING_METADATA` 就直接调 `finish`。一批的张数要能装进这条链接
+剩下的额度，装不下时整批拒绝而不是传一半。
 
 除前两个外，每个请求都要带会话头：
 

@@ -1,8 +1,10 @@
 import {
-  Alert, App, Button, Card, Empty, Form, Input, List, Progress, Result, Skeleton, Space, Tag,
-  Typography, Upload,
+  Alert, App, Button, Card, Empty, Form, Input, List, Progress, Result, Segmented, Skeleton, Space,
+  Tag, Typography, Upload,
 } from 'antd'
-import { CloudUploadOutlined, InboxOutlined, LockOutlined } from '@ant-design/icons'
+import {
+  CloudUploadOutlined, FileZipOutlined, InboxOutlined, LockOutlined,
+} from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useCallback, useEffect, useState } from 'react'
 import { Navigate, useParams } from 'react-router-dom'
@@ -14,14 +16,28 @@ import {
 } from '../projectShare'
 import { sha256Hex } from '../recruitmentUpload'
 import {
-  MAX_QUEUE_SIZE, addToQueue, runQueue, summarize,
+  MAX_IMAGES_PER_ARCHIVE, MAX_QUEUE_SIZE, addToQueue, describeBatchOutcome,
+  isTerminalBatchStatus, rejectArchiveReason, runQueue, summarize,
 } from '../shareUpload'
 import type { ShareUploadItem } from '../shareUpload'
 import { uploadToObjectStorage } from '../storageUpload'
-import type { ShareGuestAccess } from '../types'
+import type { ShareGuestAccess, ShareUploadBatch } from '../types'
 
 /** 处理结果的轮询上限。压缩一张相机原图通常几秒，超过这个就交给访客自己刷新。 */
 const PROCESSING_TIMEOUT_MS = 90_000
+/** 一包最多 100 张，每张要解码、压缩、生成预览，所以给的时间比单张宽得多。 */
+const BATCH_TIMEOUT_MS = 20 * 60_000
+
+type UploadMode = 'files' | 'archive'
+/** ZIP 的四个阶段，用来把"卡住了吗"这个问题回答清楚。 */
+type ArchivePhase = 'uploading' | 'extracting' | 'organizing' | 'processing'
+
+const ARCHIVE_PHASE_TEXT: Record<ArchivePhase, string> = {
+  uploading: '正在上传压缩包',
+  extracting: '上传完成，后台正在安全解压并筛选出图片',
+  organizing: '正在按包内文件名生成标题',
+  processing: '正在生成成品图和缩略图',
+}
 
 /**
  * 上传链接的访客页，不需要登录。
@@ -47,6 +63,10 @@ export default function SharedUploadPage() {
   const [unlocking, setUnlocking] = useState(false)
   const [items, setItems] = useState<ShareUploadItem[]>([])
   const [running, setRunning] = useState(false)
+  const [mode, setMode] = useState<UploadMode>('files')
+  const [archivePhase, setArchivePhase] = useState<ArchivePhase | null>(null)
+  const [archivePercent, setArchivePercent] = useState(0)
+  const [archiveBatch, setArchiveBatch] = useState<ShareUploadBatch | null>(null)
 
   const dropSession = useCallback((notice?: string) => {
     clearShareSession(token)
@@ -192,6 +212,69 @@ export default function SharedUploadPage() {
     if (expired) handleGuestError(expired)
   }
 
+  /** 轮询批次，直到满足条件或超时。超时不当失败：后台仍在跑。 */
+  const pollBatch = async (guestSession: string, batchId: string,
+                           done: (batch: ShareUploadBatch) => boolean) => {
+    const deadline = Date.now() + BATCH_TIMEOUT_MS
+    let latest = await shareUploadApi.batchStatus(token, guestSession, batchId)
+    while (!done(latest) && Date.now() < deadline) {
+      await new Promise(resolve => window.setTimeout(resolve, 2000))
+      latest = await shareUploadApi.batchStatus(token, guestSession, batchId)
+      setArchiveBatch(latest)
+    }
+    setArchiveBatch(latest)
+    return latest
+  }
+
+  const uploadArchive = async (file: File) => {
+    if (!session) return
+    const reason = rejectArchiveReason(file)
+    if (reason) {
+      message.error(`${file.name}：${reason}`)
+      return
+    }
+    setRunning(true)
+    setArchiveBatch(null)
+    setArchivePercent(0)
+    setArchivePhase('uploading')
+    try {
+      const ticket = await shareUploadApi.createBatch(token, session, {
+        archiveFileName: file.name,
+        archiveSize: file.size,
+      })
+      const target = ticket.tickets[0]
+      if (!target) throw new Error('没能创建压缩包的上传地址，请重试')
+      await uploadToObjectStorage(target, file, setArchivePercent)
+
+      setArchivePhase('extracting')
+      setArchiveBatch(await shareUploadApi.completeBatch(token, session, ticket.batchId))
+      const extracted = await pollBatch(session, ticket.batchId,
+        batch => batch.status === 'WAITING_METADATA' || isTerminalBatchStatus(batch.status))
+      if (extracted.status !== 'WAITING_METADATA') {
+        throw new Error(describeBatchOutcome(extracted).message)
+      }
+
+      setArchivePhase('organizing')
+      // 拍摄时间取压缩包自己的修改时间，与单张上传同一个道理：访客手上只有
+      // 一堆相机导出来的文件，逐张问拍摄时间没人会填。
+      setArchiveBatch(await shareUploadApi.finishBatch(token, session, ticket.batchId,
+        dayjs(file.lastModified).format('YYYY-MM-DDTHH:mm:ss')))
+
+      setArchivePhase('processing')
+      const finished = await pollBatch(session, ticket.batchId,
+        batch => isTerminalBatchStatus(batch.status))
+      const outcome = describeBatchOutcome(finished)
+      if (outcome.tone === 'success') message.success(outcome.message)
+      else if (outcome.tone === 'warning') message.warning(outcome.message)
+      else message.error(outcome.message)
+    } catch (reasonThrown) {
+      handleGuestError(reasonThrown)
+    } finally {
+      setRunning(false)
+      setArchivePhase(null)
+    }
+  }
+
   const enqueue = (files: File[]) => {
     setItems(current => {
       const added = addToQueue(current, files)
@@ -265,8 +348,10 @@ export default function SharedUploadPage() {
 
   return <main className="share-page">{header}
     <div className="share-body">
-      <Card title={`上传照片${summary.total ? `（${summary.done} / ${summary.total}）` : ''}`}
-        extra={<Space wrap>
+      <Card title={mode === 'files'
+        ? `上传照片${summary.total ? `（${summary.done} / ${summary.total}）` : ''}`
+        : '打包上传'}
+        extra={mode === 'files' ? <Space wrap>
           {!!summary.total && !running &&
             <Button onClick={() => setItems(current => current.filter(item => item.stage !== 'done'))}>
               清掉已完成
@@ -277,50 +362,96 @@ export default function SharedUploadPage() {
             onClick={() => void startUpload()}>
             开始上传{summary.failed ? `（含重试 ${summary.failed} 张）` : ''}
           </Button>
-        </Space>}>
+        </Space> : null}>
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
           {access && !access.allowUpload && <Alert type="warning" showIcon
             message="这个选题已经不再接收上传"
             description="活动已经收工了。如果还需要补交照片，请联系发给你链接的同学。" />}
 
+          {/* 几十上百张时打包传一次比逐张省事得多，所以两种方式都给，默认逐张。 */}
+          <Segmented value={mode} disabled={running}
+            onChange={value => setMode(value as UploadMode)}
+            options={[
+              { label: '逐张上传', value: 'files', icon: <CloudUploadOutlined /> },
+              { label: '打包上传（ZIP）', value: 'archive', icon: <FileZipOutlined /> },
+            ]} />
+
           <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-            支持 JPG 和 PNG，单张不超过 100 MiB，一次最多 {MAX_QUEUE_SIZE} 张。
+            {mode === 'files'
+              ? `支持 JPG 和 PNG，单张不超过 100 MiB，一次最多 ${MAX_QUEUE_SIZE} 张。`
+              : `一个压缩包最大 1.5 GB，里面最多 ${MAX_IMAGES_PER_ARCHIVE} 张 JPG / PNG，`
+                + '单张不超过 100 MiB；包里的其他文件会被自动跳过。'}
             照片会直接进入这个选题的图库，由选题负责人和选片人后续处理；这里看不到别人传了什么。
           </Typography.Paragraph>
 
-          <Upload.Dragger multiple accept="image/jpeg,image/png" showUploadList={false}
-            disabled={running || !access?.allowUpload}
-            beforeUpload={(_file, fileList) => {
-              // 交给自己的队列跑：antd 的自动上传不认预签名地址那一套两步流程。
-              // fileList 是这一次选中的全部文件，所以只在第一个回调里入队一次。
-              if (_file === fileList[0]) enqueue(fileList as File[])
-              return Upload.LIST_IGNORE
-            }}>
-            <p className="ant-upload-drag-icon"><InboxOutlined /></p>
-            <p className="ant-upload-text">把照片拖到这里，或者点击选择</p>
-            <p className="ant-upload-hint">可以一次选很多张，上传过程中请不要关闭这个页面</p>
-          </Upload.Dragger>
+          {mode === 'files' ? <>
+            <Upload.Dragger multiple accept="image/jpeg,image/png" showUploadList={false}
+              disabled={running || !access?.allowUpload}
+              beforeUpload={(_file, fileList) => {
+                // 交给自己的队列跑：antd 的自动上传不认预签名地址那一套两步流程。
+                // fileList 是这一次选中的全部文件，所以只在第一个回调里入队一次。
+                if (_file === fileList[0]) enqueue(fileList as File[])
+                return Upload.LIST_IGNORE
+              }}>
+              <p className="ant-upload-drag-icon"><InboxOutlined /></p>
+              <p className="ant-upload-text">把照片拖到这里，或者点击选择</p>
+              <p className="ant-upload-hint">可以一次选很多张，上传过程中请不要关闭这个页面</p>
+            </Upload.Dragger>
 
-          {items.length ? <List size="small" dataSource={items} rowKey="key"
-            renderItem={item => <List.Item>
-              <List.Item.Meta
-                title={<Space wrap>
-                  <span>{item.file.name}</span>
-                  {item.stage === 'done' && <Tag color="green">已完成</Tag>}
-                  {item.stage === 'processing' && <Tag color="blue">处理中</Tag>}
-                  {item.stage === 'waiting' && <Tag>等待上传</Tag>}
-                  {item.stage === 'failed' && <Tag color="red">失败</Tag>}
-                </Space>}
-                description={item.stage === 'failed'
-                  ? <Typography.Text type="danger">{item.error}</Typography.Text>
-                  : <Progress percent={item.percent} size="small"
-                      status={item.stage === 'processing' ? 'active' : undefined} />} />
-            </List.Item>} />
-            : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有选择照片" />}
+            {items.length ? <List size="small" dataSource={items} rowKey="key"
+              renderItem={item => <List.Item>
+                <List.Item.Meta
+                  title={<Space wrap>
+                    <span>{item.file.name}</span>
+                    {item.stage === 'done' && <Tag color="green">已完成</Tag>}
+                    {item.stage === 'processing' && <Tag color="blue">处理中</Tag>}
+                    {item.stage === 'waiting' && <Tag>等待上传</Tag>}
+                    {item.stage === 'failed' && <Tag color="red">失败</Tag>}
+                  </Space>}
+                  description={item.stage === 'failed'
+                    ? <Typography.Text type="danger">{item.error}</Typography.Text>
+                    : <Progress percent={item.percent} size="small"
+                        status={item.stage === 'processing' ? 'active' : undefined} />} />
+              </List.Item>} />
+              : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有选择照片" />}
 
-          {!!summary.failed && !running && <Alert type="error" showIcon
-            message={`有 ${summary.failed} 张没有传成功`}
-            description="再点一次「开始上传」会只重传这几张。如果反复失败，多半是文件本身有问题。" />}
+            {!!summary.failed && !running && <Alert type="error" showIcon
+              message={`有 ${summary.failed} 张没有传成功`}
+              description="再点一次「开始上传」会只重传这几张。如果反复失败，多半是文件本身有问题。" />}
+          </> : <>
+            <Upload.Dragger accept=".zip,application/zip" maxCount={1} showUploadList={false}
+              disabled={running || !access?.allowUpload}
+              beforeUpload={file => {
+                void uploadArchive(file as File)
+                return Upload.LIST_IGNORE
+              }}>
+              <p className="ant-upload-drag-icon"><FileZipOutlined /></p>
+              <p className="ant-upload-text">把 ZIP 拖到这里，或者点击选择</p>
+              <p className="ant-upload-hint">
+                选好之后会立刻开始上传，解压和整理都在后台完成；这期间请不要关闭页面
+              </p>
+            </Upload.Dragger>
+
+            {archivePhase && <Space direction="vertical" style={{ width: '100%' }}>
+              <Progress status="active"
+                percent={archivePhase === 'uploading' ? archivePercent : 100} />
+              <Typography.Text type="secondary">
+                {ARCHIVE_PHASE_TEXT[archivePhase]}
+                {archivePhase === 'uploading' && `… ${archivePercent}%`}
+                {archivePhase === 'processing' && archiveBatch
+                  && `：${archiveBatch.successCount + archiveBatch.failureCount} / ${archiveBatch.totalCount}`}
+                {archivePhase !== 'uploading' && archivePhase !== 'processing' && '…'}
+              </Typography.Text>
+            </Space>}
+
+            {archiveBatch && !archivePhase && (() => {
+              const outcome = describeBatchOutcome(archiveBatch)
+              return <Alert showIcon type={outcome.tone === 'success' ? 'success'
+                : outcome.tone === 'warning' ? 'warning' : 'error'}
+                message={outcome.tone === 'success' ? '打包上传完成' : '打包上传没有全部成功'}
+                description={outcome.message} />
+            })()}
+          </>}
         </Space>
       </Card>
     </div>

@@ -355,6 +355,19 @@ export interface ShareUploadTicket {
   expiresAt: string
 }
 
+/**
+ * 访客的 ZIP 批次。状态与站内批量上传同一套（`BatchUploadStatus`），因为走的就是
+ * 同一张批次表和同一条解包流水线；访客看到的字段比站内少：没有条目明细。
+ */
+export interface ShareUploadBatch {
+  batchId: string
+  status: BatchUploadStatus
+  totalCount: number
+  successCount: number
+  failureCount: number
+  failureReason?: string | null
+}
+
 /** 访客刚传的那一张当下的处理结果。失败时 status 会被打回 UPLOADING 并带上原因。 */
 export interface ShareUploadedPhoto {
   photoId: EntityId

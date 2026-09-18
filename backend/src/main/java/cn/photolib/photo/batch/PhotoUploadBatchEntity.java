@@ -15,6 +15,8 @@ public class PhotoUploadBatchEntity {
     private Long requestId;
     private Long projectId;
     private Long createdBy;
+    /** 这个批次是哪条上传链接开的；站内上传为 {@code null}（见 Flyway V49）。 */
+    private Long shareLinkId;
     private String archiveObjectKey;
     private String archiveFileName;
     private Long archiveSize;
