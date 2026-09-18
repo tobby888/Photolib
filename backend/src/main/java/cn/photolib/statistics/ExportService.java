@@ -212,14 +212,18 @@ public class ExportService {
     public void exportStatistics(StatisticsExportRequested event) {
         try (XSSFWorkbook workbook = new XSSFWorkbook(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             Sheet worklogs = workbook.createSheet("工时统计");
-            row(worklogs, 0, "姓名", "学号", "校区", "拍摄分钟", "修图分钟", "总分钟", "被引张数");
+            row(worklogs, 0, "姓名", "学号", "校区", "拍摄时长（小时）", "修图时长（小时）",
+                    "总时长（小时）", "被引张数");
+            CellStyle hourStyle = hourStyle(workbook);
             int index = 1;
             for (var value : statistics.members(event.from(), event.to(), event.projectId(),
                     event.campusId(), null, event.campusIds())) {
-                row(worklogs, index++, value.displayName(), value.studentId(), value.campus(),
-                        value.shootingMinutes(), value.retouchingMinutes(), value.totalMinutes(),
-                        value.adoptedCount());
+                Row exportRow = row(worklogs, index++, value.displayName(), value.studentId(),
+                        value.campus(), hours(value.shootingMinutes()), hours(value.retouchingMinutes()),
+                        hours(value.totalMinutes()), value.adoptedCount());
+                styleHourCells(exportRow, hourStyle, 3, 5);
             }
+            autoSizeColumns(worklogs, 7);
             workbook.write(output);
             save(event.jobId(), output.toByteArray(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx");
         } catch (Exception ex) {
@@ -233,25 +237,15 @@ public class ExportService {
         try (XSSFWorkbook workbook = new XSSFWorkbook(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             Sheet worklogs = workbook.createSheet("工时统计");
             row(worklogs, 0, "姓名", "学号", "校区", "拍摄时长（小时）", "修图时长（小时）", "总时长（小时）", "被引张数", "工时状态");
-            CellStyle hourStyle = workbook.createCellStyle();
-            hourStyle.setDataFormat(workbook.createDataFormat().getFormat("0.00"));
+            CellStyle hourStyle = hourStyle(workbook);
             int index = 1;
             for (var value : statistics.worklogs(event.from(), event.to(), event.campusIds())) {
                 Row exportRow = row(worklogs, index++, value.memberName(), value.studentId(), value.campus(),
                         hours(value.shootingMinutes()), hours(value.retouchingMinutes()), hours(value.totalMinutes()),
                         value.adoptedCount(), value.worklogStatus());
-                for (int column = 3; column <= 5; column++) {
-                    exportRow.getCell(column).setCellStyle(hourStyle);
-                }
+                styleHourCells(exportRow, hourStyle, 3, 5);
             }
-            for (int column = 0; column < 8; column++) {
-                try {
-                    worklogs.autoSizeColumn(column);
-                } catch (Exception ignored) {
-                    // autoSizeColumn 依赖 AWT 字体度量，无头/字体缺失环境可能抛异常；
-                    // 列宽仅影响美观，不能因此让工资相关的工时导出失败。
-                }
-            }
+            autoSizeColumns(worklogs, 8);
             workbook.write(output);
             save(event.jobId(), output.toByteArray(),
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx");
@@ -365,6 +359,30 @@ public class ExportService {
 
     private double hours(int minutes) {
         return minutes / MINUTES_PER_HOUR;
+    }
+
+    /** 工时列一律以小时呈现：核算工资的人拿到分钟数还得自己再换算一次。 */
+    private CellStyle hourStyle(XSSFWorkbook workbook) {
+        CellStyle style = workbook.createCellStyle();
+        style.setDataFormat(workbook.createDataFormat().getFormat("0.00"));
+        return style;
+    }
+
+    private void styleHourCells(Row row, CellStyle hourStyle, int firstColumn, int lastColumn) {
+        for (int column = firstColumn; column <= lastColumn; column++) {
+            row.getCell(column).setCellStyle(hourStyle);
+        }
+    }
+
+    private void autoSizeColumns(Sheet sheet, int columns) {
+        for (int column = 0; column < columns; column++) {
+            try {
+                sheet.autoSizeColumn(column);
+            } catch (Exception ignored) {
+                // autoSizeColumn 依赖 AWT 字体度量，无头/字体缺失环境可能抛异常；
+                // 列宽仅影响美观，不能因此让工资相关的工时导出失败。
+            }
+        }
     }
 
     private Row row(Sheet sheet, int index, Object... values) {
