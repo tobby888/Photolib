@@ -236,6 +236,71 @@ class WorklogExportIntegrationTests {
     }
 
     @Test
+    void exportsMemberStatisticsWithHoursInsteadOfMinutes() throws Exception {
+        long base = newBase();
+        long userId = base;
+        long campusId = base + 1;
+        long projectId = base + 2;
+        long requestId = base + 3;
+
+        jdbc.sql("INSERT INTO campus (id, code, name) VALUES (:id, :code, '统计校区')")
+                .param("id", campusId).param("code", "stats-" + base).update();
+        jdbc.sql("""
+                INSERT INTO app_user
+                    (id, username, password_hash, display_name, role, enabled, must_change_password)
+                VALUES (:id, :username, 'hash', '统计管理员', 'ADMIN', TRUE, FALSE)
+                """).param("id", userId).param("username", "stats-export-" + base).update();
+        insertProject(projectId, userId, "统计导出项目", LocalDateTime.of(2023, 9, 15, 12, 0));
+        jdbc.sql("""
+                INSERT INTO photo_request
+                    (id, project_id, title, campus_id, required_count, deadline, status, created_by)
+                VALUES (:id, :projectId, '统计拍摄需求', :campusId, 1, :deadline, 'IN_PROGRESS', :userId)
+                """)
+                .param("id", requestId).param("projectId", projectId).param("campusId", campusId)
+                .param("deadline", LocalDateTime.of(2023, 9, 20, 23, 59)).param("userId", userId).update();
+        insertWorklog(base + 10, requestId, userId, LocalDate.of(2023, 9, 10),
+                "统计成员", "20230001", 60, 30);
+        insertWorklog(base + 11, requestId, userId, LocalDate.of(2023, 9, 12),
+                "统计成员", "20230001", 15, 15);
+        long photo = insertPhoto(base + 20, projectId, requestId, campusId, userId,
+                "20230001", "统计成员", "stats-" + base + ".jpg");
+        insertAdoption(base + 30, projectId, photo, userId, "20230001", "统计成员");
+
+        String jobId = "SEXP" + base;
+        jdbc.sql("""
+                INSERT INTO export_job (id, type, status, progress, created_by)
+                VALUES (:id, 'MEMBER_STATISTICS', 'PENDING', 0, :userId)
+                """).param("id", jobId).param("userId", userId).update();
+
+        exports.exportStatistics(new ExportService.StatisticsExportRequested(
+                jobId, LocalDate.of(2023, 9, 1), LocalDate.of(2023, 9, 30), projectId, null));
+
+        ExportJobEntity job = waitForCompletion(jobId);
+        assertThat(job.getStatus()).isEqualTo("SUCCEEDED");
+
+        try (XSSFWorkbook workbook = new XSSFWorkbook(storage.open(job.getObjectKey()))) {
+            Sheet sheet = workbook.getSheet("工时统计");
+            assertThat(sheet).isNotNull();
+            Row header = sheet.getRow(0);
+            assertThat(header.getCell(3).getStringCellValue()).isEqualTo("拍摄时长（小时）");
+            assertThat(header.getCell(4).getStringCellValue()).isEqualTo("修图时长（小时）");
+            assertThat(header.getCell(5).getStringCellValue()).isEqualTo("总时长（小时）");
+            assertThat(header.getCell(6).getStringCellValue()).isEqualTo("被引张数");
+            assertThat(sheet.getLastRowNum()).isEqualTo(1);
+
+            Row row = sheet.getRow(1);
+            assertThat(row.getCell(0).getStringCellValue()).isEqualTo("统计成员");
+            assertThat(row.getCell(1).getStringCellValue()).isEqualTo("20230001");
+            assertThat(row.getCell(2).getStringCellValue()).isEqualTo("统计校区");
+            // 75 分钟拍摄、45 分钟修图，导出必须是 1.25 / 0.75 / 2 小时而不是分钟数。
+            assertHourCell(row.getCell(3), 1.25);
+            assertHourCell(row.getCell(4), 0.75);
+            assertHourCell(row.getCell(5), 2.0);
+            assertThat(row.getCell(6).getNumericCellValue()).isEqualTo(1);
+        }
+    }
+
+    @Test
     void campusScopedStatisticsAndWorklogExportsOnlyIncludeAuthorizedCampuses() {
         long base = newBase();
         long userId = base;
