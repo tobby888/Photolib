@@ -378,6 +378,19 @@ export interface MemberStats {
   totalMinutes: number
 }
 
+export interface MemberWorklogDetail {
+  worklogId: EntityId
+  workDate: string
+  requestId: EntityId
+  requestTitle: string
+  projectId: EntityId
+  projectTitle: string
+  campus: string
+  shootingMinutes: number
+  retouchingMinutes: number
+  totalMinutes: number
+}
+
 export interface FooterLink {
   label: string
   url: string
