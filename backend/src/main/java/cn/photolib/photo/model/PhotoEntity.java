@@ -34,4 +34,6 @@ public class PhotoEntity extends BaseEntity {
     private PhotoStatus status;
     private String failureReason;
     private LocalDateTime originalDeleteAfter;
+    /** 经由哪条上传链接传进来的；站内上传为 {@code null}。 */
+    private Long shareLinkId;
 }

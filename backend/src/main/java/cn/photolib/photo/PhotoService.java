@@ -59,7 +59,7 @@ public class PhotoService {
 
     @Transactional
     public UploadTicket createTicket(CreateTicket command, AuthenticatedUser user) {
-        validateFile(command.fileName(), command.contentType(), command.size());
+        validateUploadFile(command.fileName(), command.contentType(), command.size());
         requireUploadPermission(command.requestId(), user);
 
         Long campusId;
@@ -537,11 +537,11 @@ public class PhotoService {
 
     /** 上传时的格式与体积校验，编辑保存复用同一套规则。 */
     void requireSupportedImage(String fileName, String contentType, long size) {
-        validateFile(fileName, contentType, size);
+        validateUploadFile(fileName, contentType, size);
     }
 
     /** 全库重复图片拦截，与单张上传 {@link #createTicket} 同一条规则；{@code exceptPhotoId} 是自己。 */
-    void requireUniqueSha256(String sha256Lower, Long exceptPhotoId) {
+    public void requireUniqueSha256(String sha256Lower, Long exceptPhotoId) {
         PhotoEntity existing = mapper.selectOne(Wrappers.<PhotoEntity>lambdaQuery()
                 .eq(PhotoEntity::getSha256, sha256Lower)
                 .eq(PhotoEntity::getDeleted, false)
@@ -570,7 +570,11 @@ public class PhotoService {
         }
     }
 
-    private void validateFile(String fileName, String contentType, long size) {
+    /**
+     * 单张上传的文件校验。公开给分享链接的上传通道复用（{@code ProjectShareUploadService}）：
+     * 站外传进来的文件与站内走的是同一条流水线，允许的类型和大小上限就必须是同一份。
+     */
+    public void validateUploadFile(String fileName, String contentType, long size) {
         if (size <= 0 || size > properties.imageMaxBytes()) {
             throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "单张图片不得超过 100 MiB");
         }

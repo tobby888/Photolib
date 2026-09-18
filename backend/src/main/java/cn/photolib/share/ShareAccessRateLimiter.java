@@ -70,7 +70,16 @@ public class ShareAccessRateLimiter {
         /** 打包下载：一次最多 200 张，成本远高于单张。 */
         BATCH_DOWNLOAD(60, 12, Duration.ofMinutes(10)),
         /** 标记/取消被引，会写进项目的采用记录。 */
-        ADOPTION(300, 60, Duration.ofMinutes(10));
+        ADOPTION(300, 60, Duration.ofMinutes(10)),
+        /**
+         * 上传链接的写操作（签票据、完成上传）。额度要同时容得下"活动当天一个人
+         * 传几百张"和"这是个匿名写入口"：按地址每 10 分钟 600 次约等于 300 张，
+         * 再多的量应该走站内批量上传而不是这条链接。收满多少张另有硬上限，
+         * 见 {@link ProjectShareUploadService#MAX_UPLOADS_PER_LINK}。
+         */
+        UPLOAD(3_000, 600, Duration.ofMinutes(10)),
+        /** 查自己刚传那张的处理结果。纯读且会被轮询，额度给得比写宽。 */
+        UPLOAD_STATUS(6_000, 1_200, Duration.ofMinutes(10));
 
         private final int linkLimit;
         private final int addressLimit;

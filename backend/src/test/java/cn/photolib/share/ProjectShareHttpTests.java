@@ -7,6 +7,7 @@ import cn.photolib.permission.PermissionCode;
 import cn.photolib.project.ProjectService;
 import cn.photolib.project.model.ProjectEntity;
 import cn.photolib.project.model.ProjectStatus;
+import cn.photolib.project.model.ProjectType;
 import cn.photolib.user.model.UserRole;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -84,7 +85,8 @@ class ProjectShareHttpTests {
         projectService.addPhotos(project.getId(), List.of(PHOTO_ID), minister);
 
         token = shareService.create(project.getId(),
-                new ProjectShareService.CreateCommand("HTTP 测试", "share-pass", true, true, null),
+                new ProjectShareService.CreateCommand(ShareLinkPurpose.BROWSE, "HTTP 测试", "share-pass",
+                        true, true, null),
                 minister).link().token();
 
         when(authService.authenticate(anyString()))
@@ -209,6 +211,54 @@ class ProjectShareHttpTests {
 
         mvc.perform(anonymous(get("/api/v1/projects/1/share-links"))
                         .header("Authorization", "Bearer token"))
+                .andExpect(status().isForbidden());
+    }
+
+    /**
+     * 上传链接的访客也从不带令牌的那条路进来：permitAll 覆盖到新的上传接口，
+     * 会话头照旧，缺身份则在进门那一步就被拒。
+     */
+    @Test
+    void anAnonymousVisitorCanUploadThroughAnUploadLink() throws Exception {
+        AuthenticatedUser minister = new AuthenticatedUser(MINISTER_ID, "share-http-minister",
+                "分享部长", UserRole.MINISTER, null, false);
+        ProjectEntity eventProject = projectService.create("HTTP 活动选题", "说明",
+                ProjectStatus.ACTIVE, List.of(), ProjectType.EVENT, minister);
+        String uploadToken = shareService.create(eventProject.getId(),
+                new ProjectShareService.CreateCommand(ShareLinkPurpose.UPLOAD, "摄影组",
+                        "share-pass", false, false, null), minister).link().token();
+
+        mvc.perform(anonymous(get("/api/v1/public/shares/" + uploadToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.purpose").value("UPLOAD"));
+
+        // 姓名和学号是进门的一部分：没有它们就没有拍摄者，照片也就无从落地。
+        mvc.perform(anonymous(post("/api/v1/public/shares/" + uploadToken + "/sessions"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"password\":\"share-pass\"}"))
+                .andExpect(status().isBadRequest());
+
+        String body = mvc.perform(anonymous(post("/api/v1/public/shares/" + uploadToken + "/sessions"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"password\":\"share-pass\",\"uploaderName\":\"张小拍\","
+                                + "\"uploaderStudentId\":\"20230001\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.access.allowUpload").value(true))
+                .andExpect(jsonPath("$.data.access.allowDownload").value(false))
+                .andReturn().getResponse().getContentAsString();
+        String session = json.readTree(body).path("data").path("sessionToken").asText();
+
+        mvc.perform(anonymous(post("/api/v1/public/shares/" + uploadToken + "/upload-tickets"))
+                        .header(ProjectSharePublicController.SESSION_HEADER, session)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"fileName\":\"field.jpg\",\"contentType\":\"image/jpeg\","
+                                + "\"size\":2048,\"sha256\":\"" + "f".repeat(64) + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.uploadUrl").isNotEmpty());
+
+        // 这条上传链接同样翻不到相册——两种用途的能力互斥。
+        mvc.perform(anonymous(get("/api/v1/public/shares/" + uploadToken + "/photos"))
+                        .header(ProjectSharePublicController.SESSION_HEADER, session))
                 .andExpect(status().isForbidden());
     }
 

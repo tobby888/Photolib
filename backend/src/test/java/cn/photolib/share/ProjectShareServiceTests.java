@@ -98,12 +98,13 @@ class ProjectShareServiceTests {
     }
 
     private ProjectShareService.CreateCommand command(boolean download, boolean adoption) {
-        return new ProjectShareService.CreateCommand("校报编辑部", "share-pass", download, adoption, null);
+        return new ProjectShareService.CreateCommand(ShareLinkPurpose.BROWSE, "校报编辑部", "share-pass",
+                download, adoption, null);
     }
 
     private ProjectShareLinkEntity guest(ProjectShareService.CreatedShareLink created) {
         ProjectShareService.GuestSession session =
-                service.openSession(created.link().token(), "share-pass");
+                service.openSession(created.link().token(), "share-pass", null);
         return service.resolveGuest(created.link().token(), session.sessionToken());
     }
 
@@ -127,7 +128,7 @@ class ProjectShareServiceTests {
     @Test
     void theGeneratedPasswordIsReturnedOnceAndOnlyItsHashIsStored() {
         ProjectShareService.CreatedShareLink created = service.create(project.getId(),
-                new ProjectShareService.CreateCommand(null, null, false, false, null), minister);
+                new ProjectShareService.CreateCommand(null, null, null, false, false, null), minister);
 
         assertThat(created.password()).hasSize(10);
         String stored = linkMapper.selectById(created.link().id()).getPasswordHash();
@@ -143,7 +144,7 @@ class ProjectShareServiceTests {
         ProjectShareService.CreatedShareLink created = service.create(project.getId(),
                 command(true, true), minister);
 
-        assertThatThrownBy(() -> service.openSession(created.link().token(), "not-the-password"))
+        assertThatThrownBy(() -> service.openSession(created.link().token(), "not-the-password", null))
                 .isInstanceOf(BusinessException.class).hasMessageContaining("密码不正确");
     }
 
@@ -153,7 +154,7 @@ class ProjectShareServiceTests {
         ProjectShareService.CreatedShareLink created = service.create(project.getId(),
                 command(true, false), minister);
         ProjectShareService.GuestSession session =
-                service.openSession(created.link().token(), "share-pass");
+                service.openSession(created.link().token(), "share-pass", null);
         String token = created.link().token();
         assertThat(service.download(service.resolveGuest(token, session.sessionToken()), PHOTO_A)
                 .downloadUrl()).isNotBlank();
@@ -172,7 +173,7 @@ class ProjectShareServiceTests {
         ProjectShareService.CreatedShareLink created = service.create(project.getId(),
                 command(true, true), minister);
         ProjectShareService.GuestSession session =
-                service.openSession(created.link().token(), "share-pass");
+                service.openSession(created.link().token(), "share-pass", null);
         String token = created.link().token();
 
         service.delete(project.getId(), created.link().id(), minister);
@@ -186,7 +187,7 @@ class ProjectShareServiceTests {
         ProjectShareService.CreatedShareLink created = service.create(project.getId(),
                 command(true, true), minister);
         ProjectShareService.GuestSession session =
-                service.openSession(created.link().token(), "share-pass");
+                service.openSession(created.link().token(), "share-pass", null);
         String token = created.link().token();
 
         ProjectShareService.ResetPassword reset =
@@ -194,7 +195,7 @@ class ProjectShareServiceTests {
 
         assertThatThrownBy(() -> service.resolveGuest(token, session.sessionToken()))
                 .isInstanceOf(BusinessException.class).hasMessageContaining("重新输入密码");
-        assertThat(service.openSession(token, reset.password()).sessionToken()).isNotBlank();
+        assertThat(service.openSession(token, reset.password(), null).sessionToken()).isNotBlank();
     }
 
     @Test
@@ -218,7 +219,7 @@ class ProjectShareServiceTests {
         ProjectShareService.CreatedShareLink writable = service.create(project.getId(),
                 command(false, true), minister);
         ProjectShareService.CreatedShareLink other = service.create(project.getId(),
-                new ProjectShareService.CreateCommand("另一条链接", "share-pass", false, false, null),
+                new ProjectShareService.CreateCommand(ShareLinkPurpose.BROWSE, "另一条链接", "share-pass", false, false, null),
                 minister);
 
         service.adopt(guest(writable), PHOTO_A);
@@ -360,7 +361,7 @@ class ProjectShareServiceTests {
         ProjectShareService.CreatedShareLink created = service.create(project.getId(),
                 command(true, false), minister);
         ProjectShareService.CreatedShareLink other = service.create(project.getId(),
-                new ProjectShareService.CreateCommand("另一条链接", "share-pass", true, false, null),
+                new ProjectShareService.CreateCommand(ShareLinkPurpose.BROWSE, "另一条链接", "share-pass", true, false, null),
                 minister);
         String jobId = service.batchDownload(guest(created), List.of(PHOTO_A, PHOTO_B)).getId();
 
@@ -401,7 +402,7 @@ class ProjectShareServiceTests {
         ProjectShareService.CreatedShareLink created = service.create(project.getId(),
                 command(true, true), minister);
         ProjectShareService.GuestSession session =
-                service.openSession(created.link().token(), "share-pass");
+                service.openSession(created.link().token(), "share-pass", null);
         jdbc.sql("UPDATE project_share_session SET expires_at = :past")
                 .param("past", LocalDateTime.now().minusMinutes(1)).update();
 
@@ -412,7 +413,7 @@ class ProjectShareServiceTests {
     @Test
     void aShortPasswordIsRefusedBeforeAnythingIsWritten() {
         assertThatThrownBy(() -> service.create(project.getId(),
-                new ProjectShareService.CreateCommand(null, "123", false, false, null), minister))
+                new ProjectShareService.CreateCommand(null, null, "123", false, false, null), minister))
                 .isInstanceOf(BusinessException.class).hasMessageContaining("密码长度");
         assertThat(service.list(project.getId(), minister)).isEmpty();
     }
@@ -420,7 +421,7 @@ class ProjectShareServiceTests {
     @Test
     void anExpiryInThePastIsRefused() {
         assertThatThrownBy(() -> service.create(project.getId(),
-                new ProjectShareService.CreateCommand(null, "share-pass", false, false,
+                new ProjectShareService.CreateCommand(null, null, "share-pass", false, false,
                         LocalDateTime.now().minusHours(1)), minister))
                 .isInstanceOf(BusinessException.class).hasMessageContaining("失效时间");
     }

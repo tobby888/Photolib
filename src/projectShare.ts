@@ -1,6 +1,9 @@
 import { api, qs } from './api'
 import type { ProjectPhotoFilters } from './photoTags'
-import type { EntityId, PageData, ShareGuestAccess, ShareGuestSession, SharePhoto } from './types'
+import type {
+  EntityId, PageData, ShareGuestAccess, ShareGuestSession, SharePhoto, ShareLinkPurpose,
+  ShareUploadTicket, ShareUploadedPhoto,
+} from './types'
 
 /** 访客图片列表的查询条件：分页、关键字，加上与选题详情页同一组筛选。 */
 export interface SharePhotoQuery extends Partial<ProjectPhotoFilters> {
@@ -68,12 +71,21 @@ export function clearShareSession(token: string) {
 
 const guest = (session: string) => ({ headers: { [SHARE_SESSION_HEADER]: session } })
 
-export const shareApi = {
-  greet: (token: string) =>
-    api<{ requiresPassword: boolean }>({ url: `/public/shares/${token}` }),
+/** 上传链接的访客进门时自报的身份，作为这次会话里每一张照片的拍摄者。 */
+export interface ShareUploaderIdentity {
+  uploaderName: string
+  uploaderStudentId: string
+}
 
-  openSession: (token: string, password: string) =>
-    api<ShareGuestSession>({ method: 'POST', url: `/public/shares/${token}/sessions`, data: { password } }),
+export const shareApi = {
+  // purpose 决定这个 token 该由哪一页接（相册还是上传台），所以密码页之前就要问一次。
+  greet: (token: string) =>
+    api<{ requiresPassword: boolean; purpose: ShareLinkPurpose }>({ url: `/public/shares/${token}` }),
+
+  openSession: (token: string, password: string, identity?: ShareUploaderIdentity) =>
+    api<ShareGuestSession>({
+      method: 'POST', url: `/public/shares/${token}/sessions`, data: { password, ...identity },
+    }),
 
   access: (token: string, session: string) =>
     api<ShareGuestAccess>({ url: `/public/shares/${token}/access`, ...guest(session) }),
@@ -107,6 +119,31 @@ export const shareApi = {
   cancelAdoption: (token: string, session: string, photoId: EntityId) =>
     api<{ photoId: EntityId; adopted: boolean }>({
       method: 'DELETE', url: `/public/shares/${token}/photos/${photoId}/adoption`, ...guest(session),
+    }),
+}
+
+/**
+ * 上传链接的访客通道。与站内单张上传是同一条流水线：签票据 → PUT 到对象存储 →
+ * complete 交给压缩管线，只是凭据换成了"链接 + 密码"换来的会话。
+ */
+export const shareUploadApi = {
+  ticket: (token: string, session: string, file: {
+    fileName: string; contentType: string; size: number; sha256: string; takenAt?: string | null
+  }) =>
+    api<ShareUploadTicket>({
+      method: 'POST', url: `/public/shares/${token}/upload-tickets`, data: file, ...guest(session),
+    }),
+
+  complete: (token: string, session: string, photoId: EntityId,
+             data: { title?: string | null; description?: string | null }) =>
+    api<ShareUploadedPhoto>({
+      method: 'POST', url: `/public/shares/${token}/uploads/${photoId}/complete`,
+      data, ...guest(session),
+    }),
+
+  status: (token: string, session: string, photoId: EntityId) =>
+    api<ShareUploadedPhoto>({
+      url: `/public/shares/${token}/uploads/${photoId}`, ...guest(session),
     }),
 }
 

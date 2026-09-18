@@ -38,7 +38,7 @@ public class SecurityConfig {
                                 "/notifications/**", "/statistics", "/manager-campuses", "/admin",
                                 "/recruitment", "/recruitments/**", "/recruitment-applications/**",
                                 "/docs", "/docs/**", "/documents", "/documents/**",
-                                "/share/**",
+                                "/share/**", "/upload/**",
                                 "/api", "/api/",
                                 "/api/v1/auth/login", "/api/v1/auth/refresh",
                                 "/api/v1/actuator/health",

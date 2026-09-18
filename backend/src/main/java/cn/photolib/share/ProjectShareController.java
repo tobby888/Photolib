@@ -60,12 +60,14 @@ public class ProjectShareController {
         return ApiResponse.ok();
     }
 
-    record CreateRequest(@Size(max = 100) String name,
+    /** {@code purpose} 省略时是浏览链接，与 V48 之前的请求体等价。 */
+    record CreateRequest(ShareLinkPurpose purpose,
+                         @Size(max = 100) String name,
                          @Size(max = ProjectShareService.MAX_PASSWORD_LENGTH) String password,
                          boolean allowDownload, boolean allowAdoption,
                          LocalDateTime expiresAt) {
         ProjectShareService.CreateCommand command() {
-            return new ProjectShareService.CreateCommand(name, password, allowDownload,
+            return new ProjectShareService.CreateCommand(purpose, name, password, allowDownload,
                     allowAdoption, expiresAt);
         }
     }

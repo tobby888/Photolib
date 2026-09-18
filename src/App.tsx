@@ -38,6 +38,7 @@ const NotificationsPage = lazy(() => import('./pages/NotificationsPage'))
 const NotificationDetailPage = lazy(() => import('./pages/NotificationDetailPage'))
 const PublicRecruitmentPage = lazy(() => import('./pages/PublicRecruitmentPage'))
 const SharedProjectPage = lazy(() => import('./pages/SharedProjectPage'))
+const SharedUploadPage = lazy(() => import('./pages/SharedUploadPage'))
 const DocsPage = lazy(() => import('./pages/DocsPage'))
 const DocumentsPage = lazy(() => import('./pages/DocumentsPage'))
 const FeaturedCollectionsPage = lazy(() => import('./pages/FeaturedCollectionsPage'))
@@ -383,6 +384,12 @@ export default function App() {
       `user`，能力由"链接 + 密码"换来的分享会话决定。
     */}
     <Route path="/share/:token" element={<SharedProjectPage />} />
+    {/*
+      活动选题的上传链接。与 /share 同源同凭据，只是门后给的是上传台而不是相册，
+      所以是独立的一页：两种用途的能力互斥，页面也就没有共享的必要。拿错了页面
+      （相册链接开在 /upload，或者反过来）由两页各自按 greet 里的 purpose 互送。
+    */}
+    <Route path="/upload/:token" element={<SharedUploadPage />} />
     <Route path="/initial-password" element={!user ? <Navigate to="/login" replace /> :
       user.mustChangePassword ? <InitialPasswordPage /> : <Navigate to="/" replace />} />
     <Route path="/*" element={<Shell />} />

@@ -996,7 +996,8 @@ export default function ProjectDetailPage() {
       <BatchTagModal mode={tagMode} photos={selectedAlbumPhotos} projectId={projectId}
         presets={presetTags} onClose={() => setTagMode(null)} onDone={applyTaggedPhotos} />
       {shareOpen && <Suspense fallback={null}>
-        <ProjectShareLinksModal projectId={projectId} open onClose={() => setShareOpen(false)} />
+        <ProjectShareLinksModal projectId={projectId} open onClose={() => setShareOpen(false)}
+          uploadLinksAvailable={isEvent && project.status === 'ACTIVE'} />
       </Suspense>}
     </>}
   </DataState>
