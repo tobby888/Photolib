@@ -13,7 +13,7 @@ from photolib_mcp.credentials import StoredCredentials
 from photolib_mcp.errors import PhotoLibError
 from photolib_mcp.server import build_server
 from photolib_mcp.toolkit import compact
-from photolib_mcp.transfers import inspect_file
+from photolib_mcp.transfers import inspect_batch, inspect_file
 
 # 一张最小的合法 PNG（1×1 透明像素）。魔数对，所以能过类型判断。
 PNG_BYTES = bytes.fromhex(
@@ -60,6 +60,20 @@ def test_non_image_is_refused_before_any_request(tmp_path: Path) -> None:
     with pytest.raises(PhotoLibError) as caught:
         inspect_file(str(text))
     assert "JPEG" in str(caught.value)
+
+
+def test_batch_refuses_two_files_with_the_same_name(tmp_path: Path) -> None:
+    """批次票据按文件名对应，同名会静默地把两张图叠成一张——必须在签票据之前拦住。"""
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    first = tmp_path / "a" / "IMG_0001.png"
+    second = tmp_path / "b" / "IMG_0001.png"
+    first.write_bytes(PNG_BYTES)
+    second.write_bytes(PNG_BYTES)
+
+    with pytest.raises(PhotoLibError) as caught:
+        inspect_batch([str(first), str(second)])
+    assert "同名" in str(caught.value)
 
 
 def test_compact_drops_unset_fields_only() -> None:

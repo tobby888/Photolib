@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from ..toolkit import ToolRegistry, compact, page_params
-from ..transfers import inspect_file, put_to_presigned_url, save_bytes
+from ..transfers import inspect_batch, put_to_presigned_url, save_bytes
 
 TaskStatus = Literal["DRAFT", "PUBLISHED", "CLOSED"]
 DRAFT_TOKEN_HEADER = "X-Recruitment-Draft-Token"
@@ -126,7 +126,7 @@ def register(registry: ToolRegistry) -> None:
     async def recruitment_public_upload(public_id: str, draft_id: str, draft_token: str,
                                         file_paths: list[str]) -> dict[str, Any]:
         """给一份报名草稿上传作品（JPEG/PNG，一批最多 100 张）。"""
-        locals_ = [inspect_file(path) for path in file_paths]
+        locals_ = inspect_batch(file_paths)
         ticket = await session.request(
             "POST", f"/public/recruitments/{public_id}/drafts/{draft_id}/batches",
             authenticated=False, headers={DRAFT_TOKEN_HEADER: draft_token},

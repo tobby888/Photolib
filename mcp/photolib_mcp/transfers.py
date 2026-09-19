@@ -33,6 +33,27 @@ class LocalFile:
     content_type: str
 
 
+def inspect_batch(file_paths: list[str], *, require_image: bool = True) -> list[LocalFile]:
+    """一批文件，附带批量上传独有的那条检查：文件名不能重复。
+
+    批次票据是按文件名回来的（后端不认本地路径），两个同名文件——放在不同目录里的
+    `IMG_0001.jpg` 太常见了——会让"票据 → 本地文件"的对应关系塌成一条，结果是同一张图
+    传了两次、另一张的位置空着，而且**不会报错**。这条检查要在签票据之前做完：等对象
+    传上去再发现，库里已经建了记录。
+    """
+    files = [inspect_file(path, require_image=require_image) for path in file_paths]
+    seen: dict[str, str] = {}
+    for local in files:
+        if local.name in seen:
+            raise PhotoLibError(
+                f"同一批里有两个同名文件：{seen[local.name]} 和 {local.path}。"
+                "批次是按文件名对应的，请先把其中一个改名，或者分两批上传。",
+                code="DUPLICATE_FILE_NAME",
+            )
+        seen[local.name] = str(local.path)
+    return files
+
+
 def inspect_file(file_path: str, *, require_image: bool = True) -> LocalFile:
     path = Path(file_path).expanduser()
     if not path.is_file():

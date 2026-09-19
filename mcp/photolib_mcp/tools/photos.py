@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from ..errors import PhotoLibError
 from ..toolkit import ToolRegistry, compact, page_params
-from ..transfers import download_to_path, inspect_file, put_to_presigned_url
+from ..transfers import download_to_path, inspect_batch, inspect_file, put_to_presigned_url
 
 PhotoStatus = Literal["UPLOADING", "PROCESSING", "AVAILABLE", "ARCHIVED", "DELETED"]
 
@@ -83,7 +83,7 @@ def register(registry: ToolRegistry) -> None:
         if len(file_paths) > 100:
             raise PhotoLibError("一批最多 100 张，请分批上传", code="VALIDATION_ERROR")
 
-        locals_ = [inspect_file(path) for path in file_paths]
+        locals_ = inspect_batch(file_paths)
         ticket = await session.request("POST", "/photos/batch-upload-tickets", json_body=compact({
             "mode": "FILES", "requestId": request_id, "projectId": project_id,
             "files": [{"fileName": item.name, "contentType": item.content_type,
