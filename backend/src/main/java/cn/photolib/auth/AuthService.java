@@ -81,6 +81,20 @@ public class AuthService {
         return issue(user);
     }
 
+    /**
+     * 为一个已经在浏览器里批准过的 MCP 客户端签发会话（见
+     * {@code cn.photolib.mcp.McpAuthorizationService}）。
+     *
+     * <p>刻意复用 {@link #issue}：MCP 客户端拿到的必须是一次**普通登录**签发的会话，
+     * 权限、TTL、改密与停用后的失效全都和浏览器一致。这里唯一比登录少的是密码校验，
+     * 那一步已经在浏览器里由成员本人完成过了；账号是否仍然启用仍要现查，因为批准
+     * 和取令牌之间隔着一段时间。
+     */
+    @Transactional
+    public TokenPair issueForPairedClient(Long userId) {
+        return issue(requireEnabledUser(userId));
+    }
+
     public SessionAuthentication authenticate(String rawAccessToken) {
         AuthSessionEntity session = sessionMapper.selectOne(Wrappers.<AuthSessionEntity>lambdaQuery()
                 .eq(AuthSessionEntity::getAccessTokenHash, TokenSupport.hash(rawAccessToken)));

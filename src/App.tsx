@@ -14,6 +14,7 @@ import { NotFound } from './components'
 import { api } from './api'
 import type { BrandingSettings, Notification, PreviewGenerationStatus } from './types'
 import { BrandGlyph, useBranding } from './branding'
+import { afterLoginRoute } from './loginRedirect'
 import { canViewProjects, hasAnyPermission, hasPermission, hasSystemAccess } from './permissions'
 import SiteFooter from './SiteFooter'
 import UserAvatar from './UserAvatar'
@@ -46,6 +47,7 @@ const FeaturedCollectionDetailPage = lazy(() => import('./pages/FeaturedCollecti
 const RecruitmentsPage = lazy(() => import('./pages/RecruitmentsPage'))
 const RecruitmentDetailPage = lazy(() => import('./pages/RecruitmentDetailPage'))
 const RecruitmentApplicationDetailPage = lazy(() => import('./pages/RecruitmentApplicationDetailPage'))
+const McpAuthorizePage = lazy(() => import('./pages/McpAuthorizePage'))
 const AvatarSettingsModal = lazy(() => import('./AvatarSettingsModal'))
 const PhotoCardShortcutsModal = lazy(() => import('./PhotoCardShortcutsModal'))
 const NotificationPanel = lazy(() => import('./NotificationPanel'))
@@ -340,6 +342,12 @@ function Shell() {
             <Route path="/recruitment-applications/:applicationId" element={hasPermission(user, 'RECRUITMENT_VIEW') ? <RecruitmentApplicationDetailPage /> : <Navigate to="/" />} />
             <Route path="/documents" element={<DocumentsPage />} />
             <Route path="/documents/:publicId" element={<DocumentsPage />} />
+            {/*
+              MCP 客户端的批准页。不挂任何权限：MCP 不是一个新的权限边界，它拿到的
+              就是这个成员自己的会话，能做的事由他原本的权限决定。放在外壳里是为了
+              借外壳那道登录守卫——批准必须由一个真实的登录会话做出。
+            */}
+            <Route path="/mcp/authorize" element={<McpAuthorizePage />} />
             <Route path="/admin" element={user.permissionGroupCode === 'ADMIN' ? <AdminPage /> : <Navigate to="/" />} />
             <Route path="*" element={<NotFound />} />
           </Routes></Suspense>
@@ -360,8 +368,9 @@ function Shell() {
 export default function App() {
   const { user, sessionVerified } = useAuth()
   const branding = useBranding()
+  const location = useLocation()
   return <Suspense fallback={<div className="route-loading">正在进入{branding.title}…</div>}><Routes>
-    <Route path="/login" element={user ? <Navigate to={user.mustChangePassword ? '/initial-password' : '/'} replace /> : <LoginPage />} />
+    <Route path="/login" element={user ? <Navigate to={afterLoginRoute(user.mustChangePassword, location.state)} replace /> : <LoginPage />} />
     {/*
       报名页只把"后端确认过的成员"弹回工作台。光看 `user` 不行：它是从 localStorage
       乐观读出来的，浏览器上留着一份过期身份的人（在这台机器上登录过的部员，或者

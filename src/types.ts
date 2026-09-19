@@ -700,3 +700,20 @@ export interface DocReaderDocument {
   updaterDisplayName?: string | null
   breadcrumb: string[]
 }
+
+/**
+ * 一条待批准的 MCP 客户端配对请求（`GET /auth/mcp/authorizations/{requestId}`）。
+ * 刻意不包含配对码：那串码只出现在发起配对的终端上，批准页要求成员手敲一遍，
+ * 页面自己知道答案的话这道关卡就没有意义了。
+ */
+export interface McpAuthorizationRequest {
+  requestId: string
+  clientName: string
+  deviceLabel?: string | null
+  requestedIp?: string | null
+  status: 'PENDING' | 'APPROVED' | 'DENIED' | 'CONSUMED'
+  createdAt: string
+  expiresAt: string
+  /** 配对码还能猜错几次，归零后该请求作废。 */
+  remainingAttempts: number
+}

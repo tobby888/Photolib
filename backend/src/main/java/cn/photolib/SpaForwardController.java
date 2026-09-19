@@ -47,6 +47,9 @@ public class SpaForwardController {
             "/recruitment-applications/{id}",
             "/documents",
             "/documents/{publicId}",
+            // MCP 客户端的批准页。链接由客户端打印在终端里，成员多半是复制到浏览器
+            // 地址栏直接打开的，所以这条路径式深链必须能 forward 到应用。
+            "/mcp/authorize",
             "/admin"
     })
     String forwardToApplication() {

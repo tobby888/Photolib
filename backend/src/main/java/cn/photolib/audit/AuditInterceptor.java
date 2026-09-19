@@ -40,7 +40,11 @@ public class AuditInterceptor implements HandlerInterceptor {
     public void afterCompletion(HttpServletRequest request, HttpServletResponse response,
                                 Object handler, Exception ex) {
         if (!WRITES.contains(request.getMethod())
-                || request.getRequestURI().contains("/auth/refresh")) return;
+                || request.getRequestURI().contains("/auth/refresh")
+                // MCP 客户端每两秒轮询一次 /auth/mcp/token 等批准，一次配对能刷出几百条
+                // 一模一样的记录，把真正要查的东西冲掉。安全上要看的那一条是"谁批准了
+                // 这次配对"，它由 /authorizations/{id}/approve 记下来，带着操作者。
+                || request.getRequestURI().endsWith("/auth/mcp/token")) return;
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         Long userId = auth != null && auth.getPrincipal() instanceof AuthenticatedUser user ? user.id() : null;
         AuditLogEntity log = new AuditLogEntity();
