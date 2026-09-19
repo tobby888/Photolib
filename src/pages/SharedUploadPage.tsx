@@ -227,7 +227,7 @@ export default function SharedUploadPage() {
   }
 
   const uploadArchive = async (file: File) => {
-    if (!session) return
+    if (!session || running) return
     const reason = rejectArchiveReason(file)
     if (reason) {
       message.error(`${file.name}：${reason}`)
@@ -421,7 +421,12 @@ export default function SharedUploadPage() {
           </> : <>
             <Upload.Dragger accept=".zip,application/zip" maxCount={1} showUploadList={false}
               disabled={running || !access?.allowUpload}
-              beforeUpload={file => {
+              beforeUpload={(file, fileList) => {
+                // antd 对拖进来的每个文件都调一次，一次拖两个包就会并发跑两条上传，
+                // 而进度、结果和 running 只有一份——先跑完的那个会把拖拽区重新启用，
+                // 结果提示也只剩最后写入的那次。与逐张那一侧同样只认第一个。
+                if (file !== fileList[0]) return Upload.LIST_IGNORE
+                if (fileList.length > 1) message.warning('一次只能传一个压缩包，这里只取了第一个')
                 void uploadArchive(file as File)
                 return Upload.LIST_IGNORE
               }}>

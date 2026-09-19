@@ -2,7 +2,7 @@ import { api, qs } from './api'
 import type { ProjectPhotoFilters } from './photoTags'
 import type {
   EntityId, PageData, ShareGuestAccess, ShareGuestSession, SharePhoto, ShareLinkPurpose,
-  ShareUploadBatch, ShareUploadTicket, ShareUploadedPhoto,
+  ShareArchiveTicket, ShareUploadBatch, ShareUploadTicket, ShareUploadedPhoto,
 } from './types'
 
 /** 访客图片列表的查询条件：分页、关键字，加上与选题详情页同一组筛选。 */
@@ -149,7 +149,7 @@ export const shareUploadApi = {
   // ZIP 批量：建批次 → PUT 压缩包 → complete（后台解包）→ 轮询到待整理 → finish。
   // 与站内需求批量上传是同一条通道和同一套限额，区别只在访客没有元数据要填。
   createBatch: (token: string, session: string, archive: { archiveFileName: string; archiveSize: number }) =>
-    api<{ batchId: string; tickets: ShareUploadTicket[] }>({
+    api<{ batchId: string; tickets: ShareArchiveTicket[] }>({
       method: 'POST', url: `/public/shares/${token}/upload-batches`, data: archive, ...guest(session),
     }),
 

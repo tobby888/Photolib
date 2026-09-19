@@ -76,8 +76,12 @@ class PhotoProcessingProfileGuardTests {
                             rs.getString("status"), rs.getString("failure_reason"),
                             rs.getInt("version")})
                     .single();
-            assertThat(retryable).containsExactly(
-                    "UPLOADING", "预览图 profile 已切换", 2);
+            // 这一条钉的是"照片退回 UPLOADING、可以重传、版本 +1"。失败原因从这里起
+            // 不再是异常原文：它会一路回到上传者界面（含上传链接那条匿名通道），所以
+            // 只有 IllegalArgumentException 那一类"文件本身的毛病"照原样说，其余换成
+            // 通用提示、原文进日志，见 UploadFailureMessage。
+            assertThat(retryable).containsExactly("UPLOADING",
+                    "这张图片没能处理完成。请确认是完整的 JPG / PNG 后重新上传；如果反复失败，请联系管理员。", 2);
         } finally {
             cleanupRows();
             restoreProfile(original);

@@ -356,6 +356,19 @@ export interface ShareUploadTicket {
 }
 
 /**
+ * ZIP 批次签出来的上传地址，字段与后端 `BatchUploadService.ItemTicket` 对应——
+ * 它和单张的 {@link ShareUploadTicket} 不是一个形状：没有 photoId，也没有 method
+ * （压缩包一律是 PUT）。
+ */
+export interface ShareArchiveTicket {
+  itemId?: EntityId | null
+  fileName: string
+  uploadUrl: string
+  contentType: string
+  expiresAt: string
+}
+
+/**
  * 访客的 ZIP 批次。状态与站内批量上传同一套（`BatchUploadStatus`），因为走的就是
  * 同一张批次表和同一条解包流水线；访客看到的字段比站内少：没有条目明细。
  */

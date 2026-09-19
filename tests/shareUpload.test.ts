@@ -198,6 +198,33 @@ test('拿着上传链接打开相册页，不会把手里的会话清掉', async
   assert.match(page, /const \[purpose, setPurpose\] = useState<ShareLinkPurpose \| null>\(null\)/)
 })
 
+test('一次拖进来好几个压缩包，只会跑一条上传', async () => {
+  const page = await read('pages/SharedUploadPage.tsx')
+
+  // antd 对每个拖进来的文件都调一次 beforeUpload；不认第一个的话会并发跑好几条，
+  // 而进度、结果和 running 只有一份，先跑完的那条会把拖拽区提前解禁。
+  assert.match(page, /if \(file !== fileList\[0\]\) return Upload\.LIST_IGNORE/)
+  assert.match(page, /if \(!session \|\| running\) return/)
+})
+
+test('失败原因分两类：文件自己的毛病照说，基础设施的报错不外抬', async () => {
+  const [helper, batch, photo] = await Promise.all([
+    readBackend('common/upload/UploadFailureMessage.java'),
+    readBackend('photo/batch/BatchProcessingService.java'),
+    readBackend('photo/PhotoProcessingService.java'),
+  ])
+
+  // 按异常类型分，不按文案匹配：文案会改，类型不会。
+  assert.match(helper, /exception instanceof IllegalArgumentException/)
+  // 两条流水线都要走它，否则 failure_reason 里仍会留下 OSS 的原文，
+  // 而这个字段会经由上传链接回给未登录的访客。
+  assert.match(batch, /UploadFailureMessage\.forUploader/)
+  assert.match(photo, /UploadFailureMessage\.forUploader/)
+  // 原文不能就这么丢了，得进日志。
+  assert.match(batch, /UploadFailureMessage\.isInternal[\s\S]{0,200}log\.error/)
+  assert.match(photo, /UploadFailureMessage\.isInternal[\s\S]{0,200}log\.error/)
+})
+
 test('上传页只上传，不显示选题里已有的任何图片', async () => {
   const page = await read('pages/SharedUploadPage.tsx')
 
