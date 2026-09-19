@@ -38,9 +38,17 @@ public class SecurityConfig {
                                 "/notifications/**", "/statistics", "/manager-campuses", "/admin",
                                 "/recruitment", "/recruitments/**", "/recruitment-applications/**",
                                 "/docs", "/docs/**", "/documents", "/documents/**",
-                                "/share/**", "/upload/**",
+                                "/share/**", "/upload/**", "/mcp/authorize",
                                 "/api", "/api/",
                                 "/api/v1/auth/login", "/api/v1/auth/refresh",
+                                // MCP 客户端的配对通道。三条都由"还没有身份"的客户端调用，
+                                // 凭据是它自己持有的 deviceCode / 刷新令牌，不是登录会话；
+                                // 查看与批准两条接口不在这里，它们要求浏览器里的登录身份。
+                                // 详见 cn.photolib.mcp.McpAuthorizationService。
+                                "/api/v1/auth/mcp/authorizations",
+                                "/api/v1/auth/mcp/token",
+                                "/api/v1/auth/mcp/token/refresh",
+                                "/api/v1/auth/mcp/token/revoke",
                                 "/api/v1/actuator/health",
                                 "/api/v1/local-storage/objects/**",
                                 "/api/v1/branding/icon").permitAll()

@@ -5,6 +5,7 @@ import {
 import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth'
+import { afterLoginRoute } from '../loginRedirect'
 import { BrandGlyph, useBranding } from '../branding'
 import SiteFooter from '../SiteFooter'
 
@@ -24,8 +25,9 @@ export default function LoginPage() {
     try {
       const result = await login(values.identifier, values.password)
       message.success(`欢迎回来，${result.user.displayName}`)
-      navigate(result.mustChangePassword ? '/initial-password' :
-        ((location.state as { from?: { pathname: string } })?.from?.pathname || '/'))
+      // 去向的判定只有一处（`src/loginRedirect.ts`），这里和 App 里那条 /login 路由
+      // 共用它——两边在赛跑，答案必须一致，理由见那个文件的注释。
+      navigate(afterLoginRoute(result.mustChangePassword, location.state))
     } catch (error) {
       message.error((error as Error).message)
     } finally { setLoading(false) }

@@ -53,6 +53,26 @@ jobs:
 
       - run: npm test
 
+  mcp:
+    name: MCP 服务检查
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 安装依赖
+        working-directory: mcp
+        run: pip install -e ".[dev]"
+
+      # 测试全部用 httpx.MockTransport 打桩，不连任何真实后端，也不碰本机凭据文件。
+      - name: 运行测试
+        working-directory: mcp
+        run: pytest -q
+
   package:
     name: 打包 JAR
     runs-on: ubuntu-latest

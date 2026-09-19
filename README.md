@@ -13,6 +13,7 @@
 - [构建与部署](#构建与部署)
 - [生产环境配置](#生产环境配置)
 - [成员招募与公开报名页](#成员招募与公开报名页)
+- [AI 客户端接入（MCP）](#ai-客户端接入mcp)
 - [旧系统数据迁移](#旧系统数据迁移)
 - [验证与文档](#验证与文档)
 
@@ -27,6 +28,7 @@
 - **成员招募**：部长可自定义报名表并限时发布，同学无需登录即可在公开页填写并上传原图作品，详见[成员招募与公开报名页](#成员招募与公开报名页)。
 - **后台管理**：维护账号、校区、权限组、品牌设置、审计日志、存储对账和管理员告警。
 - **数据库备份**：每天凌晨 0 点自动把整库业务数据备份到对象存储，系统管理员可手动备份、下载、导入外部备份文件或回滚，详见[数据库备份与回滚](#数据库备份与回滚)。该能力仅对系统管理员开放，不出现在权限面板。
+- **AI 客户端接入**：仓库自带 MCP 服务，AI 客户端经浏览器批准后即可按成员本人的权限调用系统能力，详见[AI 客户端接入（MCP）](#ai-客户端接入mcp)。
 - **安全控制**：使用访问令牌与 HttpOnly 刷新令牌、首次登录强制改密、登录失败限速与锁定、写操作与登录尝试全量审计、私有对象存储预签名 URL、乐观锁和幂等键。
 
 ## 账号与权限
@@ -410,6 +412,57 @@ curl "https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=<企业ID>&corpsecret=
 - 用真实大小的图片和 ZIP 走通一次完整报名，确认 `upload-url-ttl` 足够。
 - 在无痕窗口以未登录状态访问 `/#/recruitment`，确认只能看到应当公开的招募。
 
+## AI 客户端接入（MCP）
+
+仓库里的 `mcp/` 是一个 [MCP](https://modelcontextprotocol.io) 服务，把 PhotoLib 的能力
+（选题、需求、图库与上传、采用、工时、统计导出、站内信、通讯录、好图精选、文档中心、
+成员招募、分享链接、系统管理）开放给支持 MCP 的 AI 客户端——Claude Desktop、Claude Code、
+Cursor 等。用 Python + FastMCP 写成，以 stdio 运行。完整说明见 [mcp/README.md](./mcp/README.md)。
+
+### 让 AI 帮你装
+
+把下面这段原样发给你的 AI 客户端，它会自己完成安装、登记和登录：
+
+```text
+请帮我安装并配置 PhotoLib 的 MCP 服务：
+
+1. 进入本仓库的 mcp/ 目录，执行 `pip install -e .`（需要 Python 3.10+）。
+2. 把它登记到我的 MCP 宿主里，服务名 photolib，命令 photolib-mcp，
+   环境变量 PHOTOLIB_BASE_URL=https://photowarehouse.cn（换成我们实际的站点地址）。
+   - Claude Code：claude mcp add photolib --env PHOTOLIB_BASE_URL=<站点地址> -- photolib-mcp
+   - Claude Desktop / Cursor：写进配置文件的 mcpServers，格式见 mcp/README.md
+3. 执行 `photolib-mcp doctor` 确认站点连得上、工具都注册成功。
+4. 重启宿主让它加载这个服务，然后调用 photolib_login 工具，
+   把浏览器链接和配对码给我——我会在浏览器里自己批准。
+```
+
+第 4 步是这套接入唯一需要你动手的地方：AI 拿不到你的密码，也不能替你批准。
+
+### 登录方式
+
+配置里没有账号密码这一项。首次使用时 AI 调用 `photolib_login`，你会拿到一条站内链接和
+一串配对码；在浏览器里用平时那个已登录的会话打开链接，核对客户端与设备信息，**手动输入**
+配对码后批准，客户端才会拿到令牌（存在本机 `~/.photolib-mcp/credentials.json`，权限 0600）。
+
+配对码必须手敲，这一步不能省：只凭链接就能批准的话，别人把他自己的配对链接发给你、你顺手
+一点，他就拿到了一个以你的身份说话的令牌。配对码只出现在发起配对的那个终端上，后端也只存
+它的哈希，猜错 5 次该次配对作废，配对请求 10 分钟过期。
+
+拿到的令牌就是一次普通登录签发的会话：权限、校区范围、改密或停用后的失效都和网页完全一致。
+**MCP 不是一个新的权限边界**，AI 做不到你本人在网页上做不到的事；批准动作本身会进审计日志。
+要收回授权，调用 `photolib_logout`、跑 `photolib-mcp logout`，或者直接改密码。
+
+### 收窄开放范围
+
+默认注册约 195 个工具，会占掉宿主不少上下文。按实际用途收窄：
+
+```bash
+# 只开日常那几块
+PHOTOLIB_MCP_TOOLSETS=auth,projects,requests,photos,worklogs,statistics
+# 只让 AI 查数据，不让它改（写操作工具根本不会注册）
+PHOTOLIB_MCP_READ_ONLY=true
+```
+
 ## 旧系统数据迁移
 
 旧 PhotoWarehouse（PostgreSQL + 阿里云 OSS）的迁移脚本位于 `scripts/`，采用可重入的两阶段流程：
@@ -448,6 +501,10 @@ npm run lint
 # 后端测试
 cd backend
 .\mvnw.cmd test
+
+# MCP 服务测试（不连真实后端）
+cd mcp
+pytest -q
 ```
 
 主要文档：
@@ -455,6 +512,7 @@ cd backend
 - [接口文档](./API.md)：认证、数据结构、接口、状态流转与校验规则。
 - [项目说明](./HELP.md)：角色、业务线与原始需求。
 - [后端说明](./backend/README.md)：后端启动方式与实现范围。
+- [MCP 服务](./mcp/README.md)：AI 客户端接入、浏览器登录与工具分组。
 - [测试说明](./docs/TESTING.md)：专项手工用例与验证建议。
 - [旧系统迁移](./docs/PHOTO_WAREHOUSE_SERVER_MIGRATION.md)：PhotoWarehouse 导出、导入与项目照片归属恢复。
 
@@ -469,6 +527,7 @@ PhotoLib/
 │       ├── main/java/         # Spring Boot 业务代码
 │       ├── main/resources/    # 配置与 Flyway 迁移
 │       └── test/              # 后端测试
+├── mcp/                       # PhotoLib 的 MCP 服务（Python + FastMCP）
 ├── scripts/                   # QA、迁移与维护脚本
 ├── docs/                      # 测试、迁移与技术记录
 ├── API.md                     # REST API 契约
