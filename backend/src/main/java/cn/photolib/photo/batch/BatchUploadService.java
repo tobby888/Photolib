@@ -42,6 +42,7 @@ public class BatchUploadService {
     private final ApplicationEventPublisher events;
     private final JdbcClient jdbc;
     private final cn.photolib.directory.CampusMemberService campusMemberService;
+    private final cn.photolib.photo.AbandonedUploadCleanupJob abandonedUploads;
 
     @Transactional
     public BatchTicket create(CreateBatch command, AuthenticatedUser user) {
@@ -54,11 +55,6 @@ public class BatchUploadService {
                 || command.files().isEmpty() || command.files().size() > 100)) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "FILES 模式需上传 1 至 100 张图片");
         }
-        if (command.mode() == BatchMode.ZIP
-                && (command.archiveSize() == null || command.archiveSize() <= 0
-                || command.archiveSize() > ImageUploadPolicy.MAX_ARCHIVE_BYTES)) {
-            throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "ZIP 不得超过 1.5 GB");
-        }
         Long projectId = command.projectId();
         if (command.requestId() != null) {
             PhotoRequestEntity request = requestService.requireParticipantAccess(command.requestId(), user);
@@ -66,6 +62,10 @@ public class BatchUploadService {
         } else {
             requireGalleryUploadCampus(user);
             if (projectId != null) requireProjectUploadAccess(projectId, user);
+        }
+        if (command.mode() == BatchMode.ZIP) {
+            return createZipBatch(new ZipBatch(command.requestId(), projectId, user.id(), null,
+                    command.archiveFileName(), command.archiveSize()));
         }
         String batchId = PublicId.next();
         LocalDateTime now = LocalDateTime.now();
@@ -76,45 +76,35 @@ public class BatchUploadService {
         batch.setProjectId(projectId);
         batch.setCreatedBy(user.id());
         batch.setStatus(BatchStatus.UPLOADING);
-        batch.setTotalCount(command.mode() == BatchMode.FILES ? command.files().size() : 0);
+        batch.setTotalCount(command.files().size());
         batch.setSuccessCount(0);
         batch.setFailureCount(0);
         batch.setCreatedAt(now);
         batch.setUpdatedAt(now);
         List<ItemTicket> tickets = new ArrayList<>();
-        if (command.mode() == BatchMode.ZIP) {
-            String key = "temporary/batches/" + batchId + "/archive.zip";
-            batch.setArchiveObjectKey(key);
-            batch.setArchiveFileName(command.archiveFileName());
-            batch.setArchiveSize(command.archiveSize());
-            ObjectStorageService.SignedUrl signed = storage.presignPut(
-                    key, "application/zip", storageProperties.uploadUrlTtl());
-            tickets.add(new ItemTicket(null, command.archiveFileName(), signed.url().toString(),
-                    "application/zip", signed.expiresAt()));
-        }
         batchMapper.insert(batch);
-        if (command.mode() == BatchMode.FILES) {
-            for (FileSpec file : command.files()) {
-                validateFile(file);
-                String extension = file.contentType().equals("image/png") ? "png" : "jpg";
-                String key = "temporary/batches/" + batchId + "/" + UUID.randomUUID() + "." + extension;
-                PhotoUploadItemEntity item = new PhotoUploadItemEntity();
-                item.setBatchId(batchId);
-                item.setOriginalFileName(file.fileName());
-                item.setTempObjectKey(key);
-                item.setContentType(file.contentType());
-                item.setSize(file.size());
-                item.setSha256(file.sha256());
-                item.setStatus(BatchItemStatus.UPLOADING);
-                item.setCreatedAt(now);
-                item.setUpdatedAt(now);
-                itemMapper.insert(item);
-                ObjectStorageService.SignedUrl signed = storage.presignPut(
-                        key, file.contentType(), storageProperties.uploadUrlTtl());
-                tickets.add(new ItemTicket(item.getId(), file.fileName(), signed.url().toString(),
-                        file.contentType(), signed.expiresAt()));
-            }
+        for (FileSpec file : command.files()) {
+            validateFile(file);
+            String extension = file.contentType().equals("image/png") ? "png" : "jpg";
+            String key = "temporary/batches/" + batchId + "/" + UUID.randomUUID() + "." + extension;
+            PhotoUploadItemEntity item = new PhotoUploadItemEntity();
+            item.setBatchId(batchId);
+            item.setOriginalFileName(file.fileName());
+            item.setTempObjectKey(key);
+            item.setContentType(file.contentType());
+            item.setSize(file.size());
+            item.setSha256(file.sha256());
+            item.setStatus(BatchItemStatus.UPLOADING);
+            item.setUploadUrlExpiresAt(now.plus(storageProperties.uploadUrlTtl()));
+            item.setCreatedAt(now);
+            item.setUpdatedAt(now);
+            itemMapper.insert(item);
+            ObjectStorageService.SignedUrl signed = storage.presignPut(
+                    key, file.contentType(), storageProperties.uploadUrlTtl());
+            tickets.add(new ItemTicket(item.getId(), file.fileName(), signed.url().toString(),
+                    file.contentType(), signed.expiresAt()));
         }
+        abandonedUploads.nudge();
         return new BatchTicket(batchId, command.mode(), tickets);
     }
 
@@ -128,28 +118,21 @@ public class BatchUploadService {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "批次不处于上传状态");
         }
         if (batch.getMode() == BatchMode.ZIP) {
-            ObjectStorageService.ObjectInfo info = storage.stat(batch.getArchiveObjectKey());
-            if (info.size() > ImageUploadPolicy.MAX_ARCHIVE_BYTES) {
-                throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "ZIP 不得超过 1.5 GB");
-            }
-            transitionBatch(id, BatchStatus.UPLOADING, BatchStatus.PROCESSING);
-            events.publishEvent(new BatchProcessingService.ZipProcessRequested(id));
-        } else {
-            transitionBatch(id, BatchStatus.UPLOADING, BatchStatus.PROCESSING);
-            List<PhotoUploadItemEntity> items = items(id);
-            for (PhotoUploadItemEntity item : items) {
-                ObjectStorageService.ObjectInfo info = storage.stat(item.getTempObjectKey());
-                if (info.size() > imageMaxBytes()) {
-                    item.setStatus(BatchItemStatus.FAILED);
-                    item.setFailureReason("图片超过 100 MiB");
-                } else {
-                    item.setStatus(BatchItemStatus.WAITING_METADATA);
-                    item.setSize(info.size());
-                }
-                itemMapper.updateById(item);
-            }
-            transitionBatch(id, BatchStatus.PROCESSING, BatchStatus.WAITING_METADATA);
+            return completeZipBatch(id);
         }
+        transitionBatch(id, BatchStatus.UPLOADING, BatchStatus.PROCESSING);
+        for (PhotoUploadItemEntity item : items(id)) {
+            ObjectStorageService.ObjectInfo info = storage.stat(item.getTempObjectKey());
+            if (info.size() > imageMaxBytes()) {
+                item.setStatus(BatchItemStatus.FAILED);
+                item.setFailureReason("图片超过 100 MiB");
+            } else {
+                item.setStatus(BatchItemStatus.WAITING_METADATA);
+                item.setSize(info.size());
+            }
+            itemMapper.updateById(item);
+        }
+        transitionBatch(id, BatchStatus.PROCESSING, BatchStatus.WAITING_METADATA);
         return view(batchMapper.selectById(id));
     }
 
@@ -177,7 +160,7 @@ public class BatchUploadService {
                 : requestService.get(batch.getRequestId()).getCampusId();
         var photographer = campusMemberService.resolvePhotographer(metadata.photographerContactId(), campusId);
         createPhoto(batch, item, metadata.title(), metadata.description(), metadata.takenAt(),
-                tags, photographer.getStudentId(), photographer.getName(), campusId, user.id());
+                tags, photographer.getStudentId(), photographer.getName(), campusId, user.id(), null);
         return view(batchMapper.selectById(batchId));
     }
 
@@ -187,36 +170,129 @@ public class BatchUploadService {
         if (batch.getRequestId() == null && batch.getProjectId() != null) {
             requireProjectUploadAccess(batch.getProjectId(), user);
         }
-        if (batch.getStatus() != BatchStatus.WAITING_METADATA) {
-            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "批次尚未完成解压或已开始处理");
-        }
-        List<String> tags = allowedTags(batch, metadata.tags());
-        transitionBatch(batchId, BatchStatus.WAITING_METADATA, BatchStatus.PROCESSING);
-        List<PhotoUploadItemEntity> waitingItems = itemMapper.selectList(
-                Wrappers.<PhotoUploadItemEntity>lambdaQuery()
-                        .eq(PhotoUploadItemEntity::getBatchId, batchId)
-                        .eq(PhotoUploadItemEntity::getStatus, BatchItemStatus.WAITING_METADATA)
-                        .orderByAsc(PhotoUploadItemEntity::getId));
-        if (waitingItems.isEmpty()) {
-            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "批次中没有可整理的图片");
-        }
         Long campusId = batch.getRequestId() == null
                 ? requireGalleryUploadCampus(user)
                 : requestService.get(batch.getRequestId()).getCampusId();
         var photographer = campusMemberService.resolvePhotographer(metadata.photographerContactId(), campusId);
+        return finishAllWithSnapshot(batchId, new PhotoSnapshot(
+                photographer.getStudentId(), photographer.getName(), campusId, user.id(), null,
+                metadata.takenAt(), metadata.description(), metadata.tags()));
+    }
+
+    // ------------------------------------------------------------------ 中立接口
+    //
+    // 下面三个方法**不做任何授权**，授权由调用方按自己的规则完成：站内是这个类里
+    // 的 create / complete / setMetadataForAll（权限码 + 参与人 + 校区），站外是
+    // 上传链接（`ProjectShareUploadService`：链接用途 + 会话 + 选题是否仍在收图）。
+    // 抽出来是为了让两条路共用同一套限额、同一套状态迁移和同一段"批次条目变成
+    // 照片"的簿记——ZIP 解包的阈值只有一份，松的那一份才不会被拿来当入口。
+
+    /** 建一个 ZIP 批次并签出上传地址。 */
+    @Transactional
+    public BatchTicket createZipBatch(ZipBatch request) {
+        if (request.archiveSize() == null || request.archiveSize() <= 0
+                || request.archiveSize() > ImageUploadPolicy.MAX_ARCHIVE_BYTES) {
+            throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "ZIP 不得超过 1.5 GB");
+        }
+        String batchId = PublicId.next();
+        LocalDateTime now = LocalDateTime.now();
+        String key = "temporary/batches/" + batchId + "/archive.zip";
+        PhotoUploadBatchEntity batch = new PhotoUploadBatchEntity();
+        batch.setId(batchId);
+        batch.setMode(BatchMode.ZIP);
+        batch.setRequestId(request.requestId());
+        batch.setProjectId(request.projectId());
+        batch.setCreatedBy(request.createdBy());
+        batch.setShareLinkId(request.shareLinkId());
+        batch.setStatus(BatchStatus.UPLOADING);
+        batch.setTotalCount(0);
+        batch.setSuccessCount(0);
+        batch.setFailureCount(0);
+        batch.setArchiveObjectKey(key);
+        batch.setArchiveFileName(request.archiveFileName());
+        batch.setArchiveSize(request.archiveSize());
+        batch.setUploadUrlExpiresAt(now.plus(storageProperties.uploadUrlTtl()));
+        batch.setCreatedAt(now);
+        batch.setUpdatedAt(now);
+        batchMapper.insert(batch);
+        ObjectStorageService.SignedUrl signed = storage.presignPut(
+                key, "application/zip", storageProperties.uploadUrlTtl());
+        // 与单张一致：每次签票据都捅一下清理任务，它自己节流。
+        abandonedUploads.nudge();
+        return new BatchTicket(batchId, BatchMode.ZIP, List.of(new ItemTicket(null,
+                request.archiveFileName(), signed.url().toString(), "application/zip",
+                signed.expiresAt())));
+    }
+
+    /**
+     * ZIP 的字节已经就位：复核实际大小后交给解包。
+     *
+     * <p>签票据时那次校验信的是客户端自报的 size，这里问的是对象存储上真实躺着的
+     * 东西——两者不一致正是"签一个小的、传一个大的"这条路。</p>
+     */
+    @Transactional
+    public BatchView completeZipBatch(String batchId) {
+        PhotoUploadBatchEntity batch = batchMapper.selectById(batchId);
+        if (batch == null || batch.getMode() != BatchMode.ZIP) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "上传批次不存在");
+        }
+        if (batch.getStatus() != BatchStatus.UPLOADING) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "批次不处于上传状态");
+        }
+        ObjectStorageService.ObjectInfo info = storage.stat(batch.getArchiveObjectKey());
+        if (info.size() > ImageUploadPolicy.MAX_ARCHIVE_BYTES) {
+            throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "ZIP 不得超过 1.5 GB");
+        }
+        transitionBatch(batchId, BatchStatus.UPLOADING, BatchStatus.PROCESSING);
+        events.publishEvent(new BatchProcessingService.ZipProcessRequested(batchId));
+        return view(batchMapper.selectById(batchId));
+    }
+
+    /**
+     * 把批次里所有待整理的条目按同一份拍摄者快照落成照片，交给压缩管线。
+     *
+     * <p>标签仍按批次所属选题的预设校验，并且**在任何状态迁移之前**——被拒时批次
+     * 原样留在待整理状态，可以改完再来一次。</p>
+     */
+    @Transactional
+    public BatchView finishAllWithSnapshot(String batchId, PhotoSnapshot snapshot) {
+        PhotoUploadBatchEntity batch = batchMapper.selectById(batchId);
+        if (batch == null) throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "上传批次不存在");
+        if (batch.getStatus() != BatchStatus.WAITING_METADATA) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "批次尚未完成解压或已开始处理");
+        }
+        List<String> tags = allowedTags(batch, snapshot.tags());
+        transitionBatch(batchId, BatchStatus.WAITING_METADATA, BatchStatus.PROCESSING);
+        List<PhotoUploadItemEntity> waitingItems = waitingItems(batchId);
+        if (waitingItems.isEmpty()) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "批次中没有可整理的图片");
+        }
         for (PhotoUploadItemEntity item : waitingItems) {
             transitionItem(item.getId(), BatchItemStatus.WAITING_METADATA, BatchItemStatus.PROCESSING);
-            createPhoto(batch, item, titleFromFileName(item.getOriginalFileName()), metadata.description(),
-                    metadata.takenAt(), tags, photographer.getStudentId(), photographer.getName(),
-                    campusId, user.id());
+            createPhoto(batch, item, titleFromFileName(item.getOriginalFileName()),
+                    snapshot.description(), snapshot.takenAt(), tags,
+                    snapshot.photographerStudentId(), snapshot.photographerName(),
+                    snapshot.campusId(), snapshot.uploadedBy(), snapshot.shareLinkId());
         }
         return view(batchMapper.selectById(batchId));
+    }
+
+    /** 等着被整理成照片的条目，按 id 升序（解包顺序）。 */
+    public List<PhotoUploadItemEntity> waitingItems(String batchId) {
+        return itemMapper.selectList(Wrappers.<PhotoUploadItemEntity>lambdaQuery()
+                .eq(PhotoUploadItemEntity::getBatchId, batchId)
+                .eq(PhotoUploadItemEntity::getStatus, BatchItemStatus.WAITING_METADATA)
+                .orderByAsc(PhotoUploadItemEntity::getId));
+    }
+
+    public BatchView viewOf(PhotoUploadBatchEntity batch) {
+        return view(batch);
     }
 
     private void createPhoto(PhotoUploadBatchEntity batch, PhotoUploadItemEntity item, String title,
                              String description, LocalDateTime takenAt, List<String> tags,
                              String photographerStudentId, String photographerName, Long campusId,
-                             Long uploadedBy) {
+                             Long uploadedBy, Long shareLinkId) {
         String extension = item.getContentType().equals("image/png") ? "png" : "jpg";
         PhotoEntity photo = new PhotoEntity();
         photo.setRequestId(batch.getRequestId());
@@ -226,6 +302,7 @@ public class BatchUploadService {
         photo.setPhotographerStudentId(photographerStudentId);
         photo.setPhotographerName(photographerName);
         photo.setUploadedBy(uploadedBy);
+        photo.setShareLinkId(shareLinkId);
         photo.setCampusId(campusId);
         photo.setTakenAt(takenAt);
         photo.setTagsJson(PhotoTags.toJson(tags));
@@ -350,6 +427,13 @@ public class BatchUploadService {
 
     public record CreateBatch(BatchMode mode, Long requestId, Long projectId, String archiveFileName,
                               Long archiveSize, List<FileSpec> files) {}
+    /** 中立的 ZIP 批次建立参数；{@code shareLinkId} 非空表示这是一条上传链接开的批次。 */
+    public record ZipBatch(Long requestId, Long projectId, Long createdBy, Long shareLinkId,
+                           String archiveFileName, Long archiveSize) {}
+    /** 一个批次里所有照片共用的那份信息。拍摄者姓名/学号是快照，不落 contactId。 */
+    public record PhotoSnapshot(String photographerStudentId, String photographerName, Long campusId,
+                                Long uploadedBy, Long shareLinkId, LocalDateTime takenAt,
+                                String description, List<String> tags) {}
     public record FileSpec(String fileName, String contentType, long size, String sha256) {}
     public record ItemMetadata(String title, String description, Long photographerContactId,
                                LocalDateTime takenAt, List<String> tags) {}

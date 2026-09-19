@@ -1,5 +1,6 @@
 package cn.photolib.photo;
 
+import cn.photolib.common.upload.UploadFailureMessage;
 import cn.photolib.photo.mapper.PhotoMapper;
 import cn.photolib.photo.model.PhotoEntity;
 import cn.photolib.photo.model.PhotoStatus;
@@ -182,8 +183,17 @@ public class PhotoProcessingService {
         photo.setFailureReason(null);
     }
 
+    /**
+     * 失败原因会回到上传者的界面上（图库、批量上传页，以及上传链接那条匿名通道），
+     * 所以只有"图片本身的毛病"照原样给出去，其余换成通用提示、原文进日志，
+     * 理由见 {@link UploadFailureMessage}。
+     */
     PhotoEntity markProcessingFailed(PhotoEntity photo, Exception exception) {
-        String failureReason = exception.getMessage();
+        if (UploadFailureMessage.isInternal(exception)) {
+            log.error("图片处理因非校验类错误失败，对外只回通用提示: photoId={}", photo.getId(), exception);
+        }
+        String failureReason = UploadFailureMessage.forUploader(exception,
+                "这张图片没能处理完成。请确认是完整的 JPG / PNG 后重新上传；如果反复失败，请联系管理员。");
         int failed = photoMapper.failProcessing(photo.getId(), photo.getVersion(),
                 failureReason, LocalDateTime.now());
         if (failed == 1) {

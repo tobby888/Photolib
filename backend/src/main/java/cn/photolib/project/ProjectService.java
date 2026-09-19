@@ -127,7 +127,7 @@ public class ProjectService {
     }
 
     /** 存量行的 {@code type} 可能是 {@code NULL}（迁移之前建的选题），一律按创作选题看待。 */
-    private ProjectType typeOf(ProjectEntity project) {
+    public ProjectType typeOf(ProjectEntity project) {
         return project.getType() == null ? ProjectType.CREATION : project.getType();
     }
 

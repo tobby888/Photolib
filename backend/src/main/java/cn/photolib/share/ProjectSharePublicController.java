@@ -4,20 +4,24 @@ import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.api.PageResponse;
 import cn.photolib.photo.PhotoService;
 import cn.photolib.photo.PhotoTags;
+import cn.photolib.photo.batch.BatchUploadService;
 import cn.photolib.statistics.ExportJobEntity;
 import cn.photolib.statistics.ExportService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -38,6 +42,7 @@ public class ProjectSharePublicController {
     public static final String SESSION_HEADER = "X-Share-Session";
 
     private final ProjectShareService service;
+    private final ProjectShareUploadService uploadService;
     private final ShareAccessRateLimiter rateLimiter;
 
     // 会话头声明成可选：缺头是"这个人还没过密码"，该由 resolveGuest 回一句
@@ -50,13 +55,17 @@ public class ProjectSharePublicController {
         return ApiResponse.ok(service.greet(token));
     }
 
+    /**
+     * 进门。上传链接还要求自报姓名和学号——那是这次会话上传的每一张图片的拍摄者
+     * 快照，理由见 {@link ProjectShareUploadService} 第 2 条不变量。浏览链接忽略这两项。
+     */
     @PostMapping("/sessions")
     ApiResponse<ProjectShareService.GuestSession> openSession(
             @PathVariable String token, @Valid @RequestBody PasswordRequest request,
             HttpServletRequest servletRequest) {
         rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.PASSWORD, token,
                 servletRequest.getRemoteAddr());
-        return ApiResponse.ok(service.openSession(token, request.password()));
+        return ApiResponse.ok(service.openSession(token, request.password(), request.identity()));
     }
 
     /** 会话续用时重新取一次能力：链接的开关可能刚被创建者改过。 */
@@ -67,7 +76,7 @@ public class ProjectSharePublicController {
             HttpServletRequest servletRequest) {
         rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.BROWSE, token,
                 servletRequest.getRemoteAddr());
-        return ApiResponse.ok(service.access(service.resolveGuest(token, session)));
+        return ApiResponse.ok(service.access(service.resolveGuestContext(token, session)));
     }
 
     @GetMapping("/photos")
@@ -152,7 +161,123 @@ public class ProjectSharePublicController {
         return ApiResponse.ok(service.cancelAdoption(service.resolveGuest(token, session), photoId));
     }
 
-    record PasswordRequest(@NotNull @Size(max = ProjectShareService.MAX_PASSWORD_LENGTH) String password) {}
+    // ------------------------------------------------------------------ 上传链接
+
+    @PostMapping("/upload-tickets")
+    ApiResponse<ProjectShareUploadService.UploadTicket> uploadTicket(
+            @PathVariable String token,
+            @RequestHeader(value = SESSION_HEADER, required = false) String session,
+            @Valid @RequestBody UploadTicketRequest request, HttpServletRequest servletRequest) {
+        rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.UPLOAD, token,
+                servletRequest.getRemoteAddr());
+        return ApiResponse.ok(uploadService.createTicket(
+                service.resolveGuestContext(token, session), request.command()));
+    }
+
+    @PostMapping("/uploads/{photoId}/complete")
+    ApiResponse<ProjectShareUploadService.UploadedPhoto> completeUpload(
+            @PathVariable String token, @PathVariable Long photoId,
+            @RequestHeader(value = SESSION_HEADER, required = false) String session,
+            @Valid @RequestBody UploadCompleteRequest request, HttpServletRequest servletRequest) {
+        rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.UPLOAD, token,
+                servletRequest.getRemoteAddr());
+        return ApiResponse.ok(uploadService.complete(service.resolveGuestContext(token, session),
+                photoId, new ProjectShareUploadService.CompleteCommand(
+                        request.title(), request.description())));
+    }
+
+    /** 轮询处理结果：压缩失败的图片会被打回 UPLOADING，访客必须能看到这件事。 */
+    @GetMapping("/uploads/{photoId}")
+    ApiResponse<ProjectShareUploadService.UploadedPhoto> uploadStatus(
+            @PathVariable String token, @PathVariable Long photoId,
+            @RequestHeader(value = SESSION_HEADER, required = false) String session,
+            HttpServletRequest servletRequest) {
+        rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.UPLOAD_STATUS, token,
+                servletRequest.getRemoteAddr());
+        return ApiResponse.ok(uploadService.status(
+                service.resolveGuestContext(token, session), photoId));
+    }
+
+    /**
+     * ZIP 批量上传：建批次并签出压缩包的上传地址。限额与站内需求批量上传完全一致，
+     * 见 {@link ProjectShareUploadService#createZipTicket}。
+     */
+    @PostMapping("/upload-batches")
+    ApiResponse<BatchUploadService.BatchTicket> createUploadBatch(
+            @PathVariable String token,
+            @RequestHeader(value = SESSION_HEADER, required = false) String session,
+            @Valid @RequestBody UploadBatchRequest request, HttpServletRequest servletRequest) {
+        rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.UPLOAD, token,
+                servletRequest.getRemoteAddr());
+        return ApiResponse.ok(uploadService.createZipTicket(
+                service.resolveGuestContext(token, session),
+                new ProjectShareUploadService.ZipCommand(
+                        request.archiveFileName(), request.archiveSize())));
+    }
+
+    /** 压缩包已经传完，交给解包（异步）。 */
+    @PostMapping("/upload-batches/{batchId}/complete")
+    ApiResponse<ProjectShareUploadService.GuestBatch> completeUploadBatch(
+            @PathVariable String token, @PathVariable String batchId,
+            @RequestHeader(value = SESSION_HEADER, required = false) String session,
+            HttpServletRequest servletRequest) {
+        rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.UPLOAD, token,
+                servletRequest.getRemoteAddr());
+        return ApiResponse.ok(uploadService.completeZip(
+                service.resolveGuestContext(token, session), batchId));
+    }
+
+    /** 轮询解包与处理结果；解包失败的原因也从这里回。 */
+    @GetMapping("/upload-batches/{batchId}")
+    ApiResponse<ProjectShareUploadService.GuestBatch> uploadBatchStatus(
+            @PathVariable String token, @PathVariable String batchId,
+            @RequestHeader(value = SESSION_HEADER, required = false) String session,
+            HttpServletRequest servletRequest) {
+        rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.UPLOAD_STATUS, token,
+                servletRequest.getRemoteAddr());
+        return ApiResponse.ok(uploadService.batchStatus(
+                service.resolveGuestContext(token, session), batchId));
+    }
+
+    /** 解包完成后把这一批落成照片。访客没有元数据要填，拍摄者来自会话身份。 */
+    @PostMapping("/upload-batches/{batchId}/finish")
+    ApiResponse<ProjectShareUploadService.GuestBatch> finishUploadBatch(
+            @PathVariable String token, @PathVariable String batchId,
+            @RequestHeader(value = SESSION_HEADER, required = false) String session,
+            @Valid @RequestBody UploadBatchFinishRequest request, HttpServletRequest servletRequest) {
+        rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.UPLOAD, token,
+                servletRequest.getRemoteAddr());
+        return ApiResponse.ok(uploadService.finishZip(
+                service.resolveGuestContext(token, session), batchId, request.takenAt()));
+    }
+
+    record UploadBatchRequest(@NotBlank @Size(max = 255) String archiveFileName,
+                              @NotNull @Min(1) Long archiveSize) {}
+
+    /** 拍摄时间留空按当前时间算，与单张上传同一条规则。 */
+    record UploadBatchFinishRequest(LocalDateTime takenAt) {}
+
+    record PasswordRequest(@NotNull @Size(max = ProjectShareService.MAX_PASSWORD_LENGTH) String password,
+                           @Size(max = ProjectShareService.MAX_UPLOADER_NAME_LENGTH) String uploaderName,
+                           @Size(max = 64) String uploaderStudentId) {
+        ProjectShareService.GuestIdentity identity() {
+            return new ProjectShareService.GuestIdentity(uploaderName, uploaderStudentId);
+        }
+    }
+
+    record UploadTicketRequest(@NotBlank @Size(max = 255) String fileName,
+                               @NotBlank @Size(max = 100) String contentType,
+                               @Min(1) long size,
+                               @NotBlank @Pattern(regexp = "[0-9a-fA-F]{64}",
+                                       message = "SHA-256 必须是 64 位十六进制") String sha256,
+                               LocalDateTime takenAt) {
+        ProjectShareUploadService.TicketCommand command() {
+            return new ProjectShareUploadService.TicketCommand(fileName, contentType, size,
+                    sha256, takenAt);
+        }
+    }
+
+    record UploadCompleteRequest(@Size(max = 200) String title, @Size(max = 500) String description) {}
 
     record BatchDownloadRequest(@NotEmpty @Size(max = 200) List<@NotNull Long> photoIds) {}
 }

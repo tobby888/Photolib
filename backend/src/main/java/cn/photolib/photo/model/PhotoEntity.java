@@ -34,4 +34,12 @@ public class PhotoEntity extends BaseEntity {
     private PhotoStatus status;
     private String failureReason;
     private LocalDateTime originalDeleteAfter;
+    /** 经由哪条上传链接传进来的；站内上传为 {@code null}。 */
+    private Long shareLinkId;
+    /**
+     * 这张照片的直传地址什么时候过期。只对还没 complete 的行有意义：
+     * {@code AbandonedUploadCleanupJob} 要等它过期之后才敢删 {@code original_object_key}
+     * 指着的那个临时对象，理由见 Flyway V50。
+     */
+    private LocalDateTime uploadUrlExpiresAt;
 }

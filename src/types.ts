@@ -282,17 +282,26 @@ export interface Adoption {
  * 明文密码只在创建和重置密码的返回里出现一次，之后服务端只剩哈希——这个类型里
  * 因此没有 password 字段，要"再看一眼密码"只能重置。
  */
+/**
+ * 一条链接是用来看的还是用来传的。两种用途的能力互斥，建立后不可改
+ * （后端 `ShareLinkPurpose`）。
+ */
+export type ShareLinkPurpose = 'BROWSE' | 'UPLOAD'
+
 export interface ProjectShareLink {
   id: EntityId
   token: string
   projectId: EntityId
   name?: string | null
+  purpose: ShareLinkPurpose
   allowDownload: boolean
   allowAdoption: boolean
   expiresAt?: string | null
   expired: boolean
   viewCount: number
   lastViewedAt?: string | null
+  /** 通过这条上传链接传进来的图片张数；浏览链接恒为 0。 */
+  uploadCount: number
   createdBy: EntityId
   createdAt: string
   version: number
@@ -303,8 +312,13 @@ export interface ShareGuestAccess {
   projectTitle: string
   projectStatus: Project['status']
   linkName?: string | null
+  purpose: ShareLinkPurpose
   allowDownload: boolean
   allowAdoption: boolean
+  /** 上传链接：选题当下还收不收图（选题结束后立刻变 false）。 */
+  allowUpload: boolean
+  /** 上传链接：访客进门时自报的姓名，回显用。 */
+  uploaderName?: string | null
   expiresAt?: string | null
 }
 
@@ -330,6 +344,49 @@ export interface SharePhoto {
   storedFileName: string
   thumbnailUrl?: string
   adopted: boolean
+}
+
+/** 上传链接签出来的一次性上传票据，与站内单张上传同一条流水线。 */
+export interface ShareUploadTicket {
+  photoId: EntityId
+  uploadUrl: string
+  method: string
+  contentType: string
+  expiresAt: string
+}
+
+/**
+ * ZIP 批次签出来的上传地址，字段与后端 `BatchUploadService.ItemTicket` 对应——
+ * 它和单张的 {@link ShareUploadTicket} 不是一个形状：没有 photoId，也没有 method
+ * （压缩包一律是 PUT）。
+ */
+export interface ShareArchiveTicket {
+  itemId?: EntityId | null
+  fileName: string
+  uploadUrl: string
+  contentType: string
+  expiresAt: string
+}
+
+/**
+ * 访客的 ZIP 批次。状态与站内批量上传同一套（`BatchUploadStatus`），因为走的就是
+ * 同一张批次表和同一条解包流水线；访客看到的字段比站内少：没有条目明细。
+ */
+export interface ShareUploadBatch {
+  batchId: string
+  status: BatchUploadStatus
+  totalCount: number
+  successCount: number
+  failureCount: number
+  failureReason?: string | null
+}
+
+/** 访客刚传的那一张当下的处理结果。失败时 status 会被打回 UPLOADING 并带上原因。 */
+export interface ShareUploadedPhoto {
+  photoId: EntityId
+  title?: string | null
+  status: Photo['status']
+  failureReason?: string | null
 }
 
 export interface Worklog extends BaseEntity {

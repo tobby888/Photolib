@@ -56,10 +56,11 @@ public class PhotoService {
     private final JdbcClient jdbc;
     private final CampusService campusService;
     private final cn.photolib.directory.CampusMemberService campusMemberService;
+    private final AbandonedUploadCleanupJob abandonedUploads;
 
     @Transactional
     public UploadTicket createTicket(CreateTicket command, AuthenticatedUser user) {
-        validateFile(command.fileName(), command.contentType(), command.size());
+        validateUploadFile(command.fileName(), command.contentType(), command.size());
         requireUploadPermission(command.requestId(), user);
 
         Long campusId;
@@ -103,6 +104,9 @@ public class PhotoService {
         photo.setOriginalObjectKey(originalKey);
         photo.setSha256(sha256Lower);
         photo.setStatus(PhotoStatus.UPLOADING);
+        // 直传地址的有效期跟着一起记下来：传了一半就走的那些，要等这个时刻过了
+        // 才轮得到清理任务动手（Flyway V50）。
+        photo.setUploadUrlExpiresAt(LocalDateTime.now().plus(properties.uploadUrlTtl()));
         mapper.insert(photo);
         // 归属链接：项目相册/计数以 photo_project 为准。新照片 id 全新，(photo_id,project_id) 不会撞主键。
         if (projectId != null) {
@@ -113,6 +117,8 @@ public class PhotoService {
         }
         ObjectStorageService.SignedUrl signed = storage.presignPut(
                 originalKey, command.contentType(), properties.uploadUrlTtl());
+        // 顺手看一眼有没有别人留下的半成品该清了；节流且异步，不拖慢这次上传。
+        abandonedUploads.nudge();
         return new UploadTicket(photo.getId(), signed.url().toString(), signed.method(),
                 command.contentType(), signed.expiresAt());
     }
@@ -537,11 +543,11 @@ public class PhotoService {
 
     /** 上传时的格式与体积校验，编辑保存复用同一套规则。 */
     void requireSupportedImage(String fileName, String contentType, long size) {
-        validateFile(fileName, contentType, size);
+        validateUploadFile(fileName, contentType, size);
     }
 
     /** 全库重复图片拦截，与单张上传 {@link #createTicket} 同一条规则；{@code exceptPhotoId} 是自己。 */
-    void requireUniqueSha256(String sha256Lower, Long exceptPhotoId) {
+    public void requireUniqueSha256(String sha256Lower, Long exceptPhotoId) {
         PhotoEntity existing = mapper.selectOne(Wrappers.<PhotoEntity>lambdaQuery()
                 .eq(PhotoEntity::getSha256, sha256Lower)
                 .eq(PhotoEntity::getDeleted, false)
@@ -570,7 +576,11 @@ public class PhotoService {
         }
     }
 
-    private void validateFile(String fileName, String contentType, long size) {
+    /**
+     * 单张上传的文件校验。公开给分享链接的上传通道复用（{@code ProjectShareUploadService}）：
+     * 站外传进来的文件与站内走的是同一条流水线，允许的类型和大小上限就必须是同一份。
+     */
+    public void validateUploadFile(String fileName, String contentType, long size) {
         if (size <= 0 || size > properties.imageMaxBytes()) {
             throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "单张图片不得超过 100 MiB");
         }

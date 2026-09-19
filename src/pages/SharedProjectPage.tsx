@@ -4,7 +4,7 @@ import {
 import { DownloadOutlined, EyeOutlined, KeyOutlined, LinkOutlined, LockOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { Navigate, useParams } from 'react-router-dom'
 import { ApiError } from '../api'
 import { BrandGlyph, useBranding } from '../branding'
 import SiteFooter from '../SiteFooter'
@@ -25,7 +25,7 @@ import { isPortalEvent, selectablePreview, usePhotoCardClick } from '../usePhoto
 import { matchPhotoCardShortcut, photoCardHint, usePhotoCardShortcuts } from '../photoCardShortcuts'
 
 const PhotoCardShortcutsModal = lazy(() => import('../PhotoCardShortcutsModal'))
-import type { ShareGuestAccess, SharePhoto } from '../types'
+import type { ShareGuestAccess, ShareLinkPurpose, SharePhoto } from '../types'
 
 const PAGE_SIZE = 60
 // 「全选全部」自己翻页把 id 取回来，用后端允许的最大页长（`@Max(100)`）少发几次请求。
@@ -51,6 +51,14 @@ export default function SharedProjectPage() {
   const [session, setSession] = useState<string | null>(() => readStoredShareSession(token))
   const [access, setAccess] = useState<ShareGuestAccess | null>(null)
   const [linkUsable, setLinkUsable] = useState<boolean | null>(null)
+  /**
+   * 这条链接是用来看的还是用来传的。`null` 表示还没问过（`greet` 未回）。
+   *
+   * 所有访客请求都等它变成 `BROWSE` 之后再发：上传链接在浏览侧一律被服务端 403 挡回，
+   * 而这一页对 403 的处理是"清掉会话、退回密码页"。不等这一下，一个手里拿着有效
+   * 上传会话的人只要打开 /share/<token>，会话就在跳去上传页之前被自己清掉了。
+   */
+  const [purpose, setPurpose] = useState<ShareLinkPurpose | null>(null)
   const [checking, setChecking] = useState(true)
   const [unlocking, setUnlocking] = useState(false)
 
@@ -94,8 +102,9 @@ export default function SharedProjectPage() {
     const check = async () => {
       setChecking(true)
       try {
-        await shareApi.greet(token)
+        const greeting = await shareApi.greet(token)
         if (cancelled) return
+        setPurpose(greeting.purpose)
         setLinkUsable(true)
       } catch {
         if (!cancelled) setLinkUsable(false)
@@ -108,7 +117,7 @@ export default function SharedProjectPage() {
   }, [token])
 
   useEffect(() => {
-    if (!session) return
+    if (!session || purpose !== 'BROWSE') return
     let cancelled = false
     const load = async () => {
       try {
@@ -120,24 +129,24 @@ export default function SharedProjectPage() {
     }
     void load()
     return () => { cancelled = true }
-  }, [handleGuestError, session, token])
+  }, [handleGuestError, purpose, session, token])
 
   // 筛选条件与选题详情页同一组（ProjectPhotoFilterBar），但访客这边是服务端分页，
   // 所以每次都随列表请求发给后端，而不是在前端对一页图片做筛选。
   const listQuery = useMemo(() => ({ ...filters, keyword: keyword || undefined }), [filters, keyword])
 
   useEffect(() => {
-    if (!session) return
+    if (!session || purpose !== 'BROWSE') return
     let cancelled = false
     // 候选取不到也能用：下拉为空而已，会话失效会由图片列表那一路请求说清楚。
     shareApi.photoFilterOptions(token, session)
       .then(options => { if (!cancelled) setFilterOptions(options) })
       .catch(() => undefined)
     return () => { cancelled = true }
-  }, [session, token])
+  }, [purpose, session, token])
 
   const loadPhotos = useCallback(async (quiet = false) => {
-    if (!session) return
+    if (!session || purpose !== 'BROWSE') return
     if (!quiet) setLoadingPhotos(true)
     try {
       const result = await shareApi.photos(token, session, { ...listQuery, page, pageSize: PAGE_SIZE })
@@ -153,7 +162,7 @@ export default function SharedProjectPage() {
     } finally {
       if (!quiet) setLoadingPhotos(false)
     }
-  }, [handleGuestError, listQuery, page, session, token])
+  }, [handleGuestError, listQuery, page, purpose, session, token])
 
   const changeFilters = (next: ProjectPhotoFilters) => {
     setFilters(next)
@@ -352,6 +361,8 @@ export default function SharedProjectPage() {
       {access.expiresAt && <Tag>有效期至 {dayjs(access.expiresAt).format('YYYY-MM-DD HH:mm')}</Tag>}
     </Space>}
   </header>
+
+  if (purpose === 'UPLOAD') return <Navigate to={`/upload/${token}`} replace />
 
   if (checking) return <main className="share-page">{header}
     <div className="share-body"><Skeleton active paragraph={{ rows: 6 }} /></div>

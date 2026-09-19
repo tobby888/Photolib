@@ -2154,23 +2154,27 @@ interface ProjectShareLink {
   token: string          // 26 位随机串，拼进分享地址
   projectId: EntityId
   name?: string | null
-  allowDownload: boolean
-  allowAdoption: boolean
+  purpose: 'BROWSE' | 'UPLOAD'   // 建立后不可改，两种用途的能力互斥
+  allowDownload: boolean         // UPLOAD 恒为 false
+  allowAdoption: boolean         // UPLOAD 恒为 false
   expiresAt?: string | null
   expired: boolean
   viewCount: number
   lastViewedAt?: string | null
+  uploadCount: number            // 通过这条上传链接传进来的张数；BROWSE 恒为 0
   createdBy: EntityId
   createdAt: string
   version: number
 }
 ```
 
+创建时 `purpose` 省略等同 `BROWSE`（与 V48 之前的请求体兼容）。**`UPLOAD` 只能开在进行中的活动选题上**（`type=EVENT` 且 `status=ACTIVE`），否则 `409 RESOURCE_STATE_CONFLICT`；请求里带的 `allowDownload` / `allowAdoption` 对它一律按 `false` 落库。用途不提供修改接口——把上传链接改成浏览链接，等于把整个相册交给一批只被授权上传的人。
+
 **明文密码只在创建和重置密码的响应里出现一次**（`{ link, password }`），数据库里只有 BCrypt 哈希；此后没有任何接口能读回明文，想换只能重置。**重置密码会作废该链接已经发出的全部会话**。删除是软删，等同"撤销"：已经发出的会话下一次请求即被拒。
 
 更新用 `PUT`，带 `version` 走乐观锁；冲突返回 `409 RESOURCE_STATE_CONFLICT`。
 
-分享地址由客户端拼：`{站点地址}/#/share/{token}`。
+地址由客户端按用途拼：浏览链接 `{站点地址}/#/share/{token}`，上传链接 `{站点地址}/#/upload/{token}`。
 
 ### 19.2 访客端（不需要登录）
 
@@ -2178,8 +2182,8 @@ interface ProjectShareLink {
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/public/shares/{token}` | 链接是否可用；刻意不返回项目标题等任何项目信息 |
-| POST | `/public/shares/{token}/sessions` | `{ password }` → `{ sessionToken, expiresAt, access }` |
+| GET | `/public/shares/{token}` | 链接是否可用 + `purpose`；刻意不返回项目标题等任何项目信息 |
+| POST | `/public/shares/{token}/sessions` | `{ password, uploaderName?, uploaderStudentId? }` → `{ sessionToken, expiresAt, access }`；上传链接必须带后两项 |
 | GET | `/public/shares/{token}/access` | 重新读取这条链接当下授予的能力 |
 | GET | `/public/shares/{token}/photos` | `page`、`pageSize`、`keyword?` → `PageData<SharePhoto>` |
 | POST | `/public/shares/{token}/photos/{photoId}/download-url` | 需要 `allowDownload` |
@@ -2187,6 +2191,38 @@ interface ProjectShareLink {
 | GET | `/public/shares/{token}/batch-downloads/{jobId}` | 打包任务状态，结构同 §12 的导出任务 |
 | POST | `/public/shares/{token}/photos/{photoId}/adoption` | 需要 `allowAdoption` |
 | DELETE | `/public/shares/{token}/photos/{photoId}/adoption` | 需要 `allowAdoption` |
+| POST | `/public/shares/{token}/upload-tickets` | 仅 `UPLOAD`：`{ fileName, contentType, size, sha256, takenAt? }` → `{ photoId, uploadUrl, method, contentType, expiresAt }` |
+| POST | `/public/shares/{token}/uploads/{photoId}/complete` | 仅 `UPLOAD`：`{ title?, description? }`，确认对象已就位并交给压缩管线 |
+| GET | `/public/shares/{token}/uploads/{photoId}` | 仅 `UPLOAD`：`{ photoId, title, status, failureReason }`，轮询处理结果 |
+| POST | `/public/shares/{token}/upload-batches` | 仅 `UPLOAD`：`{ archiveFileName, archiveSize }` → `{ batchId, tickets: [ZIP 的上传地址] }` |
+| POST | `/public/shares/{token}/upload-batches/{batchId}/complete` | 压缩包已传完，交给后台解包 |
+| GET | `/public/shares/{token}/upload-batches/{batchId}` | `{ batchId, status, totalCount, successCount, failureCount, failureReason }` |
+| POST | `/public/shares/{token}/upload-batches/{batchId}/finish` | 解包完成后把这一批落成照片，`{ takenAt? }` |
+
+**用途互斥**：上传链接调浏览侧的任何接口（含 `/photos`）一律 `403`，浏览链接调上传侧同样 `403`。客户端拿到 `purpose` 后应把访客领到对应的页面，而不是先发一次注定被拒的请求——那会被当成会话失效。
+
+上传通道与站内单张上传是同一条流水线（签票据 → PUT 预签名地址 → complete），差别只在凭据和身份：
+
+- 拍摄者取自**会话**上的 `uploaderName` / `uploaderStudentId`（进门时填一次，整场会话共用），而不是通讯录——拿着链接的人按定义在通讯录之外，把通讯录摆给站外的人挑也会泄露姓名和学号。
+- 照片的 `uploadedBy` 记链接创建者（站内唯一可追责的成员），`shareLinkId` 记是哪条链接放进来的；`complete` 的归属判定只认后者。
+- 每次请求都重判选题是否仍在收图：选题一旦完成，已经拿着会话的人立刻传不进来（`access.allowUpload` 同步变 `false`）。
+- 传了一半就走留下的临时对象由 `AbandonedUploadCleanupJob` 回收（站内同一套）：直传地址过期一小时后才删，处理失败的照片不碰，解包后 24 小时没人整理的条目连本地文件一起收。启动、定时、以及每次签发上传票据时各触发一次（后者节流 5 分钟且异步）。
+
+ZIP 批量走的是**站内需求批量上传的同一条通道**（`photo_upload_batch` / `photo_upload_item` +
+`SafeImageZipExtractor`），限额一份不改（`ImageUploadPolicy`）：
+
+| 限制 | 值 |
+| --- | --- |
+| 压缩包大小 | ≤ 1.5 GB（签票据按客户端自报的 size 判一次，`complete` 再按对象存储上的真实大小判一次） |
+| 包内图片张数 | ≤ 100 |
+| 包内单张大小 | ≤ 100 MiB |
+| 解压总大小 | ≤ 10 GiB（zip bomb 的闸） |
+| 包内文件类型 | 只取 JPG / PNG，其余条目静默跳过；带路径穿越的条目直接判包失败 |
+
+访客这一侧的差别只有两处：批次归属认 `share_link_id`（`created_by` 记的是链接创建者，对访客
+不是凭据），以及最后一步不填元数据——拍摄者取会话身份、标题取包内原文件名、标签留空由选片人
+后续按预设打，所以前端轮到 `WAITING_METADATA` 就直接调 `finish`。一批的张数要能装进这条链接
+剩下的额度，装不下时整批拒绝而不是传一半。
 
 除前两个外，每个请求都要带会话头：
 
@@ -2198,6 +2234,9 @@ X-Share-Session: {sessionToken}
 
 ```ts
 interface ShareGuestAccess {
+  purpose: 'BROWSE' | 'UPLOAD'
+  allowUpload: boolean           // UPLOAD 且选题仍在收图
+  uploaderName?: string | null   // 上传链接：访客进门时自报的姓名，回显用
   projectTitle: string
   projectStatus: ProjectStatus
   linkName?: string | null

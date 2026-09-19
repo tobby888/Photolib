@@ -18,6 +18,8 @@ import cn.photolib.photo.model.PhotoStatus;
 import cn.photolib.project.ProjectService;
 import cn.photolib.project.model.ProjectEntity;
 import cn.photolib.project.model.ProjectStatus;
+import cn.photolib.project.model.ProjectType;
+import cn.photolib.recruitment.RecruitmentStudentId;
 import cn.photolib.share.mapper.ProjectShareLinkMapper;
 import cn.photolib.share.mapper.ProjectShareSessionMapper;
 import cn.photolib.statistics.ExportJobEntity;
@@ -66,6 +68,10 @@ import java.util.stream.Collectors;
  *       被引开关、是否被撤销、是否过期。因此改权限和删链接立即生效，不必等会话过期。</li>
  *   <li><b>校区范围账号不能建链接。</b> 一条链接把整个项目相册（含其他校区的图片）
  *       交给站外的人，这超出了校区负责人自己能看到的范围。</li>
+ *   <li><b>看和传是两种链接，能力互斥。</b> {@link ShareLinkPurpose} 建立后不可改：
+ *       浏览链接拿不到上传票据，上传链接拿不到相册、下载地址和被引接口
+ *       （{@link #requireBrowseLink} / {@link #requireUploadLink}）。上传那一半在
+ *       {@link ProjectShareUploadService}，口令、会话、有效期和撤销语义则完全共用这里的。</li>
  * </ol>
  */
 @Service
@@ -76,6 +82,7 @@ public class ProjectShareService {
     static final int MIN_PASSWORD_LENGTH = 6;
     static final int MAX_PASSWORD_LENGTH = 64;
     static final int MAX_LINKS_PER_PROJECT = 20;
+    static final int MAX_UPLOADER_NAME_LENGTH = 50;
     private static final int GENERATED_PASSWORD_LENGTH = 10;
     /** 去掉了 I/L/O/U 的 Crockford 字母表，念给人听、抄在纸上都不会认错。 */
     private static final char[] PASSWORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ".toCharArray();
@@ -100,6 +107,8 @@ public class ProjectShareService {
     @Transactional
     public CreatedShareLink create(Long projectId, CreateCommand command, AuthenticatedUser user) {
         ProjectEntity project = requireManageable(projectId, user);
+        ShareLinkPurpose purpose = command.purpose() == null ? ShareLinkPurpose.BROWSE : command.purpose();
+        if (purpose == ShareLinkPurpose.UPLOAD) requireUploadableProject(project);
         long existing = mapper.selectCount(Wrappers.<ProjectShareLinkEntity>lambdaQuery()
                 .eq(ProjectShareLinkEntity::getProjectId, project.getId()));
         if (existing >= MAX_LINKS_PER_PROJECT) {
@@ -115,10 +124,14 @@ public class ProjectShareService {
         link.setProjectId(project.getId());
         link.setName(StringUtils.hasText(command.name()) ? command.name().trim() : null);
         link.setPasswordHash(passwordEncoder.encode(password));
-        link.setAllowDownload(command.allowDownload());
-        link.setAllowAdoption(command.allowAdoption());
+        link.setPurpose(purpose);
+        // 上传链接不给浏览能力，两个开关一律落成 false：请求里带了什么不作数，
+        // 否则「开一条只上传的链接」会因为前端漏传一个字段而变成开放整个相册。
+        link.setAllowDownload(purpose == ShareLinkPurpose.BROWSE && command.allowDownload());
+        link.setAllowAdoption(purpose == ShareLinkPurpose.BROWSE && command.allowAdoption());
         link.setExpiresAt(expiresAt);
         link.setViewCount(0L);
+        link.setUploadCount(0L);
         link.setCreatedBy(user.id());
         mapper.insert(link);
         // 明文只在这里回一次，数据库里只有哈希。要"再看一眼密码"只能重置。
@@ -137,9 +150,12 @@ public class ProjectShareService {
     public ShareLinkView update(Long projectId, Long linkId, UpdateCommand command, AuthenticatedUser user) {
         requireManageable(projectId, user);
         ProjectShareLinkEntity link = requireLink(projectId, linkId);
+        boolean browse = purposeOf(link) == ShareLinkPurpose.BROWSE;
         link.setName(StringUtils.hasText(command.name()) ? command.name().trim() : null);
-        link.setAllowDownload(command.allowDownload());
-        link.setAllowAdoption(command.allowAdoption());
+        // 用途建立后不可改（上传链接改成浏览链接等于把相册交给了一批只被授权上传的人），
+        // 所以这里只改备注和有效期，两个浏览开关对上传链接一律按 false 写回。
+        link.setAllowDownload(browse && command.allowDownload());
+        link.setAllowAdoption(browse && command.allowAdoption());
         link.setExpiresAt(validatedExpiry(command.expiresAt()));
         link.setVersion(command.version());
         if (mapper.updateById(link) != 1) {
@@ -197,18 +213,26 @@ public class ProjectShareService {
 
     // ---------------------------------------------------------------- 访客端
 
-    /** 密码页只需要知道"这条链接还能用"，刻意不返回项目标题等任何项目信息。 */
+    /**
+     * 密码页只需要知道"这条链接还能用"，刻意不返回项目标题等任何项目信息。
+     *
+     * <p>用途是例外：它决定了这个 token 该由哪一页来接（相册还是上传台），
+     * 而它本身不透露项目的任何内容。</p>
+     */
     public LinkGreeting greet(String token) {
-        requireUsable(token);
-        return new LinkGreeting(true);
+        ProjectShareLinkEntity link = requireUsable(token);
+        return new LinkGreeting(true, purposeOf(link));
     }
 
     @Transactional
-    public GuestSession openSession(String token, String password) {
+    public GuestSession openSession(String token, String password, GuestIdentity identity) {
         ProjectShareLinkEntity link = requireUsable(token);
         if (!StringUtils.hasText(password) || !passwordEncoder.matches(password, link.getPasswordHash())) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "分享密码不正确");
         }
+        // 上传链接的身份在进门时一次性确定，这次会话上传的每一张都用同一份快照。
+        GuestIdentity uploader = purposeOf(link) == ShareLinkPurpose.UPLOAD
+                ? validatedIdentity(identity) : null;
         String sessionToken = newSessionToken();
         LocalDateTime now = LocalDateTime.now(clock);
         ProjectShareSessionEntity session = new ProjectShareSessionEntity();
@@ -217,6 +241,10 @@ public class ProjectShareService {
         session.setTokenHash(hash(sessionToken));
         session.setExpiresAt(now.plus(SESSION_TTL));
         session.setCreatedAt(now);
+        if (uploader != null) {
+            session.setUploaderName(uploader.name());
+            session.setUploaderStudentId(uploader.studentId());
+        }
         sessionMapper.insert(session);
 
         jdbc.sql("""
@@ -232,6 +260,11 @@ public class ProjectShareService {
      * <p>每次请求都重读，是为了让"改权限/删链接"立刻生效，见类注释第 2 条。</p>
      */
     public ProjectShareLinkEntity resolveGuest(String token, String sessionToken) {
+        return resolveGuestContext(token, sessionToken).link();
+    }
+
+    /** 同 {@link #resolveGuest}，另外带上会话行——上传要用它上面的身份快照。 */
+    public GuestContext resolveGuestContext(String token, String sessionToken) {
         ProjectShareLinkEntity link = requireUsable(token);
         if (!StringUtils.hasText(sessionToken)) {
             throw sessionExpired();
@@ -244,14 +277,24 @@ public class ProjectShareService {
         if (session == null || !session.getExpiresAt().isAfter(LocalDateTime.now(clock))) {
             throw sessionExpired();
         }
-        return link;
+        return new GuestContext(link, session);
     }
 
     public GuestAccess access(ProjectShareLinkEntity link) {
+        return access(new GuestContext(link, null));
+    }
+
+    public GuestAccess access(GuestContext context) {
+        ProjectShareLinkEntity link = context.link();
         ProjectEntity project = projectService.get(link.getProjectId());
-        return new GuestAccess(project.getTitle(), project.getStatus(), link.getName(),
+        ShareLinkPurpose purpose = purposeOf(link);
+        // 上传链接的访客看不到相册，所以这里连项目状态之外的东西都不需要多给；
+        // uploaderName 只是把他自己刚填的名字回显出来，好让他确认没填错人。
+        return new GuestAccess(project.getTitle(), project.getStatus(), link.getName(), purpose,
                 Boolean.TRUE.equals(link.getAllowDownload()),
                 Boolean.TRUE.equals(link.getAllowAdoption()),
+                purpose == ShareLinkPurpose.UPLOAD && canAcceptUploads(project),
+                context.session() == null ? null : context.session().getUploaderName(),
                 link.getExpiresAt());
     }
 
@@ -266,6 +309,7 @@ public class ProjectShareService {
         // 筛选条件与选题详情页那一排一致（src/photoTags.ts 的 filterPhotos）：标签同时包含、
         // 拍摄者任意其一、拍摄日期两端都含整天、被引按本项目的 adoption 现查。站内是一次取回
         // 全部图片在前端筛，访客通道是分页取的，所以放到服务端做。null 表示不筛选。
+        requireBrowseLink(link);
         PhotoFilter filter = requested == null ? PhotoFilter.NONE : requested;
         Long projectId = link.getProjectId();
         String keyword = filter.keyword();
@@ -317,6 +361,7 @@ public class ProjectShareService {
      * 预设标签按定义顺序在前，其余按出现次数、再按中文排序；拍摄者按中文排序。
      */
     public FilterOptions filterOptions(ProjectShareLinkEntity link) {
+        requireBrowseLink(link);
         Collator chinese = Collator.getInstance(Locale.CHINA);
         Map<String, Integer> tagCounts = new HashMap<>();
         Set<String> photographers = new HashSet<>();
@@ -416,12 +461,14 @@ public class ProjectShareService {
     }
 
     private void requireDownloadAllowed(ProjectShareLinkEntity link) {
+        requireBrowseLink(link);
         if (!Boolean.TRUE.equals(link.getAllowDownload())) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "这条分享链接没有开放下载");
         }
     }
 
     private void requireAdoptionAllowed(ProjectShareLinkEntity link) {
+        requireBrowseLink(link);
         if (!Boolean.TRUE.equals(link.getAllowAdoption())) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "这条分享链接没有开放标记被引");
         }
@@ -478,13 +525,77 @@ public class ProjectShareService {
         return new BusinessException(ErrorCode.FORBIDDEN, "分享访问已过期，请重新输入密码");
     }
 
+    /** 存量行（V48 之前建的链接）没有 {@code purpose}，一律按浏览链接看待。 */
+    ShareLinkPurpose purposeOf(ProjectShareLinkEntity link) {
+        return link.getPurpose() == null ? ShareLinkPurpose.BROWSE : link.getPurpose();
+    }
+
+    /**
+     * 浏览侧的每个入口都要过这一关。上传链接换来的会话拿不到相册、下载地址和被引接口——
+     * 光靠"两个开关是 false"挡不住 {@link #photos}，那条路上根本没有开关可判。
+     */
+    private void requireBrowseLink(ProjectShareLinkEntity link) {
+        if (purposeOf(link) != ShareLinkPurpose.BROWSE) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "这是一条上传链接，不能用来浏览项目相册");
+        }
+    }
+
+    ProjectShareLinkEntity requireUploadLink(ProjectShareLinkEntity link) {
+        if (purposeOf(link) != ShareLinkPurpose.UPLOAD) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "这条分享链接没有开放上传");
+        }
+        return link;
+    }
+
+    /**
+     * 能发上传链接的项目：进行中的活动选题。
+     *
+     * <p>限活动选题是因为整条工作流程只在那里说得通——图片先整批进库，再由选片人
+     * 逐张打标签、把用不上的清理掉（§2.23）。创作选题的图片要挂在具体需求下、要有
+     * 接单人和校区，这些站外的人一样都给不出来。限进行中则与站内上传同一条规则
+     * （{@code PhotoService.requireProjectUploadAccess}）：选题结束后不再收图。</p>
+     */
+    private void requireUploadableProject(ProjectEntity project) {
+        if (projectService.typeOf(project) != ProjectType.EVENT) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "只有活动选题可以生成上传链接");
+        }
+        if (project.getStatus() != ProjectStatus.ACTIVE) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "只有进行中的活动选题可以生成上传链接");
+        }
+    }
+
+    /** 选题还收不收图。链接本身没过期不代表选题还开着，所以每次上传都要现判。 */
+    boolean canAcceptUploads(ProjectEntity project) {
+        return projectService.typeOf(project) == ProjectType.EVENT
+                && project.getStatus() == ProjectStatus.ACTIVE;
+    }
+
+    /**
+     * 上传者自报的姓名和学号。
+     *
+     * <p>学号复用招募那边的规范化规则（{@link RecruitmentStudentId}）而不是另写一套：
+     * 两处面对的是同一件事——站外的人手敲的学号，可能带全角数字、空格和大小写差异。
+     * 姓名只做长度和空白校验，中文姓名没有可靠的形状可判。</p>
+     */
+    private GuestIdentity validatedIdentity(GuestIdentity identity) {
+        String name = identity == null || identity.name() == null ? "" : identity.name().trim();
+        if (name.isEmpty() || name.codePointCount(0, name.length()) > MAX_UPLOADER_NAME_LENGTH) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                    "请填写上传者姓名（" + MAX_UPLOADER_NAME_LENGTH + " 字以内）");
+        }
+        return new GuestIdentity(name,
+                RecruitmentStudentId.normalize(identity.studentId()).value());
+    }
+
     private ShareLinkView view(ProjectShareLinkEntity link) {
         boolean expired = link.getExpiresAt() != null
                 && !link.getExpiresAt().isAfter(LocalDateTime.now(clock));
         return new ShareLinkView(link.getId(), link.getToken(), link.getProjectId(), link.getName(),
+                purposeOf(link),
                 Boolean.TRUE.equals(link.getAllowDownload()), Boolean.TRUE.equals(link.getAllowAdoption()),
                 link.getExpiresAt(), expired, link.getViewCount() == null ? 0 : link.getViewCount(),
-                link.getLastViewedAt(), link.getCreatedBy(), link.getCreatedAt(), link.getVersion());
+                link.getLastViewedAt(), link.getUploadCount() == null ? 0 : link.getUploadCount(),
+                link.getCreatedBy(), link.getCreatedAt(), link.getVersion());
     }
 
     private String validatedPassword(String password) {
@@ -527,16 +638,17 @@ public class ProjectShareService {
         }
     }
 
-    public record CreateCommand(String name, String password, boolean allowDownload,
-                                boolean allowAdoption, LocalDateTime expiresAt) {}
+    public record CreateCommand(ShareLinkPurpose purpose, String name, String password,
+                                boolean allowDownload, boolean allowAdoption,
+                                LocalDateTime expiresAt) {}
 
     public record UpdateCommand(String name, boolean allowDownload, boolean allowAdoption,
                                 LocalDateTime expiresAt, int version) {}
 
     public record ShareLinkView(Long id, String token, Long projectId, String name,
-                                boolean allowDownload, boolean allowAdoption,
+                                ShareLinkPurpose purpose, boolean allowDownload, boolean allowAdoption,
                                 LocalDateTime expiresAt, boolean expired, long viewCount,
-                                LocalDateTime lastViewedAt, Long createdBy,
+                                LocalDateTime lastViewedAt, long uploadCount, Long createdBy,
                                 LocalDateTime createdAt, Integer version) {}
 
     /** 明文密码只在创建和重置时出现一次，之后系统里只剩哈希。 */
@@ -544,12 +656,19 @@ public class ProjectShareService {
 
     public record ResetPassword(ShareLinkView link, String password) {}
 
-    public record LinkGreeting(boolean requiresPassword) {}
+    public record LinkGreeting(boolean requiresPassword, ShareLinkPurpose purpose) {}
 
     public record GuestSession(String sessionToken, LocalDateTime expiresAt, GuestAccess access) {}
 
     public record GuestAccess(String projectTitle, ProjectStatus projectStatus, String linkName,
-                              boolean allowDownload, boolean allowAdoption, LocalDateTime expiresAt) {}
+                              ShareLinkPurpose purpose, boolean allowDownload, boolean allowAdoption,
+                              boolean allowUpload, String uploaderName, LocalDateTime expiresAt) {}
+
+    /** 一次访客请求解析出来的上下文：当前这一刻的链接行，加上发起请求的那个会话。 */
+    public record GuestContext(ProjectShareLinkEntity link, ProjectShareSessionEntity session) {}
+
+    /** 上传链接的访客进门时自报的身份，作为照片上的拍摄者快照。 */
+    public record GuestIdentity(String name, String studentId) {}
 
     public record SharePhotoView(Long id, String title, String description, String photographerName,
                                  LocalDateTime takenAt, Integer width, Integer height, Long size,
