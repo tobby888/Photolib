@@ -76,6 +76,7 @@ public class PhotoImageEditService {
     private final PhotoProcessingWorkspace workspace;
     private final PreviewProfilePolicy previewProfiles;
     private final TransactionTemplate transactions;
+    private final AbandonedUploadCleanupJob abandonedUploads;
 
     /**
      * 为一次编辑签发直传地址。
@@ -91,6 +92,10 @@ public class PhotoImageEditService {
         ObjectStorageService.SignedUrl signed =
                 storage.presignPut(sourceKey, contentType, properties.uploadUrlTtl());
         log.debug("签发图片编辑上传地址: photoId={}, operator={}", photo.getId(), user.id());
+        // 编辑也是一次上传：顺手让清理任务看一眼有没有该收的半成品（它自己节流）。
+        // 注意这条路自己留下的孤儿（放弃的编辑来源）不在清理范围内——它刻意不落库，
+        // 而清理只按库里记着的精确键删，见 AbandonedUploadCleanupJob 第 1 条。
+        abandonedUploads.nudge();
         return new EditTicket(photo.getId(), sourceKey, signed.url().toString(), signed.method(),
                 contentType, signed.expiresAt());
     }

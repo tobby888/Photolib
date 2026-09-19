@@ -2206,6 +2206,7 @@ interface ProjectShareLink {
 - 拍摄者取自**会话**上的 `uploaderName` / `uploaderStudentId`（进门时填一次，整场会话共用），而不是通讯录——拿着链接的人按定义在通讯录之外，把通讯录摆给站外的人挑也会泄露姓名和学号。
 - 照片的 `uploadedBy` 记链接创建者（站内唯一可追责的成员），`shareLinkId` 记是哪条链接放进来的；`complete` 的归属判定只认后者。
 - 每次请求都重判选题是否仍在收图：选题一旦完成，已经拿着会话的人立刻传不进来（`access.allowUpload` 同步变 `false`）。
+- 传了一半就走留下的临时对象由 `AbandonedUploadCleanupJob` 回收（站内同一套）：直传地址过期一小时后才删，处理失败的照片不碰，解包后 24 小时没人整理的条目连本地文件一起收。启动、定时、以及每次签发上传票据时各触发一次（后者节流 5 分钟且异步）。
 
 ZIP 批量走的是**站内需求批量上传的同一条通道**（`photo_upload_batch` / `photo_upload_item` +
 `SafeImageZipExtractor`），限额一份不改（`ImageUploadPolicy`）：

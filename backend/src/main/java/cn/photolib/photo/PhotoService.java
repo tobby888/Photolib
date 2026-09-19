@@ -56,6 +56,7 @@ public class PhotoService {
     private final JdbcClient jdbc;
     private final CampusService campusService;
     private final cn.photolib.directory.CampusMemberService campusMemberService;
+    private final AbandonedUploadCleanupJob abandonedUploads;
 
     @Transactional
     public UploadTicket createTicket(CreateTicket command, AuthenticatedUser user) {
@@ -103,6 +104,9 @@ public class PhotoService {
         photo.setOriginalObjectKey(originalKey);
         photo.setSha256(sha256Lower);
         photo.setStatus(PhotoStatus.UPLOADING);
+        // 直传地址的有效期跟着一起记下来：传了一半就走的那些，要等这个时刻过了
+        // 才轮得到清理任务动手（Flyway V50）。
+        photo.setUploadUrlExpiresAt(LocalDateTime.now().plus(properties.uploadUrlTtl()));
         mapper.insert(photo);
         // 归属链接：项目相册/计数以 photo_project 为准。新照片 id 全新，(photo_id,project_id) 不会撞主键。
         if (projectId != null) {
@@ -113,6 +117,8 @@ public class PhotoService {
         }
         ObjectStorageService.SignedUrl signed = storage.presignPut(
                 originalKey, command.contentType(), properties.uploadUrlTtl());
+        // 顺手看一眼有没有别人留下的半成品该清了；节流且异步，不拖慢这次上传。
+        abandonedUploads.nudge();
         return new UploadTicket(photo.getId(), signed.url().toString(), signed.method(),
                 command.contentType(), signed.expiresAt());
     }

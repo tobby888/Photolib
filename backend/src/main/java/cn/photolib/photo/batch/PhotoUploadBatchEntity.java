@@ -25,6 +25,8 @@ public class PhotoUploadBatchEntity {
     private Integer successCount;
     private Integer failureCount;
     private String failureReason;
+    /** 压缩包直传地址的过期时间；清理任务据此判断"现在删安不安全"（Flyway V50）。 */
+    private LocalDateTime uploadUrlExpiresAt;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

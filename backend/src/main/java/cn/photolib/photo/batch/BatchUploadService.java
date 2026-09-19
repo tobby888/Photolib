@@ -42,6 +42,7 @@ public class BatchUploadService {
     private final ApplicationEventPublisher events;
     private final JdbcClient jdbc;
     private final cn.photolib.directory.CampusMemberService campusMemberService;
+    private final cn.photolib.photo.AbandonedUploadCleanupJob abandonedUploads;
 
     @Transactional
     public BatchTicket create(CreateBatch command, AuthenticatedUser user) {
@@ -94,6 +95,7 @@ public class BatchUploadService {
             item.setSize(file.size());
             item.setSha256(file.sha256());
             item.setStatus(BatchItemStatus.UPLOADING);
+            item.setUploadUrlExpiresAt(now.plus(storageProperties.uploadUrlTtl()));
             item.setCreatedAt(now);
             item.setUpdatedAt(now);
             itemMapper.insert(item);
@@ -102,6 +104,7 @@ public class BatchUploadService {
             tickets.add(new ItemTicket(item.getId(), file.fileName(), signed.url().toString(),
                     file.contentType(), signed.expiresAt()));
         }
+        abandonedUploads.nudge();
         return new BatchTicket(batchId, command.mode(), tickets);
     }
 
@@ -208,11 +211,14 @@ public class BatchUploadService {
         batch.setArchiveObjectKey(key);
         batch.setArchiveFileName(request.archiveFileName());
         batch.setArchiveSize(request.archiveSize());
+        batch.setUploadUrlExpiresAt(now.plus(storageProperties.uploadUrlTtl()));
         batch.setCreatedAt(now);
         batch.setUpdatedAt(now);
         batchMapper.insert(batch);
         ObjectStorageService.SignedUrl signed = storage.presignPut(
                 key, "application/zip", storageProperties.uploadUrlTtl());
+        // 与单张一致：每次签票据都捅一下清理任务，它自己节流。
+        abandonedUploads.nudge();
         return new BatchTicket(batchId, BatchMode.ZIP, List.of(new ItemTicket(null,
                 request.archiveFileName(), signed.url().toString(), "application/zip",
                 signed.expiresAt())));

@@ -68,6 +68,7 @@ public class ProjectShareUploadService {
     private final PhotoService photoService;
     private final PhotoMapper photoMapper;
     private final BatchUploadService batchService;
+    private final cn.photolib.photo.AbandonedUploadCleanupJob abandonedUploads;
     private final PhotoUploadBatchMapper batchMapper;
     private final ObjectStorageService storage;
     private final StorageProperties storageProperties;
@@ -114,6 +115,8 @@ public class ProjectShareUploadService {
         photo.setOriginalObjectKey(originalKey);
         photo.setSha256(sha256Lower);
         photo.setStatus(PhotoStatus.UPLOADING);
+        // 与站内一致：记下直传地址的有效期，供清理任务判断何时能删（Flyway V50）。
+        photo.setUploadUrlExpiresAt(LocalDateTime.now(clock).plus(storageProperties.uploadUrlTtl()));
         photoMapper.insert(photo);
         // 归属链接与站内一致：项目相册以 photo_project 为准。
         jdbc.sql("INSERT INTO photo_project (photo_id, project_id) VALUES (:photoId, :projectId)")
@@ -123,6 +126,8 @@ public class ProjectShareUploadService {
 
         ObjectStorageService.SignedUrl signed = storage.presignPut(
                 originalKey, command.contentType(), storageProperties.uploadUrlTtl());
+        // 这条路不经过 PhotoService.createTicket，清理任务得自己捅（它内部节流）。
+        abandonedUploads.nudge();
         return new UploadTicket(photo.getId(), signed.url().toString(), signed.method(),
                 command.contentType(), signed.expiresAt());
     }

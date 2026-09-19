@@ -27,6 +27,8 @@ public class PhotoUploadItemEntity {
     private String tagsJson;
     private BatchItemStatus status;
     private String failureReason;
+    /** 条目直传地址的过期时间；清理任务据此判断"现在删安不安全"（Flyway V50）。 */
+    private LocalDateTime uploadUrlExpiresAt;
     private Long photoId;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
