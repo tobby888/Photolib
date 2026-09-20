@@ -18,6 +18,13 @@ public class UserEntity extends BaseEntity {
     private Long permissionGroupId;
     private Long campusId;
     private String phone;
+    /**
+     * 登录标识之一，且带 uk_user_email 唯一索引，所以必须能被「摘下来」：
+     * 默认的 NOT_NULL 更新策略会把 email = NULL 从 UPDATE 里丢掉，
+     * 管理员清空邮箱、把邮箱改挂到另一个账号、以及软删除时释放邮箱
+     * 都会静默失败，那个邮箱从此谁也用不了。
+     */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String email;
     /** 企业微信通讯录里的 userid，通知投递的收件标识；未绑定时该用户只收站内信。 */
     @TableField(updateStrategy = FieldStrategy.ALWAYS)
