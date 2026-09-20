@@ -80,7 +80,13 @@ export default function MarkdownEditor({
               <Button type="text" disabled={mode !== 'edit'} loading={uploading} icon={<PictureOutlined />} onClick={() => fileInput.current?.click()} />
             </span>
           </Tooltip>
-          <input ref={fileInput} hidden type="file" accept="image/jpeg,image/png,image/webp"
+          {/*
+            只写 hidden 属性不够：编辑器基本都渲染在 Form 里，而 antd 的
+            .ant-form input[type="file"] { display: block } 比浏览器默认的
+            [hidden] { display: none } 更具体，原生文件选择框会露在工具栏上。
+          */}
+          <input ref={fileInput} hidden style={{ display: 'none' }} type="file"
+            accept="image/jpeg,image/png,image/webp"
             onChange={event => void uploadImage(event.target.files?.[0])} />
         </>}
       </Space>
