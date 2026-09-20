@@ -86,15 +86,15 @@ photolib-mcp doctor
 | `PHOTOLIB_MCP_CREDENTIALS` | `~/.photolib-mcp/credentials.json` | 凭据文件位置 |
 | `PHOTOLIB_MCP_CLIENT_NAME` | `PhotoLib MCP` | 批准页上显示的客户端名字 |
 | `PHOTOLIB_MCP_DEVICE_LABEL` | 本机主机名 | 批准页上显示的设备名 |
-| `PHOTOLIB_MCP_TOOLSETS` | 全部 | 只启用部分分组，逗号分隔 |
-| `PHOTOLIB_MCP_READ_ONLY` | `false` | 只读模式：所有写操作工具都不注册 |
+| `PHOTOLIB_MCP_TOOLSETS` | 全部 | 只启用部分分组，逗号分隔。开哪些见[收窄工具链](#收窄工具链开哪些改哪个变量什么时候关) |
+| `PHOTOLIB_MCP_READ_ONLY` | `false` | 只读模式：所有写操作工具都不注册。**登录和导出也算写操作**，见[只读模式的代价](#只读模式的代价) |
 | `PHOTOLIB_MCP_OPEN_BROWSER` | `true` | 登录时是否自动拉起浏览器（无桌面的机器上置 false） |
 | `PHOTOLIB_MCP_TIMEOUT` | `60` | 普通接口超时（秒） |
 | `PHOTOLIB_MCP_TRANSFER_TIMEOUT` | `600` | 上传/下载超时（秒） |
 
 ## 工具
 
-一共约 195 个工具，按分组划分：
+一共 195 个工具（122 个写、73 个读），按分组划分。默认全开——"这个 MCP 要包含项目的所有能力"是它存在的前提；嫌多就按下一节收窄：
 
 | 分组 | 大致内容 |
 | --- | --- |
@@ -114,24 +114,146 @@ photolib-mcp doctor
 | `admin` | 账号、权限组、审计日志、告警、品牌、数据库备份与回滚 |
 | `misc` | 说明配图、消息配图、头像、首次改密、选片改图、通用接口出口 |
 
-### 工具太多怎么办
+## 收窄工具链：开哪些、改哪个变量、什么时候关
 
-195 个工具会占掉宿主相当一部分上下文，有些宿主还有工具数量上限。按实际用途收窄：
+默认全开的 195 个工具会占掉宿主相当一部分上下文，有些宿主还有工具数量上限。**服务本身
+不会替你收窄**——它不知道你是谁、这台机器给谁用、这次要干什么。下面把所有判断依据摊开，
+开哪些、什么时候关，由你自己决定，也由你自己动手生效。
+
+先说清楚一件事：这两个开关管的是**上下文占用和误操作面**，不是权限。权限永远由后端按你
+的账号判定，关掉 `admin` 分组不会让你不再是管理员，开着它也不会让你多出一项权限。真要
+限制某个人能做什么，去改他的权限组，别指望改 MCP 配置。
+
+### 两个开关，改在宿主的配置里
+
+| 想要的效果 | 改哪个环境变量 | 写法 |
+| --- | --- | --- |
+| 只注册用得上的分组 | `PHOTOLIB_MCP_TOOLSETS` | 逗号分隔，如 `auth,projects,photos`；**不写 = 全开** |
+| 一个写工具都不注册 | `PHOTOLIB_MCP_READ_ONLY` | `true` / `false`（默认 `false`） |
+
+分组名写错服务会直接启动失败，并在报错里列出可选值——宿主里看到 photolib 起不来，先看这行。
+
+Claude Code：
 
 ```bash
-# 只要日常那几块
-PHOTOLIB_MCP_TOOLSETS=auth,projects,requests,photos,worklogs,statistics
-
-# 只让 AI 查数据，不让它改
-PHOTOLIB_MCP_READ_ONLY=true
+claude mcp remove photolib
+claude mcp add photolib \
+  --env PHOTOLIB_BASE_URL=https://photowarehouse.cn \
+  --env PHOTOLIB_MCP_TOOLSETS=auth,projects,requests,photos,worklogs,directory \
+  -- photolib-mcp
 ```
 
-只读模式下写工具**根本不会注册**（而不是注册了再拒绝）：模型看不见的工具才不会去试。
+Claude Desktop / Cursor 等配置文件宿主，改 `env` 里的那几行：
+
+```json
+{
+  "mcpServers": {
+    "photolib": {
+      "command": "photolib-mcp",
+      "env": {
+        "PHOTOLIB_BASE_URL": "https://photowarehouse.cn",
+        "PHOTOLIB_MCP_TOOLSETS": "auth,projects,requests,photos,worklogs,directory",
+        "PHOTOLIB_MCP_READ_ONLY": "false"
+      }
+    }
+  }
+}
+```
+
+**改完要重启宿主**，它只在拉起服务时读一次 env。改完跑一次 `photolib-mcp doctor`
+核对"启用分组 / 只读模式 / 已注册工具 N 个"这三行——数字和你预期对不上，多半是宿主还
+在用旧进程。
+
+### 分组该在什么时候打开
+
+| 分组 | 工具数（只读下剩） | 什么时候打开 | 关掉之后 AI 就做不了 |
+| --- | --- | --- | --- |
+| `auth` | 6（2） | **基本别关**，见下一节 | 登录、查当前身份、取系统枚举 |
+| `projects` | 16（7） | 要建/改选题、走状态流转、管相册和选片台 | 一切选题相关 |
+| `requests` | 16（5） | 要发布图片需求、接单、交付、打回 | 一切需求相关 |
+| `photos` | 18（4） | 要传图、检索图库、改元数据、下载打包 | 上传和下载 |
+| `adoptions` | 4（2） | 要标记采用、看采用排行 | 采用标记 |
+| `worklogs` | 7（1） | 要填报/审核工时 | 工时填报 |
+| `statistics` | 7（4） | 要看总览、成员统计，或跑导出（期末结算常用） | 统计与导出 |
+| `notifications` | 8（5） | 要收发站内信、查未读、看外发投递记录 | 站内信 |
+| `directory` | 12（5） | 要查通讯录、管校区；**传图和填工时也依赖它** | 按人名找 id |
+| `featured` | 14（5） | 好图精选征集期间 | 精选征集 |
+| `docs` | 12（4） | 要编辑或阅读文档中心 | 文档中心 |
+| `recruitment` | 14（6） | 招募季：发任务、看报名、导出名单 | 招募相关 |
+| `shares` | 19（8） | 要发分享链接，或用访客端验收链接效果 | 分享链接 |
+| `admin` | 34（14） | 管账号、权限组、审计日志、品牌、数据库备份与回滚 | 后台管理（**也就少了一整块高风险操作**） |
+| `misc` | 8（1） | 要传说明配图/消息配图/头像，或需要通用接口出口 | `photolib_api_request` 这个万能出口 |
+
+### 几条硬依赖，收窄前先看
+
+- **`auth` 基本不能关。** `photolib_login`、`photolib_whoami`、`photolib_metadata_options`
+  都在里面。关掉之后没有任何工具能发起登录，只能先在终端跑 `photolib-mcp login`。
+- **开 `photos` 或 `worklogs` 就要开 `directory`。** 上传要 `photographer_contact_id`、
+  工时要 `member_contact_id`，都是通讯录成员 id，只能用 `photolib_directory_members_list`
+  查；这两个字段不接受随便填的名字。
+- **`projects_add_photos` 要配 `photos`** 才找得到图片 id。
+- **`statistics` 自带导出闭环**（建任务 → 查进度 → 下载），单开它就能跑完一次导出。
+- **开着 `misc` 的话，分组收窄只是省上下文。** `photolib_api_request` 能直接打任意
+  `/api/v1` 接口，模型绕过分组限制没有任何难度（它仍然受后端权限约束）。真想把能力面
+  收住，就别开 `misc`，或者同时开只读。
+
+### 只读模式的代价
+
+`PHOTOLIB_MCP_READ_ONLY=true` 按"会不会改数据"划线，写工具**根本不会注册**——模型看不见
+的工具才不会反复去试。全开时 195 个工具会剩 73 个。但有两类东西按这条线一起没了，很容易
+踩：
+
+- **登录也没了。** `photolib_login` / `login_status` / `logout` / `change_password` 都算写
+  操作。只读模式下要**先在终端 `photolib-mcp login` 登录好**，再让宿主起服务；否则每个工具
+  都会提示你去调一个不存在的登录工具。
+- **导出和下载也没了。** 它们在后端都是 POST 建任务：`statistics_export`、`worklogs_export`、
+  `export_job_download`、`audit_logs_export`、`photos_download` / `photos_download_url` /
+  `photos_batch_download`、`recruitment_applications_export`、`docs_public_download_file`。
+  想要"只让 AI 查数据、但还能导出报表"，**别用只读**，改用分组收窄（例如只开
+  `auth,statistics,directory`），再在对话里要求它导出前先说明。
+- `photolib_api_request` 在只读下会拒绝 POST/PUT/PATCH/DELETE。
+
+### 几套现成配方
+
+照抄或者改，右边是实际注册的工具数：
+
+| 场景 | `PHOTOLIB_MCP_TOOLSETS` | 工具数 |
+| --- | --- | --- |
+| 日常拍摄组（选题/需求/图库/工时） | `auth,projects,requests,photos,worklogs,directory` | 75 |
+| 日常 + 统计与站内信 | `auth,projects,requests,photos,worklogs,statistics,directory,notifications` | 90 |
+| 只做统计导出、期末结算 | `auth,statistics,directory` | 25 |
+| 只整理图库 | `auth,photos,directory,projects` | 52 |
+| 管理员维护窗口（用完关回去） | `auth,admin` | 40 |
+| 发分享链接、验收访客端 | `auth,shares` | 25 |
+| 文档中心 | `auth,docs` | 18 |
+| 好图精选征集期 | `auth,featured,directory` | 32 |
+| 招募季 | `auth,recruitment` | 20 |
+| 只读旁观（记得先终端登录） | 不写，配 `PHOTOLIB_MCP_READ_ONLY=true` | 73 |
+
+第一次接入建议先全开跑通一遍，确认登录和常用流程都正常，再按上表收窄——一上来就收窄，
+出问题时分不清是配置错了还是没装好。
+
+### 什么时候应该关掉
+
+这些都是建议，关不关、什么时候关由你定：
+
+- **宿主提示工具数超限、或者对话明显变慢变笨** → 先关那些偶尔才用的：`admin`、`shares`、
+  `recruitment`、`featured`、`docs`。
+- **高风险操作做完了** → 把 `admin` 关回去。数据库备份与回滚、权限组调整、重置密码都在这一组，
+  它更适合"临时开、用完关"，而不是长期挂着。
+- **要演示、录屏、投屏给别人看** → 至少关掉 `directory`（通讯录里是真实姓名和联系方式）和
+  `admin`（审计日志、账号列表）。
+- **机器要借给别人、或者是公用电脑** → 跑 `photolib-mcp logout`，或者在宿主里停用 photolib
+  这个服务。凭据留在本机 `~/.photolib-mcp/credentials.json`，谁用这台机器谁就是以你的身份说话。
+- **离职、换岗、或者怀疑令牌泄漏** → `photolib_logout` / `photolib-mcp logout`，或者直接改密码
+  （改密会让所有会话一起失效）。
+- **不再用 AI 接入** → 宿主配置里删掉 photolib 这条，再 logout 清掉本机凭据。
 
 ### 通用出口
 
-`photolib_api_request` 可以直接调任意 `/api/v1` 接口，用于工具没覆盖到的角落。它不做参数
-校验，能力仍由后端权限判定；只读模式下它会拒绝写方法。优先用具体的工具。
+`photolib_api_request`（在 `misc` 分组里）可以直接调任意 `/api/v1` 接口，用于工具没覆盖到的
+角落。它不做参数校验，能力仍由后端权限判定；只读模式下它会拒绝写方法。优先用具体的工具——
+它们带着参数校验、上传流程和用法说明。
 
 ## 开发
 
