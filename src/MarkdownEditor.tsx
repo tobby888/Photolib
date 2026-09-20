@@ -7,6 +7,10 @@ import { useRef, useState } from 'react'
 import { api } from './api'
 import MarkdownRenderer from './MarkdownRenderer'
 
+// 禁用的 <button> 浏览器一律不派发鼠标事件，Tooltip 直接套在上面永远不会弹，
+// 预览态下这些按钮名就等于没写。加一层包裹元素让 hover 落得到。
+const tooltipWrap = { display: 'inline-block' } as const
+
 export default function MarkdownEditor({
   value = '', onChange, placeholder = '使用 Markdown 编写说明……', allowImageUpload = true,
   uploadUrl = '/description-images', maxLength = 5000,
@@ -65,14 +69,16 @@ export default function MarkdownEditor({
   return <div className="markdown-editor" ref={root}>
     <div className="markdown-editor-toolbar">
       <Space size={2} wrap>
-        <Tooltip title="加粗"><Button type="text" disabled={mode !== 'edit'} icon={<BoldOutlined />} onClick={() => insert('**', '**', '加粗文字')} /></Tooltip>
-        <Tooltip title="斜体"><Button type="text" disabled={mode !== 'edit'} icon={<ItalicOutlined />} onClick={() => insert('*', '*', '斜体文字')} /></Tooltip>
-        <Tooltip title="无序列表"><Button type="text" disabled={mode !== 'edit'} icon={<UnorderedListOutlined />} onClick={() => insert('- ', '', '列表项')} /></Tooltip>
-        <Tooltip title="有序列表"><Button type="text" disabled={mode !== 'edit'} icon={<OrderedListOutlined />} onClick={() => insert('1. ', '', '列表项')} /></Tooltip>
-        <Tooltip title="链接"><Button type="text" disabled={mode !== 'edit'} icon={<LinkOutlined />} onClick={() => insert('[', '](https://)', '链接文字')} /></Tooltip>
+        <Tooltip title="加粗"><span style={tooltipWrap}><Button type="text" disabled={mode !== 'edit'} icon={<BoldOutlined />} onClick={() => insert('**', '**', '加粗文字')} /></span></Tooltip>
+        <Tooltip title="斜体"><span style={tooltipWrap}><Button type="text" disabled={mode !== 'edit'} icon={<ItalicOutlined />} onClick={() => insert('*', '*', '斜体文字')} /></span></Tooltip>
+        <Tooltip title="无序列表"><span style={tooltipWrap}><Button type="text" disabled={mode !== 'edit'} icon={<UnorderedListOutlined />} onClick={() => insert('- ', '', '列表项')} /></span></Tooltip>
+        <Tooltip title="有序列表"><span style={tooltipWrap}><Button type="text" disabled={mode !== 'edit'} icon={<OrderedListOutlined />} onClick={() => insert('1. ', '', '列表项')} /></span></Tooltip>
+        <Tooltip title="链接"><span style={tooltipWrap}><Button type="text" disabled={mode !== 'edit'} icon={<LinkOutlined />} onClick={() => insert('[', '](https://)', '链接文字')} /></span></Tooltip>
         {allowImageUpload && <>
           <Tooltip title="上传图片（JPEG、PNG、WebP，最大 5 MiB）">
-            <Button type="text" disabled={mode !== 'edit'} loading={uploading} icon={<PictureOutlined />} onClick={() => fileInput.current?.click()} />
+            <span style={tooltipWrap}>
+              <Button type="text" disabled={mode !== 'edit'} loading={uploading} icon={<PictureOutlined />} onClick={() => fileInput.current?.click()} />
+            </span>
           </Tooltip>
           <input ref={fileInput} hidden type="file" accept="image/jpeg,image/png,image/webp"
             onChange={event => void uploadImage(event.target.files?.[0])} />
