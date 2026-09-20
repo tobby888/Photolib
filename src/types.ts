@@ -223,6 +223,12 @@ export interface Photo extends BaseEntity {
   relatedProjects?: { id: EntityId; title: string }[]
 }
 
+/** GET /photos/uploaders：图库里出现过的上传者，用作「按上传者筛选」的候选人。 */
+export interface PhotoUploader {
+  id: EntityId
+  displayName: string
+}
+
 /** 往某个需求上传时可用的标签：restricted 为 true 时只能从 tags 里选。 */
 export interface TagOptions {
   restricted: boolean

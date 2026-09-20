@@ -1091,6 +1091,97 @@ class PhotoServiceTests {
         assertThat(photoService.requireGallerySelectable(1802L, selfOnly).getId()).isEqualTo(1802L);
     }
 
+    /** 在 {@link #seedVisibilityFixture} 之上补一个只在外校区传过图的上传者 203 / 图片 1804。 */
+    private void seedOtherCampusUploader(CampusEntity otherCampus) {
+        jdbc.sql("""
+                INSERT INTO app_user
+                    (id, username, password_hash, display_name, role, campus_id, enabled, must_change_password)
+                VALUES (203, 'other-uploader', 'hash', '外校区上传者', 'CAMPUS_MANAGER', :campusId, true, false)
+                """).param("campusId", otherCampus.getId()).update();
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, project_id, title, photographer_student_id, photographer_name,
+                     uploaded_by, campus_id, taken_at, size, content_type, object_key, sha256, status)
+                VALUES
+                    (1804, null, '外校区同事图片', '20230001', '张三', 203, :campusId,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/vis-other-2.jpg', :sha256, 'AVAILABLE')
+                """)
+                .param("campusId", otherCampus.getId())
+                .param("sha256", "g".repeat(64))
+                .update();
+    }
+
+    private List<Long> uploaderIds(AuthenticatedUser user) {
+        return photoService.uploaders(false, user).stream()
+                .map(PhotoService.UploaderView::id).toList();
+    }
+
+    /**
+     * 「按上传者筛选」的候选人必须与列表共用一套可见范围：下拉框里绝不能出现选了以后必然是
+     * 空列表的人，也不能借着下拉框泄露本账号看不到的上传者。
+     */
+    @Test
+    void uploaderFilterOptionsFollowTheSameVisibilityRulesAsTheGallery() {
+        seedOtherCampusUploader(seedVisibilityFixture());
+
+        // 只看本人上传：下拉框里只有自己，同事的名字不该从这里漏出去。
+        assertThat(uploaderIds(campusReader(PhotoVisibility.SELF, testCampus)))
+                .containsExactly(managerUser.id());
+        // 授权校区内：本人 + 同校区同事，外校区的上传者仍然看不到。
+        assertThat(uploaderIds(campusReader(PhotoVisibility.CAMPUS, testCampus)))
+                .containsExactlyInAnyOrder(managerUser.id(), adminUser.id());
+        // 全站可见：外校区的上传者这时才出现。
+        assertThat(uploaderIds(campusReader(PhotoVisibility.GLOBAL, testCampus)))
+                .containsExactlyInAnyOrder(managerUser.id(), adminUser.id(), 203L);
+
+        // 候选人和实际筛选结果必须对得上：选了谁就只剩谁的图片。
+        var campusWide = campusReader(PhotoVisibility.CAMPUS, testCampus);
+        assertThat(photoService.list(1, 50, null, null, null, null, null, adminUser.id(), null,
+                        PhotoStatus.AVAILABLE, false, false, false, List.of(), campusWide)
+                .items()).extracting(PhotoService.PhotoView::id).containsExactly(1802L);
+    }
+
+    /**
+     * 候选人不跟随状态筛选，也不跟着注销的账号一起消失：归档的图片、离职同学传的图片，
+     * 都得还能按上传者找回来。
+     */
+    @Test
+    void uploaderFilterOptionsCoverEveryStatusAndKeepDeletedAccountsSelectable() {
+        seedVisibilityFixture();
+        jdbc.sql("""
+                INSERT INTO app_user
+                    (id, username, password_hash, display_name, role, campus_id, enabled, must_change_password)
+                VALUES (204, 'left-school', 'hash', '已离校的同学', 'CAMPUS_MANAGER', :campusId, true, false)
+                """).param("campusId", testCampus.getId()).update();
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, project_id, title, photographer_student_id, photographer_name,
+                     uploaded_by, campus_id, taken_at, size, content_type, object_key, sha256, status)
+                VALUES
+                    (1805, null, '归档图片', '20230001', '张三', 204, :campusId,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/vis-gone.jpg', :sha256, 'ARCHIVED')
+                """)
+                .param("campusId", testCampus.getId())
+                .param("sha256", "h".repeat(64))
+                .update();
+        // 账号注销走的是逻辑删除（userMapper.deleteById），photo.uploaded_by 上的外键还在。
+        jdbc.sql("UPDATE app_user SET deleted=TRUE WHERE id=204").update();
+
+        var campusWide = campusReader(PhotoVisibility.CAMPUS, testCampus);
+        // 1805 是 ARCHIVED，默认的 AVAILABLE 视图里看不到它——但下拉框里得留着它的上传者，
+        // 否则「切到已归档再按人筛」这条路走不通。
+        assertThat(uploaderIds(campusWide)).contains(204L);
+        // 账号注销了，图片还在：把这个上传者从下拉框里抹掉，这批图片就再也没法按上传者筛出来。
+        assertThat(photoService.uploaders(false, campusWide))
+                .filteredOn(uploader -> uploader.id() == 204L)
+                .singleElement()
+                .extracting(PhotoService.UploaderView::displayName)
+                .isEqualTo("已注销的账号");
+        assertThat(photoService.list(1, 50, null, null, null, null, null, 204L, null,
+                        PhotoStatus.ARCHIVED, false, false, false, List.of(), campusWide)
+                .items()).extracting(PhotoService.PhotoView::id).containsExactly(1805L);
+    }
+
     @Test
     void selectableOnlyListingStillRequiresGalleryAccess() {
         seedVisibilityFixture();
