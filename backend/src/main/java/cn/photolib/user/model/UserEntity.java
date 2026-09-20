@@ -17,6 +17,11 @@ public class UserEntity extends BaseEntity {
     private UserRole role;
     private Long permissionGroupId;
     private Long campusId;
+    /**
+     * 和 wecomUserid 一样要能清空：默认的 NOT_NULL 更新策略会把 phone = NULL
+     * 从 UPDATE 里丢掉，调用方把手机号置空后接口照样返回成功，库里那个号还在。
+     */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String phone;
     private String email;
     /** 企业微信通讯录里的 userid，通知投递的收件标识；未绑定时该用户只收站内信。 */

@@ -177,6 +177,18 @@ class UserServiceTests {
         assertThat(cleared.wecomUserid()).isNull();
     }
 
+    @Test
+    void updateUser_shouldClearThePhone() {
+        UserService.CreatedUser created = userService.create(new UserService.CreateUser(
+                "phone-clearable", "可清手机号账号", UserRole.MINISTER, null, "13800138000", null));
+
+        UserService.UserView cleared = userService.update(created.user().id(),
+                new UserService.UpdateUser("可清手机号账号", UserRole.MINISTER, null, null, null, true, 1));
+
+        // update() 返回的是改完之后重新查出来的视图，所以这条断言同时证明了写确实落库。
+        assertThat(cleared.phone()).isNull();
+    }
+
     /** 软删除后唯一索引仍然占位，不清掉的话这个人换账号回来就绑不上同一个 userid。 */
     @Test
     void deleteUser_shouldReleaseTheWecomUseridForRebinding() {
