@@ -21,7 +21,34 @@ test('photo library filters use safe defaults for empty or invalid query paramet
     status: 'AVAILABLE',
     keyword: '校庆',
     tags: [],
+    uploadedBy: '',
   })
+})
+
+test('library filters keep only numeric uploader ids from the URL', () => {
+  const read = (uploadedBy: string) =>
+    readPhotoLibraryFilters(new URLSearchParams({ uploadedBy })).uploadedBy
+
+  assert.equal(read('42'), '42')
+  // 后端的 uploadedBy 是 Long，非数字的值会 400 让整页变成加载出错。
+  assert.equal(read('or 1=1'), '')
+  assert.equal(read('-1'), '')
+  assert.equal(read('1.5'), '')
+  assert.equal(read(''), '')
+})
+
+test('uploader filter travels through the URL and the list request', () => {
+  const filters = {
+    ...DEFAULT_PHOTO_LIBRARY_FILTERS,
+    uploadedBy: '7',
+  }
+
+  assert.equal(writePhotoLibraryFilters(filters).toString(), 'uploadedBy=7')
+  assert.deepEqual(readPhotoLibraryFilters(writePhotoLibraryFilters(filters)), filters)
+  assert.equal(photoLibraryRequestParams(filters).get('uploadedBy'), '7')
+  // 详情页的「上一张 / 下一张」必须带上同一个上传者，否则定位会错位。
+  assert.equal(photoLibraryRequestParams(filters, { page: 2 }).get('uploadedBy'), '7')
+  assert.equal(photoLibraryRequestParams(DEFAULT_PHOTO_LIBRARY_FILTERS).has('uploadedBy'), false)
 })
 
 test('photo library filters round-trip Unicode and reserved characters', () => {
@@ -30,6 +57,7 @@ test('photo library filters round-trip Unicode and reserved characters', () => {
     status: 'ARCHIVED' as const,
     keyword: '毕业典礼 A&B / 夜景',
     tags: ['合影', '颁奖/闭幕'],
+    uploadedBy: '12',
   }
   const searchParams = writePhotoLibraryFilters(filters)
 
@@ -56,6 +84,7 @@ test('photo detail and list paths preserve the complete library query', () => {
     status: 'PROCESSING',
     keyword: '新闻 图',
     tags: [],
+    uploadedBy: '',
   })}`
 
   assert.equal(
@@ -85,6 +114,9 @@ test('photo and favorites pages wire the controlled search field and preserved r
   ])
 
   assert.match(librarySource, /value=\{searchText\} onChange=\{event => setSearchText\(event\.target\.value\)\}/)
+  // 候选人只能来自按可见范围算过的专用接口，不能拿通讯录或用户列表凑。
+  assert.match(librarySource, /url: '\/photos\/uploaders'/)
+  assert.match(librarySource, /filters\.page, filters\.keyword, filters\.status, filters\.uploadedBy/)
   assert.match(librarySource, /const libraryRoot = favoritesOnly \? '\/favorites' : '\/photos'/)
   assert.match(librarySource, /`\$\{libraryRoot\}\/\$\{photo\.id\}`/)
   assert.match(librarySource, /const operationViewKey = currentViewKeyRef\.current/)
@@ -102,6 +134,7 @@ test('library request params repeat tags and match between the list and detail p
     status: 'AVAILABLE' as const,
     keyword: '',
     tags: ['合影', '颁奖/闭幕'],
+    uploadedBy: '',
   }
 
   assert.equal(

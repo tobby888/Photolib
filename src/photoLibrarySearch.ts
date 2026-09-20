@@ -16,6 +16,8 @@ export interface PhotoLibraryFilters {
   status: PhotoLibraryStatus
   /** 同时包含全部所选标签；与后端的精确标签过滤对应。 */
   tags: string[]
+  /** 上传者的用户 id，空串表示不限；候选人来自 GET /photos/uploaders。 */
+  uploadedBy: string
 }
 
 export const DEFAULT_PHOTO_LIBRARY_FILTERS: PhotoLibraryFilters = {
@@ -23,6 +25,7 @@ export const DEFAULT_PHOTO_LIBRARY_FILTERS: PhotoLibraryFilters = {
   keyword: '',
   status: 'AVAILABLE',
   tags: [],
+  uploadedBy: '',
 }
 
 export function readPhotoLibraryFilters(searchParams: URLSearchParams): PhotoLibraryFilters {
@@ -37,6 +40,8 @@ export function readPhotoLibraryFilters(searchParams: URLSearchParams): PhotoLib
       : 'AVAILABLE',
     // URL 可能被手改：超长的标签后端会直接 400，这里先丢掉，页面按剩下的条件正常加载。
     tags: normalizeTags(searchParams.getAll('tags')).filter(tag => !isTagTooLong(tag)).slice(0, MAX_TAGS),
+    // 后端的 uploadedBy 是 Long，非数字的值会 400 让整页变成加载出错；URL 可能被手改，先挡掉。
+    uploadedBy: /^\d+$/.test(searchParams.get('uploadedBy') ?? '') ? searchParams.get('uploadedBy')! : '',
   }
 }
 
@@ -59,6 +64,7 @@ export function photoLibraryRequestParams(
   if (filters.keyword) params.set('keyword', filters.keyword)
   params.set('status', filters.status)
   for (const tag of filters.tags) params.append('tags', tag)
+  if (filters.uploadedBy) params.set('uploadedBy', filters.uploadedBy)
   if (options.favoritesOnly) params.set('favoritesOnly', 'true')
   return params
 }
@@ -69,6 +75,7 @@ export function writePhotoLibraryFilters(filters: PhotoLibraryFilters): URLSearc
   if (filters.status !== DEFAULT_PHOTO_LIBRARY_FILTERS.status) searchParams.set('status', filters.status)
   if (filters.page > 1) searchParams.set('page', String(filters.page))
   for (const tag of filters.tags ?? []) searchParams.append('tags', tag)
+  if (filters.uploadedBy) searchParams.set('uploadedBy', filters.uploadedBy)
   return searchParams
 }
 

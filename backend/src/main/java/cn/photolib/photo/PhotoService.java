@@ -18,6 +18,8 @@ import cn.photolib.project.ProjectService;
 import cn.photolib.project.model.ProjectStatus;
 import cn.photolib.storage.ObjectStorageService;
 import cn.photolib.storage.StorageProperties;
+import cn.photolib.user.mapper.UserMapper;
+import cn.photolib.user.model.UserEntity;
 import cn.photolib.permission.PermissionCode;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
@@ -31,15 +33,19 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.text.Collator;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -55,6 +61,7 @@ public class PhotoService {
     private final ApplicationEventPublisher events;
     private final JdbcClient jdbc;
     private final CampusService campusService;
+    private final UserMapper userMapper;
     private final cn.photolib.directory.CampusMemberService campusMemberService;
     private final AbandonedUploadCleanupJob abandonedUploads;
 
@@ -200,10 +207,55 @@ public class PhotoService {
     }
 
     /**
+     * 图库「按上传者筛选」下拉框的候选人：在调用者可见的图片里出现过的上传者，按姓名排序。
+     *
+     * <p>候选集合刻意与 {@link #list} 共用 {@link #buildListScope}，所以它天然遵守同一套
+     * 可见范围：只看本人上传的账号只会看到自己，校区范围账号看不到别校区的上传者，非参与人
+     * 也不会从这里知道某个需求有谁传过图。下拉框里绝不能出现选了以后必然是空列表的人。</p>
+     *
+     * <p>候选不跟随状态筛选（{@code includeAllStatuses}）：状态是另一个维度的筛选条件，
+     * 让下拉框随状态增减选项会让「切个状态人就没了」显得像 bug。</p>
+     */
+    public List<UploaderView> uploaders(boolean favoritesOnly, AuthenticatedUser user) {
+        requireListPermission(null, null, favoritesOnly, false, user);
+        List<Long> uploaderIds = mapper.selectList(buildListScope(null, null, null, null, null,
+                        null, null, null, true, favoritesOnly, false, user)
+                        .select(PhotoEntity::getUploadedBy)
+                        .groupBy(PhotoEntity::getUploadedBy))
+                .stream().map(PhotoEntity::getUploadedBy).filter(Objects::nonNull).distinct().toList();
+        if (uploaderIds.isEmpty()) return List.of();
+        // 账号被删掉之后图片还在，此时不能把这个上传者从下拉框里抹掉——否则那批图片没有任何
+        // 办法按上传者筛出来。用占位名留着它。
+        Map<Long, String> names = userMapper.selectBatchIds(uploaderIds).stream()
+                .collect(Collectors.toMap(UserEntity::getId, UserEntity::getDisplayName));
+        return uploaderIds.stream()
+                .map(id -> new UploaderView(id, names.getOrDefault(id, "已注销的账号")))
+                .sorted(Comparator.comparing(UploaderView::displayName, Collator.getInstance(Locale.CHINA)))
+                .toList();
+    }
+
+    /**
      * 拼出图片列表的基础查询（不包含分页与标签过滤）。标签过滤需要先在可见集合上做精确匹配，
      * 所以这里单独抽出来，让 list 和 photoIdsWithAllTags 复用同一套可见范围规则。
      */
     private LambdaQueryWrapper<PhotoEntity> buildListQuery(
+            String keyword, Long projectId, Long requestId, String studentId,
+            String photographerName, Long uploadedBy, Long campusId, PhotoStatus status,
+            boolean includeAllStatuses, boolean favoritesOnly, boolean selectableOnly,
+            AuthenticatedUser user) {
+        return buildListScope(keyword, projectId, requestId, studentId, photographerName,
+                uploadedBy, campusId, status, includeAllStatuses, favoritesOnly, selectableOnly, user)
+                // 批量上传常有同一秒入库的图片，只按 created_at 排时分页边界上的顺序不稳定，
+                // 翻页会重复或漏图，详情页「上一张 / 下一张」也会跳号；用 id 兜底成全序。
+                .orderByDesc(PhotoEntity::getCreatedAt)
+                .orderByDesc(PhotoEntity::getId);
+    }
+
+    /**
+     * 可见范围本身，不带排序。{@link #uploaders} 要在这个范围上按 uploaded_by 分组，
+     * 而 MySQL 的 ONLY_FULL_GROUP_BY 不允许按分组之外的列排序，所以排序留给 buildListQuery 加。
+     */
+    private LambdaQueryWrapper<PhotoEntity> buildListScope(
             String keyword, Long projectId, Long requestId, String studentId,
             String photographerName, Long uploadedBy, Long campusId, PhotoStatus status,
             boolean includeAllStatuses, boolean favoritesOnly, boolean selectableOnly,
@@ -250,11 +302,7 @@ public class PhotoService {
                                 "SELECT request_id FROM request_participant WHERE user_id = " + user.id()))
                 .inSql(favoritesOnly, PhotoEntity::getId,
                         "SELECT photo_id FROM photo_favorite WHERE user_id = " + user.id())
-                .eq(effectiveStatus != null, PhotoEntity::getStatus, effectiveStatus)
-                // 批量上传常有同一秒入库的图片，只按 created_at 排时分页边界上的顺序不稳定，
-                // 翻页会重复或漏图，详情页「上一张 / 下一张」也会跳号；用 id 兜底成全序。
-                .orderByDesc(PhotoEntity::getCreatedAt)
-                .orderByDesc(PhotoEntity::getId);
+                .eq(effectiveStatus != null, PhotoEntity::getStatus, effectiveStatus);
     }
 
     /**
@@ -881,4 +929,6 @@ public class PhotoService {
                             LocalDateTime uploadedAt, Integer version, long adoptionCount, boolean favorited,
                             List<Long> relatedProjectIds, List<ProjectLink> relatedProjects) {}
     public record ProjectLink(Long id, String title) {}
+    /** 图库上传者筛选的候选项。 */
+    public record UploaderView(Long id, String displayName) {}
 }

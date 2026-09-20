@@ -63,6 +63,15 @@ public class PhotoController {
                 includeAllStatuses, favoritesOnly, selectableOnly, tags, user));
     }
 
+    /** 图库「按上传者筛选」的候选人。范围与 {@code GET /photos} 完全一致，见 PhotoService.uploaders。 */
+    @GetMapping("/uploaders")
+    @PreAuthorize("hasAuthority('PHOTO_VIEW')")
+    ApiResponse<List<PhotoService.UploaderView>> uploaders(
+            @RequestParam(defaultValue = "false") boolean favoritesOnly,
+            @AuthenticationPrincipal AuthenticatedUser user) {
+        return ApiResponse.ok(service.uploaders(favoritesOnly, user));
+    }
+
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyAuthority('PHOTO_VIEW','PROJECT_VIEW','PROJECT_VIEW_ALL','REQUEST_VIEW','REQUEST_PHOTO_MANAGE')")
     ApiResponse<PhotoService.PhotoView> get(@PathVariable Long id,
