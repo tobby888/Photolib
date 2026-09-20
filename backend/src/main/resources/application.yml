@@ -56,6 +56,14 @@ photolib:
   photo-processing:
     threads: ${PHOTO_PROCESSING_THREADS:1}
     temporary-directory: ${PHOTO_PROCESSING_TEMPORARY_DIRECTORY:./data/photo-processing}
+  photo:
+    missing-upload-scan:
+      # 定时扫描停在「上传中」、但原图在对象存储里确认不存在的照片记录，把它们软删掉。
+      # 这类记录会一直挡住同一张图的重传（查重按 sha256 + deleted=0）。
+      # 关掉它只会让那些记录继续积着，不影响上传本身。
+      enabled: ${MISSING_UPLOAD_SCAN_ENABLED:true}
+      delay-ms: ${MISSING_UPLOAD_SCAN_DELAY_MS:900000}
+      initial-delay-ms: ${MISSING_UPLOAD_SCAN_INITIAL_DELAY_MS:300000}
   auth:
     access-ttl: 15m
     idle-ttl: 30m

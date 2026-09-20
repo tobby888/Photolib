@@ -233,6 +233,9 @@ curl --fail http://127.0.0.1:8080/api/v1/actuator/health
 | `STARTUP_MISSING_OBJECT_CLEANUP_ENABLED` | 每次启动是否清理"成品图已在对象存储中丢失"的图片记录，默认 `true`；设为 `false` 完全关闭 |
 | `STARTUP_MISSING_OBJECT_CLEANUP_MAX_RATIO` | 上述清理的缺失占比熔断阈值，默认 `0.2` |
 | `STARTUP_MISSING_OBJECT_CLEANUP_MIN_ABSOLUTE` | 低于该绝对张数时不按占比熔断，默认 `20` |
+| `MISSING_UPLOAD_SCAN_ENABLED` | 是否定时扫描"停在上传中、但原图在对象存储里确认不存在"的图片记录并软删，默认 `true`。这类记录会一直挡住同一张图重传（查重按 SHA-256）；设为 `false` 只是让它们继续积着，不影响上传本身 |
+| `MISSING_UPLOAD_SCAN_DELAY_MS` | 上述扫描的间隔毫秒数，默认 `900000`（15 分钟） |
+| `MISSING_UPLOAD_SCAN_INITIAL_DELAY_MS` | 上述扫描在启动那一轮之后、第一次定时之前的等待毫秒数，默认 `300000`（5 分钟） |
 | `PHOTO_PROCESSING_THREADS` | 原生图片处理线程数，取值 1～32，默认 1 |
 | `PHOTO_PROCESSING_TEMPORARY_DIRECTORY` | ZIP 解压与图片处理临时目录 |
 | `WECOM_CORP_ID` | 企业微信企业 ID（管理后台「我的企业」页底部） |

@@ -19,6 +19,11 @@ photolib:
   featured:
     # 同上：关掉好图精选的到期自动截止定时任务。
     deadline-enabled: false
+  photo:
+    missing-upload-scan:
+      # 同上：关掉「卡在上传中」的定时扫描。共享的测试上下文里跑一整轮会软删掉别的
+      # 测试类刚造出来的 UPLOADING 夹具；用例自己直接调 scan()。
+      enabled: false
   photo-processing:
     threads: 2
     temporary-directory: ${java.io.tmpdir}/photolib-test-photo-processing
