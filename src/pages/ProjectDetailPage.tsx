@@ -1,6 +1,6 @@
 import {
   App, Breadcrumb, Button, Card, Checkbox, Col, DatePicker, Form, Input,
-  Modal, Pagination, Radio, Row, Select, Space, Statistic, Tag, Typography,
+  Modal, Pagination, Radio, Row, Select, Space, Statistic, Tag, Tooltip, Typography,
 } from 'antd'
 import {
   ArrowLeftOutlined, CameraOutlined, CheckCircleOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, EyeOutlined,
@@ -443,6 +443,35 @@ export default function ProjectDetailPage() {
     })
   }
 
+  /**
+   * 删除选题。后端另有一道「选题下还有需求、图片或采用记录就只能取消」的保护
+   * （ProjectService.delete），这里按详情页的计数先把按钮禁掉，省得点下去才吃一个报错；
+   * 真正的判定仍在后端，前端这一层只是提示。
+   */
+  const confirmDelete = () => {
+    if (!data.project) return
+    const title = data.project.title
+    modal.confirm({
+      title: '确认删除这个选题？',
+      content: <div>
+        <p>选题「{title}」会从列表中消失，已建立的分享链接随之失效。<strong>此操作不可撤销。</strong></p>
+        <p>如果只是想停掉它、保留已有记录，请改用「取消项目」。</p>
+      </div>,
+      okText: '确认删除',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await api({ method: 'DELETE', url: `/projects/${projectId}` })
+        } catch (reason) {
+          message.error((reason as Error).message)
+          return
+        }
+        message.success('选题已删除')
+        navigate('/projects')
+      },
+    })
+  }
+
   const createRequest = async () => {
     const values = await requestForm.validateFields()
     if (values.publishMode === 'draft' && values.campusIds.length !== 1) {
@@ -712,6 +741,11 @@ export default function ProjectDetailPage() {
   const canAdopt = hasPermission(user, 'PROJECT_ADOPT')
   const canBatchDownload = hasPermission(user, 'PROJECT_DOWNLOAD')
   const canShare = hasPermission(user, 'PROJECT_SHARE')
+  // 后端的删除是 PROJECT_CREATE + 本人创建或管理员，入口刻意只给管理员。
+  const canDelete = user?.permissionGroupCode === 'ADMIN'
+  // 详情页的计数对校区范围账号是裁剪过的，而删除入口只给全局范围的管理员，这里读到的是全量。
+  const hasBusinessData = (project?.requestCount || 0) + (project?.photoCount || 0)
+    + (project?.adoptionCount || 0) > 0
   // 与 PUT /photos/{id}、POST /photos/batch-tags 的方法级授权一致；逐张的归属/上传者限制由后端判断。
   const canTag = hasPermission(user, 'PHOTO_UPLOAD') || hasPermission(user, 'REQUEST_PHOTO_MANAGE')
   const canSelectPhotos = canBatchDownload || canTag
@@ -807,6 +841,11 @@ export default function ProjectDetailPage() {
             <Button danger icon={<DeleteOutlined />} onClick={() => void confirmCleanup()}>
               清理未选中的图片{project.deprecatedCount ? `（${project.deprecatedCount}）` : ''}</Button>}
           {project.status === 'COMPLETED' && user?.permissionGroupCode === 'ADMIN' && <Button type="primary" onClick={reopen}>重新开放</Button>}
+          {canDelete && (hasBusinessData
+            ? <Tooltip title="选题下已有需求、图片或采用记录，只能取消，不能删除">
+                <Button danger disabled icon={<DeleteOutlined />}>删除选题</Button>
+              </Tooltip>
+            : <Button danger icon={<DeleteOutlined />} onClick={confirmDelete}>删除选题</Button>)}
         </Space>
       </Card>
 
