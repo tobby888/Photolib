@@ -11,7 +11,8 @@ import argparse
 import asyncio
 import sys
 
-from .config import load_settings
+from .advice import configuration_notes, render_notes
+from .config import ALL_TOOLSETS, Settings, load_settings
 from .device_login import await_approval, start_pairing
 from .errors import PhotoLibError
 from .server import build_server
@@ -26,6 +27,14 @@ def main() -> None:
     sub.add_parser("logout", help="清掉本机保存的凭据")
     sub.add_parser("doctor", help="检查配置、连通性和登录状态")
     args = parser.parse_args()
+
+    # 先把配置读一遍：分组名写错时该看到一行人话，而不是一屏 traceback——
+    # 宿主里这条错误只会以"photolib 起不来"的形式出现，人得能一眼看懂。
+    try:
+        load_settings()
+    except ValueError as exc:
+        print(f"配置有误：{exc}", file=sys.stderr)
+        raise SystemExit(2) from None
 
     command = args.command or "serve"
     if command == "serve":
@@ -76,26 +85,44 @@ async def _logout() -> int:
         await session.aclose()
 
 
+def _print_notes(settings: Settings, *, has_credentials: bool) -> None:
+    """把当前这套配置的后果打在结论旁边。
+
+    收窄的取舍写在 mcp/README.md 里，但出问题的人先跑的是 doctor——提示得在这儿给，
+    不能指望他先去翻文档。提示只说"会怎样、想换该改哪个变量"，改不改是他的事。
+    """
+    print()
+    print("提示（都只是建议，改不改由你）：")
+    for line in render_notes(configuration_notes(settings, has_credentials=has_credentials)):
+        print(line)
+
+
 async def _doctor() -> int:
     settings = load_settings()
     session = PhotoLibSession(settings)
     server = build_server(settings)
     tools = await server.list_tools()
+    skipped = len(getattr(server, "photolib_registry").skipped)
     print(f"站点地址      : {settings.base_url}")
     print(f"接口前缀      : {settings.api_base}")
     print(f"凭据文件      : {settings.credentials_path}")
-    print(f"启用分组      : {', '.join(settings.toolsets)}")
+    print(f"启用分组      : {', '.join(settings.toolsets)}"
+          f"（{len(settings.toolsets)}/{len(ALL_TOOLSETS)} 组）")
     print(f"只读模式      : {'是' if settings.read_only else '否'}")
-    print(f"已注册工具    : {len(tools)} 个")
+    print(f"已注册工具    : {len(tools)} 个"
+          + (f"（另有 {skipped} 个写工具因只读模式未注册）" if skipped else ""))
     try:
         health = await session.raw_request("GET", "/actuator/health", authenticated=False)
         print(f"后端连通性    : HTTP {health.status_code}")
     except Exception as exc:  # noqa: BLE001 - doctor 就是用来把各种失败原样报出来的
         print(f"后端连通性    : 连不上（{exc}）")
+        _print_notes(settings, has_credentials=session.credentials() is not None)
         await session.aclose()
         return 1
-    if session.credentials() is None:
+    has_credentials = session.credentials() is not None
+    if not has_credentials:
         print("登录状态      : 未登录（运行 `photolib-mcp login`）")
+        _print_notes(settings, has_credentials=False)
         await session.aclose()
         return 0
     try:
@@ -107,6 +134,7 @@ async def _doctor() -> int:
         print(f"登录状态      : 凭据不可用（{exc}）")
         return 1
     finally:
+        _print_notes(settings, has_credentials=True)
         await session.aclose()
 
 

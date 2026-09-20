@@ -431,7 +431,8 @@ Cursor 等。用 Python + FastMCP 写成，以 stdio 运行。完整说明见 [m
    环境变量 PHOTOLIB_BASE_URL=https://photowarehouse.cn（换成我们实际的站点地址）。
    - Claude Code：claude mcp add photolib --env PHOTOLIB_BASE_URL=<站点地址> -- photolib-mcp
    - Claude Desktop / Cursor：写进配置文件的 mcpServers，格式见 mcp/README.md
-3. 执行 `photolib-mcp doctor` 确认站点连得上、工具都注册成功。
+3. 执行 `photolib-mcp doctor` 确认站点连得上、工具都注册成功，
+   并把末尾那几条针对当前配置的提示读给我听。
 4. 重启宿主让它加载这个服务，然后调用 photolib_login 工具，
    把浏览器链接和配对码给我——我会在浏览器里自己批准。
 ```
@@ -472,8 +473,10 @@ PHOTOLIB_MCP_READ_ONLY=true
   只读下要先在终端跑 `photolib-mcp login`；想"只查数据但还能导表"，应该用分组收窄而不是只读。
 - **开着 `misc` 时分组收窄只省上下文**，因为 `photolib_api_request` 能直接打任意 `/api/v1` 接口。
 
-每个分组的工具数、硬依赖（比如传图和填工时都要配 `directory`）、按场景抄的配方，以及什么时候
-该把某个分组关回去、什么时候该直接 `photolib-mcp logout`，见
+`photolib-mcp doctor` 的输出末尾会按当前这套配置把上面这些后果再说一遍（少了哪个依赖分组、
+只读下少了什么、要不要把 `admin` 关回去），不用先翻文档。每个分组的工具数、硬依赖（比如传图和
+填工时都要配 `directory`）、按场景抄的配方，以及什么时候该把某个分组关回去、什么时候该直接
+`photolib-mcp logout`，见
 [mcp/README.md 的"收窄工具链"](./mcp/README.md#收窄工具链开哪些改哪个变量什么时候关)。
 开哪些、什么时候关，由使用这台机器的人自己决定——服务不会替你收窄，也不会在后台改你的配置。
 

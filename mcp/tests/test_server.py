@@ -65,3 +65,21 @@ async def test_api_request_refuses_writes_when_read_only(settings: Settings) -> 
     with pytest.raises(Exception) as caught:
         await server.call_tool("photolib_api_request", {"method": "DELETE", "path": "/projects/1"})
     assert "只读" in str(caught.value)
+
+
+def test_unknown_toolset_fails_fast_with_a_readable_message(monkeypatch, capsys) -> None:
+    """分组名写错时给一行人话并以 2 退出——宿主里这条只会表现为"photolib 起不来"。"""
+    import sys as _sys
+
+    from photolib_mcp.__main__ import main
+
+    monkeypatch.setenv("PHOTOLIB_MCP_TOOLSETS", "auth,photo")
+    monkeypatch.setattr(_sys, "argv", ["photolib-mcp", "doctor"])
+
+    with pytest.raises(SystemExit) as caught:
+        main()
+
+    assert caught.value.code == 2
+    message = capsys.readouterr().err
+    assert "未知的分组: photo" in message
+    assert "可选值为" in message
