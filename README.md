@@ -454,14 +454,28 @@ Cursor 等。用 Python + FastMCP 写成，以 stdio 运行。完整说明见 [m
 
 ### 收窄开放范围
 
-默认注册约 195 个工具，会占掉宿主不少上下文。按实际用途收窄：
+默认注册 195 个工具（122 个写、73 个读），会占掉宿主不少上下文，有些宿主还有工具数量上限。
+两个环境变量可以收窄，都写在宿主配置的 `env` 里，**改完要重启宿主**：
 
 ```bash
-# 只开日常那几块
-PHOTOLIB_MCP_TOOLSETS=auth,projects,requests,photos,worklogs,statistics
+# 只开这次用得上的分组（不写 = 全开；分组名写错服务会直接启动失败并列出可选值）
+PHOTOLIB_MCP_TOOLSETS=auth,projects,requests,photos,worklogs,directory
 # 只让 AI 查数据，不让它改（写操作工具根本不会注册）
 PHOTOLIB_MCP_READ_ONLY=true
 ```
+
+三件事值得先知道：
+
+- **这两个开关不是权限边界。** 权限永远由后端按账号判定，关掉 `admin` 分组不会让你不再是
+  管理员。要限制一个人能做什么，去改他的权限组。
+- **只读模式会把登录和导出一起关掉**——`photolib_login` 和各类导出/下载在后端都是 POST。
+  只读下要先在终端跑 `photolib-mcp login`；想"只查数据但还能导表"，应该用分组收窄而不是只读。
+- **开着 `misc` 时分组收窄只省上下文**，因为 `photolib_api_request` 能直接打任意 `/api/v1` 接口。
+
+每个分组的工具数、硬依赖（比如传图和填工时都要配 `directory`）、按场景抄的配方，以及什么时候
+该把某个分组关回去、什么时候该直接 `photolib-mcp logout`，见
+[mcp/README.md 的"收窄工具链"](./mcp/README.md#收窄工具链开哪些改哪个变量什么时候关)。
+开哪些、什么时候关，由使用这台机器的人自己决定——服务不会替你收窄，也不会在后台改你的配置。
 
 ## 旧系统数据迁移
 
