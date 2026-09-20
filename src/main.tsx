@@ -7,6 +7,7 @@ import { AuthProvider } from './auth'
 import { BrandingProvider } from './branding'
 import App from './App'
 import AppErrorBoundary from './AppErrorBoundary'
+import { cacheBustedUrl } from './clientCacheReset'
 import { hashRouteForDeepLink } from './deepLink'
 import './styles.css'
 
@@ -23,9 +24,7 @@ window.addEventListener('vite:preloadError', (event) => {
 
   event.preventDefault()
   sessionStorage.setItem(PRELOAD_RELOAD_KEY, Date.now().toString())
-  const url = new URL(window.location.href)
-  url.searchParams.set('_reload', Date.now().toString())
-  window.location.replace(url)
+  window.location.replace(cacheBustedUrl(window.location.href))
 })
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

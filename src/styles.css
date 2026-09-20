@@ -512,6 +512,30 @@ button, input, textarea, select { font-family: inherit; }
   cursor: pointer;
 }
 
+.fatal-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+}
+
+.fatal-error button.ghost {
+  border: 1px solid rgba(31, 89, 76, 0.32);
+  background: transparent;
+  color: #1f594c;
+}
+
+.fatal-error button[disabled] {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.fatal-error .fatal-error-hint {
+  margin: 20px 0 0;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
 /* Gallery Workspace — professional image-led system language */
 :root {
   --studio-ink: #202b28;
