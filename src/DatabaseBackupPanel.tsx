@@ -186,8 +186,11 @@ export default function DatabaseBackupPanel() {
               onClick={() => void download(item)}>下载</Button>
             <Tooltip title={item.downloadable && !item.restorable
               ? '该备份对应的数据库结构版本与当前不一致，无法回滚' : undefined}>
-              <Button type="link" danger disabled={!item.restorable || busy}
-                onClick={() => { setConfirmation(''); setRestoreTarget(item) }}>回滚</Button>
+              {/* 禁用的 <button> 不派发鼠标事件，不套一层包裹元素 Tooltip 就永远不会弹。 */}
+              <span style={{ display: 'inline-block' }}>
+                <Button type="link" danger disabled={!item.restorable || busy}
+                  onClick={() => { setConfirmation(''); setRestoreTarget(item) }}>回滚</Button>
+              </span>
             </Tooltip>
           </Space>,
         },
