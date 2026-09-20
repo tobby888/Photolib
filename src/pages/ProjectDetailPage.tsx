@@ -843,7 +843,10 @@ export default function ProjectDetailPage() {
           {project.status === 'COMPLETED' && user?.permissionGroupCode === 'ADMIN' && <Button type="primary" onClick={reopen}>重新开放</Button>}
           {canDelete && (hasBusinessData
             ? <Tooltip title="选题下已有需求、图片或采用记录，只能取消，不能删除">
-                <Button danger disabled icon={<DeleteOutlined />}>删除选题</Button>
+                {/* 禁用的 <button> 不派发鼠标事件，不套一层包裹元素 Tooltip 就永远不会弹。 */}
+                <span style={{ display: 'inline-block' }}>
+                  <Button danger disabled icon={<DeleteOutlined />}>删除选题</Button>
+                </span>
               </Tooltip>
             : <Button danger icon={<DeleteOutlined />} onClick={confirmDelete}>删除选题</Button>)}
         </Space>
