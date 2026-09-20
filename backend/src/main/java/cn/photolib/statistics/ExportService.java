@@ -33,9 +33,12 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.text.Collator;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -216,8 +219,8 @@ public class ExportService {
                     "总时长（小时）", "被引张数");
             CellStyle hourStyle = hourStyle(workbook);
             int index = 1;
-            for (var value : statistics.members(event.from(), event.to(), event.projectId(),
-                    event.campusId(), null, event.campusIds())) {
+            for (var value : sortedByPinyin(statistics.members(event.from(), event.to(), event.projectId(),
+                    event.campusId(), null, event.campusIds()))) {
                 Row exportRow = row(worklogs, index++, value.displayName(), value.studentId(),
                         value.campus(), hours(value.shootingMinutes()), hours(value.retouchingMinutes()),
                         hours(value.totalMinutes()), value.adoptedCount());
@@ -355,6 +358,27 @@ public class ExportService {
         } catch (Exception ex) {
             log.error("写入工时导出被引对账告警失败，导出本身已成功", ex);
         }
+    }
+
+    /**
+     * 导出行按姓名的**拼音序**排列：查询里的 {@code ORDER BY member_name} 走的是库的默认
+     * 排序规则（MySQL {@code utf8mb4_general_ci} / H2 都是按码位），中文名出来是乱的，
+     * 拿去核工资的人还得在 Excel 里自己再排一遍。{@code Collator(zh_CN)} 用 CLDR 的拼音
+     * 规则，与 {@code ProjectShareService} 里筛选项的中文排序一致；非中文姓名照样按字母序落在前面。
+     *
+     * <p>同名同姓再按学号兜底（统计是按学号归并的，见 {@code StatisticsService.members}），
+     * 否则两个同名的人每次导出的前后顺序都可能不一样。{@link Collator} 不是线程安全的，
+     * 导出跑在异步线程上，因此每次现取一个实例，不要提成静态常量。</p>
+     */
+    private List<StatisticsService.MemberStatistics> sortedByPinyin(
+            List<StatisticsService.MemberStatistics> rows) {
+        Collator chinese = Collator.getInstance(Locale.CHINA);
+        Comparator<String> byPinyin = Comparator.nullsLast((left, right) -> chinese.compare(left, right));
+        return rows.stream()
+                .sorted(Comparator.comparing(StatisticsService.MemberStatistics::displayName, byPinyin)
+                        .thenComparing(StatisticsService.MemberStatistics::studentId,
+                                Comparator.nullsLast(Comparator.naturalOrder())))
+                .toList();
     }
 
     private double hours(int minutes) {

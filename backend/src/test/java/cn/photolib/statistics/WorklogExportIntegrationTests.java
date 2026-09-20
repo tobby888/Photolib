@@ -300,6 +300,78 @@ class WorklogExportIntegrationTests {
         }
     }
 
+    /**
+     * 统计导出按姓名的拼音序排行。SQL 的 ORDER BY 走库的默认排序规则（按码位），
+     * 这四个名字的码位序是「李明、赵启、阿兰、陈波」，拼音序才是「阿兰、陈波、李明、赵启」，
+     * 所以这条用例能真正区分两者。
+     */
+    @Test
+    void exportsMemberStatisticsSortedByNamePinyin() throws Exception {
+        long base = newBase();
+        long userId = base;
+        long campusId = base + 1;
+        long projectId = base + 2;
+        long requestId = base + 3;
+
+        jdbc.sql("INSERT INTO campus (id, code, name) VALUES (:id, :code, '拼音校区')")
+                .param("id", campusId).param("code", "pinyin-" + base).update();
+        jdbc.sql("""
+                INSERT INTO app_user
+                    (id, username, password_hash, display_name, role, enabled, must_change_password)
+                VALUES (:id, :username, 'hash', '拼音管理员', 'ADMIN', TRUE, FALSE)
+                """).param("id", userId).param("username", "pinyin-export-" + base).update();
+        insertProject(projectId, userId, "拼音排序项目", LocalDateTime.of(2023, 9, 15, 12, 0));
+        jdbc.sql("""
+                INSERT INTO photo_request
+                    (id, project_id, title, campus_id, required_count, deadline, status, created_by)
+                VALUES (:id, :projectId, '拼音拍摄需求', :campusId, 1, :deadline, 'IN_PROGRESS', :userId)
+                """)
+                .param("id", requestId).param("projectId", projectId).param("campusId", campusId)
+                .param("deadline", LocalDateTime.of(2023, 9, 20, 23, 59)).param("userId", userId).update();
+        insertWorklog(base + 10, requestId, userId, LocalDate.of(2023, 9, 10),
+                "李明", "20230003", 60, 0);
+        insertWorklog(base + 11, requestId, userId, LocalDate.of(2023, 9, 10),
+                "赵启", "20230004", 60, 0);
+        insertWorklog(base + 12, requestId, userId, LocalDate.of(2023, 9, 10),
+                "阿兰", "20230001", 60, 0);
+        insertWorklog(base + 13, requestId, userId, LocalDate.of(2023, 9, 10),
+                "陈波", "20230002", 60, 0);
+        // 同名同姓按学号兜底，保证两行的先后顺序稳定。
+        insertWorklog(base + 14, requestId, userId, LocalDate.of(2023, 9, 10),
+                "李明", "20230006", 60, 0);
+        insertWorklog(base + 15, requestId, userId, LocalDate.of(2023, 9, 10),
+                "李明", "20230005", 60, 0);
+        // 非中文姓名照样按字母序，落在中文之前。
+        insertWorklog(base + 16, requestId, userId, LocalDate.of(2023, 9, 10),
+                "Bob", "20230007", 60, 0);
+
+        String jobId = "PYEXP" + base;
+        jdbc.sql("""
+                INSERT INTO export_job (id, type, status, progress, created_by)
+                VALUES (:id, 'MEMBER_STATISTICS', 'PENDING', 0, :userId)
+                """).param("id", jobId).param("userId", userId).update();
+
+        exports.exportStatistics(new ExportService.StatisticsExportRequested(
+                jobId, LocalDate.of(2023, 9, 1), LocalDate.of(2023, 9, 30), projectId, null));
+
+        ExportJobEntity job = waitForCompletion(jobId);
+        assertThat(job.getStatus()).isEqualTo("SUCCEEDED");
+
+        try (XSSFWorkbook workbook = new XSSFWorkbook(storage.open(job.getObjectKey()))) {
+            Sheet sheet = workbook.getSheet("工时统计");
+            assertThat(sheet).isNotNull();
+            List<String> names = new ArrayList<>();
+            List<String> studentIds = new ArrayList<>();
+            for (int index = 1; index <= sheet.getLastRowNum(); index++) {
+                names.add(sheet.getRow(index).getCell(0).getStringCellValue());
+                studentIds.add(sheet.getRow(index).getCell(1).getStringCellValue());
+            }
+            assertThat(names).containsExactly("Bob", "阿兰", "陈波", "李明", "李明", "李明", "赵启");
+            assertThat(studentIds).containsExactly("20230007", "20230001", "20230002",
+                    "20230003", "20230005", "20230006", "20230004");
+        }
+    }
+
     @Test
     void campusScopedStatisticsAndWorklogExportsOnlyIncludeAuthorizedCampuses() {
         long base = newBase();
