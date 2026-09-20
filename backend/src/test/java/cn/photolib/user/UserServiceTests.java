@@ -139,6 +139,53 @@ class UserServiceTests {
     }
 
     @Test
+    void updateUser_shouldClearTheEmail() {
+        UserService.CreatedUser created = userService.create(new UserService.CreateUser(
+                "email-clearable", "可清邮箱账号", UserRole.MINISTER, null, null, "clearable@example.com"));
+
+        UserService.UserView cleared = userService.update(created.user().id(),
+                new UserService.UpdateUser("可清邮箱账号", UserRole.MINISTER, null, null, null, true, 1));
+
+        assertThat(cleared.email()).isNull();
+        // 清空必须真的落库：邮箱是登录标识，留着就等于这个人还能用它登录。
+        assertThatThrownBy(() -> authService.login("clearable@example.com", created.initialPassword()))
+                .isInstanceOf(BusinessException.class);
+    }
+
+    /** 邮箱录错人了：先从原账号摘下来，再挂到正主身上，之后正主要能用它登录。 */
+    @Test
+    void updateUser_shouldMoveAnEmailToAnotherAccount() {
+        UserService.CreatedUser mistaken = userService.create(new UserService.CreateUser(
+                "email-mistaken", "录错的账号", UserRole.MINISTER, null, null, "member@example.com"));
+        UserService.CreatedUser rightful = userService.create(new UserService.CreateUser(
+                "email-rightful", "正主", UserRole.MINISTER, null, null, null));
+
+        userService.update(mistaken.user().id(),
+                new UserService.UpdateUser("录错的账号", UserRole.MINISTER, null, null, null, true, 1));
+        UserService.UserView moved = userService.update(rightful.user().id(),
+                new UserService.UpdateUser("正主", UserRole.MINISTER, null, null, "member@example.com", true, 1));
+
+        assertThat(moved.email()).isEqualTo("member@example.com");
+        assertThatNoException().isThrownBy(() ->
+                authService.login("member@example.com", rightful.initialPassword()));
+    }
+
+    /** 和企微 userid 同理：软删除后 uk_user_email 仍然占位，不清掉这个邮箱就谁也用不了。 */
+    @Test
+    void deleteUser_shouldReleaseTheEmailForReuse() {
+        UserService.CreatedUser leaving = userService.create(new UserService.CreateUser(
+                "email-leaving", "离职账号", UserRole.MINISTER, null, null, "rejoin@example.com"));
+
+        userService.delete(leaving.user().id(), null);
+
+        UserService.CreatedUser rejoining = userService.create(new UserService.CreateUser(
+                "email-rejoining", "重新入职", UserRole.MINISTER, null, null, "rejoin@example.com"));
+        assertThat(rejoining.user().email()).isEqualTo("rejoin@example.com");
+        assertThatNoException().isThrownBy(() ->
+                authService.login("rejoin@example.com", rejoining.initialPassword()));
+    }
+
+    @Test
     void createUser_shouldTrimAndKeepTheCaseOfTheWecomUserid() {
         UserService.CreatedUser created = userService.create(new UserService.CreateUser(
                 "wecom-bound", "企微绑定账号", UserRole.MINISTER, null, null, null,
