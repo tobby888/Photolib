@@ -18,11 +18,29 @@ test('photo library filters use safe defaults for empty or invalid query paramet
     keyword: '校庆',
   })), {
     page: 1,
+    pageSize: 24,
     status: 'AVAILABLE',
     keyword: '校庆',
     tags: [],
     uploadedBy: '',
   })
+})
+
+test('the page size travels in the URL and is clamped to the offered options', () => {
+  const read = (pageSize: string) => readPhotoLibraryFilters(new URLSearchParams({ pageSize })).pageSize
+
+  assert.equal(read('48'), 48)
+  // 后端 GET /photos 的 pageSize 上限是 100，手改 URL 塞个更大的值会 400、整页变成加载出错。
+  assert.equal(read('500'), 24)
+  assert.equal(read('13'), 24)
+  assert.equal(read('abc'), 24)
+
+  const filters = { ...DEFAULT_PHOTO_LIBRARY_FILTERS, pageSize: 48 }
+  assert.equal(writePhotoLibraryFilters(filters).toString(), 'pageSize=48')
+  assert.deepEqual(readPhotoLibraryFilters(writePhotoLibraryFilters(filters)), filters)
+  // 详情页的「上一张 / 下一张」按同一个每页张数重取列表定位，否则翻页会跳号。
+  assert.equal(photoLibraryRequestParams(filters).get('pageSize'), '48')
+  assert.equal(photoLibraryRequestParams(filters, { page: 3 }).get('pageSize'), '48')
 })
 
 test('library filters keep only numeric uploader ids from the URL', () => {
@@ -54,6 +72,7 @@ test('uploader filter travels through the URL and the list request', () => {
 test('photo library filters round-trip Unicode and reserved characters', () => {
   const filters = {
     page: 3,
+    pageSize: 96,
     status: 'ARCHIVED' as const,
     keyword: '毕业典礼 A&B / 夜景',
     tags: ['合影', '颁奖/闭幕'],
@@ -81,6 +100,7 @@ test('default filter values stay out of the URL', () => {
 test('photo detail and list paths preserve the complete library query', () => {
   const search = `?${writePhotoLibraryFilters({
     page: 2,
+    pageSize: 24,
     status: 'PROCESSING',
     keyword: '新闻 图',
     tags: [],
@@ -116,7 +136,7 @@ test('photo and favorites pages wire the controlled search field and preserved r
   assert.match(librarySource, /value=\{searchText\} onChange=\{event => setSearchText\(event\.target\.value\)\}/)
   // 候选人只能来自按可见范围算过的专用接口，不能拿通讯录或用户列表凑。
   assert.match(librarySource, /url: '\/photos\/uploaders'/)
-  assert.match(librarySource, /filters\.page, filters\.keyword, filters\.status, filters\.uploadedBy/)
+  assert.match(librarySource, /filters\.page, filters\.pageSize, filters\.keyword, filters\.status, filters\.uploadedBy/)
   assert.match(librarySource, /const libraryRoot = favoritesOnly \? '\/favorites' : '\/photos'/)
   assert.match(librarySource, /`\$\{libraryRoot\}\/\$\{photo\.id\}`/)
   assert.match(librarySource, /const operationViewKey = currentViewKeyRef\.current/)
@@ -131,6 +151,7 @@ test('photo and favorites pages wire the controlled search field and preserved r
 test('library request params repeat tags and match between the list and detail pages', () => {
   const filters = {
     page: 3,
+    pageSize: 24,
     status: 'AVAILABLE' as const,
     keyword: '',
     tags: ['合影', '颁奖/闭幕'],

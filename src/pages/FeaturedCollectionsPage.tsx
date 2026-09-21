@@ -1,5 +1,5 @@
 import {
-  App, Button, Card, Col, DatePicker, Form, Input, InputNumber, Modal, Pagination, Radio, Row,
+  App, Button, Card, Col, DatePicker, Form, Input, InputNumber, Modal, Radio, Row,
   Select, Space, Tag, Tree, Typography,
 } from 'antd'
 import { ArrowRightOutlined, CalendarOutlined, FileWordOutlined, PictureOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons'
@@ -20,6 +20,8 @@ import RichTextEditor from '../RichTextEditor'
 import type {
   Campus, CampusAssignmentUser, EntityId, FeaturedCollection, PageData,
 } from '../types'
+import ListPagination from '../ListPagination'
+import { GRID_PAGE_SIZES, turnPage } from '../pagination'
 
 interface CollectionValues {
   title: string
@@ -48,14 +50,14 @@ export default function FeaturedCollectionsPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [requirementHtml, setRequirementHtml] = useState('')
   const [saving, setSaving] = useState(false)
-  const [filters, setFilters] = useState({ page: 1, keyword: '', status: '' })
+  const [filters, setFilters] = useState({ page: 1, pageSize: GRID_PAGE_SIZES[0], keyword: '', status: '' })
   const canManage = hasPermission(user, 'FEATURED_MANAGE')
 
   const collections = useLoad(
     () => api<PageData<FeaturedCollection>>({
-      url: '/featured-collections', params: qs({ ...filters, pageSize: 12 }),
+      url: '/featured-collections', params: qs({ ...filters }),
     }),
-    emptyPage<FeaturedCollection>(), [filters.page, filters.keyword, filters.status],
+    emptyPage<FeaturedCollection>(), [filters.page, filters.pageSize, filters.keyword, filters.status],
   )
 
   // 指派候选只有管理精选的人才需要，普通读者不必为此多发两个请求。
@@ -283,10 +285,9 @@ export default function FeaturedCollectionsPage() {
           </Col>
         })}
       </Row>
-      {collections.data.total > collections.data.pageSize && <Pagination className="pager"
-        current={collections.data.page} pageSize={collections.data.pageSize}
-        total={collections.data.total} showSizeChanger={false}
-        onChange={(page) => setFilters({ ...filters, page })} />}
+      <ListPagination className="pager" page={filters.page} pageSize={filters.pageSize}
+        total={collections.data.total} showTotal={total => `共 ${total} 期精选`}
+        onChange={(page, pageSize) => setFilters(turnPage(filters, page, pageSize))} />
     </DataState>
 
     <Modal open={modalOpen} width={720} title={editing ? '编辑好图精选' : '发布好图精选'}

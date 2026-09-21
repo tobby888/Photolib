@@ -6,6 +6,7 @@ import { DataState, PageTitle } from '../components'
 import { ContentFitTable } from '../ContentFitTable'
 import { useLoad } from '../hooks'
 import type { Campus, CampusAssignmentUser, EntityId } from '../types'
+import { GRID_PAGE_SIZES, clientTablePagination } from '../pagination'
 
 export default function ManagerCampusesPage() {
   const { message } = App.useApp()
@@ -96,7 +97,8 @@ export default function ManagerCampusesPage() {
         <ContentFitTable
           rowKey="id"
           dataSource={filteredUsers}
-          pagination={{ pageSize: 12 }}
+          pagination={clientTablePagination(filteredUsers.length,
+            { defaultPageSize: 12, sizes: GRID_PAGE_SIZES, showTotal: total => `共 ${total} 人` })}
           columns={[
             {
               title: '负责人',

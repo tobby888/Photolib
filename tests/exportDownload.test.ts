@@ -46,5 +46,5 @@ test('the applications card exports through the same filter the list is showing'
   assert.match(detail, />导出 XLSX</)
   assert.match(detail, /message\.error\(await blobErrorMessage\(error, '报名导出失败，请稍后重试'\)\)/)
   // The list request and the export request must read the same filter state.
-  assert.match(detail, /url: `\/recruitment-tasks\/\$\{taskId\}\/applications`,\s*\n\s*params: qs\(\{ page: applicationPage, pageSize: 20, studentId: studentIdFilter \}\)/)
+  assert.match(detail, /url: `\/recruitment-tasks\/\$\{taskId\}\/applications`,\s*\n\s*params: qs\(\{ \.\.\.applicationPaging, studentId: studentIdFilter \}\)/)
 })

@@ -1,5 +1,5 @@
 import {
-  App, Button, Card, Col, Form, Input, Modal, Pagination, Radio, Row, Select, Space, Tag, Typography,
+  App, Button, Card, Col, Form, Input, Modal, Radio, Row, Select, Space, Tag, Typography,
 } from 'antd'
 import { ArrowRightOutlined, FolderOpenOutlined, PlusOutlined, SearchOutlined, TagsOutlined } from '@ant-design/icons'
 import { useState } from 'react'
@@ -15,6 +15,8 @@ import { markdownExcerpt } from '../MarkdownRenderer'
 import { hasPermission } from '../permissions'
 import { normalizeTags, tagRules } from '../photoTags'
 import TagSelect from '../TagSelect'
+import ListPagination from '../ListPagination'
+import { GRID_PAGE_SIZES, turnPage } from '../pagination'
 
 /**
  * 选题类型（issue #94）。建立之后不可更改：类型决定了整条工作流程，
@@ -37,15 +39,15 @@ export default function ProjectsPage() {
   const [form] = Form.useForm()
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [filters, setFilters] = useState({ page: 1, keyword: '', status: '' })
+  const [filters, setFilters] = useState({ page: 1, pageSize: GRID_PAGE_SIZES[0], keyword: '', status: '' })
   const [searchText, setSearchText] = useState('')
   const searchKeyword = (keyword: string) => {
     setSearchText(keyword)
     setFilters(current => ({ ...current, page: 1, keyword: keyword.trim() }))
   }
   const { data, loading, error, reload } = useLoad(
-    () => api<PageData<Project>>({ url: '/projects', params: qs({ ...filters, pageSize: 12 }) }),
-    emptyPage<Project>(), [filters.page, filters.keyword, filters.status],
+    () => api<PageData<Project>>({ url: '/projects', params: qs({ ...filters }) }),
+    emptyPage<Project>(), [filters.page, filters.pageSize, filters.keyword, filters.status],
   )
   const create = async () => {
     const values = await form.validateFields()
@@ -98,8 +100,9 @@ export default function ProjectsPage() {
           </Card>
         </Col>)}
       </Row>
-      <Pagination current={filters.page} pageSize={12} total={data.total} hideOnSinglePage
-        onChange={(page) => setFilters({ ...filters, page })} />
+      <ListPagination page={filters.page} pageSize={filters.pageSize} total={data.total}
+        showTotal={total => `共 ${total} 个项目`}
+        onChange={(page, pageSize) => setFilters(turnPage(filters, page, pageSize))} />
     </DataState>
     <Modal title="新建选题项目" width={760} open={open} onCancel={() => setOpen(false)} onOk={create} confirmLoading={saving}
       okText="创建项目" cancelText="取消">

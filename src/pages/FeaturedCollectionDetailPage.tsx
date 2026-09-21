@@ -1,5 +1,5 @@
 import {
-  App, Button, Card, Col, Descriptions, Empty, Form, Input, Modal, Pagination, Row, Space,
+  App, Button, Card, Col, Descriptions, Empty, Form, Input, Modal, Row, Space,
   Tag, Typography,
 } from 'antd'
 import {
@@ -22,6 +22,8 @@ import { PhotoPlaceholder, pickPlaceholderImage, usePlaceholderImages } from '..
 import type {
   FeaturedCollection, FeaturedDocumentDownload, FeaturedEntry, PageData, Photo,
 } from '../types'
+import ListPagination from '../ListPagination'
+import { GRID_PAGE_SIZES, turnPage } from '../pagination'
 
 interface EntryValues {
   idea: string
@@ -37,7 +39,7 @@ export default function FeaturedCollectionDetailPage() {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [pickedPhoto, setPickedPhoto] = useState<Photo | null>(null)
   const [editingEntry, setEditingEntry] = useState<FeaturedEntry | null>(null)
-  const [photoFilters, setPhotoFilters] = useState({ page: 1, keyword: '' })
+  const [photoFilters, setPhotoFilters] = useState({ page: 1, pageSize: GRID_PAGE_SIZES[0], keyword: '' })
   const [saving, setSaving] = useState(false)
   const [downloading, setDownloading] = useState(false)
 
@@ -57,10 +59,10 @@ export default function FeaturedCollectionDetailPage() {
     () => pickerOpen
       ? api<PageData<Photo>>({
           url: '/photos',
-          params: qs({ ...photoFilters, pageSize: 12, status: 'AVAILABLE', selectableOnly: true }),
+          params: qs({ ...photoFilters, status: 'AVAILABLE', selectableOnly: true }),
         })
       : Promise.resolve(emptyPage<Photo>()),
-    emptyPage<Photo>(), [pickerOpen, photoFilters.page, photoFilters.keyword],
+    emptyPage<Photo>(), [pickerOpen, photoFilters.page, photoFilters.pageSize, photoFilters.keyword],
   )
   // 条目和选图弹窗里渲染的都是签名地址；弹窗没打开时 loader 直接返回空页，
   // 这一次刷新不会真的发请求。
@@ -74,7 +76,7 @@ export default function FeaturedCollectionDetailPage() {
   const openPicker = () => {
     setEditingEntry(null)
     setPickedPhoto(null)
-    setPhotoFilters({ page: 1, keyword: '' })
+    setPhotoFilters(current => ({ ...current, page: 1, keyword: '' }))
     form.resetFields()
     setPickerOpen(true)
   }
@@ -297,10 +299,12 @@ export default function FeaturedCollectionDetailPage() {
       onOk={() => void submitEntry()} onCancel={() => setPickerOpen(false)} destroyOnHidden>
       <Space direction="vertical" size={12} style={{ width: '100%' }}>
         <Input allowClear prefix={<SearchOutlined />} placeholder="按标题、说明或标签搜索"
-          onPressEnter={(event) => setPhotoFilters({
-            page: 1, keyword: (event.target as HTMLInputElement).value.trim(),
-          })}
-          onChange={(event) => { if (!event.target.value) setPhotoFilters({ page: 1, keyword: '' }) }} />
+          onPressEnter={(event) => setPhotoFilters(current => ({
+            ...current, page: 1, keyword: (event.target as HTMLInputElement).value.trim(),
+          }))}
+          onChange={(event) => {
+            if (!event.target.value) setPhotoFilters(current => ({ ...current, page: 1, keyword: '' }))
+          }} />
         <Typography.Text type="secondary">
           只能选自己上传、且在授权校区内的图片；拍摄人和拍摄时间会直接取图库信息。
         </Typography.Text>
@@ -322,9 +326,9 @@ export default function FeaturedCollectionDetailPage() {
               </Card>
             </Col>)}
           </Row>
-          {photos.data.total > photos.data.pageSize && <Pagination className="pager"
-            current={photos.data.page} pageSize={photos.data.pageSize} total={photos.data.total}
-            showSizeChanger={false} onChange={(page) => setPhotoFilters({ ...photoFilters, page })} />}
+          <ListPagination className="pager" page={photoFilters.page} pageSize={photoFilters.pageSize}
+            total={photos.data.total} showTotal={total => `共 ${total} 张`}
+            onChange={(page, pageSize) => setPhotoFilters(turnPage(photoFilters, page, pageSize))} />
         </DataState>
         <Form form={form} layout="vertical">
           <Form.Item name="idea" label="拍摄思路" rules={[{ required: true, message: '请写下拍摄思路' }]}>

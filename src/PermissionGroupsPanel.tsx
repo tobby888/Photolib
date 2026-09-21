@@ -18,6 +18,7 @@ import type {
   Campus, DataScope, EntityId, PageData, PermissionCategoryDefinition, PermissionCode,
   PermissionGroup, PhotoVisibility, User,
 } from './types'
+import { serverTablePagination, turnPage } from './pagination'
 
 const PHOTO_VISIBILITY_OPTIONS: { value: PhotoVisibility; label: string }[] = [
   { value: 'SELF', label: '仅本人上传' },
@@ -49,9 +50,12 @@ export default function PermissionGroupsPanel() {
   const [drafts, setDrafts] = useState<Record<EntityId, AuthorizationDraft>>({})
   const [search, setSearch] = useState('')
   const [permissionGroupFilter, setPermissionGroupFilter] = useState<EntityId | undefined>()
-  const [userPage, setUserPage] = useState(1)
+  const [userPaging, setUserPaging] = useState({ page: 1, pageSize: 20 })
   const [detailGroupId, setDetailGroupId] = useState<EntityId | null>(null)
-  const [memberPage, setMemberPage] = useState(1)
+  const [memberPaging, setMemberPaging] = useState({ page: 1, pageSize: 10 })
+  const userPage = userPaging.page
+  const memberPage = memberPaging.page
+  const toFirstUserPage = () => setUserPaging(current => ({ ...current, page: 1 }))
 
   const groupsState = useLoad(
     () => api<PermissionGroup[]>({ url: '/permission-groups' }), [] as PermissionGroup[], [],
@@ -62,10 +66,10 @@ export default function PermissionGroupsPanel() {
   )
   const usersState = useLoad(
     () => api<PageData<User>>({ url: '/users', params: {
-      page: userPage, pageSize: 20, keyword: search || undefined,
+      ...userPaging, keyword: search || undefined,
       permissionGroupId: permissionGroupFilter,
     } }),
-    emptyPage<User>(), [userPage, search, permissionGroupFilter],
+    emptyPage<User>(), [userPage, userPaging.pageSize, search, permissionGroupFilter],
   )
   const campusesState = useLoad(
     () => api<Campus[]>({ url: '/campuses', params: { enabled: true } }), [] as Campus[], [],
@@ -79,10 +83,10 @@ export default function PermissionGroupsPanel() {
   const membersState = useLoad(
     () => detailGroupId
       ? api<PageData<User>>({ url: '/users', params: {
-        page: memberPage, pageSize: 10, permissionGroupId: detailGroupId,
+        ...memberPaging, permissionGroupId: detailGroupId,
       } })
       : Promise.resolve(emptyPage<User>()),
-    emptyPage<User>(), [detailGroupId, memberPage],
+    emptyPage<User>(), [detailGroupId, memberPage, memberPaging.pageSize],
   )
 
   const openCreate = () => {
@@ -107,7 +111,7 @@ export default function PermissionGroupsPanel() {
   }
 
   const openDetails = (group: PermissionGroup) => {
-    setMemberPage(1)
+    setMemberPaging(current => ({ ...current, page: 1 }))
     setDetailGroupId(group.id)
   }
 
@@ -243,10 +247,10 @@ export default function PermissionGroupsPanel() {
       <Select allowClear style={{ width: 220 }} placeholder="按权限组筛选账户"
         value={permissionGroupFilter}
         options={groupsState.data.map(group => ({ value: group.id, label: group.name }))}
-        onChange={value => { setUserPage(1); setPermissionGroupFilter(value) }} />
+        onChange={value => { toFirstUserPage(); setPermissionGroupFilter(value) }} />
       <Input.Search allowClear style={{ width: 280 }}
-        placeholder="搜索姓名或账号" onSearch={value => { setUserPage(1); setSearch(value.trim()) }} onChange={event => {
-          if (!event.target.value) { setUserPage(1); setSearch('') }
+        placeholder="搜索姓名或账号" onSearch={value => { toFirstUserPage(); setSearch(value.trim()) }} onChange={event => {
+          if (!event.target.value) { toFirstUserPage(); setSearch('') }
         }} />
     </Space>}>
       <Typography.Paragraph type="secondary">
@@ -259,10 +263,10 @@ export default function PermissionGroupsPanel() {
         emptyHint={search || permissionGroupFilter
           ? '换个关键词，或清掉权限组筛选再看看。'
           : '先在“账号管理”里创建成员账号，再回到这里分配权限组和校区。'}>
-        <ContentFitTable rowKey="id" dataSource={usersState.data.items} pagination={{
-          current: userPage, pageSize: 20, total: usersState.data.total,
-          showTotal: total => `共 ${total} 个账号`, onChange: setUserPage,
-        }} columns={[
+        <ContentFitTable rowKey="id" dataSource={usersState.data.items}
+          pagination={serverTablePagination(userPaging, usersState.data.total,
+            (page, pageSize) => setUserPaging(current => turnPage(current, page, pageSize)),
+            { showTotal: total => `共 ${total} 个账号` })} columns={[
           { title: '账号', render: (_: unknown, user: User) => <div className="table-title">
             <strong>{user.displayName}</strong><span>@{user.username}</span>
           </div> },
@@ -378,10 +382,10 @@ export default function PermissionGroupsPanel() {
           </div>
           <div>
             <Typography.Title level={5}>权限组成员</Typography.Title>
-            <ContentFitTable rowKey="id" size="small" dataSource={membersState.data.items} pagination={{
-              current: memberPage, pageSize: 10, total: membersState.data.total,
-              showTotal: total => `共 ${total} 个成员`, onChange: setMemberPage,
-            }} columns={[
+            <ContentFitTable rowKey="id" size="small" dataSource={membersState.data.items}
+              pagination={serverTablePagination(memberPaging, membersState.data.total,
+                (page, pageSize) => setMemberPaging(current => turnPage(current, page, pageSize)),
+                { showTotal: total => `共 ${total} 个成员`, size: 'small' })} columns={[
               { title: '成员', render: (_: unknown, user: User) => <div className="table-title">
                 <strong>{user.displayName}</strong><span>@{user.username}</span>
               </div> },

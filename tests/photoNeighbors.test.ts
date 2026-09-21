@@ -143,13 +143,15 @@ test('the photo detail page wires the previous/next buttons to the resolved neig
   // 跨页跳转必须把新页码写回 URL，否则回到图库会落在旧的一页上。
   assert.match(detailSource, /writePhotoLibraryFilters\(\{ \.\.\.libraryFilters, page: neighbor\.page \}\)/)
 
-  // 详情页定位用的分页必须和图库列表严格一致，否则翻页会跳号。
+  // 详情页定位用的分页必须和图库列表严格一致，否则翻页会跳号。每页张数因此是筛选条件的
+  // 一部分（进 URL），两边的列表请求都走 photoLibraryRequestParams，只在那里设一次。
   assert.match(searchSource, /export const PHOTO_LIBRARY_PAGE_SIZE = 24/)
-  // 两边的列表请求都走 photoLibraryRequestParams，分页大小只在那里设一次。
-  assert.match(searchSource, /params\.set\('pageSize', String\(PHOTO_LIBRARY_PAGE_SIZE\)\)/)
+  assert.match(searchSource, /params\.set\('pageSize', String\(filters\.pageSize\)\)/)
   for (const source of [detailSource, librarySource]) {
     assert.match(source, /photoLibraryRequestParams\((filters|libraryFilters), \{/)
     assert.doesNotMatch(source, /pageSize: 24/)
   }
-  assert.match(librarySource, /pageSize=\{PHOTO_LIBRARY_PAGE_SIZE\}/)
+  // 图库页的分页条改了每页张数之后，详情页也要跟着按新的张数重取那一页。
+  assert.match(librarySource, /pageSize=\{filters\.pageSize\}/)
+  assert.match(detailSource, /libraryFilters\.page, libraryFilters\.pageSize,/)
 })

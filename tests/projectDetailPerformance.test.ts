@@ -25,7 +25,7 @@ test('相册分页展示，而不是把全部图片一次挂成卡片', async ()
   assert.match(detail, /\{pagedPhotos\.map\(photo =>/)
   assert.doesNotMatch(detail, /\{filteredPhotos\.map\(/)
   assert.doesNotMatch(detail, /\{data\.photos\.map\(/)
-  assert.match(detail, /<Pagination className="project-photo-pagination"/)
+  assert.match(detail, /<ListPagination className="project-photo-pagination"/)
   // 筛选一变就回第 1 页，否则可能停在一个已经不存在的页码上。
   assert.match(detail, /setPhotoPage\(current => \(\{ \.\.\.current, current: 1 \}\)\)/)
 })
@@ -50,7 +50,7 @@ test('卡片状态靠索引查，不再逐张线性扫描采纳、需求和勾�
   assert.match(detail, /const adoptedPhotoIds = useMemo\(\(\) => new Set\(/)
   assert.match(detail, /const requestTitles = useMemo\(\s*\(\) => new Map\(/)
   assert.match(detail, /const selectedAlbumIdSet = useMemo\(\(\) => new Set\(/)
-  const grid = detail.slice(detail.indexOf('{pagedPhotos.map(photo =>'), detail.indexOf('<Pagination className="project-photo-pagination"'))
+  const grid = detail.slice(detail.indexOf('{pagedPhotos.map(photo =>'), detail.indexOf('<ListPagination className="project-photo-pagination"'))
   assert.doesNotMatch(grid, /data\.adoptions\.some\(|data\.requests\.find\(|selectedAlbumPhotoIds\.includes\(/)
 })
 

@@ -99,7 +99,8 @@ export default function PhotoDetailPage({ favoritesOnly = false }: { favoritesOn
   const { data: libraryPage } = useLoad(
     () => api<PageData<Photo>>({ url: '/photos', params: libraryPageParams(libraryFilters.page) }),
     emptyPage<Photo>(),
-    [libraryFilters.page, libraryFilters.keyword, libraryFilters.status, libraryTagKey, favoritesOnly],
+    [libraryFilters.page, libraryFilters.pageSize, libraryFilters.keyword, libraryFilters.status,
+      libraryTagKey, favoritesOnly],
   )
   const neighbors = findPhotoNeighbors(libraryPage, photoId)
   const [movingTo, setMovingTo] = useState<'previous' | 'next' | null>(null)

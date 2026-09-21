@@ -1,6 +1,6 @@
 import {
   App, Button, Card, Checkbox, Col, DatePicker, Form, Input, Modal,
-  Pagination, Progress, Row, Select, Space, Tag, Typography, Upload,
+  Progress, Row, Select, Space, Tag, Typography, Upload,
 } from 'antd'
 import {
   CloudUploadOutlined, DeleteOutlined, DownloadOutlined, FolderAddOutlined, InboxOutlined, MinusCircleOutlined,
@@ -26,10 +26,12 @@ import PreviewPhoto from '../PreviewPhoto'
 import { refreshPhotoPreviewUrl } from '../previewRefresh'
 import { PhotoPlaceholder, pickPlaceholderImage, usePlaceholderImages } from '../photoPlaceholder'
 import {
-  PHOTO_LIBRARY_PAGE_SIZE, isTagTooLong, photoLibraryRequestParams, readPhotoLibraryFilters, writePhotoLibraryFilters,
-  withPhotoLibrarySearch,
+  PHOTO_LIBRARY_PAGE_SIZES, isTagTooLong, photoLibraryRequestParams, readPhotoLibraryFilters,
+  writePhotoLibraryFilters, withPhotoLibrarySearch,
 } from '../photoLibrarySearch'
 import type { PhotoLibraryFilters, PhotoLibraryStatus } from '../photoLibrarySearch'
+import ListPagination from '../ListPagination'
+import { turnPage } from '../pagination'
 import { updateFavoritePage } from '../photoFavorites'
 import BatchTagModal from '../BatchTagModal'
 import type { BatchTagMode } from '../BatchTagModal'
@@ -100,7 +102,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
   const { data, setData, loading, error, reload, refresh } = useLoad(
     () => api<PageData<Photo>>({ url: '/photos', params: photoLibraryRequestParams(filters, { favoritesOnly }) }),
     emptyPage<Photo>(),
-    [filters.page, filters.keyword, filters.status, filters.uploadedBy, tagSearchKey, favoritesOnly],
+    [filters.page, filters.pageSize, filters.keyword, filters.status, filters.uploadedBy, tagSearchKey, favoritesOnly],
   )
   useRefreshOnResume(refresh)
   useEffect(() => {
@@ -277,7 +279,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
   )
   useEffect(() => {
     setSelectionAnchor(null)
-  }, [filters.page, filters.keyword, filters.status, tagSearchKey, favoritesOnly])
+  }, [filters.page, filters.pageSize, filters.keyword, filters.status, tagSearchKey, favoritesOnly])
   useEffect(() => {
     if (!selectedPhotos.length) setSelectionAnchor(null)
   }, [selectedPhotos.length])
@@ -518,7 +520,10 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
           </Card>
         </Col>)}
       </Row>
-      <Pagination current={filters.page} pageSize={PHOTO_LIBRARY_PAGE_SIZE} total={data.total} hideOnSinglePage onChange={page => setFilters({ ...filters, page })} />
+      {/* 勾选是跨页累加的（selectedPhotos 按图片本身存着），翻页和改每页张数都不清空。 */}
+      <ListPagination page={filters.page} pageSize={filters.pageSize} total={data.total}
+        sizes={PHOTO_LIBRARY_PAGE_SIZES} showTotal={total => `共 ${total} 张`}
+        onChange={(page, pageSize) => setFilters(turnPage(filters, page, pageSize))} />
     </DataState>
     <Modal title="上传单张图片" width={680} open={uploadOpen} onCancel={() => { if (!uploading) setUploadOpen(false) }} onOk={submitUpload}
       okText="开始上传" confirmLoading={uploading} destroyOnHidden

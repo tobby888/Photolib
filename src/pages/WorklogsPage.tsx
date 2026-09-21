@@ -1,10 +1,10 @@
 import {
-  App, Button, Card, DatePicker, Form, Input, InputNumber, Modal, Pagination, Select, Space,
+  App, Button, Card, DatePicker, Form, Input, InputNumber, Modal, Select, Space,
 } from 'antd'
 import {
   CheckOutlined, ClockCircleOutlined, DeleteOutlined, DownloadOutlined, PlusOutlined, StopOutlined,
 } from '@ant-design/icons'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import dayjs from 'dayjs'
 import { api, emptyPage, qs } from '../api'
 import { useAuth } from '../auth'
@@ -18,6 +18,9 @@ import {
   WORKLOG_OWNER_ACTION_MIN_WIDTH,
   WORKLOG_REVIEW_ACTION_MIN_WIDTH,
 } from '../tableActionWidths'
+import ListPagination from '../ListPagination'
+import { TABLE_PAGE_SIZES, turnPage } from '../pagination'
+import { keepSelectedRows } from '../rowSelection'
 
 interface ExportJobView {
   job: { status: 'PENDING' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED'; errorMessage?: string }
@@ -38,16 +41,25 @@ export default function WorklogsPage() {
     dayjs().startOf('year'),
     dayjs(),
   ])
-  const [selectedIds, setSelectedIds] = useState<EntityId[]>([])
-  const [filters, setFilters] = useState({ page: 1, status: '' })
+  // 勾选跨页累加，存的是整行而不只是 id：批量批准要读状态和版本号，而翻到第 2 页之后
+  // 第 1 页的那几行已经不在 data.items 里了（见 src/rowSelection.ts）。
+  const [selectedItems, setSelectedItems] = useState<Worklog[]>([])
+  const [filters, setFilters] = useState({ page: 1, pageSize: 20, status: '' })
   const reviewer = hasPermission(user, 'WORKLOG_CONFIRM')
   const canExport = hasPermission(user, 'WORKLOG_EXPORT')
   const canSubmit = hasPermission(user, 'WORKLOG_SUBMIT')
   const canSubmitAny = hasPermission(user, 'WORKLOG_SUBMIT_ANY')
   const { data, loading, error, reload } = useLoad(
-    () => api<PageData<Worklog>>({ url: '/worklogs', params: qs({ ...filters, pageSize: 20 }) }),
-    emptyPage<Worklog>(), [filters.page, filters.status],
+    () => api<PageData<Worklog>>({ url: '/worklogs', params: qs({ ...filters }) }),
+    emptyPage<Worklog>(), [filters.page, filters.pageSize, filters.status],
   )
+  const selectedIds = selectedItems.map(item => item.id)
+  // 列表重取之后把勾着的行换成新数据：批准和删除都带版本号，拿着旧快照去提交会被乐观锁拒掉。
+  useEffect(() => {
+    setSelectedItems(current => current.length
+      ? keepSelectedRows(current.map(item => item.id), [current, data.items], item => item.id)
+      : current)
+  }, [data.items])
   const { data: requestOptions, loading: requestsLoading } = useLoad(
     async () => {
       if (!canSubmit || !user) return []
@@ -171,7 +183,7 @@ export default function WorklogsPage() {
     try {
       await Promise.all(items.map(item => api({ method: 'DELETE', url: `/worklogs/${item.id}` })))
       message.success(`已删除 ${items.length} 条工时`)
-      setSelectedIds([])
+      setSelectedItems([])
       await reload()
     } catch (e) {
       message.error((e as Error).message)
@@ -188,7 +200,8 @@ export default function WorklogsPage() {
   })
 
   const approveSelected = async () => {
-    const items = data.items.filter(item => selectedIds.includes(item.id) && item.status === 'SUBMITTED')
+    // 勾选是跨页的，所以按勾选本身筛，不能再按当前页筛——翻页之后那几条不在 data.items 里。
+    const items = selectedItems.filter(item => item.status === 'SUBMITTED')
     if (!items.length) {
       message.warning('请选择状态为“待确认”的工时')
       return
@@ -196,7 +209,7 @@ export default function WorklogsPage() {
     try {
       await Promise.all(items.map(item => action(item, 'confirm')))
       message.success(`已批准 ${items.length} 条工时`)
-      setSelectedIds([])
+      setSelectedItems([])
       await reload()
     } catch (e) {
       message.error((e as Error).message)
@@ -235,8 +248,6 @@ export default function WorklogsPage() {
     }
   }
 
-  const selectedItems = data.items.filter(item => selectedIds.includes(item.id))
-
   return <>
     <PageTitle
       eyebrow="WORKLOGS"
@@ -260,12 +271,11 @@ export default function WorklogsPage() {
           { value: 'SUBMITTED', label: '待确认' },
           { value: 'CONFIRMED', label: '已确认' },
           { value: 'REJECTED', label: '已退回' },
-        ]} onChange={(status = '') => {
-          setSelectedIds([])
-          setFilters({ ...filters, page: 1, status })
-        }} />
+        ]} onChange={(status = '') => setFilters({ ...filters, page: 1, status })} />
         {reviewer && <>
-          <span>已选择 {selectedItems.length} 条</span>
+          <span>已选择 {selectedItems.length} 条{
+            selectedItems.some(item => !data.items.some(row => row.id === item.id)) ? '（含其他页）' : ''}</span>
+          {!!selectedItems.length && <Button type="link" onClick={() => setSelectedItems([])}>清空选择</Button>}
           <Button
             type="primary"
             icon={<CheckOutlined />}
@@ -301,8 +311,12 @@ export default function WorklogsPage() {
           dataSource={data.items}
           pagination={false}
           rowSelection={reviewer ? {
+            // preserveSelectedRowKeys 不是可选的：没有它，antd 会在每次勾选时把不在当前页
+            // （dataSource）里的 key 全部滤掉，翻页回来勾选就没了。见 src/rowSelection.ts。
+            preserveSelectedRowKeys: true,
             selectedRowKeys: selectedIds,
-            onChange: keys => setSelectedIds(keys as EntityId[]),
+            onChange: keys => setSelectedItems(
+              keepSelectedRows(keys, [selectedItems, data.items], item => item.id)),
           } : undefined}
           columns={[
             { title: '日期', dataIndex: 'workDate', render: value => dayjs(value).format('YYYY-MM-DD') },
@@ -331,10 +345,10 @@ export default function WorklogsPage() {
             </Space> },
           ]}
         />
-        <Pagination current={filters.page} total={data.total} pageSize={20} hideOnSinglePage onChange={page => {
-          setSelectedIds([])
-          setFilters({ ...filters, page })
-        }} />
+        {/* 翻页不清空勾选：跨页选完一批再统一批准是审核时的常规动作。 */}
+        <ListPagination page={filters.page} pageSize={filters.pageSize} total={data.total}
+          sizes={TABLE_PAGE_SIZES} showTotal={total => `共 ${total} 条`}
+          onChange={(page, pageSize) => setFilters(turnPage(filters, page, pageSize))} />
       </DataState>
     </Card>
     <Modal title="填报工时" open={open} onCancel={() => setOpen(false)} onOk={create} okText="保存记录" confirmLoading={saving}>
