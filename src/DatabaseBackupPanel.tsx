@@ -10,6 +10,7 @@ import { ContentFitTable, TableEllipsisText } from './ContentFitTable'
 import { DataState } from './components'
 import { useLoad } from './hooks'
 import type { DatabaseBackup, DatabaseBackupDownload, DatabaseRestore, PageData } from './types'
+import { clientTablePagination } from './pagination'
 
 const typeLabels: Record<DatabaseBackup['type'], string> = {
   SCHEDULED: '每日自动',
@@ -155,7 +156,8 @@ export default function DatabaseBackupPanel() {
         + '因此只能回滚到与当前数据库结构版本一致的备份。'} />
     <DataState loading={loading} error={error} empty={!backups.items.length} onRetry={reload}
       emptyText="还没有任何备份" emptyHint="每天凌晨 0 点会自动生成，也可以点右上角立即备份。">
-      <ContentFitTable rowKey="id" dataSource={backups.items} pagination={{ pageSize: 10 }} columns={[
+      <ContentFitTable rowKey="id" dataSource={backups.items}
+        pagination={clientTablePagination(backups.items.length, { showTotal: total => `共 ${total} 份备份` })} columns={[
         {
           title: '备份时间',
           render: (_, item) => <div className="table-title">

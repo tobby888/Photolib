@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react'
 import { api, emptyPage, http, qs } from './api'
 import { ContentFitTable, TableEllipsisText } from './ContentFitTable'
 import type { AuditLog, PageData } from './types'
+import { serverTablePagination, turnPage } from './pagination'
 
 interface LogFilters {
   keyword?: string
@@ -19,8 +20,10 @@ export default function AuditLogsPanel() {
   const { message } = App.useApp()
   const [form] = Form.useForm<LogFilters>()
   const [filters, setFilters] = useState<LogFilters>({})
-  const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(20)
+  // 每页条数由这里持有并进请求：交给 antd 自己记会被下面传进去的 pageSize 盖回去（见 src/pagination.ts）。
+  const [paging, setPaging] = useState({ page: 1, pageSize: 20 })
+  const { page, pageSize } = paging
+  const toFirstPage = () => setPaging(current => ({ ...current, page: 1 }))
   const [data, setData] = useState<PageData<AuditLog>>(emptyPage())
   const [loading, setLoading] = useState(false)
   const [selected, setSelected] = useState<AuditLog>()
@@ -70,13 +73,13 @@ export default function AuditLogsPanel() {
         options={['POST', 'PUT', 'PATCH', 'DELETE'].map(value => ({ value, label: value }))} /></Form.Item>
       <Form.Item name="resourceType"><Input allowClear placeholder="资源类型" style={{ width: 140 }} /></Form.Item>
       <Form.Item name="range"><DatePicker.RangePicker allowClear /></Form.Item>
-      <Button type="primary" onClick={() => { setPage(1); setFilters(form.getFieldsValue()) }}>查询</Button>
-      <Button onClick={() => { form.resetFields(); setPage(1); setFilters({}) }}>重置</Button>
+      <Button type="primary" onClick={() => { toFirstPage(); setFilters(form.getFieldsValue()) }}>查询</Button>
+      <Button onClick={() => { form.resetFields(); toFirstPage(); setFilters({}) }}>重置</Button>
     </Form>
     <ContentFitTable rowKey="id" loading={loading} dataSource={data.items}
-      pagination={{ current: page, pageSize, total: data.total, showSizeChanger: true,
-        showTotal: total => `共 ${total} 条`,
-        onChange: (nextPage, nextSize) => { setPage(nextSize === pageSize ? nextPage : 1); setPageSize(nextSize) } }}
+      pagination={serverTablePagination(paging, data.total,
+        (nextPage, nextSize) => setPaging(current => turnPage(current, nextPage, nextSize)),
+        { showTotal: total => `共 ${total} 条` })}
       onRow={record => ({ onClick: () => setSelected(record), style: { cursor: 'pointer' } })}
       columns={[
         { title: '时间', dataIndex: 'createdAt', width: 180, render: value => dayjs(value).format('YYYY-MM-DD HH:mm:ss') },

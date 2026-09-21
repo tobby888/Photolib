@@ -20,6 +20,7 @@ import DatabaseBackupPanel from '../DatabaseBackupPanel'
 import PermissionGroupsPanel from '../PermissionGroupsPanel'
 import UserAvatar from '../UserAvatar'
 import { USER_ACTION_MIN_WIDTH } from '../tableActionWidths'
+import { GRID_PAGE_SIZES, clientTablePagination } from '../pagination'
 
 interface BrandingFormValues {
   title: string
@@ -571,7 +572,9 @@ export default function AdminPage() {
             emptyHint={userKeyword
               ? '姓名、账号和邮箱都会被搜索，换个词再试试。'
               : '系统不开放注册，成员账号都要在这里创建。'}>
-            <ContentFitTable rowKey="id" dataSource={users.items} pagination={{ pageSize: 12 }} columns={[
+            <ContentFitTable rowKey="id" dataSource={users.items}
+              pagination={clientTablePagination(users.items.length,
+                { defaultPageSize: 12, sizes: GRID_PAGE_SIZES, showTotal: total => `共 ${total} 个账号` })} columns={[
               { title: '成员', render: (_, item) => <Space>
                 <UserAvatar size={38} avatarUrl={item.avatarUrl} label={item.displayName}
                   style={{ background: '#edf3f0', color: '#28594f' }} />

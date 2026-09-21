@@ -1,6 +1,6 @@
 import {
   App, Breadcrumb, Button, Card, Checkbox, Col, DatePicker, Form, Input,
-  Modal, Pagination, Radio, Row, Select, Space, Statistic, Tag, Tooltip, Typography,
+  Modal, Radio, Row, Select, Space, Statistic, Tag, Tooltip, Typography,
 } from 'antd'
 import {
   ArrowLeftOutlined, CameraOutlined, CheckCircleOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, EyeOutlined,
@@ -43,6 +43,8 @@ import {
 import type { ProjectPhotoFilters } from '../photoTags'
 import ProjectPhotoFilterBar from '../ProjectPhotoFilterBar'
 import { PHOTO_LIBRARY_PAGE_SIZE } from '../photoLibrarySearch'
+import ListPagination from '../ListPagination'
+import { GRID_PAGE_SIZES, clientTablePagination } from '../pagination'
 
 const ProjectShareLinksModal = lazy(() => import('../ProjectShareLinksModal'))
 
@@ -69,7 +71,7 @@ const projectStateCopy = {
  * 相册分页。以前一次把选题里的全部图片都挂成卡片，400 张时首屏要卡 3 秒多、
  * 每勾一张图卡 1.5 秒。默认张数与图片库（PHOTO_LIBRARY_PAGE_SIZE）一致。
  */
-const PHOTO_PAGE_SIZES = [PHOTO_LIBRARY_PAGE_SIZE, 48, 96]
+const PHOTO_PAGE_SIZES = GRID_PAGE_SIZES
 const DEFAULT_PHOTO_PAGE_SIZE = PHOTO_LIBRARY_PAGE_SIZE
 
 const isDownloadableStatus = (status: Photo['status']) => status === 'AVAILABLE' || status === 'ARCHIVED'
@@ -918,10 +920,11 @@ export default function ProjectDetailPage() {
               </Col>
             })}
           </Row>
-          {filteredPhotos.length > PHOTO_PAGE_SIZES[0] && <Pagination className="project-photo-pagination"
-            current={currentPhotoPage} pageSize={photoPage.pageSize} total={filteredPhotos.length}
-            showSizeChanger pageSizeOptions={PHOTO_PAGE_SIZES} showTotal={total => `共 ${total} 张`}
-            onChange={changePhotoPage} />}
+          {/* 勾选跨页保留（selectedAlbumPhotoIds 按 id 累加），翻页和改每页张数都不清空。 */}
+          <ListPagination className="project-photo-pagination"
+            page={currentPhotoPage} pageSize={photoPage.pageSize} total={filteredPhotos.length}
+            sizes={PHOTO_PAGE_SIZES} showTotal={total => `共 ${total} 张`}
+            onChange={changePhotoPage} />
         </> : <div className="empty-state">
           {data.photos.length ? '没有符合筛选条件的图片' : '这个选题还没有上传图片'}
           {filtersActive && <Button type="link" onClick={() => updatePhotoFilters(emptyProjectPhotoFilters)}>
@@ -990,8 +993,13 @@ export default function ProjectDetailPage() {
           <Input.Search allowClear placeholder="搜索图片标题、描述或标签"
             onSearch={setGalleryKeyword} style={{ maxWidth: 420 }} />
           <ContentFitTable<Photo> rowKey="id" size="small" loading={galleryLoading}
-            dataSource={addableGalleryPhotos} pagination={{ pageSize: 8 }}
+            dataSource={addableGalleryPhotos}
+            pagination={clientTablePagination(addableGalleryPhotos.length,
+              { defaultPageSize: 8, sizes: [8, 16, 32] })}
             rowSelection={{
+              // 这张表是本地分页（dataSource 就是全部候选图），勾选本来就跨页保留；
+              // preserveSelectedRowKeys 还管住「换了关键词再搜一次」时已勾选的那几张。
+              preserveSelectedRowKeys: true,
               selectedRowKeys: selectedPhotoIds,
               onChange: keys => setSelectedPhotoIds(keys.map(String)),
             }}

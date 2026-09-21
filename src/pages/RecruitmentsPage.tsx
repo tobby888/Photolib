@@ -15,7 +15,6 @@ import {
   Form,
   Input,
   Modal,
-  Pagination,
   Row,
   Select,
   Space,
@@ -40,6 +39,8 @@ import {
   type RecruitmentFormSchema,
 } from '../recruitmentForm'
 import { normalizeRecruitmentPage, normalizeRecruitmentTask, type RecruitmentTask } from '../recruitmentTypes'
+import ListPagination from '../ListPagination'
+import { GRID_PAGE_SIZES, turnPage } from '../pagination'
 
 type CreateValues = {
   title: string
@@ -80,16 +81,16 @@ export default function RecruitmentsPage() {
   const [form] = Form.useForm<CreateValues>()
   const [modalOpen, setModalOpen] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [filters, setFilters] = useState({ page: 1, keyword: '', status: '' })
+  const [filters, setFilters] = useState({ page: 1, pageSize: GRID_PAGE_SIZES[0], keyword: '', status: '' })
   const canPublish = canPublishRecruitments(user)
 
   const tasks = useLoad(async () => {
     const value = await api<unknown>({
-      url: '/recruitment-tasks', params: qs({ ...filters, pageSize: 12 }),
+      url: '/recruitment-tasks', params: qs({ ...filters }),
     })
-    return normalizeRecruitmentPage(value, normalizeRecruitmentTask, filters.page, 12)
-  }, { items: [] as RecruitmentTask[], page: 1, pageSize: 12, total: 0, totalPages: 0 },
-  [filters.page, filters.keyword, filters.status])
+    return normalizeRecruitmentPage(value, normalizeRecruitmentTask, filters.page, filters.pageSize)
+  }, { items: [] as RecruitmentTask[], page: 1, pageSize: GRID_PAGE_SIZES[0], total: 0, totalPages: 0 },
+  [filters.page, filters.pageSize, filters.keyword, filters.status])
 
   const openCreate = () => {
     form.setFieldsValue({
@@ -183,8 +184,9 @@ export default function RecruitmentsPage() {
           </Col>
         })}
       </Row>
-      <Pagination current={filters.page} pageSize={12} total={tasks.data.total} hideOnSinglePage
-        onChange={page => setFilters(current => ({ ...current, page }))} />
+      <ListPagination page={filters.page} pageSize={filters.pageSize} total={tasks.data.total}
+        showTotal={total => `共 ${total} 次招募`}
+        onChange={(page, pageSize) => setFilters(current => turnPage(current, page, pageSize))} />
     </DataState>
 
     <Modal title="发起一次招募" width={900} open={modalOpen} onCancel={() => !saving && setModalOpen(false)}

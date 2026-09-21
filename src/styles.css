@@ -296,6 +296,9 @@ button, input, textarea, select { font-family: inherit; }
 .project-photo-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 18px;
   padding-bottom: 16px; border-bottom: 1px solid var(--studio-rule, #eeebe5); }
 .project-photo-filters-icon { color: var(--studio-muted, #6f7975); }
+/* 列表底部的分页条（src/ListPagination.tsx）。它现在带着「每页条数」的下拉框，
+   比原来高一些，统一给一点上边距，免得贴着最后一行卡片。 */
+.list-pagination { margin-top: 16px; }
 .project-photo-pagination { display: flex; justify-content: center; margin-top: 24px; }
 .image-placeholder { height: 100%; width: 100%; display: grid; place-items: center; background: linear-gradient(135deg, #d8e1dc, #b8cbc3); }
 .image-placeholder span { display: grid; place-items: center; width: 70px; height: 70px; border: 1px solid rgba(255,255,255,.6); color: white; font-size: 32px; border-radius: 50%; }
@@ -2696,6 +2699,11 @@ body {
   border-radius: 12px;
   background: var(--studio-surface);
 }
+/* 左列是固定高度的 flex 列，而 flex 项默认可以被压扁去适应容器（`flex-shrink: 1`），
+   缩略图自己又是 `overflow: hidden`——那让它的自动最小尺寸变成 0，于是压到几像素高也不算越界。
+   结果是：几十张图时每张被压成一条，容器反而没有溢出，也就滚不动。缩略图必须按 aspect-ratio
+   保持原尺寸、让这一列溢出去滚（窄屏那条横向规则里的 `flex: 0 0 140px` 是同一件事）。 */
+.selection-filmstrip > * { flex: 0 0 auto; }
 .selection-thumb {
   position: relative;
   display: block;

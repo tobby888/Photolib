@@ -24,7 +24,6 @@ import {
   Form,
   Input,
   Modal,
-  Pagination,
   Result,
   Row,
   Space,
@@ -57,6 +56,8 @@ import {
   type RecruitmentTask,
 } from '../recruitmentTypes'
 import { canPublishRecruitments, recruitmentStatusDisplay } from './RecruitmentsPage'
+import ListPagination from '../ListPagination'
+import { TABLE_PAGE_SIZES, turnPage } from '../pagination'
 
 type EditValues = {
   title: string
@@ -75,7 +76,8 @@ export default function RecruitmentDetailPage() {
   const [editOpen, setEditOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [actioning, setActioning] = useState(false)
-  const [applicationPage, setApplicationPage] = useState(1)
+  const [applicationPaging, setApplicationPaging] = useState({ page: 1, pageSize: TABLE_PAGE_SIZES[1] })
+  const applicationPage = applicationPaging.page
   const [exporting, setExporting] = useState(false)
   const [studentIdInput, setStudentIdInput] = useState('')
   const [studentIdFilter, setStudentIdFilter] = useState('')
@@ -89,16 +91,16 @@ export default function RecruitmentDetailPage() {
   const applications = useLoad(async () => {
     const value = await api<unknown>({
       url: `/recruitment-tasks/${taskId}/applications`,
-      params: qs({ page: applicationPage, pageSize: 20, studentId: studentIdFilter }),
+      params: qs({ ...applicationPaging, studentId: studentIdFilter }),
     })
-    return normalizeRecruitmentPage(value, normalizeApplicationSummary, applicationPage, 20)
-  }, { items: [] as RecruitmentApplicationSummary[], page: 1, pageSize: 20, total: 0, totalPages: 0 },
-  [taskId, applicationPage, studentIdFilter])
+    return normalizeRecruitmentPage(value, normalizeApplicationSummary, applicationPage, applicationPaging.pageSize)
+  }, { items: [] as RecruitmentApplicationSummary[], page: 1, pageSize: TABLE_PAGE_SIZES[1], total: 0, totalPages: 0 },
+  [taskId, applicationPage, applicationPaging.pageSize, studentIdFilter])
 
   const task = taskState.data
 
   const searchByStudentId = (value: string) => {
-    setApplicationPage(1)
+    setApplicationPaging(current => ({ ...current, page: 1 }))
     setStudentIdFilter(value.trim())
   }
 
@@ -298,8 +300,10 @@ export default function RecruitmentDetailPage() {
                       onClick={() => navigate(`/recruitment-applications/${application.id}`)}>查看详情</Button>
                   </div>)}
                 </div>
-                <Pagination style={{ marginTop: 16 }} current={applicationPage} pageSize={20} total={applications.data.total}
-                  hideOnSinglePage onChange={setApplicationPage} />
+                <ListPagination className="pager" page={applicationPage} pageSize={applicationPaging.pageSize}
+                  total={applications.data.total} sizes={TABLE_PAGE_SIZES}
+                  showTotal={total => `共 ${total} 份报名`}
+                  onChange={(page, pageSize) => setApplicationPaging(current => turnPage(current, page, pageSize))} />
               </>}
             </DataState>
           </Card>

@@ -7,6 +7,7 @@ import type { MemberStats, MemberWorklogDetail } from '../types'
 import { DataState, PageTitle } from '../components'
 import { ContentFitTable, TableEllipsisText } from '../ContentFitTable'
 import { useLoad } from '../hooks'
+import { clientTablePagination } from '../pagination'
 
 interface ExportJobView {
   job: { status: 'PENDING' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED'; errorMessage?: string }
@@ -114,7 +115,7 @@ export default function StatisticsPage() {
         empty={details.length === 0} emptyText="这个时间范围内没有已确认的工时"
         emptyHint="统计只看已确认工时，且需求所属选题要在所选结束时间范围内结束。">
         <ContentFitTable rowKey={detail => detail.worklogId} dataSource={details}
-          pagination={details.length > 10 ? { pageSize: 10, size: 'small' } : false} columns={[
+          pagination={clientTablePagination(details.length, { size: 'small' })} columns={[
           { title: '工作日期', dataIndex: 'workDate' },
           { title: '需求', dataIndex: 'requestTitle', render: value => <TableEllipsisText value={value} maxWidth={220} /> },
           { title: '所属选题', dataIndex: 'projectTitle', render: value => <TableEllipsisText value={value} maxWidth={220} /> },

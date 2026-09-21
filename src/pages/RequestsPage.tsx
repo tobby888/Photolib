@@ -1,6 +1,6 @@
 import {
   App, Button, Card, DatePicker, Descriptions, Drawer, Form, Input, Modal,
-  Pagination, Radio, Select, Space, Tag, Typography,
+  Radio, Select, Space, Tag, Typography,
 } from 'antd'
 import {
   CheckOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, RollbackOutlined, SearchOutlined,
@@ -22,6 +22,8 @@ import MarkdownRenderer from '../MarkdownRenderer'
 import RequestAssigneeSelect from '../RequestAssigneeSelect'
 import { canViewProjects, hasPermission } from '../permissions'
 import { REQUEST_ACTION_MIN_WIDTH } from '../tableActionWidths'
+import ListPagination from '../ListPagination'
+import { TABLE_PAGE_SIZES, turnPage } from '../pagination'
 
 const statuses = [
   ['DRAFT', '草稿'], ['PUBLISHED', '待接单'], ['ACCEPTED', '执行中'],
@@ -49,12 +51,13 @@ export default function RequestsPage() {
   const [saving, setSaving] = useState(false)
   const [filters, setFilters] = useState({
     page: 1,
+    pageSize: 20,
     status: '',
     projectId: searchParams.get('projectId') || undefined,
   })
   const { data, loading, error, reload } = useLoad(
-    () => api<PageData<PhotoRequest>>({ url: '/requests', params: qs({ ...filters, pageSize: 20 }) }),
-    emptyPage<PhotoRequest>(), [filters.page, filters.status, filters.projectId],
+    () => api<PageData<PhotoRequest>>({ url: '/requests', params: qs({ ...filters }) }),
+    emptyPage<PhotoRequest>(), [filters.page, filters.pageSize, filters.status, filters.projectId],
   )
   const batches = useMemo(() => groupPhotoRequests(data.items), [data.items])
   const { data: options } = useLoad(async () => {
@@ -247,7 +250,11 @@ export default function RequestsPage() {
           { title: '操作', key: 'action', fixed: 'right', minWidth: REQUEST_ACTION_MIN_WIDTH,
             className: 'table-action-cell', render: (_, batch) => actions(selectedRequest(batch)) },
         ]} />
-        <Pagination current={filters.page} total={data.total} pageSize={20} hideOnSinglePage onChange={page => setFilters({ ...filters, page })} />
+        {/* 分页按需求条数算，一批多校区发布会在表格里并成一行（src/requestBatch.ts），
+            所以「共 N 条」说的是需求数，不是表格行数。 */}
+        <ListPagination page={filters.page} pageSize={filters.pageSize} total={data.total}
+          sizes={TABLE_PAGE_SIZES} showTotal={total => `共 ${total} 条需求`}
+          onChange={(page, pageSize) => setFilters(turnPage(filters, page, pageSize))} />
       </DataState>
     </Card>
     <Modal title="新建图片需求" width={780} open={open} onCancel={() => setOpen(false)} onOk={create}

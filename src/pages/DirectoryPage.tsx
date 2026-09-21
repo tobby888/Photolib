@@ -9,6 +9,7 @@ import { ContentFitTable } from '../ContentFitTable'
 import { useLoad } from '../hooks'
 import { hasPermission } from '../permissions'
 import { DIRECTORY_ACTION_MIN_WIDTH } from '../tableActionWidths'
+import { GRID_PAGE_SIZES, clientTablePagination } from '../pagination'
 
 export default function DirectoryPage() {
   const { user } = useAuth()
@@ -153,7 +154,8 @@ export default function DirectoryPage() {
               <ContentFitTable
                 rowKey="id"
                 dataSource={members}
-                pagination={{ pageSize: 12, hideOnSinglePage: true }}
+                pagination={clientTablePagination(members.length,
+                  { defaultPageSize: 12, sizes: GRID_PAGE_SIZES, showTotal: total => `共 ${total} 人` })}
                 columns={[
                   { title: '姓名', dataIndex: 'name' },
                   { title: '学号', dataIndex: 'studentId' },
