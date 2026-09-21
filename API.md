@@ -1278,11 +1278,11 @@ UPLOADING -> PROCESSING -> WAITING_METADATA -> PROCESSING
 
 建议先每 2 秒轮询到 `WAITING_METADATA`，提交元数据后再轮询到 `SUCCEEDED`、`PARTIALLY_SUCCEEDED` 或 `FAILED`。大型 ZIP 现有客户端最多等待约 10 分钟。
 
-批量上传与单张上传的去重差异：
+批量上传与单张上传的去重规则：
 
-- FILES 会保存并在处理时校验每项 SHA-256，但创建批次时不做全库重复拦截。
-- ZIP 解压条目当前不计算内容 hash，照片中写入 64 个 `0` 作为跳过 hash 校验哨兵。
-- 因此客户端不能假定批量路径与单张路径具有相同的全库查重语义。
+- FILES 会保存并在处理时校验每项 SHA-256；ZIP 解压时也会为每个条目计算并保存 SHA-256。
+- 批量生成 photo 前会按 SHA-256 查重。重复条目会标记为 `FAILED`，并提示“图片已存在，已跳过重复项”，不会新增重复 photo。
+- 无论需求交付还是图库，批量路径与单张路径使用相同的全库查重语义。
 
 ### 9.5 预览图后台状态
 
@@ -2322,7 +2322,7 @@ interface SharePhoto {
 7. 需求提交不要求存在图片。
 8. 工时更新的 version 位于 query 参数，更新后状态固定回到 `DRAFT`。
 9. 单张上传会由 `requestId` 推导项目；批量上传不会，批量需求上传必须显式传正确 `projectId`。
-10. 单张上传做全库 SHA-256 查重，批量上传目前没有相同语义。
+10. 单张上传和批量上传都会做全库 SHA-256 查重；批量重复项会标记失败并跳过，不新增 photo。
 11. 单张下载 URL 接口没有 body；批量下载虽然接受 `purpose`，当前没有使用。
 12. 导出任务查询响应是 `{ job, downloadUrl, expiresAt }`，不是扁平结构；任务当前不会显式进入 `PROCESSING` 或 `EXPIRED`。
 13. 统计总览中的资源数量不受日期过滤，日期只影响工时统计。

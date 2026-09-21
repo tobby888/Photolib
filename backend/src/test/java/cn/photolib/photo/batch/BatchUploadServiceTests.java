@@ -19,9 +19,11 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
 import java.util.zip.ZipEntry;
@@ -130,6 +132,73 @@ class BatchUploadServiceTests {
     }
 
     @Test
+    @Transactional
+    void batchMetadata_shouldSkipDuplicateSha256() {
+        String existingSha = "a".repeat(64);
+        String newSha = "c".repeat(64);
+        String duplicateLocalPath = processingProperties.temporaryRoot()
+                .resolve("batches").resolve("batch-dedupe-test").resolve("existing.jpg").toString();
+        jdbc.sql("""
+                INSERT INTO photo
+                    (photographer_student_id, photographer_name, uploaded_by, campus_id, taken_at,
+                     size, content_type, object_key, sha256, status, version, deleted)
+                VALUES ('20268102', '测试摄影师', 8101, 8100, CURRENT_TIMESTAMP,
+                        100, 'image/jpeg', 'photos/batch-dedupe-existing.jpg', :sha,
+                        'AVAILABLE', 1, false)
+                """).param("sha", existingSha).update();
+        jdbc.sql("""
+                INSERT INTO photo_upload_batch
+                    (id, mode, created_by, status, total_count, success_count, failure_count)
+                VALUES ('batch-dedupe-test', 'ZIP', 8101, 'WAITING_METADATA', 3, 0, 0)
+                """).update();
+        jdbc.sql("""
+                INSERT INTO photo_upload_item
+                    (batch_id, original_file_name, temp_object_key, temp_local_path,
+                     content_type, size, sha256, status)
+                VALUES
+                    ('batch-dedupe-test', 'existing.jpg',
+                     'temporary/batches/batch-dedupe-test/existing.jpg',
+                     :duplicateLocalPath, 'image/jpeg', 100, :existingSha, 'WAITING_METADATA'),
+                    ('batch-dedupe-test', 'new.jpg',
+                     'temporary/batches/batch-dedupe-test/new.jpg',
+                     NULL, 'image/jpeg', 100, :newSha, 'WAITING_METADATA'),
+                    ('batch-dedupe-test', 'new-again.jpg',
+                     'temporary/batches/batch-dedupe-test/new-again.jpg',
+                     NULL, 'image/jpeg', 100, :newSha, 'WAITING_METADATA')
+                """).param("existingSha", existingSha).param("newSha", newSha)
+                .param("duplicateLocalPath", duplicateLocalPath).update();
+
+        var result = service.setMetadataForAll("batch-dedupe-test",
+                new BatchUploadService.BatchMetadata(
+                        "说明", 8102L, LocalDateTime.now(), List.of()),
+                manager);
+
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM photo WHERE sha256=:sha AND deleted=0")
+                .param("sha", existingSha).query(Long.class).single()).isEqualTo(1);
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM photo WHERE sha256=:sha AND deleted=0")
+                .param("sha", newSha).query(Long.class).single()).isEqualTo(1);
+        assertThat(jdbc.sql("""
+                SELECT status FROM photo_upload_item
+                WHERE batch_id='batch-dedupe-test' AND original_file_name='existing.jpg'
+                """).query(String.class).single()).isEqualTo("FAILED");
+        assertThat(jdbc.sql("""
+                SELECT failure_reason FROM photo_upload_item
+                WHERE batch_id='batch-dedupe-test' AND original_file_name='existing.jpg'
+                """).query(String.class).single()).contains("已存在");
+        assertThat(jdbc.sql("""
+                SELECT status FROM photo_upload_item
+                WHERE batch_id='batch-dedupe-test' AND original_file_name='new-again.jpg'
+                """).query(String.class).single()).isEqualTo("FAILED");
+        assertThat(jdbc.sql("""
+                SELECT COUNT(*) FROM photo_upload_item
+                WHERE batch_id='batch-dedupe-test' AND original_file_name='existing.jpg'
+                  AND temp_local_path IS NOT NULL
+                """).query(Long.class).single()).isZero();
+        assertThat(result.batch().getFailureCount()).isEqualTo(2);
+        assertThat(result.batch().getStatus()).isEqualTo(BatchStatus.PROCESSING);
+    }
+
+    @Test
     void processZip_shouldExtractSupportedImagesOnBackend() throws Exception {
         assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
         String archiveKey = "temporary/batches/batch-unzip-test/archive.zip";
@@ -182,6 +251,11 @@ class BatchUploadServiceTests {
                     .isInstanceOf(IllegalArgumentException.class);
             workspace.deleteBatchFile(path);
         }
+        assertThat(jdbc.sql("""
+                SELECT sha256 FROM photo_upload_item
+                WHERE batch_id = 'batch-unzip-test' ORDER BY id
+                """).query(String.class).list())
+                .containsExactly(sha256(new byte[] {1, 2, 3}), sha256(new byte[] {4, 5, 6}));
         assertThat(jdbc.sql("""
                 SELECT archive_object_key FROM photo_upload_batch
                 WHERE id = 'batch-unzip-test'
@@ -366,6 +440,14 @@ class BatchUploadServiceTests {
             storage.delete(key);
         } catch (RuntimeException ignored) {
             // Cleanup is best effort when processing already removed the object.
+        }
+    }
+
+    private String sha256(byte[] bytes) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+        } catch (Exception exception) {
+            throw new IllegalStateException(exception);
         }
     }
 }

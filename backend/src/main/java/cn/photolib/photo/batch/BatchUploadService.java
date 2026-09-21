@@ -6,6 +6,7 @@ import cn.photolib.common.error.ErrorCode;
 import cn.photolib.common.upload.ImageUploadPolicy;
 import cn.photolib.common.util.PublicId;
 import cn.photolib.photo.PhotoProcessingService;
+import cn.photolib.photo.PhotoProcessingWorkspace;
 import cn.photolib.photo.PhotoTags;
 import cn.photolib.photo.mapper.PhotoMapper;
 import cn.photolib.photo.model.PhotoEntity;
@@ -19,6 +20,7 @@ import cn.photolib.project.ProjectService;
 import cn.photolib.project.model.ProjectStatus;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
@@ -27,10 +29,12 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class BatchUploadService {
     private final PhotoUploadBatchMapper batchMapper;
     private final PhotoUploadItemMapper itemMapper;
@@ -43,6 +47,7 @@ public class BatchUploadService {
     private final JdbcClient jdbc;
     private final cn.photolib.directory.CampusMemberService campusMemberService;
     private final cn.photolib.photo.AbandonedUploadCleanupJob abandonedUploads;
+    private final PhotoProcessingWorkspace workspace;
 
     @Transactional
     public BatchTicket create(CreateBatch command, AuthenticatedUser user) {
@@ -161,6 +166,7 @@ public class BatchUploadService {
         var photographer = campusMemberService.resolvePhotographer(metadata.photographerContactId(), campusId);
         createPhoto(batch, item, metadata.title(), metadata.description(), metadata.takenAt(),
                 tags, photographer.getStudentId(), photographer.getName(), campusId, user.id(), null);
+        refreshBatch(batchId);
         return view(batchMapper.selectById(batchId));
     }
 
@@ -274,6 +280,7 @@ public class BatchUploadService {
                     snapshot.photographerStudentId(), snapshot.photographerName(),
                     snapshot.campusId(), snapshot.uploadedBy(), snapshot.shareLinkId());
         }
+        refreshBatch(batchId);
         return view(batchMapper.selectById(batchId));
     }
 
@@ -293,6 +300,13 @@ public class BatchUploadService {
                              String description, LocalDateTime takenAt, List<String> tags,
                              String photographerStudentId, String photographerName, Long campusId,
                              Long uploadedBy, Long shareLinkId) {
+        String sha256 = normalizedSha256(item.getSha256());
+        if (sha256 != null) item.setSha256(sha256);
+        ExistingPhoto duplicate = findExistingPhoto(sha256);
+        if (duplicate != null) {
+            markDuplicate(item, duplicate);
+            return;
+        }
         String extension = item.getContentType().equals("image/png") ? "png" : "jpg";
         PhotoEntity photo = new PhotoEntity();
         photo.setRequestId(batch.getRequestId());
@@ -310,7 +324,7 @@ public class BatchUploadService {
         photo.setContentType(item.getContentType());
         photo.setOriginalObjectKey(item.getTempObjectKey());
         photo.setObjectKey("photos/" + LocalDateTime.now().getYear() + "/" + UUID.randomUUID() + "." + extension);
-        photo.setSha256(item.getSha256() == null ? "0".repeat(64) : item.getSha256());
+        photo.setSha256(sha256 == null ? "0".repeat(64) : sha256);
         photo.setStatus(PhotoStatus.PROCESSING);
         photoMapper.insert(photo);
         // 归属链接：项目相册/计数以 photo_project 为准。新照片 id 全新，不会撞主键。
@@ -330,6 +344,81 @@ public class BatchUploadService {
         item.setStatus(BatchItemStatus.PROCESSING);
         itemMapper.updateById(item);
         events.publishEvent(new PhotoProcessingService.PhotoProcessRequested(photo.getId()));
+    }
+
+    private String normalizedSha256(String value) {
+        if (value == null || value.isBlank()) return null;
+        String normalized = value.toLowerCase(Locale.ROOT);
+        return "0".repeat(64).equals(normalized) ? null : normalized;
+    }
+
+    private ExistingPhoto findExistingPhoto(String sha256) {
+        if (sha256 == null) return null;
+        return jdbc.sql("""
+                SELECT title FROM photo
+                WHERE sha256=:sha256 AND deleted=0
+                ORDER BY id LIMIT 1
+                """).param("sha256", sha256)
+                .query((rs, rowNum) -> new ExistingPhoto(rs.getString("title")))
+                .list().stream().findFirst().orElse(null);
+    }
+
+    private void markDuplicate(PhotoUploadItemEntity item, ExistingPhoto existing) {
+        cleanupDuplicateSource(item);
+        item.setStatus(BatchItemStatus.FAILED);
+        item.setFailureReason(existing.title() == null || existing.title().isBlank()
+                ? "图片已存在，已跳过重复项"
+                : "图片已存在，已跳过重复项（标题：" + existing.title() + "）");
+        itemMapper.updateById(item);
+        itemMapper.clearTempLocalPath(item.getId(), LocalDateTime.now());
+    }
+
+    private void cleanupDuplicateSource(PhotoUploadItemEntity item) {
+        if (item.getTempLocalPath() != null && !item.getTempLocalPath().isBlank()) {
+            try {
+                workspace.deleteBatchFile(workspace.resolveStoredPath(item.getTempLocalPath()));
+            } catch (RuntimeException exception) {
+                log.warn("清理重复图片的本地临时文件失败: itemId={}, path={}",
+                        item.getId(), item.getTempLocalPath(), exception);
+            }
+            item.setTempLocalPath(null);
+            return;
+        }
+        if (item.getTempObjectKey() != null && !item.getTempObjectKey().isBlank()) {
+            try {
+                storage.delete(item.getTempObjectKey());
+            } catch (RuntimeException exception) {
+                log.warn("清理重复图片的临时对象失败: itemId={}, objectKey={}",
+                        item.getId(), item.getTempObjectKey(), exception);
+            }
+        }
+    }
+
+    private void refreshBatch(String batchId) {
+        PhotoUploadBatchEntity batch = batchMapper.selectById(batchId);
+        if (batch == null) return;
+        long success = itemMapper.selectCount(Wrappers.<PhotoUploadItemEntity>lambdaQuery()
+                .eq(PhotoUploadItemEntity::getBatchId, batchId)
+                .eq(PhotoUploadItemEntity::getStatus, BatchItemStatus.SUCCEEDED));
+        long failed = itemMapper.selectCount(Wrappers.<PhotoUploadItemEntity>lambdaQuery()
+                .eq(PhotoUploadItemEntity::getBatchId, batchId)
+                .eq(PhotoUploadItemEntity::getStatus, BatchItemStatus.FAILED));
+        long waitingMetadata = itemMapper.selectCount(Wrappers.<PhotoUploadItemEntity>lambdaQuery()
+                .eq(PhotoUploadItemEntity::getBatchId, batchId)
+                .eq(PhotoUploadItemEntity::getStatus, BatchItemStatus.WAITING_METADATA));
+        long processing = itemMapper.selectCount(Wrappers.<PhotoUploadItemEntity>lambdaQuery()
+                .eq(PhotoUploadItemEntity::getBatchId, batchId)
+                .in(PhotoUploadItemEntity::getStatus, BatchItemStatus.PROCESSING, BatchItemStatus.UPLOADING));
+        batch.setSuccessCount((int) success);
+        batch.setFailureCount((int) failed);
+        if (waitingMetadata == 0 && processing == 0) {
+            batch.setStatus(failed > 0 ? BatchStatus.PARTIALLY_SUCCEEDED : BatchStatus.SUCCEEDED);
+        } else if (waitingMetadata > 0) {
+            batch.setStatus(BatchStatus.WAITING_METADATA);
+        } else {
+            batch.setStatus(BatchStatus.PROCESSING);
+        }
+        batchMapper.updateById(batch);
     }
 
     /**
@@ -424,6 +513,8 @@ public class BatchUploadService {
     private BatchView view(PhotoUploadBatchEntity batch) {
         return new BatchView(batch, items(batch.getId()));
     }
+
+    private record ExistingPhoto(String title) {}
 
     public record CreateBatch(BatchMode mode, Long requestId, Long projectId, String archiveFileName,
                               Long archiveSize, List<FileSpec> files) {}
