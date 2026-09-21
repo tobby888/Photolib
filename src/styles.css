@@ -2909,6 +2909,92 @@ body {
   pointer-events: none;
 }
 
+/* ---------------------------------------------------------------------------
+   弹窗选图（选片页「大图区太小」的反馈）
+   portal 挂在 body 上、fixed 铺满视口，盖住外壳的侧边栏和顶栏。三行：顶栏 / 大图 / 标签+缩略图条，
+   中间那行吃掉所有剩余高度。整块固定深色，不跟站点主题走——看片的底色要稳定，
+   浅色底会让人把偏暗的图误判成欠曝。z-index 低于 antd 的 message（2010）和
+   Tooltip（1070），高于外壳顶栏，所以提示和气泡照常浮在弹窗上面。
+   --------------------------------------------------------------------------- */
+.selection-focus {
+  position: fixed;
+  inset: 0;
+  z-index: 1050;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 10px 14px 12px;
+  background: #0d0f11;
+  color: #e8e6e1;
+  outline: none;
+}
+.selection-focus-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+}
+.selection-focus-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex-wrap: wrap; }
+.selection-focus-title strong { color: #fff; }
+.selection-focus-count {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .12);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+.selection-focus .ant-typography-secondary { color: rgba(232, 230, 225, .62); }
+/* 和 .selection-stage-image 同一个道理：要 flex 让里面的 .selection-viewer 撑满，缩放边界才算得对。 */
+.selection-focus-stage {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #14171a;
+}
+.selection-focus-stage > .ant-empty { margin: auto; }
+.selection-focus-nav.ant-btn {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 0;
+  background: rgba(20, 23, 26, .6);
+  color: #fff;
+}
+.selection-focus-nav.ant-btn:not(:disabled):hover { background: rgba(20, 23, 26, .85); color: #fff; }
+.selection-focus-nav.ant-btn:disabled { opacity: 0; pointer-events: none; }
+.selection-focus-nav.is-prev { left: 12px; }
+.selection-focus-nav.is-next { right: 12px; }
+.selection-focus-panel { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.selection-focus .selection-tag-row .ant-tag-checkable:not(.ant-tag-checkable-checked) {
+  color: #e8e6e1;
+  background: rgba(255, 255, 255, .1);
+}
+/* 底部的缩略图条：固定高度、横向滚动。和左列一样，每一格必须 flex: 0 0 auto，
+   否则几百张图会被一起压扁成细条，条子本身反而不溢出、也就滚不动。 */
+.selection-focus-strip {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  height: 76px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior: contain;
+  padding-bottom: 4px;
+}
+.selection-focus-strip > * { flex: 0 0 auto; }
+.selection-focus-strip .selection-thumb { width: auto; height: 100%; background: #1c2024; }
+.selection-focus-strip .selection-thumb.is-current { border-color: #e9ba70; box-shadow: 0 0 0 2px rgba(233, 186, 112, .3); }
+.selection-focus-strip > .ant-btn { align-self: center; }
+
+@media (max-width: 767px) {
+  .selection-focus { padding: 8px; gap: 8px; }
+  .selection-focus-strip { height: 60px; }
+}
+
 .empty-state { padding: 24px; text-align: center; color: var(--studio-muted); }
 
 @media (max-width: 991px) {

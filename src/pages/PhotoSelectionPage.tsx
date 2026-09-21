@@ -2,10 +2,11 @@ import {
   App, Alert, Breadcrumb, Button, Empty, Progress, Segmented, Space, Spin, Tag, Tooltip, Typography,
 } from 'antd'
 import {
-  AppstoreOutlined, ArrowLeftOutlined, CheckCircleOutlined, ExpandOutlined, LeftOutlined, PictureOutlined,
-  RightOutlined, ScissorOutlined, StopOutlined,
+  AppstoreOutlined, ArrowLeftOutlined, BlockOutlined, CheckCircleOutlined, CloseOutlined, CompressOutlined,
+  ExpandOutlined, FullscreenOutlined, LeftOutlined, PictureOutlined, RightOutlined, ScissorOutlined, StopOutlined,
 } from '@ant-design/icons'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate, useParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { api } from '../api'
@@ -82,6 +83,11 @@ export default function PhotoSelectionPage() {
   const [editing, setEditing] = useState(false)
   const [savingEdit, setSavingEdit] = useState(false)
   const [taggingId, setTaggingId] = useState<string | null>(null)
+  // 弹窗选图：把大图铺满整个浏览器窗口，外壳的侧边栏、顶栏和页头都让开。
+  const [focusRequested, setFocusOpen] = useState(false)
+  const [browserFullscreen, setBrowserFullscreen] = useState(false)
+  const focusRef = useRef<HTMLDivElement>(null)
+  const focusStripRef = useRef<HTMLDivElement>(null)
   // 两种视角各有一个滚动容器，但「把当前这张滚进可视范围」是同一件事，
   // 所以 ref 挂在当下渲染的那一个上。
   const browserRef = useRef<HTMLDivElement>(null)
@@ -145,6 +151,8 @@ export default function PhotoSelectionPage() {
   const visible = useMemo(() => photos.filter(photo => matchesFilter(photo, filter)), [photos, filter])
   const activeIndex = visible.findIndex(photo => String(photo.id) === String(activeId))
   const active = activeIndex >= 0 ? visible[activeIndex] : visible[0]
+  // 「待处理」筛选下把最后一张也打完标签，列表就空了——弹窗没有图可看，直接让位回页面。
+  const focusOpen = focusRequested && !!active
   // 每次渲染都新建一个数组会让键盘监听的 effect 反复重挂（每次按键都重绑一遍）。
   const presetTags = useMemo(() => project?.tags || [], [project?.tags])
   const decided = photos.filter(photo => photo.tags.length > 0).length
@@ -155,12 +163,45 @@ export default function PhotoSelectionPage() {
   }, [activeIndex, visible.length, loadMore])
 
   // 当前这张要始终留在左列可视范围内，否则用键盘翻几张之后就看不见自己在哪了。
+  // 弹窗底部那条缩略图同理；两处都用 nearest，不会把外层页面也带着滚。
   useEffect(() => {
     if (!active) return
-    browserRef.current
-      ?.querySelector(`[data-photo-id="${active.id}"]`)
-      ?.scrollIntoView({ block: 'nearest' })
-  }, [active, view])
+    for (const container of [browserRef.current, focusStripRef.current]) {
+      container
+        ?.querySelector(`[data-photo-id="${active.id}"]`)
+        ?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    }
+  }, [active, view, focusOpen])
+
+  // 弹窗开着时锁住底下页面的滚动，并把焦点交给弹窗，读屏和键盘都从这里开始。
+  useEffect(() => {
+    if (!focusOpen) return
+    const previous = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    focusRef.current?.focus()
+    return () => { document.body.style.overflow = previous }
+  }, [focusOpen])
+
+  // 浏览器全屏是弹窗里的可选项：用户也可能自己按 F11 或 Esc 退出，状态以事件为准。
+  // 全屏的是整个 documentElement 而不是弹窗那个元素——antd 的提示和气泡都挂在 body 上，
+  // 只全屏弹窗的话，打标签失败的报错会被挡在全屏层后面看不见。
+  useEffect(() => {
+    const sync = () => setBrowserFullscreen(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', sync)
+    return () => document.removeEventListener('fullscreenchange', sync)
+  }, [])
+
+  const toggleBrowserFullscreen = useCallback(() => {
+    const request = document.fullscreenElement
+      ? document.exitFullscreen()
+      : document.documentElement.requestFullscreen?.()
+    void request?.catch(() => message.warning('浏览器没有允许全屏，可以按 F11 手动切换'))
+  }, [message])
+
+  const closeFocus = useCallback(() => {
+    setFocusOpen(false)
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined)
+  }, [])
 
   const step = useCallback((delta: number) => {
     if (!visible.length) return
@@ -204,6 +245,13 @@ export default function PhotoSelectionPage() {
       const target = event.target as HTMLElement | null
       if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return
       if (event.metaKey || event.ctrlKey || event.altKey) return
+      if (event.key === 'Escape' && focusOpen) { event.preventDefault(); closeFocus(); return }
+      if ((event.key === 'f' || event.key === 'F') && visible.length) {
+        event.preventDefault()
+        if (focusOpen) closeFocus()
+        else setFocusOpen(true)
+        return
+      }
       if (event.key === 'ArrowLeft') { event.preventDefault(); step(-1); return }
       if (event.key === 'ArrowRight') { event.preventDefault(); step(1); return }
       if (!active) return
@@ -220,7 +268,7 @@ export default function PhotoSelectionPage() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [active, editing, presetTags, step, toggleTag])
+  }, [active, closeFocus, editing, focusOpen, presetTags, step, toggleTag, visible.length])
 
   const saveEdit = async (blob: Blob) => {
     if (!active) return
@@ -307,6 +355,102 @@ export default function PhotoSelectionPage() {
     </button>
   }
 
+  const renderTagRow = (photo: SelectionPhoto) => <>
+    <div className="selection-tag-row">
+      <Typography.Text type="secondary">标签</Typography.Text>
+      {presetTags.length
+        ? presetTags.map((tag, index) => <Tag.CheckableTag key={tag}
+            checked={photo.tags.includes(tag)}
+            onChange={() => { if (editable) void toggleTag(photo, tag) }}>
+            {tag}<span className="selection-tag-key">{index < 9 ? index + 1 : ''}</span>
+          </Tag.CheckableTag>)
+        : <Typography.Text type="secondary">
+            这个选题还没有预设标签，请让选题负责人在选题里先定义一组</Typography.Text>}
+      <Tag.CheckableTag checked={isDeprecated(photo.tags)}
+        className="selection-tag-deprecated"
+        onChange={() => { if (editable) void toggleTag(photo, DEPRECATED_TAG) }}>
+        <StopOutlined /> {DEPRECATED_TAG_LABEL}<span className="selection-tag-key">空格</span>
+      </Tag.CheckableTag>
+      {taggingId === photo.id && <Spin size="small" />}
+    </div>
+    {isDeprecated(photo.tags) && <Alert type="warning" showIcon
+      message={`标记为${DEPRECATED_TAG_LABEL}的图片会在选题完成、负责人确认后从图库和对象存储中删除`} />}
+  </>
+
+  const qualitySwitch = <Tooltip title="原图按成品图渲染，看得清细节但更费流量；预览图是 480px 的压缩图">
+    <Segmented<QualityMode> value={quality} onChange={setQuality} options={[
+      { value: 'preview', label: '小图（预览）', icon: <CheckCircleOutlined /> },
+      { value: 'original', label: '大图（原图）', icon: <ExpandOutlined /> },
+    ]} />
+  </Tooltip>
+
+  const stageImage = (photo: SelectionPhoto) => stageSrc
+    ? <Suspense fallback={<div className="empty-state">正在加载图片…</div>}>
+      <ZoomableImage src={stageSrc} alt={photo.title || '选片图片'}
+        refresh={() => refreshImageUrl(photo.id as string)}
+        resetKey={`${photo.id}-${quality}`}
+        previewHint={quality === 'preview'
+          ? '当前是 480px 预览图，放大后会糊；要判清晰度请切到「大图（原图）」'
+          : undefined} />
+    </Suspense>
+    : <Empty description="这张图片暂时没有可展示的画面" />
+
+  /*
+    弹窗选图（「大图区太小」的反馈）：用 portal 挂到 body 上、fixed 铺满整个视口，
+    外壳的侧边栏、顶栏、页头统统盖住，大图拿到几乎整块屏幕，底下留一条标签和一条缩略图。
+    它和页面共用同一个「当前这张」、同一套标签操作和键盘快捷键，所以关掉弹窗回到页面时
+    进度原样还在。弹窗开着的时候页面那边不渲染大图——ZoomableImage 在 window 上挂了
+    0 / + / - 的快捷键，两份同时在场会各缩放各的。
+  */
+  const focusWindow = focusOpen && active && createPortal(
+    <div className="selection-focus" ref={focusRef} tabIndex={-1} role="dialog" aria-modal="true"
+      aria-label={`弹窗选图：${project?.title ?? ''}`}>
+      <header className="selection-focus-bar">
+        <div className="selection-focus-title">
+          <span className="selection-focus-count">
+            {activeIndex + 1} / {visible.length}{photos.length < total ? '+' : ''}
+          </span>
+          <strong>{active.title || '未命名图片'}</strong>
+          <Typography.Text type="secondary">
+            {active.photographerName} · {dayjs(active.takenAt).format('YYYY-MM-DD HH:mm')}
+            {active.width && active.height ? ` · ${active.width}×${active.height}` : ''}
+          </Typography.Text>
+        </div>
+        <Space wrap>
+          {qualitySwitch}
+          <Tooltip title={browserFullscreen ? '退出浏览器全屏' : '浏览器全屏，连地址栏也收起来'}>
+            <Button icon={browserFullscreen ? <CompressOutlined /> : <FullscreenOutlined />}
+              aria-label={browserFullscreen ? '退出浏览器全屏' : '浏览器全屏'}
+              onClick={toggleBrowserFullscreen} />
+          </Tooltip>
+          <Tooltip title="关掉弹窗，在页面里裁切 / 旋转这张">
+            <Button icon={<ScissorOutlined />} disabled={!editable || !active.imageUrl}
+              onClick={() => { closeFocus(); setView('single'); setEditing(true) }}>裁切 / 旋转</Button>
+          </Tooltip>
+          <Tooltip title="关闭（Esc 或 F）">
+            <Button icon={<CloseOutlined />} aria-label="关闭弹窗" onClick={closeFocus} />
+          </Tooltip>
+        </Space>
+      </header>
+      <div className="selection-focus-stage">
+        {stageImage(active)}
+        <Button className="selection-focus-nav is-prev" shape="circle" size="large" icon={<LeftOutlined />}
+          aria-label="上一张" disabled={activeIndex <= 0} onClick={() => step(-1)} />
+        <Button className="selection-focus-nav is-next" shape="circle" size="large" icon={<RightOutlined />}
+          aria-label="下一张" disabled={activeIndex >= visible.length - 1} onClick={() => step(1)} />
+      </div>
+      <div className="selection-focus-panel">
+        {renderTagRow(active)}
+        <div className="selection-focus-strip" ref={focusStripRef}>
+          {visible.map((photo, index) => renderThumb(photo, index))}
+          {photos.length < total && <Button type="link" loading={loadingMore} onClick={() => void loadMore()}>
+            继续加载（还有 {total - photos.length} 张）</Button>}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  )
+
   return <DataState loading={loading} error={error} empty={!project} onRetry={reload}
     emptyText="找不到这个选题" emptyHint="它可能已经被删除，或者你不是这个选题的选片人。">
     {project && <div className="selection-page">
@@ -324,6 +468,7 @@ export default function PhotoSelectionPage() {
             已处理 {decided} / 已加载 {photos.length}（共 {total} 张）
             ．方向键翻图，空格标记{DEPRECATED_TAG_LABEL}，数字键 1–9 套用预设标签
             {view === 'single' && '．滚轮缩放，放大后可拖动，双击切换 1:1，按 0 回到适应窗口'}
+            ．按 F 弹窗选图
           </Typography.Text>
           <Progress percent={photos.length ? Math.round(decided / photos.length * 100) : 0}
             size="small" showInfo={false} />
@@ -340,11 +485,10 @@ export default function PhotoSelectionPage() {
               { value: 'grid', label: '网格', icon: <AppstoreOutlined /> },
             ]} />
           </Tooltip>
-          <Tooltip title="原图按成品图渲染，看得清细节但更费流量；预览图是 480px 的压缩图">
-            <Segmented<QualityMode> value={quality} onChange={setQuality} options={[
-              { value: 'preview', label: '小图（预览）', icon: <CheckCircleOutlined /> },
-              { value: 'original', label: '大图（原图）', icon: <ExpandOutlined /> },
-            ]} />
+          {qualitySwitch}
+          <Tooltip title="把大图铺满整个浏览器窗口来选（快捷键 F）">
+            <Button type="primary" icon={<BlockOutlined />} disabled={!visible.length || editing}
+              onClick={() => setFocusOpen(true)}>弹窗选图</Button>
           </Tooltip>
         </Space>
       </header>
@@ -391,16 +535,9 @@ export default function PhotoSelectionPage() {
                 onCancel={() => setEditing(false)} onSave={blob => void saveEdit(blob)} />
             </Suspense>}
             {active && !editing && <div className="selection-stage-image">
-              {stageSrc
-                ? <Suspense fallback={<div className="empty-state">正在加载图片…</div>}>
-                  <ZoomableImage src={stageSrc} alt={active.title || '选片图片'}
-                    refresh={() => refreshImageUrl(active.id as string)}
-                    resetKey={`${active.id}-${quality}`}
-                    previewHint={quality === 'preview'
-                      ? '当前是 480px 预览图，放大后会糊；要判清晰度请切到「大图（原图）」'
-                      : undefined} />
-                </Suspense>
-                : <Empty description="这张图片暂时没有可展示的画面" />}
+              {focusOpen
+                ? <Empty description="正在弹窗中选图" />
+                : stageImage(active)}
             </div>}
           </>}
 
@@ -422,28 +559,11 @@ export default function PhotoSelectionPage() {
               <Button icon={<ScissorOutlined />} disabled={!editable || !active.imageUrl}
                 onClick={() => { setView('single'); setEditing(true) }}>裁切 / 旋转</Button>
             </div>
-            <div className="selection-tag-row">
-              <Typography.Text type="secondary">标签</Typography.Text>
-              {presetTags.length
-                ? presetTags.map((tag, index) => <Tag.CheckableTag key={tag}
-                    checked={active.tags.includes(tag)}
-                    onChange={() => { if (editable) void toggleTag(active, tag) }}>
-                    {tag}<span className="selection-tag-key">{index < 9 ? index + 1 : ''}</span>
-                  </Tag.CheckableTag>)
-                : <Typography.Text type="secondary">
-                    这个选题还没有预设标签，请让选题负责人在选题里先定义一组</Typography.Text>}
-              <Tag.CheckableTag checked={isDeprecated(active.tags)}
-                className="selection-tag-deprecated"
-                onChange={() => { if (editable) void toggleTag(active, DEPRECATED_TAG) }}>
-                <StopOutlined /> {DEPRECATED_TAG_LABEL}<span className="selection-tag-key">空格</span>
-              </Tag.CheckableTag>
-              {taggingId === active.id && <Spin size="small" />}
-            </div>
-            {isDeprecated(active.tags) && <Alert type="warning" showIcon
-              message={`标记为${DEPRECATED_TAG_LABEL}的图片会在选题完成、负责人确认后从图库和对象存储中删除`} />}
+            {renderTagRow(active)}
           </div>}
         </section>
       </div>
+      {focusWindow}
     </div>}
   </DataState>
 }
