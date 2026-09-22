@@ -105,15 +105,63 @@ class MfaFlowTests {
     }
 
     @Test
-    void enablingTheSystemRequiresTheAdministratorsOwnDevice() throws Exception {
+    void enablingTheSystemNeedsTheAdministratorsDeviceTheirPasswordAndAFreshVerification() throws Exception {
         String token = login("mfa-admin", null).get("accessToken").asText();
-        JsonNode refused = call(put("/api/v1/mfa-settings").content("{\"enabled\":true}"), token, 409);
+        JsonNode refused = call(put("/api/v1/mfa-settings").content(enableBody(PASSWORD)), token, 409);
         assertThat(refused.get("message").asText()).contains("绑定");
 
-        enrollTotp(token);
-        JsonNode enabled = call(put("/api/v1/mfa-settings").content("{\"enabled\":true}"), token, 200);
+        String secret = enrollTotp(token);
+        assertThat(notifications(ADMIN_ID, "MFA_DEVICE_ADDED")).isEqualTo(1);
+        // 会话里没有密码：偷到会话的人绑上自己的设备也打不开开关。
+        call(put("/api/v1/mfa-settings").content(enableBody("not-the-password")), token, 400);
+        JsonNode verifyFirst = call(put("/api/v1/mfa-settings").content(enableBody(PASSWORD)), token, 403);
+        assertThat(verifyFirst.get("code").asText()).isEqualTo("STEP_UP_REQUIRED");
+        assertThat(mfaService.systemEnabled()).isFalse();
+
+        call(post("/api/v1/auth/mfa/step-up").content(codeBody(code(secret, 0))), token, 200);
+        JsonNode enabled = call(put("/api/v1/mfa-settings").content(enableBody(PASSWORD)), token, 200);
         assertThat(enabled.at("/data/enabled").asBoolean()).isTrue();
         assertThat(mfaService.systemEnabled()).isTrue();
+        // 打开开关的这个会话刚验证过设备，不会被当成"没过第二步的旧会话"踢下线。
+        call(get("/api/v1/auth/me"), token, 200);
+    }
+
+    @Test
+    void sessionsThatNeverPassedTheSecondStepAreSignedOutOnceItApplies() throws Exception {
+        setMinisterPolicy("SUGGESTED");
+        MvcResult before = loginResult("mfa-member", null, PASSWORD);
+        String oldToken = data(before).get("accessToken").asText();
+        String enrolledIn = login("mfa-member", null).get("accessToken").asText();
+        enrollTotp(enrolledIn);
+        enableSystem();
+
+        // 开关打开前签发、从没过第二步的会话：请求和续期都不再认。
+        call(get("/api/v1/auth/me"), oldToken, 401);
+        MvcResult refresh = mvc.perform(post("/api/v1/auth/refresh")
+                .cookie(before.getResponse().getCookie("photolib_refresh"))).andReturn();
+        assertThat(refresh.getResponse().getStatus()).isEqualTo(401);
+        assertThat(json.readTree(refresh.getResponse().getContentAsString()).get("code").asText())
+                .isEqualTo("MFA_SESSION_UNVERIFIED");
+        // 在其中绑定设备的那个会话已经证明了设备在手上，照常可用。
+        call(get("/api/v1/auth/me"), enrolledIn, 200);
+    }
+
+    @Test
+    void approvingAnMcpClientNeedsAFreshVerification() throws Exception {
+        enableSystem();
+        setMinisterPolicy("REQUIRED");
+        String token = login("mfa-member", null).get("accessToken").asText();
+        String secret = enrollTotp(token);
+        JsonNode pairing = data(mvc.perform(post("/api/v1/auth/mcp/authorizations")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json.createObjectNode().put("clientName", "Claude Code").toString())).andReturn());
+        String approve = "/api/v1/auth/mcp/authorizations/" + pairing.get("requestId").asText() + "/approve";
+        String body = json.createObjectNode().put("userCode", pairing.get("userCode").asText()).toString();
+
+        assertThat(call(post(approve).content(body), token, 403).get("code").asText())
+                .isEqualTo("STEP_UP_REQUIRED");
+        call(post("/api/v1/auth/mfa/step-up").content(codeBody(code(secret, 0))), token, 200);
+        call(post(approve).content(body), token, 200);
     }
 
     @Test
@@ -146,6 +194,7 @@ class MfaFlowTests {
                 """).param("id", MEMBER_ID).param("now", LocalDateTime.now(clock))
                 .param("later", LocalDateTime.now(clock).plusDays(10)).update();
 
+        long noticesBefore = notifications(MEMBER_ID, "MFA_DEVICE_ADDED");
         String initial = userService.resetPassword(MEMBER_ID);
         assertThat(count("mfa_device", MEMBER_ID)).isZero();
         assertThat(count("mfa_trusted_device", MEMBER_ID)).isZero();
@@ -160,8 +209,12 @@ class MfaFlowTests {
         assertThat(blocked.get("code").asText()).isEqualTo("MFA_ENROLLMENT_REQUIRED");
 
         enrollTotp(token);
-        call(put("/api/v1/auth/initial-password").content(json.createObjectNode()
-                .put("initialPassword", initial).put("newPassword", "Brand-new-pass-456").toString()), token, 200);
+        assertThat(notifications(MEMBER_ID, "MFA_DEVICE_ADDED")).isEqualTo(noticesBefore + 1);
+        String renewed = call(put("/api/v1/auth/initial-password").content(json.createObjectNode()
+                .put("initialPassword", initial).put("newPassword", "Brand-new-pass-456").toString()), token, 200)
+                .at("/data/accessToken").asText();
+        // 改密签发的新会话继承"刚在本会话绑定过设备"，不会一改完密码就被踢下线。
+        call(get("/api/v1/auth/me"), renewed, 200);
     }
 
     @Test
@@ -229,9 +282,8 @@ class MfaFlowTests {
 
     @Test
     void sensitiveOperationsNeedAFreshVerificationThatSurvivesRefreshForFifteenMinutes() throws Exception {
-        String setupToken = login("mfa-admin", null).get("accessToken").asText();
-        String secret = enrollTotp(setupToken);
-        call(put("/api/v1/mfa-settings").content("{\"enabled\":true}"), setupToken, 200);
+        String secret = enrollTotp(login("mfa-admin", null).get("accessToken").asText());
+        enableSystem();
 
         String ticket = login("mfa-admin", null).get("mfaTicket").asText();
         MvcResult verified = mvc.perform(post("/api/v1/auth/login/mfa").contentType(MediaType.APPLICATION_JSON)
@@ -281,8 +333,9 @@ class MfaFlowTests {
                 .andReturn()).get("accessToken").asText();
         assertThat(call(delete("/api/v1/projects/987654321"), active, 403).get("code").asText())
                 .isEqualTo("STEP_UP_REQUIRED");
+        // 部长没有删除需求的权限：先判权限，直接 403，不会先让他输一遍验证码。
         assertThat(call(delete("/api/v1/requests/987654321"), active, 403).get("code").asText())
-                .isEqualTo("STEP_UP_REQUIRED");
+                .isEqualTo("FORBIDDEN");
         assertThat(call(delete("/api/v1/photos/987654321"), active, 403).get("code").asText())
                 .isEqualTo("STEP_UP_REQUIRED");
         assertThat(call(post("/api/v1/photos/batch-delete").content("{\"photoIds\":[987654321]}"), active, 403)
@@ -296,7 +349,8 @@ class MfaFlowTests {
     void repeatedWrongCodesLockTheSecondStepEvenWithTheRightCode() throws Exception {
         enableSystem();
         setMinisterPolicy("REQUIRED");
-        String secret = enrollTotp(login("mfa-locked", null).get("accessToken").asText());
+        String enrolledSession = login("mfa-locked", null).get("accessToken").asText();
+        String secret = enrollTotp(enrolledSession);
         String ticket = login("mfa-locked", null).get("mfaTicket").asText();
         for (int i = 0; i < 5; i++) {
             verifyLogin(ticket, wrongCode(secret), false, 400);
@@ -306,6 +360,10 @@ class MfaFlowTests {
         // 重新输一遍密码也绕不过去：计数按账号记，不随密码登录清零。
         String fresh = login("mfa-locked", null).get("mfaTicket").asText();
         verifyLogin(fresh, code(secret, 0), false, 429);
+        // 连错到锁定时通知本人：走到第二步说明密码已经对了。
+        assertThat(notifications(LOCKED_MEMBER_ID, "MFA_LOGIN_LOCKED")).isEqualTo(1);
+        // 知道密码的人在登录页只锁得住登录第二步，本人已登录会话里的再验证照常可用。
+        call(post("/api/v1/auth/mfa/step-up").content(codeBody(code(secret, 0))), enrolledSession, 200);
     }
 
     @Test
@@ -437,6 +495,15 @@ class MfaFlowTests {
                 return value;
             }
         }
+    }
+
+    private String enableBody(String password) {
+        return json.createObjectNode().put("enabled", true).put("password", password).toString();
+    }
+
+    private long notifications(long userId, String event) {
+        return jdbc.sql("SELECT COUNT(*) FROM user_notification WHERE user_id = :id AND event_type = :event")
+                .param("id", userId).param("event", event).query(Long.class).single();
     }
 
     private String codeBody(String code) {

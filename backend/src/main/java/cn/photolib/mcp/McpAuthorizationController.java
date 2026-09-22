@@ -3,6 +3,7 @@ package cn.photolib.mcp;
 import cn.photolib.audit.AuditInterceptor;
 import cn.photolib.auth.AuthService;
 import cn.photolib.auth.AuthenticatedUser;
+import cn.photolib.auth.mfa.RequiresStepUp;
 import cn.photolib.common.api.ApiResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -56,6 +57,9 @@ public class McpAuthorizationController {
 
     @PostMapping("/authorizations/{requestId}/approve")
     @PreAuthorize("isAuthenticated()")
+    // 批准会签发一个独立、可以一直续期的会话。两步验证生效的账号必须先再验证：
+    // 否则偷到浏览器会话的人就能借配对换出一个长期可用的会话。
+    @RequiresStepUp
     ApiResponse<Void> approve(@PathVariable String requestId,
                               @Valid @RequestBody ApproveRequest request,
                               HttpServletRequest servletRequest,

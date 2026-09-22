@@ -42,9 +42,18 @@ http.interceptors.request.use((config) => {
 // stale, which makes the /login guard bounce straight back to the shell.
 export const SESSION_EXPIRED_EVENT = 'photolib:session-expired'
 
-function clearSession() {
+/**
+ * 被踢回登录页时要给人看的一句话。两步验证对账号生效后，之前签发、没过第二步的会话
+ * 会被后端作废——不说一声的话，用户只会觉得"莫名其妙被登出了"。登录页读一次就清掉。
+ */
+export const LOGIN_NOTICE_KEY = 'photolib_login_notice'
+
+function clearSession(notice?: string) {
   localStorage.removeItem('photolib_access_token')
   localStorage.removeItem('photolib_user')
+  if (notice) {
+    try { sessionStorage.setItem(LOGIN_NOTICE_KEY, notice) } catch { /* 隐私模式等：提示丢了也不影响登出 */ }
+  }
   window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT))
 }
 
@@ -107,8 +116,9 @@ http.interceptors.response.use(
       const token = await refreshing
       original.headers = { ...original.headers, Authorization: `Bearer ${token}` }
       return http(original)
-    } catch {
-      clearSession()
+    } catch (refreshError) {
+      const body = axios.isAxiosError(refreshError) ? refreshError.response?.data as Envelope<unknown> : undefined
+      clearSession(body?.code === 'MFA_SESSION_UNVERIFIED' ? body.message : undefined)
       return Promise.reject(error)
     }
   },

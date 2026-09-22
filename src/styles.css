@@ -464,6 +464,7 @@ button, input, textarea, select { font-family: inherit; }
 .two-factor-verify .ant-otp { display: flex; justify-content: center; margin: 4px 0 8px; }
 .two-factor-error, .two-factor-note { margin-top: 16px; }
 .two-factor-trust { display: block; margin-top: 18px; }
+.login-notice { margin-bottom: 16px; }
 .login-card .two-factor-verify + .ant-btn { margin-top: 12px; }
 .two-factor-setup { display: grid; gap: 16px; }
 .two-factor-setup .ant-steps { margin-top: 4px; }

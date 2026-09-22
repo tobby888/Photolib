@@ -1,4 +1,4 @@
-import { Alert, App, Card, Descriptions, Space, Switch, Typography } from 'antd'
+import { Alert, App, Card, Descriptions, Input, Modal, Space, Switch, Typography } from 'antd'
 import { useState } from 'react'
 import { api } from './api'
 import { useAuth } from './auth'
@@ -19,11 +19,17 @@ export default function MfaSettingsPanel() {
     () => api<MfaSettings>({ url: '/mfa-settings' }), EMPTY, [],
   )
   const [saving, setSaving] = useState(false)
+  /** 打开开关前再输一次密码：会话被人拿去用时，这一步挡得住（会话里没有密码）。 */
+  const [confirming, setConfirming] = useState(false)
+  const [password, setPassword] = useState('')
 
-  const apply = async (enabled: boolean) => {
+  const apply = async (enabled: boolean, currentPassword?: string) => {
     setSaving(true)
     try {
-      await api<MfaSettings>({ method: 'PUT', url: '/mfa-settings', data: { enabled } })
+      // 打开时后端还会要求本会话刚用设备验证过：请求层会自动弹出验证框，验证后重发这个请求。
+      await api<MfaSettings>({ method: 'PUT', url: '/mfa-settings', data: { enabled, password: currentPassword } })
+      setConfirming(false)
+      setPassword('')
       message.success(enabled ? '已启用两步验证' : '已关闭两步验证')
       // 先更新自己的身份再刷新面板：刚打开开关后面板的下一次请求就要求再验证。
       await refreshUser()
@@ -37,7 +43,8 @@ export default function MfaSettingsPanel() {
 
   const toggle = (enabled: boolean) => {
     if (enabled) {
-      void apply(true)
+      setPassword('')
+      setConfirming(true)
       return
     }
     modal.confirm({
@@ -49,6 +56,16 @@ export default function MfaSettingsPanel() {
   }
 
   return <DataState loading={loading} error={error} onRetry={reload}>
+    <Modal open={confirming} title="启用全站两步验证" okText="下一步" confirmLoading={saving}
+      okButtonProps={{ disabled: !password }} destroyOnHidden
+      onOk={() => void apply(true, password)} onCancel={() => setConfirming(false)}>
+      <Typography.Paragraph>
+        请输入你的登录密码。下一步会要求用你的验证设备确认一次，确认后立即生效。
+      </Typography.Paragraph>
+      <Input.Password autoFocus value={password} autoComplete="current-password" placeholder="登录密码"
+        onChange={event => setPassword(event.target.value)}
+        onPressEnter={() => { if (password) void apply(true, password) }} />
+    </Modal>
     <Card title="两步验证">
       <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
         <Space>

@@ -73,3 +73,8 @@ CREATE TABLE mfa_challenge (
 -- 敏感操作（删除图片 / 选题 / 需求、系统管理面板）验证过一次后的 15 分钟信任期。
 -- 挂在会话上：续期换新会话时会把它带过去，登出或会话失效时一并作废。
 ALTER TABLE auth_session ADD COLUMN step_up_until DATETIME(6) NULL;
+
+-- 会话是否通过过第二因素：登录第二步、信任的浏览器、在本会话里绑定设备或完成再验证都会置真。
+-- 两步验证对账号生效后，没通过过的会话（开关打开前、策略收紧前、绑定前签发的）
+-- 在下一次请求和续期时一律作废，必须重新登录；续期换会话时带过去。
+ALTER TABLE auth_session ADD COLUMN mfa_verified BOOLEAN NOT NULL DEFAULT FALSE;
