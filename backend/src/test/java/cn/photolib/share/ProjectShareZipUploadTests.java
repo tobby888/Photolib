@@ -16,14 +16,18 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -51,6 +55,7 @@ class ProjectShareZipUploadTests {
     @Autowired private ObjectStorageService storage;
     @Autowired private PhotoProcessingWorkspace workspace;
     @Autowired private JdbcClient jdbc;
+    @Autowired @Qualifier("photoProcessingExecutor") private ThreadPoolTaskExecutor processingExecutor;
 
     private AuthenticatedUser minister;
     private ProjectEntity event;
@@ -76,6 +81,7 @@ class ProjectShareZipUploadTests {
     @AfterEach
     void cleanUp() {
         if (TransactionSynchronizationManager.isActualTransactionActive()) return;
+        awaitPhotoProcessing();
         jdbc.sql("""
                 SELECT temp_local_path FROM photo_upload_item
                 WHERE batch_id IN (SELECT id FROM photo_upload_batch WHERE created_by = :user)
@@ -101,6 +107,28 @@ class ProjectShareZipUploadTests {
                 .param("project", event.getId()).update();
         jdbc.sql("DELETE FROM project WHERE id = :project").param("project", event.getId()).update();
         jdbc.sql("DELETE FROM app_user WHERE id = :user").param("user", MINISTER_ID).update();
+    }
+
+    /**
+     * finishZip 把照片交给异步处理池，工作线程会打开批次临时文件。Windows 上删不掉仍被打开的文件，
+     * 清理若抢在处理前面就会抛 AccessDenied，后面的删行全被跳过，下一个用例的 setUp 撞上残留夹具。
+     */
+    private void awaitPhotoProcessing() {
+        Instant deadline = Instant.now().plus(Duration.ofSeconds(30));
+        while (Instant.now().isBefore(deadline)) {
+            // 提交发生在 finishZip 的提交后回调里、调用线程上，返回时任务已经进了队列。
+            if (processingExecutor.getActiveCount() == 0
+                    && processingExecutor.getThreadPoolExecutor().getQueue().isEmpty()) {
+                return;
+            }
+            try {
+                Thread.sleep(20);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+        throw new IllegalStateException("等待照片异步处理结束超时");
     }
 
     private ProjectShareService.GuestContext guest() {
