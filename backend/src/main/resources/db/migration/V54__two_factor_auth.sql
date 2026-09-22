@@ -14,6 +14,12 @@ INSERT INTO mfa_setting(id, enabled) VALUES (1, FALSE);
 -- 系统管理员组固定为 REQUIRED（代码里也会兜底），其余存量组默认不使用。
 ALTER TABLE permission_group ADD COLUMN mfa_policy VARCHAR(16) NOT NULL DEFAULT 'OFF';
 UPDATE permission_group SET mfa_policy = 'REQUIRED' WHERE code = 'ADMIN';
+-- 持有能打开"要求再验证"操作的权限（删除图片、管理需求图片、新建 / 删除选题、删除需求）
+-- 的组同样固定强制：否则这些删除在"不使用"的组里完全不用验证。
+-- 与 PermissionCode.unlocksStepUpOperation() 保持一致。
+UPDATE permission_group SET mfa_policy = 'REQUIRED'
+WHERE id IN (SELECT group_id FROM permission_group_permission
+             WHERE permission_code IN ('PHOTO_DELETE', 'REQUEST_PHOTO_MANAGE', 'PROJECT_CREATE', 'REQUEST_DELETE'));
 
 -- 验证设备：验证器 App（TOTP）或安全密钥 / 通行密钥（WebAuthn）。
 -- TOTP 密钥必须能还原才能算码，所以存的是 AES-GCM 密文而不是哈希；

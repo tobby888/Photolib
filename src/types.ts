@@ -82,6 +82,8 @@ export interface MfaSettings {
 export interface PermissionDefinition {
   code: PermissionCode
   label: string
+  /** 能打开要求再验证的操作（删除图片 / 选题 / 需求等）：勾了它的权限组固定强制两步验证。 */
+  requiresMfa?: boolean
 }
 
 export interface PermissionCategoryDefinition {

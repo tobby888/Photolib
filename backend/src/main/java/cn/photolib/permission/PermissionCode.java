@@ -1,5 +1,8 @@
 package cn.photolib.permission;
 
+import java.util.EnumSet;
+import java.util.Set;
+
 public enum PermissionCode {
     PROJECT_VIEW(PermissionCategory.PROJECT, "查看接到需求的选题"),
     PROJECT_VIEW_ALL(PermissionCategory.PROJECT, "无条件查看全部选题"),
@@ -51,4 +54,19 @@ public enum PermissionCode {
     public String label() {
         return label;
     }
+
+    /**
+     * 这个权限能不能打开要求再验证（{@code @RequiresStepUp}）的操作。有的权限组，两步验证策略
+     * 固定为强制：否则把"删除图片"交给一个"不使用两步验证"的组，删除就完全不用验证了。
+     *
+     * <p>清单要和 {@code @RequiresStepUp} 接口上的 {@code @PreAuthorize} 保持一致，
+     * {@code StepUpPermissionCoverageTests} 会扫描全部接口核对。系统管理面板那一批接口
+     * 只认管理员角色，而系统管理员组本来就固定强制，所以不在这里。
+     */
+    public boolean unlocksStepUpOperation() {
+        return STEP_UP_OPERATIONS.contains(this);
+    }
+
+    private static final Set<PermissionCode> STEP_UP_OPERATIONS = EnumSet.of(
+            PHOTO_DELETE, REQUEST_PHOTO_MANAGE, PROJECT_CREATE, REQUEST_DELETE);
 }
