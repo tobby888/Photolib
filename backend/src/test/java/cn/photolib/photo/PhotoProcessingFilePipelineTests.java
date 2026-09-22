@@ -21,13 +21,16 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.spy;
@@ -176,6 +179,57 @@ class PhotoProcessingFilePipelineTests {
                     SELECT status FROM photo_upload_item WHERE batch_id=:batchId
                     """).param("batchId", BATCH_ID).query(String.class).single())
                     .isEqualTo("SUCCEEDED");
+        } finally {
+            deleteObject(THUMBNAIL_KEY);
+            deleteObject(PHOTO_KEY);
+            deleteObject(ORIGINAL_KEY);
+            jdbc.sql("DELETE FROM photo_upload_item WHERE batch_id=:id").param("id", BATCH_ID).update();
+            jdbc.sql("DELETE FROM photo_upload_batch WHERE id=:id").param("id", BATCH_ID).update();
+            jdbc.sql("DELETE FROM photo WHERE id=:id").param("id", PHOTO_ID).update();
+            jdbc.sql("DELETE FROM app_user WHERE id=:id").param("id", USER_ID).update();
+            if (Files.exists(source)) workspace.deleteBatchFile(source);
+        }
+    }
+
+    @Test
+    void anErrorDuringProcessingStillMarksThePhotoFailedAndIsRethrown() throws Exception {
+        // 以前只接 Exception：一个 Error 会让照片和批次永远停在"处理中"。
+        Path source = workspace.createBatchFile(BATCH_ID, ".jpg");
+        writeJpeg(source);
+        long sourceSize = Files.size(source);
+        insertRows(source, sourceSize);
+
+        ImageCompressor brokenCompressor = spy(compressor);
+        doThrow(new AssertionError("synthetic native failure"))
+                .when(brokenCompressor).compress(any(Path.class), any(Path.class),
+                        anyString(), anyLong());
+        PhotoProcessingService isolated = new PhotoProcessingService(
+                photoMapper, userMapper, storage, properties,
+                new NativeImageTaskPool(processingExecutor, brokenCompressor),
+                workspace, batchItemMapper, batchMapper, previewProfiles, transactions);
+
+        try {
+            // Error 不能被吞掉：任务的 future 以它结束，onRequested 会把它记进日志。
+            assertThatThrownBy(() -> isolated.submit(PHOTO_ID).get(30, TimeUnit.SECONDS))
+                    .isInstanceOf(ExecutionException.class)
+                    .hasCauseInstanceOf(AssertionError.class);
+            assertThat(isolated.isInFlight(PHOTO_ID)).isFalse();
+
+            var photo = jdbc.sql("SELECT status, failure_reason FROM photo WHERE id=:id")
+                    .param("id", PHOTO_ID)
+                    .query((rs, rowNum) -> new String[]{
+                            rs.getString("status"), rs.getString("failure_reason")})
+                    .single();
+            assertThat(photo[0]).isEqualTo("UPLOADING");
+            // 内部错误对外只给通用提示，Error 的原文不外抬。
+            assertThat(photo[1]).isNotBlank().doesNotContain("synthetic");
+            assertThat(jdbc.sql("""
+                    SELECT status FROM photo_upload_item WHERE batch_id=:batchId
+                    """).param("batchId", BATCH_ID).query(String.class).single())
+                    .isEqualTo("FAILED");
+            assertThat(jdbc.sql("SELECT status FROM photo_upload_batch WHERE id=:id")
+                    .param("id", BATCH_ID).query(String.class).single())
+                    .isEqualTo("PARTIALLY_SUCCEEDED");
         } finally {
             deleteObject(THUMBNAIL_KEY);
             deleteObject(PHOTO_KEY);

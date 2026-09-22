@@ -153,6 +153,8 @@ public class ProjectShareUploadService {
         photo.setDescription(trimmedOrNull(command.description(), 500));
         photo.setStatus(PhotoStatus.PROCESSING);
         photo.setFailureReason(null);
+        // 这是一次新的处理，恢复任务的重提交次数从头算（Flyway V53）。
+        photo.setProcessingRecoveries(0);
 
         // 与站内 complete 同一条并发保护：只有仍看得见 UPLOADING 的那个请求算数。
         // version 由乐观锁拦截器自动处理，这里不要手动设置（见 PhotoService.complete 的注释）。

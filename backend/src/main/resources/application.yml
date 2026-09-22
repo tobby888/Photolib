@@ -71,6 +71,15 @@ photolib:
       retention-days: ${FAILED_UPLOAD_RETENTION_DAYS:7}
       delay-ms: ${FAILED_UPLOAD_RETENTION_DELAY_MS:3600000}
       initial-delay-ms: ${FAILED_UPLOAD_RETENTION_INITIAL_DELAY_MS:600000}
+    stalled-processing:
+      # 停在「处理中」、本进程却没有任务在处理的照片（JVM 重启、执行器拒收、处理中出现 Error）。
+      # 重提交次数没到上限就重新提交，到了上限就标为处理失败。次数落库（Flyway V53），
+      # 防止一张会把 JVM 带走的图让服务每次重启都再崩一次。
+      enabled: ${STALLED_PROCESSING_RECOVERY_ENABLED:true}
+      stale-after-minutes: ${STALLED_PROCESSING_STALE_AFTER_MINUTES:15}
+      max-resubmits: ${STALLED_PROCESSING_MAX_RESUBMITS:1}
+      delay-ms: ${STALLED_PROCESSING_DELAY_MS:300000}
+      initial-delay-ms: ${STALLED_PROCESSING_INITIAL_DELAY_MS:300000}
   auth:
     access-ttl: 15m
     idle-ttl: 30m
