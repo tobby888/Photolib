@@ -1,5 +1,6 @@
 package cn.photolib.campus;
 
+import cn.photolib.auth.mfa.RequiresStepUp;
 import cn.photolib.campus.model.CampusEntity;
 import cn.photolib.common.api.ApiResponse;
 import jakarta.validation.Valid;
@@ -28,6 +29,7 @@ public class CampusController {
 
     @PostMapping
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<CampusEntity> create(@Valid @RequestBody CreateRequest request) {
         return ApiResponse.ok(service.create(request.code(), request.name()));
     }
@@ -44,12 +46,14 @@ public class CampusController {
 
     @PutMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<CampusEntity> update(@PathVariable Long id, @Valid @RequestBody UpdateRequest request) {
         return ApiResponse.ok(service.update(id, request.name(), request.enabled(), request.version()));
     }
 
     @PostMapping("/{id}/enable")
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<CampusEntity> enable(@PathVariable Long id) {
         CampusEntity campus = service.get(id);
         return ApiResponse.ok(service.update(id, campus.getName(), true, campus.getVersion()));
@@ -57,6 +61,7 @@ public class CampusController {
 
     @PostMapping("/{id}/disable")
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<CampusEntity> disable(@PathVariable Long id) {
         CampusEntity campus = service.get(id);
         return ApiResponse.ok(service.update(id, campus.getName(), false, campus.getVersion()));

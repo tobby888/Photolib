@@ -1,5 +1,6 @@
 package cn.photolib.notification;
 
+import cn.photolib.auth.mfa.RequiresStepUp;
 import cn.photolib.common.api.ApiResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -11,6 +12,7 @@ import java.util.List;
 @RequestMapping("/notification-logs")
 @RequiredArgsConstructor
 @PreAuthorize("hasRole('ADMIN')")
+@RequiresStepUp
 public class NotificationController {
     private final NotificationService service;
 

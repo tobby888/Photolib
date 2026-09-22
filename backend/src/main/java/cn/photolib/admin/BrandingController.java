@@ -1,5 +1,6 @@
 package cn.photolib.admin;
 
+import cn.photolib.auth.mfa.RequiresStepUp;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
@@ -51,6 +52,7 @@ public class BrandingController {
 
     @PutMapping("/branding")
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<BrandingResponse> update(@Valid @RequestBody BrandingRequest request) {
         if (!Set.of("builtin", "custom").contains(request.iconType())) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "不支持的图标类型");
@@ -83,6 +85,7 @@ public class BrandingController {
      */
     @PutMapping("/branding/site")
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<BrandingResponse> updateSite(@Valid @RequestBody SiteContentRequest request) {
         BrandingSettingEntity setting = mapper.selectById(SETTING_ID);
         boolean isNew = setting == null;
@@ -103,6 +106,7 @@ public class BrandingController {
 
     @PostMapping(value = "/branding/icon", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<BrandingResponse> uploadIcon(@RequestPart("file") MultipartFile file) throws IOException {
         BrandIconValidator.NormalizedIcon normalized = iconValidator.normalize(file);
         BrandingSettingEntity setting = mapper.selectById(SETTING_ID);
@@ -137,12 +141,14 @@ public class BrandingController {
 
     @GetMapping("/branding/scheduled-icons")
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<List<ScheduledBrandIconService.ScheduledIconView>> scheduledIcons() {
         return ApiResponse.ok(scheduledIconService.list());
     }
 
     @PutMapping(value = "/branding/scheduled-icons", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<List<ScheduledBrandIconService.ScheduledIconView>> replaceScheduledIcons(
             @RequestPart("rules") List<ScheduledIconRuleRequest> rules,
             @RequestPart(value = "files", required = false) List<MultipartFile> files) throws IOException {
@@ -166,12 +172,14 @@ public class BrandingController {
 
     @GetMapping("/branding/placeholder-images")
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<List<PlaceholderImageService.PlaceholderImageView>> placeholderImages() {
         return ApiResponse.ok(placeholderImageService.list());
     }
 
     @PostMapping(value = "/branding/placeholder-images", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<List<PlaceholderImageService.PlaceholderImageView>> uploadPlaceholderImages(
             @RequestPart("files") List<MultipartFile> files) throws IOException {
         return ApiResponse.ok(placeholderImageService.add(files));
@@ -179,6 +187,7 @@ public class BrandingController {
 
     @DeleteMapping("/branding/placeholder-images/{id}")
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<List<PlaceholderImageService.PlaceholderImageView>> deletePlaceholderImage(@PathVariable long id) {
         return ApiResponse.ok(placeholderImageService.remove(id));
     }

@@ -4,6 +4,7 @@ import {
 import {
   BarChartOutlined, BellOutlined, BookOutlined, CameraOutlined, ContactsOutlined,
   DashboardOutlined, EnvironmentOutlined, FolderOutlined, KeyOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SettingOutlined,
+  SafetyCertificateOutlined,
   MessageOutlined, ReadOutlined, StarOutlined, TeamOutlined, TrophyOutlined,
   UnorderedListOutlined, UserOutlined,
 } from '@ant-design/icons'
@@ -15,12 +16,15 @@ import { api } from './api'
 import type { BrandingSettings, Notification, PreviewGenerationStatus } from './types'
 import { BrandGlyph, useBranding } from './branding'
 import { afterLoginRoute } from './loginRedirect'
-import { canViewProjects, hasAnyPermission, hasPermission, hasSystemAccess } from './permissions'
+import {
+  canManageTwoFactor, canViewProjects, hasAnyPermission, hasPermission, hasSystemAccess,
+} from './permissions'
 import SiteFooter from './SiteFooter'
 import UserAvatar from './UserAvatar'
 
 const LoginPage = lazy(() => import('./pages/LoginPage'))
 const InitialPasswordPage = lazy(() => import('./pages/InitialPasswordPage'))
+const TwoFactorPage = lazy(() => import('./pages/TwoFactorPage'))
 const DashboardPage = lazy(() => import('./pages/DashboardPage'))
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage'))
 const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage'))
@@ -50,6 +54,8 @@ const RecruitmentApplicationDetailPage = lazy(() => import('./pages/RecruitmentA
 const McpAuthorizePage = lazy(() => import('./pages/McpAuthorizePage'))
 const AvatarSettingsModal = lazy(() => import('./AvatarSettingsModal'))
 const PhotoCardShortcutsModal = lazy(() => import('./PhotoCardShortcutsModal'))
+const TwoFactorSettingsModal = lazy(() => import('./TwoFactorSettingsModal'))
+const StepUpHost = lazy(() => import('./StepUpHost'))
 const NotificationPanel = lazy(() => import('./NotificationPanel'))
 
 const { Header, Sider, Content } = Layout
@@ -106,6 +112,7 @@ function Shell() {
   const [notificationOpen, setNotificationOpen] = useState(false)
   const [avatarSettingsOpen, setAvatarSettingsOpen] = useState(false)
   const [shortcutSettingsOpen, setShortcutSettingsOpen] = useState(false)
+  const [twoFactorOpen, setTwoFactorOpen] = useState(false)
   const [previewStatus, setPreviewStatus] = useState<PreviewGenerationStatus | null>(null)
   const previousPreviewState = useRef<PreviewGenerationStatus['status'] | undefined>(undefined)
   const mobile = !screens.md
@@ -215,6 +222,10 @@ function Shell() {
   }, [user])
 
   if (!user) return <Navigate to="/login" replace state={{ from: location }} />
+  // 被强制两步验证却还没绑定：先去绑定，排在首次改密之前（后端在绑定前也不放行改密）。
+  if (user.mfa?.enrollmentRequired) {
+    return <Navigate to={`/two-factor?next=${encodeURIComponent(`${location.pathname}${location.search}`)}`} replace />
+  }
   if (user.mustChangePassword) return <Navigate to="/initial-password" replace />
   // 还没分配权限组的账号进不了工作台，但文档中心要留一个入口：新同学登录后
   // 第一件事往往就是读"要求登录才能看"的入部须知，而后端已经把这类会话当成
@@ -287,6 +298,8 @@ function Shell() {
           <Dropdown menu={{ items: [
             { key: 'profile', icon: <UserOutlined />, label: '个人头像', onClick: () => setAvatarSettingsOpen(true) },
             { key: 'shortcuts', icon: <KeyOutlined />, label: '图片快捷键', onClick: () => setShortcutSettingsOpen(true) },
+            ...(canManageTwoFactor(user) ? [{ key: 'two-factor', icon: <SafetyCertificateOutlined />,
+              label: '两步验证', onClick: () => setTwoFactorOpen(true) }] : []),
             { type: 'divider' },
             { key: 'logout', icon: <LogoutOutlined />, label: '退出登录', danger: true,
               onClick: async () => { await logout(); message.success('已安全退出'); navigate('/login') } },
@@ -362,6 +375,12 @@ function Shell() {
     {shortcutSettingsOpen && <Suspense fallback={null}>
       <PhotoCardShortcutsModal open onClose={() => setShortcutSettingsOpen(false)} />
     </Suspense>}
+    {twoFactorOpen && <Suspense fallback={null}>
+      <TwoFactorSettingsModal open onClose={() => setTwoFactorOpen(false)} />
+    </Suspense>}
+    {/* 所在权限组不使用两步验证的账号永远不会被要求再验证，不必加载这段代码。不按
+        `mfa.active` 判断：全站开关刚打开的那一刻，本地缓存的身份还没更新，请求就可能已经被拦下。 */}
+    {canManageTwoFactor(user) && <Suspense fallback={null}><StepUpHost /></Suspense>}
   </Layout>
 }
 
@@ -370,7 +389,7 @@ export default function App() {
   const branding = useBranding()
   const location = useLocation()
   return <Suspense fallback={<div className="route-loading">正在进入{branding.title}…</div>}><Routes>
-    <Route path="/login" element={user ? <Navigate to={afterLoginRoute(user.mustChangePassword, location.state)} replace /> : <LoginPage />} />
+    <Route path="/login" element={user ? <Navigate to={afterLoginRoute(user, location.state)} replace /> : <LoginPage />} />
     {/*
       报名页只把"后端确认过的成员"弹回工作台。光看 `user` 不行：它是从 localStorage
       乐观读出来的，浏览器上留着一份过期身份的人（在这台机器上登录过的部员，或者
@@ -400,7 +419,10 @@ export default function App() {
     */}
     <Route path="/upload/:token" element={<SharedUploadPage />} />
     <Route path="/initial-password" element={!user ? <Navigate to="/login" replace /> :
-      user.mustChangePassword ? <InitialPasswordPage /> : <Navigate to="/" replace />} />
+      user.mfa?.enrollmentRequired ? <Navigate to="/two-factor" replace /> :
+        user.mustChangePassword ? <InitialPasswordPage /> : <Navigate to="/" replace />} />
+    {/* 两步验证的绑定 / 建议页。去向判定在页面里，见 TwoFactorPage。 */}
+    <Route path="/two-factor" element={!user ? <Navigate to="/login" replace /> : <TwoFactorPage />} />
     <Route path="/*" element={<Shell />} />
   </Routes></Suspense>
 }

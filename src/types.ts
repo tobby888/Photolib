@@ -33,7 +33,50 @@ export interface User {
   wecomUserid?: string | null
   enabled?: boolean
   mustChangePassword?: boolean
+  /** 两步验证状态，只在登录身份（`/auth/me`、登录应答）里有；旧缓存里可能没有。 */
+  mfa?: MfaSummary
   version?: number
+}
+
+export type MfaPolicy = 'OFF' | 'SUGGESTED' | 'REQUIRED'
+
+/** 与后端 `MfaSummary` 一致，派生字段由后端算好，前端不要自己拼规则。 */
+export interface MfaSummary {
+  systemEnabled: boolean
+  policy: MfaPolicy
+  enrolled: boolean
+  active: boolean
+  enrollmentRequired: boolean
+  suggested: boolean
+}
+
+export interface MfaDevice {
+  id: EntityId
+  type: 'TOTP' | 'WEBAUTHN'
+  name: string
+  createdAt: string
+  lastUsedAt?: string | null
+}
+
+export interface MfaTrustedBrowser {
+  id: EntityId
+  label?: string | null
+  createdAt: string
+  lastUsedAt: string
+  expiresAt: string
+}
+
+export interface MfaOverview {
+  summary: MfaSummary
+  devices: MfaDevice[]
+  trustedBrowsers: MfaTrustedBrowser[]
+  totpAvailable: boolean
+}
+
+export interface MfaSettings {
+  enabled: boolean
+  totpAvailable: boolean
+  webauthnRpId?: string | null
 }
 
 export interface PermissionDefinition {
@@ -58,6 +101,7 @@ export interface PermissionGroup {
   lowest: boolean
   permissions: PermissionCode[]
   memberCount: number
+  mfaPolicy?: MfaPolicy
   version: number
 }
 

@@ -1,6 +1,8 @@
 package cn.photolib.permission;
 
 import cn.photolib.auth.AuthenticatedUser;
+import cn.photolib.auth.mfa.MfaPolicy;
+import cn.photolib.auth.mfa.MfaService;
 import cn.photolib.campus.mapper.CampusMapper;
 import cn.photolib.campus.model.CampusEntity;
 import cn.photolib.common.error.BusinessException;
@@ -36,6 +38,7 @@ public class PermissionGroupService {
     private final UserMapper userMapper;
     private final CampusMapper campusMapper;
     private final JdbcClient jdbc;
+    private final MfaService mfa;
 
     public List<CategoryDefinition> definitions() {
         return Arrays.stream(PermissionCategory.values())
@@ -113,6 +116,7 @@ public class PermissionGroupService {
         group.setDescription(normalizeDescription(command.description()));
         group.setDataScope(command.dataScope());
         group.setPhotoVisibility(command.photoVisibility());
+        group.setMfaPolicy(command.mfaPolicy() == null ? MfaPolicy.OFF : command.mfaPolicy());
         group.setBuiltIn(false);
         group.setLowest(false);
         try {
@@ -152,6 +156,14 @@ public class PermissionGroupService {
             photoVisibility = PhotoVisibility.GLOBAL;
         }
         group.setPhotoVisibility(photoVisibility);
+        // 两步验证策略和图库可见范围一样对内置组开放——部长、校区负责人正是最需要
+        // 按组决定的账号。系统管理员组固定为强制：不传就沿用原值，兼容不认识这个字段的
+        // 调用方（MCP 工具、旧版前端）。
+        if ("ADMIN".equals(group.getCode())) {
+            group.setMfaPolicy(MfaPolicy.REQUIRED);
+        } else if (command.mfaPolicy() != null) {
+            group.setMfaPolicy(command.mfaPolicy());
+        }
         if (!Boolean.TRUE.equals(group.getBuiltIn())) {
             group.setName(command.name().trim());
             group.setDescription(normalizeDescription(command.description()));
@@ -206,7 +218,8 @@ public class PermissionGroupService {
         return new AuthenticatedUser(user.getId(), user.getUsername(), user.getDisplayName(),
                 compatibleRole, primaryCampusId, Boolean.TRUE.equals(user.getMustChangePassword()),
                 group.getId(), group.getCode(), group.getName(), group.getDataScope(),
-                photoVisibility(group), permissions, campusIds, UserAvatarService.avatarUrl(user));
+                photoVisibility(group), permissions, campusIds, UserAvatarService.avatarUrl(user),
+                mfa.summarize(user.getId(), group.getCode(), group.getMfaPolicy()));
     }
 
     public Set<Long> campusIds(Long userId) {
@@ -313,6 +326,8 @@ public class PermissionGroupService {
         return new GroupView(group.getId(), group.getCode(), group.getName(), group.getDescription(),
                 group.getDataScope(), photoVisibility(group), Boolean.TRUE.equals(group.getBuiltIn()),
                 Boolean.TRUE.equals(group.getLowest()), permissionCodes(group.getId()), memberCount(group.getId()),
+                "ADMIN".equals(group.getCode()) ? MfaPolicy.REQUIRED
+                        : group.getMfaPolicy() == null ? MfaPolicy.OFF : group.getMfaPolicy(),
                 group.getCreatedAt(), group.getUpdatedAt(), group.getVersion());
     }
 
@@ -334,11 +349,23 @@ public class PermissionGroupService {
     public record CategoryDefinition(String code, String label, List<PermissionDefinition> permissions) {}
     public record GroupView(Long id, String code, String name, String description, DataScope dataScope,
                             PhotoVisibility photoVisibility, boolean builtIn, boolean lowest,
-                            Set<PermissionCode> permissions, long memberCount, LocalDateTime createdAt,
+                            Set<PermissionCode> permissions, long memberCount, MfaPolicy mfaPolicy,
+                            LocalDateTime createdAt,
                             LocalDateTime updatedAt, Integer version) {}
     public record CreateCommand(String code, String name, String description, DataScope dataScope,
-                                PhotoVisibility photoVisibility, Set<PermissionCode> permissions) {}
+                                PhotoVisibility photoVisibility, Set<PermissionCode> permissions,
+                                MfaPolicy mfaPolicy) {
+        public CreateCommand(String code, String name, String description, DataScope dataScope,
+                             PhotoVisibility photoVisibility, Set<PermissionCode> permissions) {
+            this(code, name, description, dataScope, photoVisibility, permissions, null);
+        }
+    }
     public record UpdateCommand(String name, String description, DataScope dataScope,
                                 PhotoVisibility photoVisibility, Set<PermissionCode> permissions,
-                                int version) {}
+                                int version, MfaPolicy mfaPolicy) {
+        public UpdateCommand(String name, String description, DataScope dataScope,
+                             PhotoVisibility photoVisibility, Set<PermissionCode> permissions, int version) {
+            this(name, description, dataScope, photoVisibility, permissions, version, null);
+        }
+    }
 }

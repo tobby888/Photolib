@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom'
 import { api, type LoginResult } from '../api'
 import { useAuth } from '../auth'
 import { useBranding } from '../branding'
+import { afterLoginRoute } from '../loginRedirect'
 
 interface PasswordValues {
   initialPassword: string
@@ -30,7 +31,8 @@ export default function InitialPasswordPage() {
       })
       updateSession(result)
       message.success(`密码修改成功，欢迎使用${branding.title}`)
-      navigate('/', { replace: true })
+      // 被建议两步验证的账号，改完密码接着看一眼建议页；判定和登录后的去向是同一处。
+      navigate(afterLoginRoute(result.user, null), { replace: true })
     } catch (error) {
       message.error((error as Error).message)
     } finally {

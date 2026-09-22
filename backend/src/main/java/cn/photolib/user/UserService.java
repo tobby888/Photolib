@@ -2,6 +2,7 @@ package cn.photolib.user;
 
 import cn.photolib.auth.AuthService;
 import cn.photolib.auth.AuthenticatedUser;
+import cn.photolib.auth.mfa.MfaService;
 import cn.photolib.notification.NotificationService;
 import cn.photolib.campus.mapper.CampusMapper;
 import cn.photolib.campus.model.CampusEntity;
@@ -42,6 +43,7 @@ public class UserService {
     private final NotificationService notifications;
     private final PermissionGroupService permissionGroups;
     private final UserAvatarService avatars;
+    private final MfaService mfa;
     private final SecureRandom random = new SecureRandom();
 
     @Transactional
@@ -226,6 +228,9 @@ public class UserService {
         user.setMustChangePassword(true);
         userMapper.updateById(user);
         authService.revokeAll(id);
+        // 密码被重置往往意味着账号可能已不在本人手里：验证设备和信任过的浏览器一并清掉，
+        // 本人重新登录后按所在权限组的要求重新绑定（强制组必须先绑定、再设置新密码）。
+        mfa.resetForUser(id);
         notifications.notifyUser(id, "PASSWORD_RESET", "PhotoLib 密码已重置",
                 "<p>管理员已重置您的密码，请通过安全渠道获取新的初始密码。</p>");
         return initialPassword;
@@ -255,6 +260,7 @@ public class UserService {
         }
         userMapper.deleteById(id);
         authService.revokeAll(id);
+        mfa.resetForUser(id);
         avatars.cleanupAfterCommit(user.getAvatarObjectKey());
     }
 

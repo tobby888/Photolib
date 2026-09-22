@@ -16,6 +16,9 @@ import { DataState, PageTitle } from '../components'
 import { ContentFitTable } from '../ContentFitTable'
 import { useLoad } from '../hooks'
 import AuditLogsPanel from '../AuditLogsPanel'
+import MfaSettingsPanel from '../MfaSettingsPanel'
+import TwoFactorVerify from '../TwoFactorVerify'
+import { loadMfaOverview, loadStepUpStatus, stepUpWithCode, stepUpWithSecurityKey } from '../mfa'
 import DatabaseBackupPanel from '../DatabaseBackupPanel'
 import PermissionGroupsPanel from '../PermissionGroupsPanel'
 import UserAvatar from '../UserAvatar'
@@ -69,7 +72,44 @@ function ScheduledIconPreview({ file, iconUrl }: Pick<ScheduledIconDraft, 'file'
   return previewUrl ? <img src={previewUrl} alt="定时图标预览" /> : null
 }
 
+/**
+ * 进入系统管理面板前先验证两步验证（对管理员生效时）。验证一次 15 分钟内有效；
+ * 过期后面板里的下一次请求会被后端拦下，由外壳的再验证框接住，不用重新进来。
+ * 门挡在面板外面，是为了让面板一加载就发出的那一串请求不会各自弹一次验证框。
+ */
 export default function AdminPage() {
+  const [state, setState] = useState<'checking' | 'locked' | 'open'>('checking')
+  const [methods, setMethods] = useState<('TOTP' | 'WEBAUTHN')[]>()
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    void loadStepUpStatus().then(async status => {
+      if (cancelled) return
+      if (!status.required || status.verified) { setState('open'); return }
+      const overview = await loadMfaOverview().catch(() => null)
+      if (cancelled) return
+      setMethods(overview ? [...new Set(overview.devices.map(device => device.type))] : undefined)
+      setState('locked')
+    }).catch(failure => { if (!cancelled) setError((failure as Error).message) })
+    return () => { cancelled = true }
+  }, [])
+
+  if (state === 'open') return <AdminPanel />
+  return <>
+    <PageTitle eyebrow="ADMINISTRATION" title="系统管理" description="进入系统管理面板前，请先完成两步验证。" />
+    <DataState loading={state === 'checking' && !error} error={error}>
+      <Card className="admin-step-up-card" title={<span><SafetyCertificateOutlined /> 验证身份</span>}>
+        <Typography.Paragraph type="secondary">验证后 15 分钟内，管理操作和删除操作不再询问。</Typography.Paragraph>
+        <TwoFactorVerify methods={methods}
+          onCode={async code => { await stepUpWithCode(code); setState('open') }}
+          onSecurityKey={async () => { await stepUpWithSecurityKey(); setState('open') }} />
+      </Card>
+    </DataState>
+  </>
+}
+
+function AdminPanel() {
   const { message, modal } = App.useApp()
   const [userForm] = Form.useForm()
   const [accountForm] = Form.useForm<AccountFormValues>()
@@ -605,6 +645,7 @@ export default function AdminPage() {
             { title: '版本', dataIndex: 'version', render: value => `v${value}` },
           ]} />
         </> },
+        { key: 'two-factor', label: <span><SafetyCertificateOutlined /> 两步验证</span>, children: <MfaSettingsPanel /> },
         { key: 'audit-logs', label: <span><FileTextOutlined /> 操作日志</span>, children: <AuditLogsPanel /> },
         // 数据库备份/回滚只对系统管理员开放，刻意没有对应的权限项，因此不出现在权限面板里。
         { key: 'backups', label: <span><DatabaseOutlined /> 数据备份</span>, children: <DatabaseBackupPanel /> },

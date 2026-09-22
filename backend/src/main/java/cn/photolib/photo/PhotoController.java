@@ -2,6 +2,7 @@ package cn.photolib.photo;
 
 import cn.photolib.audit.AuditInterceptor;
 import cn.photolib.auth.AuthenticatedUser;
+import cn.photolib.auth.mfa.RequiresStepUp;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.api.PageResponse;
 import cn.photolib.photo.model.PhotoStatus;
@@ -152,6 +153,7 @@ public class PhotoController {
 
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAnyAuthority('PHOTO_DELETE','REQUEST_PHOTO_MANAGE')")
+    @RequiresStepUp
     ApiResponse<Void> delete(@PathVariable Long id, @AuthenticationPrincipal AuthenticatedUser user) {
         service.delete(id, user);
         return ApiResponse.ok();
@@ -159,6 +161,7 @@ public class PhotoController {
 
     @PostMapping("/batch-delete")
     @PreAuthorize("hasAnyAuthority('PHOTO_DELETE','REQUEST_PHOTO_MANAGE')")
+    @RequiresStepUp
     ApiResponse<Void> batchDelete(@Valid @RequestBody BatchDeleteRequest request,
                                   @AuthenticationPrincipal AuthenticatedUser user) {
         service.batchDelete(request.photoIds(), user);

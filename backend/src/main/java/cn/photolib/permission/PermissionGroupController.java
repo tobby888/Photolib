@@ -1,5 +1,7 @@
 package cn.photolib.permission;
 
+import cn.photolib.auth.mfa.MfaPolicy;
+import cn.photolib.auth.mfa.RequiresStepUp;
 import cn.photolib.common.api.ApiResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
@@ -25,6 +27,7 @@ import java.util.Set;
 @RequestMapping("/permission-groups")
 @RequiredArgsConstructor
 @PreAuthorize("hasRole('ADMIN')")
+@RequiresStepUp
 public class PermissionGroupController {
     private final PermissionGroupService service;
 
@@ -47,7 +50,7 @@ public class PermissionGroupController {
     ApiResponse<PermissionGroupService.GroupView> create(@Valid @RequestBody CreateRequest request) {
         return ApiResponse.ok(service.create(new PermissionGroupService.CreateCommand(
                 request.code(), request.name(), request.description(), request.dataScope(),
-                request.photoVisibility(), request.permissions())));
+                request.photoVisibility(), request.permissions(), request.mfaPolicy())));
     }
 
     @PutMapping("/{id}")
@@ -55,7 +58,7 @@ public class PermissionGroupController {
                                                          @Valid @RequestBody UpdateRequest request) {
         return ApiResponse.ok(service.update(id, new PermissionGroupService.UpdateCommand(
                 request.name(), request.description(), request.dataScope(), request.photoVisibility(),
-                request.permissions(), request.version())));
+                request.permissions(), request.version(), request.mfaPolicy())));
     }
 
     @DeleteMapping("/{id}")
@@ -70,7 +73,8 @@ public class PermissionGroupController {
             @Size(max = 500) String description,
             @NotNull DataScope dataScope,
             @NotNull PhotoVisibility photoVisibility,
-            @NotNull Set<PermissionCode> permissions) {}
+            @NotNull Set<PermissionCode> permissions,
+            MfaPolicy mfaPolicy) {}
 
     record UpdateRequest(
             @NotBlank @Size(max = 100) String name,
@@ -78,5 +82,6 @@ public class PermissionGroupController {
             @NotNull DataScope dataScope,
             @NotNull PhotoVisibility photoVisibility,
             @NotNull Set<PermissionCode> permissions,
-            @Min(1) int version) {}
+            @Min(1) int version,
+            MfaPolicy mfaPolicy) {}
 }

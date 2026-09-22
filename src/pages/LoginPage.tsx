@@ -1,8 +1,11 @@
 import { App, Button, Card, Checkbox, Divider, Form, Input, Space, Typography } from 'antd'
 import {
-  ArrowRightOutlined, LockOutlined, ReadOutlined, TeamOutlined, UserOutlined,
+  ArrowLeftOutlined, ArrowRightOutlined, LockOutlined, ReadOutlined, TeamOutlined, UserOutlined,
 } from '@ant-design/icons'
 import { useState } from 'react'
+import type { LoginResult } from '../api'
+import { loginWithCode, loginWithSecurityKey } from '../mfa'
+import TwoFactorVerify from '../TwoFactorVerify'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth'
 import { afterLoginRoute } from '../loginRedirect'
@@ -10,27 +13,42 @@ import { BrandGlyph, useBranding } from '../branding'
 import SiteFooter from '../SiteFooter'
 
 export default function LoginPage() {
-  const { login } = useAuth()
+  const { login, updateSession } = useAuth()
   const branding = useBranding()
   const { message } = App.useApp()
   const navigate = useNavigate()
   const location = useLocation()
   const [loading, setLoading] = useState(false)
+  /** 密码对了、还差两步验证时的票据与可用方式。 */
+  const [challenge, setChallenge] = useState<{ ticket: string; methods: ('TOTP' | 'WEBAUTHN')[] } | null>(null)
+  const [trustDevice, setTrustDevice] = useState(false)
   const headline = branding.loginHeadline?.trim()
   const subheadline = branding.loginSubheadline?.trim()
   const highlights = branding.loginHighlights ?? []
   const notice = branding.loginNotice?.trim()
+  const enter = (result: LoginResult) => {
+    message.success(`欢迎回来，${result.user.displayName}`)
+    // 去向的判定只有一处（`src/loginRedirect.ts`），这里和 App 里那条 /login 路由
+    // 共用它——两边在赛跑，答案必须一致，理由见那个文件的注释。
+    navigate(afterLoginRoute(result.user, location.state))
+  }
   const submit = async (values: { identifier: string; password: string }) => {
     setLoading(true)
     try {
       const result = await login(values.identifier, values.password)
-      message.success(`欢迎回来，${result.user.displayName}`)
-      // 去向的判定只有一处（`src/loginRedirect.ts`），这里和 App 里那条 /login 路由
-      // 共用它——两边在赛跑，答案必须一致，理由见那个文件的注释。
-      navigate(afterLoginRoute(result.mustChangePassword, location.state))
+      if (result.mfaRequired) {
+        setTrustDevice(false)
+        setChallenge({ ticket: result.mfaTicket, methods: result.mfaMethods })
+        return
+      }
+      enter(result)
     } catch (error) {
       message.error((error as Error).message)
     } finally { setLoading(false) }
+  }
+  const finishMfa = (result: LoginResult) => {
+    updateSession(result)
+    enter(result)
   }
   return <main className="login-page">
     <section className="login-story">
@@ -52,6 +70,20 @@ export default function LoginPage() {
     </section>
     <section className="login-form-side">
       <Card className="login-card" variant="borderless">
+        {challenge ? <>
+          <Typography.Text className="eyebrow">两步验证</Typography.Text>
+          <Typography.Title level={2}>验证你的身份</Typography.Title>
+          <TwoFactorVerify methods={challenge.methods}
+            onCode={async code => finishMfa(await loginWithCode(challenge.ticket, code, trustDevice))}
+            onSecurityKey={async () => finishMfa(await loginWithSecurityKey(challenge.ticket, trustDevice))}
+            extra={<Checkbox className="two-factor-trust" checked={trustDevice}
+              onChange={event => setTrustDevice(event.target.checked)}>
+              信任此浏览器，30 天内在这里登录不再验证
+            </Checkbox>} />
+          <Button block type="text" icon={<ArrowLeftOutlined />} onClick={() => setChallenge(null)}>
+            返回重新输入密码
+          </Button>
+        </> : <>
         <Typography.Text className="eyebrow">欢迎回来</Typography.Text>
         <Typography.Title level={2}>登录{branding.title}</Typography.Title>
         <Typography.Paragraph type="secondary">使用管理员分配给你的账号或邮箱继续工作。</Typography.Paragraph>
@@ -65,6 +97,7 @@ export default function LoginPage() {
           <div className="form-between"><Checkbox>记住账号</Checkbox><Typography.Text type="secondary">忘记密码请联系管理员</Typography.Text></div>
           <Button block type="primary" htmlType="submit" loading={loading}>登录 <ArrowRightOutlined /></Button>
         </Form>
+        </>}
         <Divider plain>不用登录也能看</Divider>
         <Space.Compact block>
           <Button size="large" style={{ width: '50%' }} icon={<TeamOutlined />}

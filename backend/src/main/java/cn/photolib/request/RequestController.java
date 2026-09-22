@@ -1,6 +1,7 @@
 package cn.photolib.request;
 
 import cn.photolib.auth.AuthenticatedUser;
+import cn.photolib.auth.mfa.RequiresStepUp;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.api.PageResponse;
 import cn.photolib.request.model.PhotoRequestEntity;
@@ -146,6 +147,7 @@ public class RequestController {
 
     @DeleteMapping("/requests/{id}")
     @PreAuthorize("hasAuthority('REQUEST_DELETE')")
+    @RequiresStepUp
     ApiResponse<Void> delete(@PathVariable Long id,
                              @AuthenticationPrincipal AuthenticatedUser user) {
         service.delete(id, user);

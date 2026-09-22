@@ -1,5 +1,6 @@
 package cn.photolib.audit;
 
+import cn.photolib.auth.mfa.RequiresStepUp;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.api.PageResponse;
 import cn.photolib.common.util.SpreadsheetText;
@@ -20,6 +21,7 @@ import java.util.StringJoiner;
 @RequestMapping("/audit-logs")
 @RequiredArgsConstructor
 @PreAuthorize("hasRole('ADMIN')")
+@RequiresStepUp
 public class AuditController {
     private final AuditLogMapper mapper;
 

@@ -39,6 +39,7 @@ import java.util.Locale;
 public class LoginThrottle {
     static final String IDENTIFIER_SCOPE = "IDENTIFIER";
     static final String ADDRESS_SCOPE = "ADDRESS";
+    static final String MFA_SCOPE = "MFA";
     private static final int MAX_KEY_LENGTH = 190;
 
     private final LoginAttemptMapper mapper;
@@ -77,6 +78,37 @@ public class LoginThrottle {
     public void clearIdentifier(String identifier) {
         String key = identifierKey(identifier);
         if (key != null) mapper.clear(IDENTIFIER_SCOPE, key);
+    }
+
+    /**
+     * 两步验证的验证码按账号单独计数（{@code MFA} 范围）。它不能借用账号范围的计数：
+     * 密码一旦输对就会清掉账号计数，攻击者拿着密码就能"登录—猜 5 次码—再登录"无限循环。
+     * 登录第二步和敏感操作再验证共用这一份计数。
+     */
+    public void requireMfaNotLocked(Long userId) {
+        if (locked(MFA_SCOPE, mfaKey(userId), LocalDateTime.now(clock))) {
+            throw new BusinessException(ErrorCode.RATE_LIMITED,
+                    "验证码错误次数过多，请 " + properties.loginThrottle().lockDuration().toMinutes()
+                            + " 分钟后再试");
+        }
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void recordMfaFailure(Long userId) {
+        AuthProperties.LoginThrottleProperties settings = properties.loginThrottle();
+        LocalDateTime now = LocalDateTime.now(clock);
+        countFailure(MFA_SCOPE, mfaKey(userId), now, now.minus(settings.failureWindow()),
+                settings.maxIdentifierFailures(), now.plus(settings.lockDuration()));
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void clearMfa(Long userId) {
+        String key = mfaKey(userId);
+        if (key != null) mapper.clear(MFA_SCOPE, key);
+    }
+
+    private static String mfaKey(Long userId) {
+        return userId == null ? null : "user:" + userId;
     }
 
     private boolean locked(String scope, String key, LocalDateTime now) {

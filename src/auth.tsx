@@ -1,5 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, type PropsWithChildren } from 'react'
-import { api, SESSION_EXPIRED_EVENT, type LoginResult } from './api'
+import {
+  api, MFA_ENROLLMENT_REQUIRED_EVENT, SESSION_EXPIRED_EVENT, type LoginResult, type PasswordLoginResult,
+} from './api'
 import type { User } from './types'
 
 interface AuthContextValue {
@@ -13,9 +15,15 @@ interface AuthContextValue {
    * 不能只看 `user`：公开页（报名页）曾经因此把没有账号的访客也弹去了登录页。
    */
   sessionVerified: boolean
-  login: (identifier: string, password: string) => Promise<LoginResult>
+  /**
+   * 密码登录。两步验证对账号生效时返回的是票据而不是会话：此时什么都不写入，
+   * 由登录页完成第二步后再调 `updateSession`。
+   */
+  login: (identifier: string, password: string) => Promise<PasswordLoginResult>
   updateSession: (result: LoginResult) => void
   updateUser: (updates: Partial<User>) => void
+  /** 重新向后端取一次登录身份（两步验证状态变了之后调用）。 */
+  refreshUser: () => Promise<User | null>
   logout: () => Promise<void>
 }
 
@@ -51,29 +59,45 @@ export function AuthProvider({ children }: PropsWithChildren) {
     window.addEventListener(SESSION_EXPIRED_EVENT, onExpired)
     return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired)
   }, [])
-  useEffect(() => {
-    if (!localStorage.getItem('photolib_access_token')) return
-    void api<User>({ url: '/auth/me' }).then(current => {
+  const refreshUser = useCallback(async () => {
+    if (!localStorage.getItem('photolib_access_token')) return null
+    try {
+      const current = await api<User>({ url: '/auth/me' })
       storeUser(current)
       setSessionVerified(true)
-    }).catch(() => undefined)
+      return current
+    } catch {
+      return null
+    }
   }, [storeUser])
+  useEffect(() => {
+    void refreshUser()
+  }, [refreshUser])
+  useEffect(() => {
+    // 会话被后端关进"先绑定两步验证"时，取一次最新身份，外壳会据此跳去绑定页。
+    const onEnrollmentRequired = () => void refreshUser()
+    window.addEventListener(MFA_ENROLLMENT_REQUIRED_EVENT, onEnrollmentRequired)
+    return () => window.removeEventListener(MFA_ENROLLMENT_REQUIRED_EVENT, onEnrollmentRequired)
+  }, [refreshUser])
   const updateSession = (result: LoginResult) => {
     localStorage.setItem('photolib_access_token', result.accessToken)
     storeUser(result.user)
     setSessionVerified(true)
   }
-  const updateUser = (updates: Partial<User>) => {
+  // 保持引用稳定：弹窗会把它放进 effect 的依赖里，每次渲染换一个新函数会让 effect 反复执行。
+  const updateUser = useCallback((updates: Partial<User>) => {
     setUser(current => {
       if (!current) return current
       const next = { ...current, ...updates }
       localStorage.setItem('photolib_user', JSON.stringify(next))
       return next
     })
-  }
+  }, [])
   const login = async (identifier: string, password: string) => {
-    const result = await api<LoginResult>({ method: 'POST', url: '/auth/login', data: { username: identifier, password } })
-    updateSession(result)
+    const result = await api<PasswordLoginResult>({
+      method: 'POST', url: '/auth/login', data: { username: identifier, password },
+    })
+    if (!result.mfaRequired) updateSession(result)
     return result
   }
   const logout = async () => {
@@ -84,7 +108,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       setSessionVerified(false)
     }
   }
-  return <AuthContext.Provider value={{ user, sessionVerified, login, updateSession, updateUser, logout }}>{children}</AuthContext.Provider>
+  return <AuthContext.Provider value={{ user, sessionVerified, login, updateSession, updateUser, refreshUser, logout }}>{children}</AuthContext.Provider>
 }
 
 export function useAuth() {
