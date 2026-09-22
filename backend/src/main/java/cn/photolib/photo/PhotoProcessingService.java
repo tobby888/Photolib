@@ -27,7 +27,9 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.HexFormat;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 @RequiredArgsConstructor
@@ -52,11 +54,30 @@ public class PhotoProcessingService {
         });
     }
 
+    /**
+     * 本进程提交了、还没跑完的照片（排队中或正在处理）。
+     *
+     * <p>{@link StalledProcessingRecoveryJob} 靠它区分"真的卡住了"和"只是在排队"：处理池的
+     * 队列能放 1000 个任务，活动当天积压超过任何固定阈值都很正常，单看 {@code updated_at}
+     * 会把排着队的照片再提交一遍。JVM 重启后这个集合是空的，于是留在 {@code PROCESSING} 的
+     * 行都成了恢复对象——这正是它要处理的情况。前提是单实例部署（README）；多实例时
+     * 别的实例的在途任务不在这里，只剩时间阈值一道保护。</p>
+     */
+    private final Set<Long> inFlight = ConcurrentHashMap.newKeySet();
+
     CompletableFuture<Void> submit(Long photoId) {
-        return nativeTasks.submit(compressor -> {
+        inFlight.add(photoId);
+        CompletableFuture<Void> task = nativeTasks.submit(compressor -> {
             process(photoId, compressor);
             return null;
         });
+        // 被执行器拒绝（队列满）时 future 立刻以异常结束，同样要放掉，让恢复任务之后接手。
+        return task.whenComplete((ignored, failure) -> inFlight.remove(photoId));
+    }
+
+    /** 这张照片是否已经在本进程的处理池里（排队或正在跑）。 */
+    boolean isInFlight(Long photoId) {
+        return inFlight.contains(photoId);
     }
 
     private void process(Long photoId, ImageCompressor compressor) {
@@ -65,6 +86,7 @@ public class PhotoProcessingService {
         PhotoUploadItemEntity batchItem = findBatchItem(photoId);
         Path batchSource = null;
         Path taskDirectory = null;
+        Error fatal = null;
         try {
             taskDirectory = workspace.createTaskDirectory(photoId);
             Path source;
@@ -133,6 +155,13 @@ public class PhotoProcessingService {
                     originalDeleteAfter, previewPermit);
         } catch (Exception ex) {
             photo = markProcessingFailed(photo, ex);
+        } catch (Error error) {
+            // 以前只接 Exception：一个 Error（原生组件抛出的 LinkageError、断言、栈溢出……）
+            // 会让照片永远停在 PROCESSING。先照常标失败、更新批次，再原样抛出去——
+            // 吞掉 Error 会掩盖真正的故障。标失败本身也失败的话（比如 OOM），
+            // 这一行仍停在 PROCESSING，由 StalledProcessingRecoveryJob 接手。
+            fatal = error;
+            photo = markProcessingFailed(photo, error);
         } finally {
             if (batchSource != null && batchItem != null && cleanupBatchSource(batchSource)) {
                 batchItem.setTempLocalPath(null);
@@ -141,6 +170,21 @@ public class PhotoProcessingService {
             cleanupTaskDirectory(taskDirectory);
         }
         updateBatch(photo, batchItem);
+        if (fatal != null) throw fatal;
+    }
+
+    /**
+     * 把一张卡在 {@code PROCESSING} 的照片标成处理失败，并把它所在批次的计数和状态一并
+     * 更新。按观察到的 version 做 CAS：期间照片被别的路径推进过，就什么都不做并返回 false。
+     * 给 {@link StalledProcessingRecoveryJob} 用，失败原因原样写给上传者。
+     */
+    boolean failStalled(Long photoId, int observedVersion, String failureReason) {
+        int failed = photoMapper.failProcessing(photoId, observedVersion, failureReason,
+                LocalDateTime.now());
+        if (failed != 1) return false;
+        PhotoEntity photo = photoMapper.selectById(photoId);
+        if (photo != null) updateBatch(photo, findBatchItem(photoId));
+        return true;
     }
 
     void completeProcessing(PhotoEntity photo,
@@ -188,7 +232,7 @@ public class PhotoProcessingService {
      * 所以只有"图片本身的毛病"照原样给出去，其余换成通用提示、原文进日志，
      * 理由见 {@link UploadFailureMessage}。
      */
-    PhotoEntity markProcessingFailed(PhotoEntity photo, Exception exception) {
+    PhotoEntity markProcessingFailed(PhotoEntity photo, Throwable exception) {
         if (UploadFailureMessage.isInternal(exception)) {
             log.error("图片处理因非校验类错误失败，对外只回通用提示: photoId={}", photo.getId(), exception);
         } else {

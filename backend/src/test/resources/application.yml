@@ -27,6 +27,10 @@ photolib:
     failed-upload-retention:
       # 同上：关掉处理失败上传的保留期清理，用例自己直接调 cleanup()。
       enabled: false
+    stalled-processing:
+      # 同上：关掉卡在处理中的恢复任务。共享上下文里的其他测试会造 PROCESSING 夹具
+      # 并直接调 submit()；用例自己直接调 recover()。
+      enabled: false
   photo-processing:
     threads: 2
     temporary-directory: ${java.io.tmpdir}/photolib-test-photo-processing

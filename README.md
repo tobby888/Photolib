@@ -240,6 +240,10 @@ curl --fail http://127.0.0.1:8080/api/v1/actuator/health
 | `FAILED_UPLOAD_RETENTION_DAYS` | 上述记录的保留天数，默认 `7`，至少为 `1` |
 | `FAILED_UPLOAD_RETENTION_DELAY_MS` | 上述清理的间隔毫秒数，默认 `3600000`（1 小时） |
 | `FAILED_UPLOAD_RETENTION_INITIAL_DELAY_MS` | 上述清理在启动后第一次运行前的等待毫秒数，默认 `600000`（10 分钟） |
+| `STALLED_PROCESSING_RECOVERY_ENABLED` | 是否接手"停在处理中、本进程却没有任务在处理"的图片（JVM 重启、执行器拒收、处理中出现 Error），默认 `true`。启动时跑一次，之后定时跑 |
+| `STALLED_PROCESSING_STALE_AFTER_MINUTES` | `updated_at` 早于多少分钟才算卡住，默认 `15`。本进程排队中的图片无论等多久都不会被接手，这个阈值只是第二道保护 |
+| `STALLED_PROCESSING_MAX_RESUBMITS` | 每张图最多自动重新提交几次，默认 `1`，设 `0` 表示直接标为处理失败。次数落库（`photo.processing_recoveries`），防止一张会让进程崩溃的图片使服务每次重启都再崩一次；上传者重新提交时清零 |
+| `STALLED_PROCESSING_DELAY_MS` / `STALLED_PROCESSING_INITIAL_DELAY_MS` | 上述任务的间隔与首次等待毫秒数，默认都是 `300000`（5 分钟） |
 | `PHOTO_PROCESSING_THREADS` | 原生图片处理线程数，取值 1～32，默认 1 |
 | `PHOTO_PROCESSING_TEMPORARY_DIRECTORY` | ZIP 解压与图片处理临时目录 |
 | `WECOM_CORP_ID` | 企业微信企业 ID（管理后台「我的企业」页底部） |

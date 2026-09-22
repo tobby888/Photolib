@@ -42,4 +42,9 @@ public class PhotoEntity extends BaseEntity {
      * 指着的那个临时对象，理由见 Flyway V50。
      */
     private LocalDateTime uploadUrlExpiresAt;
+    /**
+     * 停在 {@code PROCESSING} 之后被 {@code StalledProcessingRecoveryJob} 重新提交过几次
+     * （Flyway V53）。重新 complete 时清零。
+     */
+    private Integer processingRecoveries;
 }

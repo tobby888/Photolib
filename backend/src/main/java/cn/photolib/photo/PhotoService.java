@@ -147,6 +147,8 @@ public class PhotoService {
         photo.setTagsJson(PhotoTags.toJson(tags));
         photo.setStatus(PhotoStatus.PROCESSING);
         photo.setFailureReason(null);
+        // 这是一次新的处理，恢复任务的重提交次数从头算（Flyway V53）。
+        photo.setProcessingRecoveries(0);
 
         // Guard against concurrent completion: only the request that still sees
         // UPLOADING wins. Optimistic version bump/check is applied automatically by
