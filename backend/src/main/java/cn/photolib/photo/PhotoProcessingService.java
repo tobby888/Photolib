@@ -220,29 +220,7 @@ public class PhotoProcessingService {
                 ? BatchItemStatus.SUCCEEDED : BatchItemStatus.FAILED);
         item.setFailureReason(photo.getFailureReason());
         batchItemMapper.updateById(item);
-        long success = batchItemMapper.selectCount(Wrappers.<PhotoUploadItemEntity>lambdaQuery()
-                .eq(PhotoUploadItemEntity::getBatchId, item.getBatchId())
-                .eq(PhotoUploadItemEntity::getStatus, BatchItemStatus.SUCCEEDED));
-        long failed = batchItemMapper.selectCount(Wrappers.<PhotoUploadItemEntity>lambdaQuery()
-                .eq(PhotoUploadItemEntity::getBatchId, item.getBatchId())
-                .eq(PhotoUploadItemEntity::getStatus, BatchItemStatus.FAILED));
-        long waitingMetadata = batchItemMapper.selectCount(Wrappers.<PhotoUploadItemEntity>lambdaQuery()
-                .eq(PhotoUploadItemEntity::getBatchId, item.getBatchId())
-                .eq(PhotoUploadItemEntity::getStatus, BatchItemStatus.WAITING_METADATA));
-        long processing = batchItemMapper.selectCount(Wrappers.<PhotoUploadItemEntity>lambdaQuery()
-                .eq(PhotoUploadItemEntity::getBatchId, item.getBatchId())
-                .in(PhotoUploadItemEntity::getStatus, BatchItemStatus.PROCESSING, BatchItemStatus.UPLOADING));
-        PhotoUploadBatchEntity batch = batchMapper.selectById(item.getBatchId());
-        batch.setSuccessCount((int) success);
-        batch.setFailureCount((int) failed);
-        if (waitingMetadata == 0 && processing == 0) {
-            batch.setStatus(failed > 0 ? BatchStatus.PARTIALLY_SUCCEEDED : BatchStatus.SUCCEEDED);
-        } else if (waitingMetadata > 0) {
-            batch.setStatus(BatchStatus.WAITING_METADATA);
-        } else {
-            batch.setStatus(BatchStatus.PROCESSING);
-        }
-        batchMapper.updateById(batch);
+        batchMapper.refreshCounters(item.getBatchId(), LocalDateTime.now());
     }
 
     private String fileName(String uploader, String photographer, LocalDateTime takenAt, String extension) {

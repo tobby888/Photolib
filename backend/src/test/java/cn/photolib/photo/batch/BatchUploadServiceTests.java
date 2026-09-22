@@ -199,6 +199,110 @@ class BatchUploadServiceTests {
     }
 
     @Test
+    @Transactional
+    void zipRetry_shouldReimportImagesWhoseEarlierProcessingFailed() {
+        // 第一次上传同一个 ZIP：succeeded.jpg 入库成功，failed.jpg 处理失败留下 UPLOADING + 失败原因。
+        String succeededSha = "d".repeat(64);
+        String failedSha = "e".repeat(64);
+        insertPhoto("photos/batch-retry-succeeded.jpg", succeededSha, "AVAILABLE", null);
+        insertPhoto("photos/batch-retry-failed.jpg", failedSha, "UPLOADING", "图片无法压缩至 10 MiB");
+        insertWaitingBatch("batch-retry-test", 2);
+        insertWaitingItem("batch-retry-test", "succeeded.jpg", succeededSha);
+        insertWaitingItem("batch-retry-test", "failed.jpg", failedSha);
+
+        var result = service.setMetadataForAll("batch-retry-test",
+                new BatchUploadService.BatchMetadata("说明", 8102L, LocalDateTime.now(), List.of()),
+                manager);
+
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM photo WHERE sha256=:sha AND deleted=0")
+                .param("sha", succeededSha).query(Long.class).single()).isEqualTo(1);
+        assertThat(itemStatus("batch-retry-test", "succeeded.jpg")).isEqualTo("FAILED");
+        assertThat(itemStatus("batch-retry-test", "failed.jpg")).isEqualTo("PROCESSING");
+        assertThat(jdbc.sql("""
+                SELECT COUNT(*) FROM photo
+                WHERE sha256=:sha AND deleted=0 AND status='PROCESSING'
+                """).param("sha", failedSha).query(Long.class).single()).isEqualTo(1);
+        assertThat(result.batch().getFailureCount()).isEqualTo(1);
+        assertThat(result.batch().getStatus()).isEqualTo(BatchStatus.PROCESSING);
+    }
+
+    @Test
+    @Transactional
+    void batchMetadata_allDuplicates_shouldFinishBatch() {
+        String sha = "f".repeat(64);
+        insertPhoto("photos/batch-all-dup-existing.jpg", sha, "AVAILABLE", null);
+        insertWaitingBatch("batch-all-dup-test", 2);
+        insertWaitingItem("batch-all-dup-test", "one.jpg", sha);
+        insertWaitingItem("batch-all-dup-test", "two.jpg", sha);
+
+        var result = service.setMetadataForAll("batch-all-dup-test",
+                new BatchUploadService.BatchMetadata("说明", 8102L, LocalDateTime.now(), List.of()),
+                manager);
+
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM photo WHERE sha256=:sha AND deleted=0")
+                .param("sha", sha).query(Long.class).single()).isEqualTo(1);
+        assertThat(result.batch().getSuccessCount()).isZero();
+        assertThat(result.batch().getFailureCount()).isEqualTo(2);
+        assertThat(result.batch().getStatus()).isEqualTo(BatchStatus.PARTIALLY_SUCCEEDED);
+    }
+
+    @Test
+    @Transactional
+    void itemMetadata_duplicateLastItem_shouldFinishBatch() {
+        String sha = "b".repeat(64);
+        insertPhoto("photos/batch-item-dup-existing.jpg", sha, "AVAILABLE", null);
+        insertWaitingBatch("batch-item-dup-test", 1);
+        insertWaitingItem("batch-item-dup-test", "dup.jpg", sha);
+        Long itemId = jdbc.sql("SELECT id FROM photo_upload_item WHERE batch_id='batch-item-dup-test'")
+                .query(Long.class).single();
+
+        var result = service.setMetadata("batch-item-dup-test", itemId,
+                new BatchUploadService.ItemMetadata("标题", "说明", 8102L, LocalDateTime.now(), List.of()),
+                manager);
+
+        assertThat(itemStatus("batch-item-dup-test", "dup.jpg")).isEqualTo("FAILED");
+        assertThat(result.batch().getFailureCount()).isEqualTo(1);
+        assertThat(result.batch().getStatus()).isEqualTo(BatchStatus.PARTIALLY_SUCCEEDED);
+    }
+
+    private void insertPhoto(String objectKey, String sha, String status, String failureReason) {
+        jdbc.sql("""
+                INSERT INTO photo
+                    (photographer_student_id, photographer_name, uploaded_by, campus_id, taken_at,
+                     size, content_type, object_key, sha256, status, failure_reason, version, deleted)
+                VALUES ('20268102', '测试摄影师', 8101, 8100, CURRENT_TIMESTAMP,
+                        100, 'image/jpeg', :objectKey, :sha, :status, :failureReason, 1, false)
+                """).param("objectKey", objectKey).param("sha", sha).param("status", status)
+                .param("failureReason", failureReason).update();
+    }
+
+    private void insertWaitingBatch(String batchId, int total) {
+        jdbc.sql("""
+                INSERT INTO photo_upload_batch
+                    (id, mode, created_by, status, total_count, success_count, failure_count)
+                VALUES (:id, 'ZIP', 8101, 'WAITING_METADATA', :total, 0, 0)
+                """).param("id", batchId).param("total", total).update();
+    }
+
+    private void insertWaitingItem(String batchId, String fileName, String sha) {
+        jdbc.sql("""
+                INSERT INTO photo_upload_item
+                    (batch_id, original_file_name, temp_object_key, content_type, size, sha256, status)
+                VALUES (:batchId, :fileName, :key, 'image/jpeg', 100, :sha, 'WAITING_METADATA')
+                """).param("batchId", batchId).param("fileName", fileName)
+                .param("key", "temporary/batches/" + batchId + "/" + fileName)
+                .param("sha", sha).update();
+    }
+
+    private String itemStatus(String batchId, String fileName) {
+        return jdbc.sql("""
+                SELECT status FROM photo_upload_item
+                WHERE batch_id=:batchId AND original_file_name=:fileName
+                """).param("batchId", batchId).param("fileName", fileName)
+                .query(String.class).single();
+    }
+
+    @Test
     void processZip_shouldExtractSupportedImagesOnBackend() throws Exception {
         assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
         String archiveKey = "temporary/batches/batch-unzip-test/archive.zip";
