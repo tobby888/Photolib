@@ -465,6 +465,7 @@ button, input, textarea, select { font-family: inherit; }
 .two-factor-error, .two-factor-note { margin-top: 16px; }
 .two-factor-trust { display: block; margin-top: 18px; }
 .login-notice { margin-bottom: 16px; }
+.permission-mfa-tag { margin-inline-start: 6px; font-size: 11px; line-height: 16px; padding-inline: 4px; }
 .login-card .two-factor-verify + .ant-btn { margin-top: 12px; }
 .two-factor-setup { display: grid; gap: 16px; }
 .two-factor-setup .ant-steps { margin-top: 4px; }

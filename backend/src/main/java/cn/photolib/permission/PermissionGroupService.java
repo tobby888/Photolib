@@ -45,7 +45,8 @@ public class PermissionGroupService {
                 .map(category -> new CategoryDefinition(category.name(), category.label(),
                         Arrays.stream(PermissionCode.values())
                                 .filter(permission -> permission.category() == category)
-                                .map(permission -> new PermissionDefinition(permission.name(), permission.label()))
+                                .map(permission -> new PermissionDefinition(permission.name(), permission.label(),
+                                        permission.unlocksStepUpOperation()))
                                 .toList()))
                 .toList();
     }
@@ -116,7 +117,7 @@ public class PermissionGroupService {
         group.setDescription(normalizeDescription(command.description()));
         group.setDataScope(command.dataScope());
         group.setPhotoVisibility(command.photoVisibility());
-        group.setMfaPolicy(command.mfaPolicy() == null ? MfaPolicy.OFF : command.mfaPolicy());
+        group.setMfaPolicy(effectiveMfaPolicy(code, command.mfaPolicy(), command.permissions()));
         group.setBuiltIn(false);
         group.setLowest(false);
         try {
@@ -159,11 +160,8 @@ public class PermissionGroupService {
         // 两步验证策略和图库可见范围一样对内置组开放——部长、校区负责人正是最需要
         // 按组决定的账号。系统管理员组固定为强制：不传就沿用原值，兼容不认识这个字段的
         // 调用方（MCP 工具、旧版前端）。
-        if ("ADMIN".equals(group.getCode())) {
-            group.setMfaPolicy(MfaPolicy.REQUIRED);
-        } else if (command.mfaPolicy() != null) {
-            group.setMfaPolicy(command.mfaPolicy());
-        }
+        group.setMfaPolicy(effectiveMfaPolicy(group.getCode(),
+                command.mfaPolicy() != null ? command.mfaPolicy() : group.getMfaPolicy(), permissions));
         if (!Boolean.TRUE.equals(group.getBuiltIn())) {
             group.setName(command.name().trim());
             group.setDescription(normalizeDescription(command.description()));
@@ -219,7 +217,8 @@ public class PermissionGroupService {
                 compatibleRole, primaryCampusId, Boolean.TRUE.equals(user.getMustChangePassword()),
                 group.getId(), group.getCode(), group.getName(), group.getDataScope(),
                 photoVisibility(group), permissions, campusIds, UserAvatarService.avatarUrl(user),
-                mfa.summarize(user.getId(), group.getCode(), group.getMfaPolicy()));
+                mfa.summarize(user.getId(), group.getCode(),
+                        effectiveMfaPolicy(group.getCode(), group.getMfaPolicy(), permissions)));
     }
 
     public Set<Long> campusIds(Long userId) {
@@ -326,8 +325,7 @@ public class PermissionGroupService {
         return new GroupView(group.getId(), group.getCode(), group.getName(), group.getDescription(),
                 group.getDataScope(), photoVisibility(group), Boolean.TRUE.equals(group.getBuiltIn()),
                 Boolean.TRUE.equals(group.getLowest()), permissionCodes(group.getId()), memberCount(group.getId()),
-                "ADMIN".equals(group.getCode()) ? MfaPolicy.REQUIRED
-                        : group.getMfaPolicy() == null ? MfaPolicy.OFF : group.getMfaPolicy(),
+                effectiveMfaPolicy(group.getCode(), group.getMfaPolicy(), permissionCodes(group.getId())),
                 group.getCreatedAt(), group.getUpdatedAt(), group.getVersion());
     }
 
@@ -345,7 +343,23 @@ public class PermissionGroupService {
                 .eq(UserEntity::getPermissionGroupId, groupId));
     }
 
-    public record PermissionDefinition(String code, String label) {}
+    /**
+     * 权限组实际执行的两步验证策略。系统管理员组、以及持有任何一个能打开"要求再验证"操作的
+     * 权限（{@link PermissionCode#unlocksStepUpOperation()}）的组，一律强制——不管存的、传的是什么。
+     *
+     * <p>保存时把结果写回库，读的时候（登录身份、列表）再算一遍：库里的旧行、或者绕过这里
+     * 直接改库的行，照样按规则执行。去掉这些权限之后，存下的"强制"会保留，管理员可以再改低。
+     */
+    static MfaPolicy effectiveMfaPolicy(String groupCode, MfaPolicy requested, Set<PermissionCode> permissions) {
+        if ("ADMIN".equals(groupCode)) return MfaPolicy.REQUIRED;
+        if (permissions != null && permissions.stream().anyMatch(PermissionCode::unlocksStepUpOperation)) {
+            return MfaPolicy.REQUIRED;
+        }
+        return requested == null ? MfaPolicy.OFF : requested;
+    }
+
+    /** @param requiresMfa 授予这个权限的权限组会被强制两步验证 */
+    public record PermissionDefinition(String code, String label, boolean requiresMfa) {}
     public record CategoryDefinition(String code, String label, List<PermissionDefinition> permissions) {}
     public record GroupView(Long id, String code, String name, String description, DataScope dataScope,
                             PhotoVisibility photoVisibility, boolean builtIn, boolean lowest,

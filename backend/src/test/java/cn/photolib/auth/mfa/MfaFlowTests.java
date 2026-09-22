@@ -1,5 +1,9 @@
 package cn.photolib.auth.mfa;
 
+import cn.photolib.permission.DataScope;
+import cn.photolib.permission.PermissionCode;
+import cn.photolib.permission.PermissionGroupService;
+import cn.photolib.permission.PhotoVisibility;
 import cn.photolib.user.UserService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -45,6 +49,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
@@ -67,6 +72,8 @@ class MfaFlowTests {
     private static final long ADMIN_ID = 9_801L;
     private static final long MEMBER_ID = 9_802L;
     private static final long LOCKED_MEMBER_ID = 9_803L;
+    /** 所在组只有查看权限，碰不到任何要求再验证的操作，策略才能设成"建议"或"不使用"。 */
+    private static final long VIEWER_ID = 9_804L;
     private static final String PASSWORD = "Password-2fa-123";
     private static final Base64.Encoder B64 = Base64.getUrlEncoder().withoutPadding();
     private static final Base64.Decoder B64D = Base64.getUrlDecoder();
@@ -80,6 +87,7 @@ class MfaFlowTests {
     @Autowired private Clock clock;
     @Autowired private UserService userService;
     @Autowired private MfaService mfaService;
+    @Autowired private PermissionGroupService permissionGroups;
 
     @BeforeEach
     void setUp() {
@@ -88,11 +96,28 @@ class MfaFlowTests {
         insertUser(ADMIN_ID, "mfa-admin", "ADMIN", hash);
         insertUser(MEMBER_ID, "mfa-member", "MINISTER", hash);
         insertUser(LOCKED_MEMBER_ID, "mfa-locked", "MINISTER", hash);
+        jdbc.sql("""
+                INSERT INTO permission_group (code, name, data_scope, photo_visibility, built_in, lowest, mfa_policy)
+                VALUES ('MFA_VIEWER', '只读成员', 'GLOBAL', 'GLOBAL', FALSE, FALSE, 'OFF')
+                """).update();
+        jdbc.sql("""
+                INSERT INTO permission_group_permission (group_id, permission_code)
+                SELECT id, permission_code FROM permission_group
+                CROSS JOIN (SELECT 'PROJECT_VIEW' permission_code UNION ALL SELECT 'PHOTO_VIEW') permissions
+                WHERE permission_group.code = 'MFA_VIEWER'
+                """).update();
+        jdbc.sql("""
+                INSERT INTO app_user (id, username, password_hash, display_name, role, permission_group_id,
+                                      enabled, must_change_password)
+                VALUES (:id, 'mfa-viewer', :hash, 'mfa-viewer', 'CAMPUS_MANAGER',
+                        (SELECT id FROM permission_group WHERE code = 'MFA_VIEWER'), TRUE, FALSE)
+                """).param("id", VIEWER_ID).param("hash", hash).update();
     }
 
     @AfterTransaction
     void clearThrottleRows() {
-        jdbc.sql("DELETE FROM login_attempt WHERE attempt_key IN ('user:9801', 'user:9802', 'user:9803')").update();
+        jdbc.sql("DELETE FROM login_attempt WHERE attempt_key IN ('user:9801', 'user:9802', 'user:9803', 'user:9804')")
+                .update();
     }
 
     @Test
@@ -128,10 +153,10 @@ class MfaFlowTests {
 
     @Test
     void sessionsThatNeverPassedTheSecondStepAreSignedOutOnceItApplies() throws Exception {
-        setMinisterPolicy("SUGGESTED");
-        MvcResult before = loginResult("mfa-member", null, PASSWORD);
+        setViewerPolicy("SUGGESTED");
+        MvcResult before = loginResult("mfa-viewer", null, PASSWORD);
         String oldToken = data(before).get("accessToken").asText();
-        String enrolledIn = login("mfa-member", null).get("accessToken").asText();
+        String enrolledIn = login("mfa-viewer", null).get("accessToken").asText();
         enrollTotp(enrolledIn);
         enableSystem();
 
@@ -314,19 +339,22 @@ class MfaFlowTests {
     }
 
     @Test
-    void deletesAreGuardedButOnlyForMembersWhoseTwoFactorIsActive() throws Exception {
-        setMinisterPolicy("SUGGESTED");
+    void holdingADeletePermissionForcesTwoFactorAndEveryDeleteNeedsAFreshVerification() throws Exception {
+        // 库里写的是"不使用"，但部长手里有删除图片 / 选题的权限。
+        setMinisterPolicy("OFF");
         String token = login("mfa-member", null).get("accessToken").asText();
         // 没开全站开关：删除照常走业务判断（这里是不存在的选题）。
         call(delete("/api/v1/projects/987654321"), token, 404);
 
         enableSystem();
-        JsonNode suggested = login("mfa-member", null);
-        assertThat(suggested.at("/user/mfa/suggested").asBoolean()).isTrue();
-        // 开了但还没绑定：无从再验证，照常放行。
-        call(delete("/api/v1/projects/987654321"), suggested.get("accessToken").asText(), 404);
+        JsonNode forced = login("mfa-member", null);
+        assertThat(forced.at("/user/mfa/policy").asText()).isEqualTo("REQUIRED");
+        assertThat(forced.at("/user/mfa/enrollmentRequired").asBoolean()).isTrue();
+        // 没绑定就连删除都走不到：先被带去绑定，不存在"有删除权限却不用验证"的账号。
+        assertThat(call(delete("/api/v1/projects/987654321"), forced.get("accessToken").asText(), 403)
+                .get("code").asText()).isEqualTo("MFA_ENROLLMENT_REQUIRED");
 
-        String secret = enrollTotp(suggested.get("accessToken").asText());
+        String secret = enrollTotp(forced.get("accessToken").asText());
         String ticket = login("mfa-member", null).get("mfaTicket").asText();
         String active = data(mvc.perform(post("/api/v1/auth/login/mfa").contentType(MediaType.APPLICATION_JSON)
                 .content(json.createObjectNode().put("ticket", ticket).put("code", code(secret, 0)).toString()))
@@ -369,19 +397,59 @@ class MfaFlowTests {
     @Test
     void aRequiredMemberCannotRemoveTheirLastDevice() throws Exception {
         enableSystem();
-        setMinisterPolicy("REQUIRED");
-        String token = login("mfa-member", null).get("accessToken").asText();
+        setViewerPolicy("REQUIRED");
+        String token = login("mfa-viewer", null).get("accessToken").asText();
         String secret = enrollTotp(token);
         // 绑定完成后才是"生效"状态，删除设备要先再验证。
         call(post("/api/v1/auth/mfa/step-up").content(codeBody(code(secret, 1))), token, 200);
-        Long deviceId = jdbc.sql("SELECT id FROM mfa_device WHERE user_id = :id").param("id", MEMBER_ID)
+        Long deviceId = jdbc.sql("SELECT id FROM mfa_device WHERE user_id = :id").param("id", VIEWER_ID)
                 .query(Long.class).single();
         JsonNode refused = call(delete("/api/v1/auth/mfa/devices/" + deviceId), token, 409);
         assertThat(refused.get("message").asText()).contains("最后一个");
 
-        setMinisterPolicy("SUGGESTED");
+        setViewerPolicy("SUGGESTED");
         call(delete("/api/v1/auth/mfa/devices/" + deviceId), token, 200);
-        assertThat(count("mfa_device", MEMBER_ID)).isZero();
+        assertThat(count("mfa_device", VIEWER_ID)).isZero();
+    }
+
+    @Test
+    void aGroupHoldingAPermissionForAGuardedOperationIsAlwaysRequired() {
+        // 权限定义上带着标记，前端据此锁定下拉框。
+        assertThat(permissionGroups.definitions().stream().flatMap(category -> category.permissions().stream())
+                .filter(PermissionGroupService.PermissionDefinition::requiresMfa)
+                .map(PermissionGroupService.PermissionDefinition::code))
+                .containsExactlyInAnyOrder("PHOTO_DELETE", "REQUEST_PHOTO_MANAGE", "PROJECT_CREATE", "REQUEST_DELETE");
+
+        var created = permissionGroups.create(new PermissionGroupService.CreateCommand("MFA_DELETER", "能删图的组", null,
+                DataScope.GLOBAL, PhotoVisibility.GLOBAL, Set.of(PermissionCode.PHOTO_VIEW, PermissionCode.PHOTO_DELETE),
+                MfaPolicy.OFF));
+        assertThat(created.mfaPolicy()).isEqualTo(MfaPolicy.REQUIRED);
+
+        // 去掉删除权限后可以再改低。
+        var lowered = permissionGroups.update(created.id(), new PermissionGroupService.UpdateCommand("能删图的组", null,
+                DataScope.GLOBAL, PhotoVisibility.GLOBAL, Set.of(PermissionCode.PHOTO_VIEW), created.version(),
+                MfaPolicy.OFF));
+        assertThat(lowered.mfaPolicy()).isEqualTo(MfaPolicy.OFF);
+
+        // 加上任何一个都会被拉回强制，传什么都没用。
+        var raised = permissionGroups.update(created.id(), new PermissionGroupService.UpdateCommand("能删图的组", null,
+                DataScope.GLOBAL, PhotoVisibility.GLOBAL, Set.of(PermissionCode.PHOTO_VIEW, PermissionCode.REQUEST_DELETE),
+                lowered.version(), MfaPolicy.SUGGESTED));
+        assertThat(raised.mfaPolicy()).isEqualTo(MfaPolicy.REQUIRED);
+    }
+
+    @Test
+    void aStaleRowThatSaysOffIsStillEnforcedForGroupsWithGuardedPermissions() throws Exception {
+        enableSystem();
+        // 绕过服务直接改库（或升级前的旧行）：读的时候照样按规则算。
+        setMinisterPolicy("OFF");
+        JsonNode login = login("mfa-member", null);
+        assertThat(login.at("/user/mfa/policy").asText()).isEqualTo("REQUIRED");
+        assertThat(login.at("/user/mfa/enrollmentRequired").asBoolean()).isTrue();
+        assertThat(permissionGroups.list().stream().filter(group -> "MINISTER".equals(group.code()))
+                .findFirst().orElseThrow().mfaPolicy()).isEqualTo(MfaPolicy.REQUIRED);
+        // 碰不到这些操作的组仍然按设置来。
+        assertThat(login("mfa-viewer", null).at("/user/mfa/policy").asText()).isEqualTo("OFF");
     }
 
     @Test
@@ -463,6 +531,11 @@ class MfaFlowTests {
 
     private void setMinisterPolicy(String policy) {
         jdbc.sql("UPDATE permission_group SET mfa_policy = :policy WHERE code = 'MINISTER'")
+                .param("policy", policy).update();
+    }
+
+    private void setViewerPolicy(String policy) {
+        jdbc.sql("UPDATE permission_group SET mfa_policy = :policy WHERE code = 'MFA_VIEWER'")
                 .param("policy", policy).update();
     }
 

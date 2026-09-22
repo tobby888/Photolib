@@ -5,7 +5,7 @@ import {
 import {
   DeleteOutlined, EditOutlined, EyeOutlined, PlusOutlined, SaveOutlined, SafetyCertificateOutlined,
 } from '@ant-design/icons'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api, emptyPage } from './api'
 import { DataState } from './components'
 import { ContentFitTable } from './ContentFitTable'
@@ -132,6 +132,15 @@ export default function PermissionGroupsPanel() {
       ? [...new Set([...current, ...categoryCodes])]
       : current.filter(code => !categoryCodes.includes(code)))
   }
+
+  // 勾了能打开"要求再验证"操作的权限，这个组就固定强制两步验证——否则把删除交给一个
+  // "不使用"的组，删除就完全不用验证了。后端保存时同样强制，这里只是让界面如实显示。
+  const forcingPermissions = definitionsState.data.flatMap(category => category.permissions)
+    .filter(permission => permission.requiresMfa && permissions.includes(permission.code))
+  const mfaForced = editing?.code === 'ADMIN' || forcingPermissions.length > 0
+  useEffect(() => {
+    if (groupOpen && mfaForced) form.setFieldValue('mfaPolicy', 'REQUIRED')
+  }, [form, groupOpen, mfaForced])
 
   const saveGroup = async () => {
     const values = await form.validateFields()
@@ -339,10 +348,13 @@ export default function PermissionGroupsPanel() {
             extra="决定账号在图库里能看到谁的图片，以及能下载哪些图片。编辑、归档、删除他人图片始终不放开；好图精选选图也始终只限授权校区。">
             <Select disabled={editing?.code === 'ADMIN'} options={PHOTO_VISIBILITY_OPTIONS} />
           </Form.Item></Col>
-          {/* 系统管理员组固定强制：它是整套权限的入口。全站开关关着时这里的设置不生效。 */}
+          {/* 系统管理员组、以及勾了要求再验证的权限的组固定强制。全站开关关着时这里的设置不生效。 */}
           <Col xs={24} md={12}><Form.Item label="两步验证" name="mfaPolicy" rules={[{ required: true }]}
-            extra="强制：未绑定的成员必须先绑定才能使用系统；建议：未绑定的成员每次登录后看到提醒。需在「两步验证」页签打开全站开关后生效。">
-            <Select disabled={editing?.code === 'ADMIN'} options={MFA_POLICY_OPTIONS} />
+            extra={editing?.code === 'ADMIN' ? '系统管理员组固定强制启用。'
+              : forcingPermissions.length > 0
+                ? `已勾选「${forcingPermissions.map(permission => permission.label).join('」「')}」，这些操作要求两步验证，本组固定强制启用。`
+                : '强制：未绑定的成员必须先绑定才能使用系统；建议：未绑定的成员每次登录后看到提醒。需在「两步验证」页签打开全站开关后生效。'}>
+            <Select disabled={mfaForced} options={MFA_POLICY_OPTIONS} />
           </Form.Item></Col>
         </Row>
         <Form.Item label="说明" name="description" rules={[{ max: 500 }]}><Input.TextArea rows={2} disabled={editing?.builtIn} /></Form.Item>
@@ -362,6 +374,7 @@ export default function PermissionGroupsPanel() {
                         ? [...new Set([...current, permission.code])]
                         : current.filter(code => code !== permission.code))}>
                       {permission.label}
+                      {permission.requiresMfa && <Tag className="permission-mfa-tag" color="red">需两步验证</Tag>}
                     </Checkbox>)}
                 </Space>
               </Card>
