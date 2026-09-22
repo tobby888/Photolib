@@ -21,6 +21,8 @@ public class AuthSessionEntity {
     private LocalDateTime revokedAt;
     /** 敏感操作再验证的信任期截止时间（Flyway V54）。 */
     private LocalDateTime stepUpUntil;
+    /** 本会话是否通过过第二因素（Flyway V54）。 */
+    private Boolean mfaVerified;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

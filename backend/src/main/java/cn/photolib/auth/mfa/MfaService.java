@@ -5,12 +5,15 @@ import cn.photolib.auth.MfaSummary;
 import cn.photolib.auth.TokenSupport;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
+import cn.photolib.notification.NotificationService;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+import org.springframework.web.util.HtmlUtils;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -45,13 +48,18 @@ public class MfaService {
     private final MfaProperties properties;
     private final WebAuthnSupport webAuthn;
     private final Clock clock;
+    private final PasswordEncoder passwordEncoder;
+    private final NotificationService notifications;
     private final SecretCipher cipher;
 
-    public MfaService(JdbcClient jdbc, MfaProperties properties, WebAuthnSupport webAuthn, Clock clock) {
+    public MfaService(JdbcClient jdbc, MfaProperties properties, WebAuthnSupport webAuthn, Clock clock,
+                      PasswordEncoder passwordEncoder, NotificationService notifications) {
         this.jdbc = jdbc;
         this.properties = properties;
         this.webAuthn = webAuthn;
         this.clock = clock;
+        this.passwordEncoder = passwordEncoder;
+        this.notifications = notifications;
         this.cipher = new SecretCipher(properties.encryptionKey());
     }
 
@@ -68,13 +76,20 @@ public class MfaService {
     }
 
     /**
-     * 打开全站开关有两个前提：服务器配好了加密密钥（否则没人能绑定验证器 App），
-     * 以及操作的管理员自己已经绑好了设备。后者防的是"打开开关的那一刻把自己锁在外面"，
-     * 也兑现了"启用后管理员必须绑定"——其他管理员会在下一次请求时被带去绑定。
+     * 打开全站开关的前提：
+     * <ul>
+     *   <li>服务器配好了加密密钥，否则没人能绑定验证器 App；</li>
+     *   <li>操作的管理员自己已经绑好了设备，否则打开的那一刻就把自己锁在外面；</li>
+     *   <li>再输一次密码：开关关着时绑定设备不需要再验证，偷到管理员会话的人可以先绑上
+     *       自己的设备、再打开开关，把真管理员锁在外面。会话里没有密码，这一步挡得住他；</li>
+     *   <li>本会话刚用设备验证过：证明设备确实在手上，也让这个会话算通过了第二步，
+     *       开关打开后不会被当成"没过第二步的旧会话"踢下线。</li>
+     * </ul>
+     * 关掉开关不需要密码：此时两步验证已经生效，关开关本身就要先再验证。
      */
     @Transactional
-    public SettingsView updateSettings(AuthenticatedUser admin, boolean enabled) {
-        if (enabled) {
+    public SettingsView updateSettings(AuthenticatedUser admin, Long sessionId, boolean enabled, String password) {
+        if (enabled && !systemEnabled()) {
             if (!cipher.available()) {
                 throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
                         "服务器未配置 MFA_ENCRYPTION_KEY，暂时不能启用两步验证");
@@ -82,6 +97,16 @@ public class MfaService {
             if (confirmedDeviceCount(admin.id()) == 0) {
                 throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
                         "请先在右上角头像菜单的「两步验证」里绑定自己的验证设备，再启用");
+            }
+            String hash = jdbc.sql("SELECT password_hash FROM app_user WHERE id = :id")
+                    .param("id", admin.id()).query(String.class).optional().orElse(null);
+            // 400 而不是 401：前端遇到 401 会去续期会话，而这里只是密码输错了。
+            if (hash == null || password == null || !passwordEncoder.matches(password, hash)) {
+                throw new BusinessException(ErrorCode.VALIDATION_ERROR, "密码不正确");
+            }
+            LocalDateTime until = stepUpUntil(sessionId);
+            if (until == null || !until.isAfter(now())) {
+                throw new BusinessException(ErrorCode.STEP_UP_REQUIRED, "启用前请先用你的验证设备确认一次");
             }
         }
         jdbc.sql("UPDATE mfa_setting SET enabled = :enabled, updated_by = :adminId, updated_at = :now WHERE id = 1")
@@ -134,7 +159,7 @@ public class MfaService {
     }
 
     @Transactional
-    public DeviceView confirmTotp(AuthenticatedUser user, Long deviceId, String code, String name) {
+    public DeviceView confirmTotp(AuthenticatedUser user, Long sessionId, Long deviceId, String code, String name) {
         requireManageable(user);
         Optional<String> stored = jdbc.sql("""
                 SELECT totp_secret_cipher FROM mfa_device
@@ -155,7 +180,28 @@ public class MfaService {
                 """).param("now", now()).param("step", step).param("name", deviceName(name, "验证器 App"))
                 .param("id", deviceId).update();
         if (updated != 1) throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "该设备已经绑定过了");
-        return device(user.id(), deviceId);
+        DeviceView device = device(user.id(), deviceId);
+        afterDeviceAdded(user.id(), sessionId, device);
+        return device;
+    }
+
+    /**
+     * 刚输对一次新设备的码（或刚用新密钥签过名），本会话就算通过了第二步；同时告诉本人
+     * 账号多了一个设备——不是本人绑的，就是会话被人拿去用了。
+     */
+    private void afterDeviceAdded(Long userId, Long sessionId, DeviceView device) {
+        markSessionVerified(userId, sessionId);
+        notifications.notifyUser(userId, "MFA_DEVICE_ADDED", "你的账号添加了两步验证设备",
+                "<p>你的账号刚刚添加了验证设备「" + HtmlUtils.htmlEscape(device.name()) + "」。</p>"
+                        + "<p>如果不是你本人操作，请立即联系管理员重置密码。</p>");
+    }
+
+    private void markSessionVerified(Long userId, Long sessionId) {
+        if (sessionId == null) return;
+        jdbc.sql("""
+                UPDATE auth_session SET mfa_verified = TRUE
+                WHERE id = :sessionId AND user_id = :userId AND revoked_at IS NULL
+                """).param("sessionId", sessionId).param("userId", userId).update();
     }
 
     @Transactional
@@ -190,7 +236,9 @@ public class MfaService {
         }
         Long id = jdbc.sql("SELECT id FROM mfa_device WHERE credential_id = :credentialId")
                 .param("credentialId", credential.credentialId()).query(Long.class).single();
-        return device(user.id(), id);
+        DeviceView device = device(user.id(), id);
+        afterDeviceAdded(user.id(), sessionId, device);
+        return device;
     }
 
     /**
@@ -199,6 +247,9 @@ public class MfaService {
      */
     @Transactional
     public void deleteDevice(AuthenticatedUser user, Long deviceId) {
+        // 按账号串行：否则同时删两个设备时，两边都数到"还剩 2 个"，结果一个不剩。
+        jdbc.sql("SELECT id FROM app_user WHERE id = :id FOR UPDATE").param("id", user.id())
+                .query(Long.class).optional();
         DeviceView device = device(user.id(), deviceId);
         long remaining = confirmedDeviceCount(user.id());
         if (remaining <= 1 && user.mfa().systemEnabled() && user.mfa().policy() == MfaPolicy.REQUIRED) {
@@ -212,6 +263,16 @@ public class MfaService {
             // 这些浏览器会直接跳过验证。
             jdbc.sql("DELETE FROM mfa_trusted_device WHERE user_id = :userId").param("userId", user.id()).update();
         }
+        notifications.notifyUser(user.id(), "MFA_DEVICE_REMOVED", "你的账号删除了两步验证设备",
+                "<p>你的账号刚刚删除了验证设备「" + HtmlUtils.htmlEscape(device.name()) + "」。</p>"
+                        + "<p>如果不是你本人操作，请立即联系管理员重置密码。</p>");
+    }
+
+    /** 登录第二步被连续输错到锁定：走到第二步说明密码已经对了。 */
+    public void warnSecondStepLocked(Long userId) {
+        notifications.notifyUser(userId, "MFA_LOGIN_LOCKED", "有人用你的密码尝试登录",
+                "<p>有人输入了你的正确密码，但两步验证连续失败，登录已被暂时锁定。</p>"
+                        + "<p>如果不是你本人，说明密码可能已经泄露，请尽快修改密码或联系管理员。</p>");
     }
 
     /** 管理员重置密码时调用：设备、信任的浏览器、没用完的票据全部清掉。 */
@@ -341,7 +402,7 @@ public class MfaService {
         verifyFactor(user.id(), verification, challenge, rp);
         LocalDateTime until = now().plus(properties.stepUpTtl());
         jdbc.sql("""
-                UPDATE auth_session SET step_up_until = :until
+                UPDATE auth_session SET step_up_until = :until, mfa_verified = TRUE
                 WHERE id = :sessionId AND user_id = :userId AND revoked_at IS NULL
                 """).param("until", until).param("sessionId", sessionId).param("userId", user.id()).update();
         return new StepUpStatus(true, true, until);

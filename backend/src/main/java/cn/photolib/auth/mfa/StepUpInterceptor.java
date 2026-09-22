@@ -4,39 +4,44 @@ import cn.photolib.auth.AccessTokenFilter;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
-import lombok.RequiredArgsConstructor;
-import org.springframework.core.annotation.AnnotatedElementUtils;
+import org.aopalliance.intercept.MethodInterceptor;
+import org.aopalliance.intercept.MethodInvocation;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.stereotype.Component;
-import org.springframework.web.method.HandlerMethod;
-import org.springframework.web.servlet.HandlerInterceptor;
+import org.springframework.web.context.request.RequestAttributes;
+import org.springframework.web.context.request.RequestContextHolder;
 
-/** 执行 {@link RequiresStepUp}。 */
-@Component
-@RequiredArgsConstructor
-public class StepUpInterceptor implements HandlerInterceptor {
-    private final MfaService mfa;
+/**
+ * 执行 {@link RequiresStepUp}。
+ *
+ * <p>做成方法拦截器、排在 {@code @PreAuthorize} 之后（见 {@link MfaConfig}），而不是 MVC 的
+ * HandlerInterceptor：后者跑在权限检查之前，没有权限的人会先被要求输验证码、输完才看到
+ * "无权执行该操作"。现在权限不够的请求直接得到 403，只有真能执行的人才会被要求验证。
+ */
+public class StepUpInterceptor implements MethodInterceptor {
+    /** 延迟取：这个拦截器是基础设施 bean，早于业务 bean 创建。 */
+    private final ObjectProvider<MfaService> mfa;
 
-    @Override
-    public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
-        if (!(handler instanceof HandlerMethod method) || !requiresStepUp(method)) return true;
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        // 未登录的请求交给 Spring Security 去拒绝，这里不抢着给出另一种答复。
-        if (authentication == null || !(authentication.getPrincipal() instanceof AuthenticatedUser user)) {
-            return true;
-        }
-        Long sessionId = request.getAttribute(AccessTokenFilter.SESSION_ID_ATTRIBUTE) instanceof Long id ? id : null;
-        if (!mfa.stepUpSatisfied(user, sessionId)) {
-            throw new BusinessException(ErrorCode.STEP_UP_REQUIRED, "该操作需要先完成两步验证");
-        }
-        return true;
+    public StepUpInterceptor(ObjectProvider<MfaService> mfa) {
+        this.mfa = mfa;
     }
 
-    static boolean requiresStepUp(HandlerMethod method) {
-        return AnnotatedElementUtils.hasAnnotation(method.getMethod(), RequiresStepUp.class)
-                || AnnotatedElementUtils.hasAnnotation(method.getBeanType(), RequiresStepUp.class);
+    @Override
+    public Object invoke(MethodInvocation invocation) throws Throwable {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        // 未登录的请求交给 Spring Security 去拒绝，这里不抢着给出另一种答复。
+        if (authentication != null && authentication.getPrincipal() instanceof AuthenticatedUser user
+                && !mfa.getObject().stepUpSatisfied(user, currentSessionId())) {
+            throw new BusinessException(ErrorCode.STEP_UP_REQUIRED, "该操作需要先完成两步验证");
+        }
+        return invocation.proceed();
+    }
+
+    private static Long currentSessionId() {
+        RequestAttributes attributes = RequestContextHolder.getRequestAttributes();
+        if (attributes == null) return null;
+        return attributes.getAttribute(AccessTokenFilter.SESSION_ID_ATTRIBUTE, RequestAttributes.SCOPE_REQUEST)
+                instanceof Long id ? id : null;
     }
 }

@@ -87,11 +87,11 @@ public class AuthService {
         if (mfa != null && toPrincipal(user).mfa().active()) {
             String token = trustedToken.apply(user.getId());
             if (token != null && mfa.useTrustedBrowser(user.getId(), token)) {
-                return new LoginOutcome(issue(user, null), null, token);
+                return new LoginOutcome(issue(user, null, true), null, token);
             }
             return new LoginOutcome(null, mfa.startLogin(user.getId()), null);
         }
-        return new LoginOutcome(issue(user, null), null, null);
+        return new LoginOutcome(issue(user, null, false), null, null);
     }
 
     /** 验过第二步、消费登录票据之后签发会话。账号在两步之间被停用的，照样拒绝。 */
@@ -99,7 +99,7 @@ public class AuthService {
     public TokenPair completeMfaLogin(String ticket, MfaService.Verification verification,
                                       WebAuthnSupport.RelyingParty rp) {
         Long userId = mfa.completeLogin(ticket, verification, rp);
-        return issue(requireEnabledUser(userId), null);
+        return issue(requireEnabledUser(userId), null, true);
     }
 
     @Transactional
@@ -114,12 +114,17 @@ public class AuthService {
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "会话已失效");
         }
         UserEntity user = requireEnabledUser(session.getUserId());
+        // 两步验证在这个会话签发之后才对账号生效（开关刚打开、组策略收紧、在别处绑了设备）：
+        // 这个会话从没过第二步，不能靠续期一直活下去。
+        if (!secondFactorSatisfied(toPrincipal(user), session)) {
+            throw new BusinessException(ErrorCode.MFA_SESSION_UNVERIFIED, "账号已启用两步验证，请重新登录");
+        }
         if (sessionMapper.revokeActive(session.getId(), now) != 1) {
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "会话已失效");
         }
         // 访问令牌 15 分钟就换一次会话，敏感操作的 15 分钟信任期要跟着带过去，
         // 否则刚验证完就可能因为一次续期而失效。
-        return issue(user, session.getStepUpUntil());
+        return issue(user, session.getStepUpUntil(), Boolean.TRUE.equals(session.getMfaVerified()));
     }
 
     /**
@@ -133,7 +138,10 @@ public class AuthService {
      */
     @Transactional
     public TokenPair issueForPairedClient(Long userId) {
-        return issue(requireEnabledUser(userId), null);
+        UserEntity user = requireEnabledUser(userId);
+        // 两步验证生效的账号，批准配对前必须在浏览器里再验证过（批准接口带 @RequiresStepUp），
+        // 所以配对出来的会话算通过了第二步。
+        return issue(user, null, toPrincipal(user).mfa().active());
     }
 
     public SessionAuthentication authenticate(String rawAccessToken) {
@@ -145,7 +153,9 @@ public class AuthService {
             return null;
         }
         UserEntity user = requireEnabledUser(session.getUserId());
-        return new SessionAuthentication(session.getId(), toPrincipal(user));
+        AuthenticatedUser principal = toPrincipal(user);
+        if (!secondFactorSatisfied(principal, session)) return null;
+        return new SessionAuthentication(session.getId(), principal);
     }
 
     public void touch(Long sessionId) {
@@ -171,6 +181,19 @@ public class AuthService {
 
     @Transactional
     public TokenPair changeInitialPassword(AuthenticatedUser principal, String initialPassword, String newPassword) {
+        return changeInitialPassword(principal, null, initialPassword, newPassword);
+    }
+
+    /**
+     * @param sessionId 发起改密的会话。强制组成员是在这个会话里先绑定了设备（会话因此算通过了
+     *                  第二步）再来改密的，新签发的会话要继承这一点，否则改完密码就会被踢下线。
+     */
+    @Transactional
+    public TokenPair changeInitialPassword(AuthenticatedUser principal, Long sessionId,
+                                           String initialPassword, String newPassword) {
+        AuthSessionEntity current = sessionId == null ? null : sessionMapper.selectById(sessionId);
+        boolean mfaVerified = current != null && current.getUserId().equals(principal.id())
+                && Boolean.TRUE.equals(current.getMfaVerified());
         UserEntity user = requireEnabledUser(principal.id());
         if (!Boolean.TRUE.equals(user.getMustChangePassword())) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "当前账号不需要首次改密");
@@ -180,7 +203,7 @@ public class AuthService {
         }
         updatePassword(user, newPassword, false);
         revokeAll(user.getId());
-        return issue(user, null);
+        return issue(user, null, mfaVerified);
     }
 
     @Transactional
@@ -202,7 +225,12 @@ public class AuthService {
                 .set(AuthSessionEntity::getRevokedAt, now));
     }
 
-    private TokenPair issue(UserEntity user, LocalDateTime stepUpUntil) {
+    /** 两步验证没对账号生效时不设门槛；生效了，会话就必须通过过第二步。 */
+    private static boolean secondFactorSatisfied(AuthenticatedUser principal, AuthSessionEntity session) {
+        return !principal.mfa().active() || Boolean.TRUE.equals(session.getMfaVerified());
+    }
+
+    private TokenPair issue(UserEntity user, LocalDateTime stepUpUntil, boolean mfaVerified) {
         String access = TokenSupport.randomToken();
         String refresh = TokenSupport.randomToken();
         LocalDateTime now = LocalDateTime.now();
@@ -213,6 +241,7 @@ public class AuthService {
         session.setAccessExpiresAt(now.plus(properties.accessTtl()));
         session.setIdleExpiresAt(now.plus(properties.idleTtl()));
         session.setStepUpUntil(stepUpUntil);
+        session.setMfaVerified(mfaVerified);
         session.setCreatedAt(now);
         session.setUpdatedAt(now);
         sessionMapper.insert(session);

@@ -98,16 +98,21 @@ public class AuthController {
                                            HttpServletResponse response) {
         Long userId = mfaService.loginTicketUser(request.ticket());
         servletRequest.setAttribute(AuditInterceptor.DETAIL_ATTRIBUTE, Map.of("userId", userId));
-        loginThrottle.requireMfaNotLocked(userId);
+        loginThrottle.requireMfaNotLocked(userId, LoginThrottle.MfaAttempt.LOGIN);
         AuthService.TokenPair pair;
         try {
             pair = authService.completeMfaLogin(request.ticket(), request.verification(),
                     webAuthn.relyingParty(servletRequest));
         } catch (BusinessException failure) {
-            if (failure.getCode() == ErrorCode.MFA_INVALID_CODE) loginThrottle.recordMfaFailure(userId);
+            if (failure.getCode() == ErrorCode.MFA_INVALID_CODE) {
+                // 走到第二步说明密码是对的。连错到被锁，多半是密码已经落到别人手里。
+                if (loginThrottle.recordMfaFailure(userId, LoginThrottle.MfaAttempt.LOGIN)) {
+                    mfaService.warnSecondStepLocked(userId);
+                }
+            }
             throw failure;
         }
-        loginThrottle.clearMfa(userId);
+        loginThrottle.clearMfa(userId, LoginThrottle.MfaAttempt.LOGIN);
         if (Boolean.TRUE.equals(request.trustDevice())) {
             String token = mfaService.trustBrowser(userId, browserLabel(servletRequest));
             setTrustedCookie(response, userId, token, mfaService.trustedBrowserTtl());
@@ -148,9 +153,12 @@ public class AuthController {
     ApiResponse<LoginResponse> initialPassword(
             @AuthenticationPrincipal AuthenticatedUser user,
             @Valid @RequestBody InitialPasswordRequest request,
+            HttpServletRequest servletRequest,
             HttpServletResponse response) {
+        Long sessionId = servletRequest.getAttribute(AccessTokenFilter.SESSION_ID_ATTRIBUTE) instanceof Long id
+                ? id : null;
         AuthService.TokenPair pair = authService.changeInitialPassword(
-                user, request.initialPassword(), request.newPassword());
+                user, sessionId, request.initialPassword(), request.newPassword());
         setRefreshCookie(response, pair.refreshToken());
         return ApiResponse.ok(toResponse(pair));
     }

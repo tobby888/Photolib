@@ -50,8 +50,9 @@ public class MfaController {
     @PostMapping("/totp/{id}/confirm")
     ApiResponse<MfaService.DeviceView> confirmTotp(@AuthenticationPrincipal AuthenticatedUser user,
                                                    @PathVariable Long id,
-                                                   @Valid @RequestBody ConfirmTotpRequest request) {
-        return ApiResponse.ok(mfa.confirmTotp(user, id, request.code(), request.name()));
+                                                   @Valid @RequestBody ConfirmTotpRequest request,
+                                                   HttpServletRequest servletRequest) {
+        return ApiResponse.ok(mfa.confirmTotp(user, sessionId(servletRequest), id, request.code(), request.name()));
     }
 
     @PostMapping("/webauthn/options")
@@ -97,26 +98,28 @@ public class MfaController {
         return ApiResponse.ok(mfa.stepUpWebAuthnOptions(user, sessionId(request), webAuthn.relyingParty(request)));
     }
 
-    /** 失败计数和登录第二步共用一份，并且同样放在事务外记录。 */
+    /** 失败计数和登录第二步一样放在事务外记录，但两者分开计数，见 {@link LoginThrottle.MfaAttempt}。 */
     @PostMapping("/step-up")
     ApiResponse<MfaService.StepUpStatus> stepUp(@AuthenticationPrincipal AuthenticatedUser user,
                                                 @RequestBody StepUpRequest body,
                                                 HttpServletRequest request) {
-        loginThrottle.requireMfaNotLocked(user.id());
+        loginThrottle.requireMfaNotLocked(user.id(), LoginThrottle.MfaAttempt.STEP_UP);
         MfaService.StepUpStatus status;
         try {
             status = mfa.completeStepUp(user, sessionId(request),
                     new MfaService.Verification(body.code(), body.assertion(), body.challengeToken()),
                     webAuthn.relyingParty(request));
         } catch (BusinessException failure) {
-            if (failure.getCode() == ErrorCode.MFA_INVALID_CODE) loginThrottle.recordMfaFailure(user.id());
+            if (failure.getCode() == ErrorCode.MFA_INVALID_CODE) {
+                loginThrottle.recordMfaFailure(user.id(), LoginThrottle.MfaAttempt.STEP_UP);
+            }
             throw failure;
         }
-        loginThrottle.clearMfa(user.id());
+        loginThrottle.clearMfa(user.id(), LoginThrottle.MfaAttempt.STEP_UP);
         return ApiResponse.ok(status);
     }
 
-    private static Long sessionId(HttpServletRequest request) {
+    static Long sessionId(HttpServletRequest request) {
         return request.getAttribute(AccessTokenFilter.SESSION_ID_ATTRIBUTE) instanceof Long id ? id : null;
     }
 

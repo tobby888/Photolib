@@ -1,9 +1,9 @@
-import { App, Button, Card, Checkbox, Divider, Form, Input, Space, Typography } from 'antd'
+import { Alert, App, Button, Card, Checkbox, Divider, Form, Input, Space, Typography } from 'antd'
 import {
   ArrowLeftOutlined, ArrowRightOutlined, LockOutlined, ReadOutlined, TeamOutlined, UserOutlined,
 } from '@ant-design/icons'
 import { useState } from 'react'
-import type { LoginResult } from '../api'
+import { LOGIN_NOTICE_KEY, type LoginResult } from '../api'
 import { loginWithCode, loginWithSecurityKey } from '../mfa'
 import TwoFactorVerify from '../TwoFactorVerify'
 import { useLocation, useNavigate } from 'react-router-dom'
@@ -22,6 +22,16 @@ export default function LoginPage() {
   /** 密码对了、还差两步验证时的票据与可用方式。 */
   const [challenge, setChallenge] = useState<{ ticket: string; methods: ('TOTP' | 'WEBAUTHN')[] } | null>(null)
   const [trustDevice, setTrustDevice] = useState(false)
+  // 只读一次：刷新或下次再来登录页就不再显示。
+  const [sessionNotice] = useState(() => {
+    try {
+      const value = sessionStorage.getItem(LOGIN_NOTICE_KEY)
+      sessionStorage.removeItem(LOGIN_NOTICE_KEY)
+      return value
+    } catch {
+      return null
+    }
+  })
   const headline = branding.loginHeadline?.trim()
   const subheadline = branding.loginSubheadline?.trim()
   const highlights = branding.loginHighlights ?? []
@@ -87,6 +97,7 @@ export default function LoginPage() {
         <Typography.Text className="eyebrow">欢迎回来</Typography.Text>
         <Typography.Title level={2}>登录{branding.title}</Typography.Title>
         <Typography.Paragraph type="secondary">使用管理员分配给你的账号或邮箱继续工作。</Typography.Paragraph>
+        {sessionNotice && <Alert className="login-notice" type="info" showIcon title={sessionNotice} />}
         <Form layout="vertical" size="large" onFinish={submit} requiredMark={false}>
           <Form.Item label="账号或邮箱" name="identifier" rules={[{ required: true, message: '请输入账号或邮箱' }]}>
             <Input prefix={<UserOutlined />} placeholder="请输入账号或邮箱" autoComplete="username" />

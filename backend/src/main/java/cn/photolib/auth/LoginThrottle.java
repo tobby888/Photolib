@@ -39,7 +39,6 @@ import java.util.Locale;
 public class LoginThrottle {
     static final String IDENTIFIER_SCOPE = "IDENTIFIER";
     static final String ADDRESS_SCOPE = "ADDRESS";
-    static final String MFA_SCOPE = "MFA";
     private static final int MAX_KEY_LENGTH = 190;
 
     private final LoginAttemptMapper mapper;
@@ -81,30 +80,50 @@ public class LoginThrottle {
     }
 
     /**
-     * 两步验证的验证码按账号单独计数（{@code MFA} 范围）。它不能借用账号范围的计数：
-     * 密码一旦输对就会清掉账号计数，攻击者拿着密码就能"登录—猜 5 次码—再登录"无限循环。
-     * 登录第二步和敏感操作再验证共用这一份计数。
+     * 两步验证的验证码按账号单独计数。它不能借用账号范围的计数：密码一旦输对就会清掉
+     * 账号计数，攻击者拿着密码就能"登录—猜 5 次码—再登录"无限循环。
+     *
+     * <p>登录第二步和会话内的再验证分开计数：知道密码的人在登录页故意输错，只锁得住登录
+     * 第二步，锁不住本人已登录会话里的删除和管理操作。
      */
-    public void requireMfaNotLocked(Long userId) {
-        if (locked(MFA_SCOPE, mfaKey(userId), LocalDateTime.now(clock))) {
+    public enum MfaAttempt {
+        LOGIN("MFA_LOGIN"), STEP_UP("MFA_STEP_UP");
+
+        private final String scope;
+
+        MfaAttempt(String scope) {
+            this.scope = scope;
+        }
+    }
+
+    public void requireMfaNotLocked(Long userId, MfaAttempt attempt) {
+        if (locked(attempt.scope, mfaKey(userId), LocalDateTime.now(clock))) {
             throw new BusinessException(ErrorCode.RATE_LIMITED,
                     "验证码错误次数过多，请 " + properties.loginThrottle().lockDuration().toMinutes()
                             + " 分钟后再试");
         }
     }
 
+    /**
+     * 记一次验证码错误。
+     *
+     * @return 这一次之后是否已被锁定。在同一个独立事务里读出来，调用方不必再查一次——
+     *         再查会落在调用方自己的会话里，可能读到计数之前的旧行。
+     */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void recordMfaFailure(Long userId) {
+    public boolean recordMfaFailure(Long userId, MfaAttempt attempt) {
         AuthProperties.LoginThrottleProperties settings = properties.loginThrottle();
         LocalDateTime now = LocalDateTime.now(clock);
-        countFailure(MFA_SCOPE, mfaKey(userId), now, now.minus(settings.failureWindow()),
+        String key = mfaKey(userId);
+        countFailure(attempt.scope, key, now, now.minus(settings.failureWindow()),
                 settings.maxIdentifierFailures(), now.plus(settings.lockDuration()));
+        return locked(attempt.scope, key, now);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void clearMfa(Long userId) {
+    public void clearMfa(Long userId, MfaAttempt attempt) {
         String key = mfaKey(userId);
-        if (key != null) mapper.clear(MFA_SCOPE, key);
+        if (key != null) mapper.clear(attempt.scope, key);
     }
 
     private static String mfaKey(Long userId) {
