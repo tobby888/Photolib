@@ -7,10 +7,11 @@ package cn.photolib.common.upload;
  * 界面上——**包括上传链接那条匿名通道**（`ProjectShareUploadService` 的状态接口）。
  * 直接存 {@code exception.getMessage()} 的问题是它分不清两类东西：</p>
  * <ul>
- *   <li><b>上传者该看到的</b>：文件本身的毛病。两条流水线里这一类一律是
+ *   <li><b>上传者该看到的</b>：文件本身的毛病。两条流水线里这一类是
  *       {@link IllegalArgumentException}——"图片超过 100 MiB"、"文件真实格式与声明类型
- *       不一致"、"ZIP 中没有 JPG/PNG 图片"、"ZIP 包含非法路径"……这些照原样给出去，
- *       上传者才知道下一步该做什么。</li>
+ *       不一致"、"ZIP 中没有 JPG/PNG 图片"、"ZIP 包含非法路径"……——以及原生组件判定
+ *       处理不了的 {@link UnprocessableImageException}（超大渐进式 JPEG 等）。这些照原样
+ *       给出去，上传者才知道下一步该做什么。</li>
  *   <li><b>上传者看不懂、也不该看到的</b>：对象存储 SDK 的异常原文带着 endpoint、
  *       RequestId 和对象键，本地实现的异常带着服务器路径。站内成员看了没用，站外
  *       访客更没有理由拿到（与 {@code src/storageUpload.ts} 同一条取舍：只有管理员
@@ -29,8 +30,7 @@ public final class UploadFailureMessage {
 
     /** 上传者该看到的原因；不是文件本身的毛病时回 {@code fallback}。 */
     public static String forUploader(Throwable exception, String fallback) {
-        if (!(exception instanceof IllegalArgumentException)) return fallback;
-        String message = exception.getMessage();
+        String message = uploaderFacingMessage(exception);
         if (message == null || message.isBlank()) return fallback;
         int[] codePoints = message.codePoints().limit(MAX_CODE_POINTS).toArray();
         return new String(codePoints, 0, codePoints.length);
@@ -38,7 +38,20 @@ public final class UploadFailureMessage {
 
     /** {@link #forUploader} 回了 {@code fallback} 的那些，原文该进日志。 */
     public static boolean isInternal(Throwable exception) {
-        return !(exception instanceof IllegalArgumentException)
-                || exception.getMessage() == null || exception.getMessage().isBlank();
+        String message = uploaderFacingMessage(exception);
+        return message == null || message.isBlank();
+    }
+
+    /**
+     * 两种类型算"文件本身的毛病"：流水线自己抛的 {@link IllegalArgumentException}，以及
+     * 原生组件白名单里的 {@link UnprocessableImageException}。后者只给干净的那句话，
+     * 不带原生组件的原文。
+     */
+    private static String uploaderFacingMessage(Throwable exception) {
+        if (exception instanceof UnprocessableImageException unprocessable) {
+            return unprocessable.uploaderMessage();
+        }
+        if (exception instanceof IllegalArgumentException) return exception.getMessage();
+        return null;
     }
 }

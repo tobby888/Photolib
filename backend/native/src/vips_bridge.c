@@ -61,6 +61,19 @@ enum {
     PL_MAXIMUM_INPUT_MIB = 100
 };
 
+/*
+ * 512 MiB: an RGB progressive JPEG up to ~89 MP (or ~179 MP at 4:2:0) fits.
+ * Every libvips call runs under vips_mutex, so at most one such buffer exists
+ * per process no matter how many photo-processing threads are configured.
+ */
+#define PL_PROGRESSIVE_MAXIMUM_COEFFICIENT_BYTES (UINT64_C(512) * 1024 * 1024)
+
+/*
+ * The Java side maps these exact strings to explanations the uploader can act
+ * on (NativeImageProcessor#failure). Change both sides together.
+ */
+#define PL_ERROR_PROGRESSIVE_JPEG_TOO_LARGE "超大渐进式 JPEG 超出解码内存上限"
+
 static int vips_initialized = 0;
 
 #ifdef _WIN32
@@ -120,6 +133,19 @@ static int dimensions_are_safe(int width, int height,
         width > maximum_dimension || height > maximum_dimension)
         return 0;
     return (uint64_t)width * (uint64_t)height <= maximum_pixels;
+}
+
+/*
+ * Upper bound of libjpeg's whole-image coefficient buffer for a progressive
+ * JPEG: one 64-coefficient block of 16-bit values per 8x8 tile, per component,
+ * assuming no chroma subsampling. Real 4:2:0 files need half of this, so the
+ * bound is conservative by design.
+ */
+static uint64_t progressive_coefficient_bytes(int width, int height, int bands) {
+    uint64_t components = bands < 1 ? UINT64_C(1) : (uint64_t)bands;
+    uint64_t blocks_wide = ((uint64_t)width + 7) / 8;
+    uint64_t blocks_high = ((uint64_t)height + 7) / 8;
+    return blocks_wide * blocks_high * UINT64_C(64) * UINT64_C(2) * components;
 }
 
 static int image_metadata_is_true(VipsImage *image, const char *name) {
@@ -234,11 +260,21 @@ static int dimensions_file_unlocked(const char *input_path,
         image_height >= streaming_threshold_dimension ||
         image_pixels >= streaming_threshold_pixels ||
         decoded_bytes > streaming_threshold_decoded_bytes;
+    /*
+     * A progressive JPEG cannot be decoded scanline by scanline: libjpeg keeps
+     * the DCT coefficients of the whole image in memory until the last scan
+     * arrives. Shrink-on-load in render_file still keeps the *pixel* side
+     * small, so the coefficient buffer is the only part that grows with the
+     * source. Refusing every large progressive file outright turned ordinary
+     * 45 MP exports (Lightroom / Photoshop "progressive") into uploads that
+     * failed forever; bound that one buffer instead.
+     */
     if (requires_streaming && format == PL_FORMAT_JPEG &&
-        image_metadata_is_true(image, "jpeg-multiscan")) {
+        image_metadata_is_true(image, "jpeg-multiscan") &&
+        progressive_coefficient_bytes(image_width, image_height, image_channels) >
+            PL_PROGRESSIVE_MAXIMUM_COEFFICIENT_BYTES) {
         g_object_unref(image);
-        copy_error(error_message, error_capacity,
-                   "超大渐进式 JPEG 无法安全流式处理");
+        copy_error(error_message, error_capacity, PL_ERROR_PROGRESSIVE_JPEG_TOO_LARGE);
         return 0;
     }
     if (requires_streaming && format == PL_FORMAT_PNG &&

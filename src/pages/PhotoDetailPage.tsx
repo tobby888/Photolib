@@ -9,7 +9,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { api, emptyPage, qs } from '../api'
-import { DataState, formatBytes, PageTitle, StatusTag } from '../components'
+import { DataState, formatBytes, PageTitle, PhotoStatusTag } from '../components'
 import { ContentFitTable } from '../ContentFitTable'
 import { useAuth } from '../auth'
 import { useLoad, useRefreshOnResume } from '../hooks'
@@ -291,7 +291,10 @@ export default function PhotoDetailPage({ favoritesOnly = false }: { favoritesOn
               {photo.tags.map(tag => <Tag variant="filled" key={tag}>{tag}</Tag>)}
             </Space>}
             <Descriptions column={1} size="small" items={[
-              { key: 'status', label: '状态', children: <StatusTag value={photo.status} /> },
+              { key: 'status', label: '状态', children: <PhotoStatusTag photo={photo} /> },
+              // 悬浮提示在手机上看不到，详情页把失败原因单独列一行。
+              ...(photo.status === 'UPLOADING' && photo.failureReason
+                ? [{ key: 'failure', label: '失败原因', children: photo.failureReason }] : []),
               { key: 'adoption', label: '采纳状态', children: photo.adoptionCount
                 ? <Tag color="gold">已采纳 × {photo.adoptionCount}</Tag> : '未采纳' },
               { key: 'projects', label: '关联项目', children: photo.relatedProjects?.length

@@ -15,7 +15,7 @@ import { uploadToObjectStorage } from '../storageUpload'
 import type {
   CampusMember, DedupedMember, EntityId, PageData, Photo, PhotoUploader, Project, TaggedPhoto,
 } from '../types'
-import { DataState, PageTitle, StatusTag } from '../components'
+import { DataState, PageTitle, PhotoStatusTag } from '../components'
 import { ContentFitTable } from '../ContentFitTable'
 import { useLoad, useRefreshOnResume } from '../hooks'
 import { useAuth } from '../auth'
@@ -510,7 +510,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
                   onKeyDown={event => event.stopPropagation()} />}
               </Space>
             </div>
-            <div className="photo-badges"><Space size={4}><StatusTag value={photo.status} />
+            <div className="photo-badges"><Space size={4}><PhotoStatusTag photo={photo} />
               {!!photo.adoptionCount && <Tag color="gold">已采纳 × {photo.adoptionCount}</Tag>}
             </Space></div>
           </div>}>

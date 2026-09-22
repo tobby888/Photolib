@@ -16,7 +16,7 @@ import type {
   Adoption, BatchPublishResult, Campus, EntityId, PageData, Photo, PhotoRequest, Project, ProjectSelector,
   SelectionCleanupPlan, SelectionCleanupResult, TaggedPhoto,
 } from '../types'
-import { DataState, StatusTag } from '../components'
+import { DataState, StatusTag, PhotoStatusTag } from '../components'
 import { ContentFitTable } from '../ContentFitTable'
 import { useLoad, useRefreshOnResume, useStableCallback } from '../hooks'
 import MarkdownEditor from '../MarkdownEditor'
@@ -189,7 +189,7 @@ const ProjectPhotoCard = memo(function ProjectPhotoCard({
         </Space>}
       </div>
       <div className="photo-badges"><Space size={4}>
-        <StatusTag value={photo.status} />
+        <PhotoStatusTag photo={photo} />
         {adopted && <Tag color="gold">已采纳</Tag>}
       </Space></div>
     </div>}
