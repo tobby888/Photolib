@@ -44,6 +44,19 @@ class UploadFailureMessageTests {
     }
 
     @Test
+    void anImageTheNativeComponentCannotProcessIsExplainedWithoutTheNativeDetail() {
+        // 超大渐进式 JPEG 以前落到通用提示"请确认是完整的 JPG / PNG"，上传者照做也
+        // 解决不了；而原生组件的原文不该出现在界面上。
+        UnprocessableImageException unprocessable = new UnprocessableImageException(
+                "请导出为标准 JPEG 后重新上传", "超大渐进式 JPEG 超出解码内存上限");
+        assertThat(UploadFailureMessage.forUploader(unprocessable, FALLBACK))
+                .isEqualTo("请导出为标准 JPEG 后重新上传");
+        assertThat(UploadFailureMessage.isInternal(unprocessable)).isFalse();
+        // 日志里的原文仍然带着原生层那一句，排查时能对上。
+        assertThat(unprocessable.getMessage()).contains("超大渐进式 JPEG 超出解码内存上限");
+    }
+
+    @Test
     void anEmptyMessageFallsBackInsteadOfShowingAnEmptyLine() {
         // 早先这里会退化成异常的类名（"ZipException"），对上传者同样是噪音。
         assertThat(UploadFailureMessage.forUploader(new IllegalArgumentException(), FALLBACK))

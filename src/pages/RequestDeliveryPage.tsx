@@ -13,7 +13,7 @@ import { api, emptyPage } from '../api'
 import { readTakenAt } from '../exif'
 import { uploadToObjectStorage } from '../storageUpload'
 import { useAuth } from '../auth'
-import { DataState, StatusTag } from '../components'
+import { DataState, StatusTag, PhotoStatusTag } from '../components'
 import { useLoad, useRefreshOnResume } from '../hooks'
 import type { Campus, CampusMember, EntityId, PageData, Photo, PhotoRequest, Project, TagOptions } from '../types'
 import MarkdownRenderer from '../MarkdownRenderer'
@@ -40,7 +40,7 @@ type UploadValues = {
 const photoStatuses = [
   { value: 'AVAILABLE', label: '可用图片' },
   { value: 'PROCESSING', label: '处理中' },
-  { value: 'UPLOADING', label: '上传中' },
+  { value: 'UPLOADING', label: '上传中 / 处理失败' },
   { value: 'ARCHIVED', label: '已归档' },
 ]
 
@@ -381,7 +381,7 @@ export default function RequestDeliveryPage() {
                       : <PhotoPlaceholder className="delivery-placeholder" seed={photo.id}>
                         <PictureOutlined />
                       </PhotoPlaceholder>}
-                    <StatusTag value={photo.status} />
+                    <PhotoStatusTag photo={photo} />
                   </div>
                   <strong>{photo.title || '未命名图片'}</strong>
                   <span>{dayjs(photo.createdAt).format('MM-DD HH:mm')}</span>

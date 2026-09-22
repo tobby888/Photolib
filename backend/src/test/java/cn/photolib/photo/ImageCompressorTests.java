@@ -1,5 +1,6 @@
 package cn.photolib.photo;
 
+import cn.photolib.common.upload.UnprocessableImageException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
@@ -163,23 +164,50 @@ class ImageCompressorTests {
 
         assertThatThrownBy(() -> compressor.compress(
                 source, destination, "image/png", png.length + 1L))
-                .isInstanceOf(java.io.IOException.class)
+                .isInstanceOf(UnprocessableImageException.class)
                 .hasMessageContaining("安全上限");
     }
 
     @Test
-    void rejectsHugeProgressiveJpegBeforePixelDecode() throws Exception {
+    @Timeout(120)
+    void compressesProgressiveJpegThatNeedsTheStreamingPath() throws Exception {
+        // 以前"要走流式 + 渐进式"一律拒绝，45 MP 机身经 Lightroom/PS 勾选"渐进式"导出
+        // 的图于是永远处理失败。30000 像素宽和 45 MP 触发的是同一个分支
+        // （LEGACY_MAX_DIMENSION / LEGACY_MAX_DECODED_BYTES），而这张图只要 24 MP 的堆。
+        Path source = writeSource(encodeProgressiveJpeg(noisyImage(30_000, 800)), ".jpg");
+        long sourceSize = Files.size(source);
+
+        ImageCompressor.FileResult result = compress(source, "image/jpeg", sourceSize / 2);
+        ImageCompressor.FileResult preview = thumbnail(result.path(), "image/jpeg", 480, 0.6);
+
+        assertThat(result.size()).isLessThanOrEqualTo(sourceSize / 2);
+        assertThat(Files.readAllBytes(result.path())).startsWith((byte) 0xff, (byte) 0xd8);
+        assertThat(result.width()).isGreaterThan(320).isLessThanOrEqualTo(30_000);
+        assertThat(preview.width()).isEqualTo(480);
+        assertWebp(preview.path());
+        // 源图直接出预览（重新生成预览走的就是这条）也必须能过。
+        assertWebp(thumbnail(source, "image/jpeg", 480, 0.6).path());
+    }
+
+    @Test
+    void rejectsProgressiveJpegWhoseCoefficientBufferExceedsTheBudgetBeforeDecode()
+            throws Exception {
+        // 30000 x 30000 x 3 分量 x 2 字节 ≈ 5 GiB 的系数缓冲，远超 512 MiB 预算。
         byte[] jpeg = encodeProgressiveJpeg(noisyImage(32, 24));
         int frame = findJpegStartOfFrame(jpeg);
-        writeUnsignedShort(jpeg, frame + 5, 24);
+        writeUnsignedShort(jpeg, frame + 5, 30_000);
         writeUnsignedShort(jpeg, frame + 7, 30_000);
         Path source = writeSource(jpeg, ".jpg");
 
         assertThatThrownBy(() -> compressor.thumbnail(source,
                 temporaryDirectory.resolve("progressive-output.jpg"),
                 "image/jpeg", 480, 0.6))
-                .isInstanceOf(java.io.IOException.class)
-                .hasMessageContaining("超大渐进式 JPEG");
+                .isInstanceOf(UnprocessableImageException.class)
+                .hasMessageContaining("超大渐进式 JPEG")
+                .satisfies(error -> assertThat(
+                        ((UnprocessableImageException) error).uploaderMessage())
+                        .contains("渐进式")
+                        .doesNotContain("原生组件"));
     }
 
     @Test
@@ -195,7 +223,7 @@ class ImageCompressorTests {
         assertThatThrownBy(() -> compressor.thumbnail(source,
                 temporaryDirectory.resolve("interlaced-output.png"),
                 "image/png", 480, 0.6))
-                .isInstanceOf(java.io.IOException.class)
+                .isInstanceOf(UnprocessableImageException.class)
                 .hasMessageContaining("超大隔行 PNG");
     }
 

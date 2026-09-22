@@ -191,6 +191,10 @@ public class PhotoProcessingService {
     PhotoEntity markProcessingFailed(PhotoEntity photo, Exception exception) {
         if (UploadFailureMessage.isInternal(exception)) {
             log.error("图片处理因非校验类错误失败，对外只回通用提示: photoId={}", photo.getId(), exception);
+        } else {
+            // 图片本身的毛病不算事故，但排查"一直卡着"的上传时要能在日志里按 photoId 找到。
+            log.warn("图片处理因图片本身的问题失败: photoId={}, reason={}",
+                    photo.getId(), exception.getMessage());
         }
         String failureReason = UploadFailureMessage.forUploader(exception,
                 "这张图片没能处理完成。请确认是完整的 JPG / PNG 后重新上传；如果反复失败，请联系管理员。");

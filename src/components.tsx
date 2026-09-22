@@ -1,4 +1,4 @@
-import { Alert, Button, Empty, Result, Skeleton, Space, Tag, Typography } from 'antd'
+import { Alert, Button, Empty, Result, Skeleton, Space, Tag, Tooltip, Typography } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import type { ReactNode } from 'react'
 
@@ -26,6 +26,20 @@ export function statusText(value: string) {
 export function StatusTag({ value }: { value: string }) {
   const item = statusMap[value] || { text: value, color: 'default' }
   return <Tag color={item.color} variant="filled">{item.text}</Tag>
+}
+
+/**
+ * 照片专用的状态标签。处理失败的照片后端会打回 `UPLOADING` 并写上 `failureReason`，
+ * 只看 status 会一直显示“上传中”，上传者以为还在传、干等着——实际上需要换个文件重传。
+ * 失败原因放在悬浮提示里。
+ */
+export function PhotoStatusTag({ photo }: { photo: { status: string; failureReason?: string | null } }) {
+  if (photo.status === 'UPLOADING' && photo.failureReason) {
+    return <Tooltip title={photo.failureReason}>
+      <Tag color="error" variant="filled">处理失败</Tag>
+    </Tooltip>
+  }
+  return <StatusTag value={photo.status} />
 }
 
 export function PageTitle({ eyebrow, title, description, extra }: {

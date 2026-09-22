@@ -1,5 +1,6 @@
 package cn.photolib.photo;
 
+import cn.photolib.common.upload.UnprocessableImageException;
 import com.sun.jna.Library;
 import com.sun.jna.Native;
 import com.sun.jna.Structure;
@@ -11,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Locale;
+import java.util.Map;
 
 final class NativeImageProcessor {
     private static final int FORMAT_JPEG = 1;
@@ -101,8 +103,30 @@ final class NativeImageProcessor {
         }
         String detail = length == 0 ? "unknown native error"
                 : new String(errorMessage, 0, length, StandardCharsets.UTF_8);
+        String uploaderMessage = UPLOADER_MESSAGES.get(detail);
+        if (uploaderMessage != null) return new UnprocessableImageException(uploaderMessage, detail);
         return new IOException("原生图片处理失败: " + detail);
     }
+
+    /**
+     * 原生层（vips_bridge.c / image_processor.zig）里"图片本身处理不了"的那几句，按原文
+     * 精确匹配，换成上传者能照着做的说明。白名单之外的一律按内部错误处理：libvips 的
+     * 原文可能带着服务器路径，匹配不上时向"少说"的方向失败。改原生层文案时要同步这里，
+     * {@code ImageCompressorTests} 会发现两边对不上。
+     */
+    private static final Map<String, String> UPLOADER_MESSAGES = Map.of(
+            "超大渐进式 JPEG 超出解码内存上限",
+            "这张图片是分辨率很高的渐进式 JPEG，超出了服务器的解码内存上限。"
+                    + "请在导出时取消勾选“渐进式”（改为标准/基线 JPEG），或把尺寸缩小后重新上传。",
+            "超大隔行 PNG 无法安全流式处理",
+            "这张图片是分辨率很高的隔行扫描（Interlaced）PNG，服务器无法安全处理。"
+                    + "请导出为非隔行 PNG 或 JPG 后重新上传。",
+            "图片像素尺寸超过原生安全上限",
+            "图片像素尺寸超过上限（单边不超过 100000 像素、总计不超过 10 亿像素），请缩小后重新上传。",
+            "图片像素尺寸超过安全上限",
+            "图片像素尺寸超过上限（单边不超过 100000 像素、总计不超过 10 亿像素），请缩小后重新上传。",
+            "输入图片为空或超过 100 MiB 原生安全上限",
+            "图片为空或超过 100 MiB");
 
     private static NativeLibrary loadLibrary() {
         PlatformResource platform = PlatformResource.detect();

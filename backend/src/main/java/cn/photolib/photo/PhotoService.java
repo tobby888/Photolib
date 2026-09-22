@@ -83,10 +83,7 @@ public class PhotoService {
         }
         // 先完成业务上下文授权，再执行可能暴露既有图片标题的全库哈希查询。
         String sha256Lower = command.sha256().toLowerCase();
-        PhotoEntity existing = mapper.selectOne(Wrappers.<PhotoEntity>lambdaQuery()
-                .eq(PhotoEntity::getSha256, sha256Lower)
-                .eq(PhotoEntity::getDeleted, false)
-                .last("LIMIT 1"));
+        PhotoEntity existing = findDuplicate(sha256Lower, null);
         if (existing != null) {
             throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE,
                     "已经上传过该图片（标题：" + existing.getTitle() + "）");
@@ -596,15 +593,29 @@ public class PhotoService {
 
     /** 全库重复图片拦截，与单张上传 {@link #createTicket} 同一条规则；{@code exceptPhotoId} 是自己。 */
     public void requireUniqueSha256(String sha256Lower, Long exceptPhotoId) {
-        PhotoEntity existing = mapper.selectOne(Wrappers.<PhotoEntity>lambdaQuery()
-                .eq(PhotoEntity::getSha256, sha256Lower)
-                .eq(PhotoEntity::getDeleted, false)
-                .ne(exceptPhotoId != null, PhotoEntity::getId, exceptPhotoId)
-                .last("LIMIT 1"));
+        PhotoEntity existing = findDuplicate(sha256Lower, exceptPhotoId);
         if (existing != null) {
             throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE,
                     "图库里已经有一张一模一样的图片（标题：" + existing.getTitle() + "）");
         }
+    }
+
+    /**
+     * 查重的候选：没删的、同一个 sha256 的照片，但**处理失败的那些不算**（停在
+     * {@code UPLOADING} 且带着 {@code failure_reason}）。那张图从没进过相册，把它算作
+     * "已经上传过"只会让上传者换一种说法再失败一次——改好格式重新导出的文件哈希
+     * 不同，碰不到这里；可同一个文件在修好处理链之后重传，就是被这条卡住的。
+     * 失败行本身由 {@link FailedUploadRetentionJob} 到期收走。
+     */
+    private PhotoEntity findDuplicate(String sha256Lower, Long exceptPhotoId) {
+        return mapper.selectOne(Wrappers.<PhotoEntity>lambdaQuery()
+                .eq(PhotoEntity::getSha256, sha256Lower)
+                .eq(PhotoEntity::getDeleted, false)
+                .ne(exceptPhotoId != null, PhotoEntity::getId, exceptPhotoId)
+                .not(failed -> failed
+                        .eq(PhotoEntity::getStatus, PhotoStatus.UPLOADING)
+                        .isNotNull(PhotoEntity::getFailureReason))
+                .last("LIMIT 1"));
     }
 
     private void performDelete(PhotoEntity photo) {

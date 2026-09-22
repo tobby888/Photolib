@@ -60,7 +60,7 @@
 
 ### 原生图片处理
 
-成品图压缩、缩略图生成和后台预览图重建都在受控的串行/有界执行器中调用 `backend/native/` 的 Zig 原生组件：新上传走 `photoProcessingExecutor`，全库预览维护走独立的 `previewRegenerationExecutor`，避免互相占用队列。常规 JPEG 使用 libjpeg-turbo、PNG 使用固定版本的 stb 并保留透明通道；需要重新编码时，达到 100 MP、任一边达到 30,000 像素、按实际解码通道数估算的像素缓冲超过 128 MiB，或 EXIF Orientation 不为 1 的图片会改走 libvips 8.18.3 的文件式、顺序读取管线，所有缩略图也会按同一规则正确应用方向。小于成品图目标体积的文件仍只读头部并原样复制、保留 EXIF，不做完整像素解码；记录到数据库的宽高会按 EXIF 方向换算。libvips 的大图/方向分支使用 down-only、自动方向校正；JPEG 使用倍率换算质量、4:2:0、优化编码并去除元数据，PNG 使用无损 compression 9 并去除非像素元数据。原生层仍限制输入 100 MiB、输出 256 MiB、10 亿像素及单边 100,000 像素，并把 libvips 并发设为 1、关闭缓存；超阈值的渐进式 JPEG 和隔行 PNG 会被拒绝，因为这两类文件不能保证顺序解码的有界内存。ZIP 条目会流式解压到临时目录，避免完整进入 Java 堆。
+成品图压缩、缩略图生成和后台预览图重建都在受控的串行/有界执行器中调用 `backend/native/` 的 Zig 原生组件：新上传走 `photoProcessingExecutor`，全库预览维护走独立的 `previewRegenerationExecutor`，避免互相占用队列。常规 JPEG 使用 libjpeg-turbo、PNG 使用固定版本的 stb 并保留透明通道；需要重新编码时，达到 100 MP、任一边达到 30,000 像素、按实际解码通道数估算的像素缓冲超过 128 MiB，或 EXIF Orientation 不为 1 的图片会改走 libvips 8.18.3 的文件式、顺序读取管线，所有缩略图也会按同一规则正确应用方向。小于成品图目标体积的文件仍只读头部并原样复制、保留 EXIF，不做完整像素解码；记录到数据库的宽高会按 EXIF 方向换算。libvips 的大图/方向分支使用 down-only、自动方向校正；JPEG 使用倍率换算质量、4:2:0、优化编码并去除元数据，PNG 使用无损 compression 9 并去除非像素元数据。原生层仍限制输入 100 MiB、输出 256 MiB、10 亿像素及单边 100,000 像素，并把 libvips 并发设为 1、关闭缓存；超阈值的隔行 PNG 会被拒绝，因为它不能保证顺序解码的有界内存；超阈值的渐进式 JPEG 仍走 libvips 的缩小加载，但 libjpeg 要把整幅图的 DCT 系数留在内存里，所以按"每个 8×8 块 × 分量 × 128 字节"（不计色度抽样的上界）估算，超过 512 MiB（RGB 约 8900 万像素）才拒绝，并提示上传者改用基线 JPEG 导出。所有 libvips 调用在原生层共用一把进程级互斥锁，所以无论 `PHOTO_PROCESSING_THREADS` 设多大，同一时刻最多只有一份这样的缓冲，但内存预算里要留出这 512 MiB。ZIP 条目会流式解压到临时目录，避免完整进入 Java 堆。
 
 构建阶段会生成并打包以下 x86-64 组件：
 
@@ -236,6 +236,10 @@ curl --fail http://127.0.0.1:8080/api/v1/actuator/health
 | `MISSING_UPLOAD_SCAN_ENABLED` | 是否定时扫描"停在上传中、但原图在对象存储里确认不存在"的图片记录并软删，默认 `true`。这类记录会一直挡住同一张图重传（查重按 SHA-256）；设为 `false` 只是让它们继续积着，不影响上传本身 |
 | `MISSING_UPLOAD_SCAN_DELAY_MS` | 上述扫描的间隔毫秒数，默认 `900000`（15 分钟） |
 | `MISSING_UPLOAD_SCAN_INITIAL_DELAY_MS` | 上述扫描在启动那一轮之后、第一次定时之前的等待毫秒数，默认 `300000`（5 分钟） |
+| `FAILED_UPLOAD_RETENTION_ENABLED` | 是否定时清理"处理失败、原图却还在对象存储里"的图片记录，默认 `true`。超过保留期没人重试的记录会被软删（写 `audit_log`，可改回 `deleted=0` 恢复），它的原图对象随之删除；设为 `false` 则这些记录一直留在图库里显示"处理失败" |
+| `FAILED_UPLOAD_RETENTION_DAYS` | 上述记录的保留天数，默认 `7`，至少为 `1` |
+| `FAILED_UPLOAD_RETENTION_DELAY_MS` | 上述清理的间隔毫秒数，默认 `3600000`（1 小时） |
+| `FAILED_UPLOAD_RETENTION_INITIAL_DELAY_MS` | 上述清理在启动后第一次运行前的等待毫秒数，默认 `600000`（10 分钟） |
 | `PHOTO_PROCESSING_THREADS` | 原生图片处理线程数，取值 1～32，默认 1 |
 | `PHOTO_PROCESSING_TEMPORARY_DIRECTORY` | ZIP 解压与图片处理临时目录 |
 | `WECOM_CORP_ID` | 企业微信企业 ID（管理后台「我的企业」页底部） |
