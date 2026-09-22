@@ -1,6 +1,7 @@
 package cn.photolib.project;
 
 import cn.photolib.auth.AuthenticatedUser;
+import cn.photolib.auth.mfa.RequiresStepUp;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.api.PageResponse;
 import cn.photolib.project.model.ProjectEntity;
@@ -83,6 +84,7 @@ public class ProjectController {
 
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAuthority('PROJECT_CREATE')")
+    @RequiresStepUp
     ApiResponse<Void> delete(@PathVariable Long id, @AuthenticationPrincipal AuthenticatedUser user) {
         service.delete(id, user);
         return ApiResponse.ok();

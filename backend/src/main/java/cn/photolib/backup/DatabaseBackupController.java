@@ -1,6 +1,7 @@
 package cn.photolib.backup;
 
 import cn.photolib.auth.AuthenticatedUser;
+import cn.photolib.auth.mfa.RequiresStepUp;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.api.PageResponse;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +30,7 @@ public class DatabaseBackupController {
 
     @PostMapping("/database-backups")
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<DatabaseBackupService.BackupView> create(@AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.startManualBackup(user));
     }
@@ -40,6 +42,7 @@ public class DatabaseBackupController {
      */
     @PostMapping(value = "/database-backups/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<DatabaseBackupService.BackupView> upload(@RequestPart("file") MultipartFile file,
                                                          @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.importUploaded(file, user));
@@ -47,6 +50,7 @@ public class DatabaseBackupController {
 
     @GetMapping("/database-backups")
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<PageResponse<DatabaseBackupService.BackupView>> list(
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize,
@@ -56,6 +60,7 @@ public class DatabaseBackupController {
 
     @GetMapping("/database-backups/{id}")
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<DatabaseBackupService.BackupView> get(@PathVariable String id,
                                                      @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.getBackup(id, user));
@@ -63,6 +68,7 @@ public class DatabaseBackupController {
 
     @GetMapping("/database-backups/{id}/download")
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<DatabaseBackupService.DownloadLink> download(@PathVariable String id,
                                                              @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.downloadLink(id, user));
@@ -70,6 +76,7 @@ public class DatabaseBackupController {
 
     @PostMapping("/database-backups/{id}/restore")
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<DatabaseBackupService.RestoreView> restore(@PathVariable String id,
                                                            @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.startRestore(id, user));
@@ -77,6 +84,7 @@ public class DatabaseBackupController {
 
     @GetMapping("/database-restores")
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<PageResponse<DatabaseBackupService.RestoreView>> restores(
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize,
@@ -86,6 +94,7 @@ public class DatabaseBackupController {
 
     @GetMapping("/database-restores/{id}")
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<DatabaseBackupService.RestoreView> getRestore(@PathVariable String id,
                                                               @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.getRestore(id, user));

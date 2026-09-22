@@ -68,6 +68,7 @@ class SpaForwardHttpTests {
             "/documents",
             "/documents/abc123",
             "/mcp/authorize",
+            "/two-factor",
             "/admin");
 
     @BeforeEach

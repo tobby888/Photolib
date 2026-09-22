@@ -19,6 +19,8 @@ public class AuthSessionEntity {
     private LocalDateTime accessExpiresAt;
     private LocalDateTime idleExpiresAt;
     private LocalDateTime revokedAt;
+    /** 敏感操作再验证的信任期截止时间（Flyway V54）。 */
+    private LocalDateTime stepUpUntil;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

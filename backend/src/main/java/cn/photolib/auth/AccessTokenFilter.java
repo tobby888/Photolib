@@ -19,6 +19,9 @@ import java.util.List;
 @Component
 @RequiredArgsConstructor
 public class AccessTokenFilter extends OncePerRequestFilter {
+    /** 当前请求所属会话的 id，供敏感操作再验证（{@code StepUpInterceptor}）读取。 */
+    public static final String SESSION_ID_ATTRIBUTE = "photolib.sessionId";
+
     private final AuthService authService;
 
     @Override
@@ -38,12 +41,14 @@ public class AccessTokenFilter extends OncePerRequestFilter {
                     authService.authenticate(authorization.substring(7));
             if (authenticated != null) {
                 AuthenticatedUser user = authenticated.user();
+                request.setAttribute(SESSION_ID_ATTRIBUTE, authenticated.sessionId());
                 // 未改初始密码的会话在"登出的人也能读"的接口上退回匿名继续，
                 // 而不是拿到 403——否则它比一个登出的访客还差，浏览器里存着令牌
                 // 反而打不开公开文档。但它也不算成员：初始密码还没换掉的账号
                 // 不该看到仅限成员的内容，所以是"不设置 principal"，
                 // 而不是"放行并认证"。
-                if (user.mustChangePassword() && isAnonymousReadableDocs(request)) {
+                if ((user.mustChangePassword() || user.mfa().enrollmentRequired())
+                        && isAnonymousReadableDocs(request)) {
                     chain.doFilter(request, response);
                     return;
                 }
@@ -59,14 +64,23 @@ public class AccessTokenFilter extends OncePerRequestFilter {
                     chain.doFilter(request, response);
                     return;
                 }
-                if (user.mustChangePassword() && !isAllowedBeforePasswordChange(request.getServletPath())) {
+                // 被强制两步验证却还没绑定：会话只能走绑定流程。排在首次改密之前——
+                // 重置过密码的账号设备已被清空，必须先绑定、再设置新密码。
+                if (user.mfa().enrollmentRequired() && !isAllowedBeforeMfaEnrollment(applicationPath(request))) {
+                    response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                    response.setContentType("application/json;charset=UTF-8");
+                    response.getWriter().write(
+                            "{\"code\":\"MFA_ENROLLMENT_REQUIRED\",\"message\":\"请先绑定两步验证设备\",\"details\":[]}");
+                    return;
+                }
+                if (user.mustChangePassword() && !isAllowedBeforePasswordChange(applicationPath(request))) {
                     response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                     response.setContentType("application/json;charset=UTF-8");
                     response.getWriter().write(
                             "{\"code\":\"FORBIDDEN\",\"message\":\"首次登录必须先修改密码\",\"details\":[]}");
                     return;
                 }
-                if (!user.hasSystemAccess() && !isAllowedWithoutSystemAccess(request.getServletPath())) {
+                if (!user.hasSystemAccess() && !isAllowedWithoutSystemAccess(applicationPath(request))) {
                     response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                     response.setContentType("application/json;charset=UTF-8");
                     response.getWriter().write(
@@ -98,7 +112,30 @@ public class AccessTokenFilter extends OncePerRequestFilter {
         return path.equals("/api/v1/auth/me")
                 || path.equals("/api/v1/auth/initial-password")
                 || path.equals("/api/v1/auth/logout")
+                || isMfaSelfService(path)
                 || isPublicBranding(path);
+    }
+
+    private boolean isAllowedBeforeMfaEnrollment(String path) {
+        return path.equals("/api/v1/auth/me")
+                || path.equals("/api/v1/auth/logout")
+                || isMfaSelfService(path)
+                || isPublicBranding(path);
+    }
+
+    /**
+     * 去掉上下文路径后的请求路径。不用 {@code getServletPath()}：它取决于 Servlet 的映射方式，
+     * 在 MockMvc 里恒为空串，写在它上面的放行清单在测试里根本验不到。
+     */
+    private static String applicationPath(HttpServletRequest request) {
+        String uri = request.getRequestURI();
+        String context = request.getContextPath();
+        return context != null && !context.isEmpty() && uri.startsWith(context) ? uri.substring(context.length()) : uri;
+    }
+
+    /** 成员自己的两步验证接口（{@code MfaController}）。 */
+    private boolean isMfaSelfService(String path) {
+        return path.equals("/api/v1/auth/mfa") || path.startsWith("/api/v1/auth/mfa/");
     }
 
     private boolean isAllowedWithoutSystemAccess(String path) {

@@ -1,6 +1,7 @@
 package cn.photolib.user;
 
 import cn.photolib.auth.AuthenticatedUser;
+import cn.photolib.auth.mfa.RequiresStepUp;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.api.PageResponse;
 import cn.photolib.user.model.UserRole;
@@ -41,6 +42,7 @@ public class UserController {
 
     @PostMapping
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<UserService.CreatedUser> create(@Valid @RequestBody CreateRequest request) {
         return ApiResponse.ok(userService.create(new UserService.CreateUser(
                 request.username(), request.displayName(), request.role(), request.campusId(),
@@ -50,6 +52,7 @@ public class UserController {
 
     @GetMapping
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<PageResponse<UserService.UserView>> list(
             @RequestParam(defaultValue = "1") @Min(1) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int pageSize,
@@ -83,6 +86,7 @@ public class UserController {
 
     @PutMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<UserService.UserView> update(@PathVariable Long id, @Valid @RequestBody UpdateRequest request) {
         return ApiResponse.ok(userService.update(id, new UserService.UpdateUser(
                 request.displayName(), request.role(), request.campusId(), request.phone(),
@@ -92,6 +96,7 @@ public class UserController {
 
     @PutMapping("/{id}/authorization")
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<UserService.UserView> updateAuthorization(
             @PathVariable Long id, @Valid @RequestBody AuthorizationRequest request) {
         return ApiResponse.ok(userService.updateAuthorization(id, request.permissionGroupId(),
@@ -108,24 +113,28 @@ public class UserController {
 
     @PutMapping("/{id}/password")
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<ResetPasswordResponse> resetPassword(@PathVariable Long id) {
         return ApiResponse.ok(new ResetPasswordResponse(userService.resetPassword(id)));
     }
 
     @PostMapping("/{id}/enable")
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<UserService.UserView> enable(@PathVariable Long id) {
         return ApiResponse.ok(userService.setEnabled(id, true));
     }
 
     @PostMapping("/{id}/disable")
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<UserService.UserView> disable(@PathVariable Long id) {
         return ApiResponse.ok(userService.setEnabled(id, false));
     }
 
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<Void> delete(@PathVariable Long id, @AuthenticationPrincipal AuthenticatedUser current) {
         userService.delete(id, current.id());
         return ApiResponse.ok();

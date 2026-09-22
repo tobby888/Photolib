@@ -48,11 +48,52 @@ function clearSession() {
   window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT))
 }
 
+/**
+ * 被强制两步验证却还没绑定时，后端对几乎所有接口回 `MFA_ENROLLMENT_REQUIRED`。
+ * 典型场景是管理员刚打开全站开关、成员手上还开着页面：`AuthProvider` 听到这个事件后
+ * 重新取一次身份，外壳据此把人带去绑定页。
+ */
+export const MFA_ENROLLMENT_REQUIRED_EVENT = 'photolib:mfa-enrollment-required'
+
+/**
+ * 敏感操作（删除图片 / 选题 / 需求、系统管理面板）要求先再验证一次两步验证。
+ * 外壳注册一个处理器弹出验证框；验证成功就把原请求原样重发，调用方完全无感。
+ */
+type StepUpHandler = () => Promise<boolean>
+let stepUpHandler: StepUpHandler | null = null
+let steppingUp: Promise<boolean> | null = null
+
+export function setStepUpHandler(handler: StepUpHandler) {
+  stepUpHandler = handler
+  return () => {
+    if (stepUpHandler === handler) stepUpHandler = null
+  }
+}
+
+/** 下载接口的错误体也是 Blob，要读出来才知道错误码。 */
+async function errorCode(data: unknown): Promise<string | undefined> {
+  if (data instanceof Blob) {
+    try { return (JSON.parse(await data.text()) as Envelope<unknown>).code } catch { return undefined }
+  }
+  return (data as Envelope<unknown> | undefined)?.code
+}
+
 let refreshing: Promise<string> | null = null
 http.interceptors.response.use(
   (response) => response,
   async (error) => {
-    const original = error.config as AxiosRequestConfig & { _retry?: boolean }
+    const original = error.config as AxiosRequestConfig & { _retry?: boolean; _stepUp?: boolean }
+    if (error.response?.status === 403) {
+      const code = await errorCode(error.response.data)
+      if (code === 'STEP_UP_REQUIRED' && stepUpHandler && !original._stepUp) {
+        original._stepUp = true
+        // 同一时刻的几个请求（比如管理面板一进来的几次加载）共用一个验证框。
+        steppingUp ??= stepUpHandler().finally(() => { steppingUp = null })
+        if (await steppingUp) return http(original)
+      }
+      if (code === 'MFA_ENROLLMENT_REQUIRED') window.dispatchEvent(new Event(MFA_ENROLLMENT_REQUIRED_EVENT))
+      return Promise.reject(error)
+    }
     if (error.response?.status !== 401 || original._retry || original.url?.includes('/auth/')) {
       return Promise.reject(error)
     }
@@ -104,3 +145,11 @@ export interface LoginResult {
   mustChangePassword: boolean
   user: User
 }
+
+/**
+ * 密码登录的应答。`mfaRequired` 为真时还没有会话：只有一张票据，要拿它去完成第二步
+ * （`mfaMethods` 是这个账号绑过的验证方式）。
+ */
+export type PasswordLoginResult =
+  | (LoginResult & { mfaRequired: false })
+  | { mfaRequired: true; mfaTicket: string; mfaMethods: ('TOTP' | 'WEBAUTHN')[]; mfaExpiresIn: number }

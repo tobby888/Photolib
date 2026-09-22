@@ -19,3 +19,10 @@ export function canViewProjects(user: User | null | undefined) {
 export function hasSystemAccess(user: User | null | undefined) {
   return Boolean(user) && (user?.permissionGroupCode === 'ADMIN' || user?.dataScope !== 'NONE')
 }
+
+/**
+ * 头像菜单里要不要出现"两步验证"、外壳要不要挂再验证框：所在权限组不是"不使用"就要。
+ * 放在这里而不是 `mfa.ts`，是为了不把两步验证的接口代码拉进首屏。
+ */
+export const canManageTwoFactor = (user: Pick<User, 'mfa'> | null | undefined) =>
+  !!user?.mfa && user.mfa.policy !== 'OFF'

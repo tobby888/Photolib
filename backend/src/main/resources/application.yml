@@ -92,6 +92,18 @@ photolib:
       max-address-failures: ${LOGIN_MAX_ADDRESS_FAILURES:40}
       failure-window: ${LOGIN_FAILURE_WINDOW:15m}
       lock-duration: ${LOGIN_LOCK_DURATION:15m}
+    mfa:
+      # 加密验证器 App 密钥的 AES 密钥，Base64 编码的 32 字节随机数（openssl rand -base64 32）。
+      # 没配置时不能绑定验证器 App，也不能打开全站两步验证。一旦启用就不要更换：
+      # 换了之后所有人的验证器都要重新绑定。请和数据库备份分开保管，但一样要备份。
+      encryption-key: ${MFA_ENCRYPTION_KEY:}
+      # 安全密钥 / 通行密钥（WebAuthn）绑定在站点域名上。生产环境务必显式配置，
+      # 例如 MFA_WEBAUTHN_RP_ID=photowarehouse.cn、MFA_WEBAUTHN_ORIGINS=https://photowarehouse.cn
+      rp-id: ${MFA_WEBAUTHN_RP_ID:}
+      rp-name: ${MFA_WEBAUTHN_RP_NAME:PhotoLib}
+      origins: ${MFA_WEBAUTHN_ORIGINS:}
+      trusted-device-ttl: ${MFA_TRUSTED_DEVICE_TTL:30d}
+      step-up-ttl: ${MFA_STEP_UP_TTL:15m}
   bootstrap:
     enabled: ${ADMIN_BOOTSTRAP_ENABLED:true}
     admin-username: ${ADMIN_USERNAME:admin}

@@ -1,6 +1,9 @@
 photolib:
   auth:
     secure-cookie: false
+    mfa:
+      # 仅供本地开发的固定密钥，生产环境必须用 MFA_ENCRYPTION_KEY 换成自己的随机值。
+      encryption-key: ${MFA_ENCRYPTION_KEY:cGhvdG9saWItbG9jYWwtbWZhLWtleS0zMi1ieXRlcyE=}
   bootstrap:
     admin-password: ${ADMIN_INITIAL_PASSWORD:ChangeMe123!}
   storage:

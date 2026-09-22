@@ -30,7 +30,7 @@ test('the public page only bounces a session the backend confirmed, never a cach
 
   // 标志只在后端应答之后才立起来，失效的每条路径都要把它放下。
   assert.match(auth, /sessionVerified: boolean/)
-  assert.match(auth, /api<User>\(\{ url: '\/auth\/me' \}\)\.then\(current => \{\s*\n\s*storeUser\(current\)\s*\n\s*setSessionVerified\(true\)/)
+  assert.match(auth, /const current = await api<User>\(\{ url: '\/auth\/me' \}\)\s*\n\s*storeUser\(current\)\s*\n\s*setSessionVerified\(true\)/)
   assert.equal((auth.match(/setSessionVerified\(false\)/g) || []).length, 2)
 })
 

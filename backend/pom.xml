@@ -26,6 +26,7 @@
         <poi.version>5.4.1</poi.version>
         <jsoup.version>1.18.3</jsoup.version>
         <jna.version>5.18.1</jna.version>
+        <webauthn4j.version>0.31.10.RELEASE</webauthn4j.version>
         <exec-maven-plugin.version>3.5.0</exec-maven-plugin.version>
         <frontend-maven-plugin.version>1.15.1</frontend-maven-plugin.version>
         <node.version>v20.19.4</node.version>
@@ -92,6 +93,12 @@
             <artifactId>aliyun-java-sdk-dm</artifactId>
             <version>${aliyun-dm.version}</version>
         </dependency>
+        <!-- 两步验证里的安全密钥 / 通行密钥（WebAuthn）的服务端校验。 -->
+        <dependency>
+            <groupId>com.webauthn4j</groupId>
+            <artifactId>webauthn4j-core</artifactId>
+            <version>${webauthn4j.version}</version>
+        </dependency>
         <dependency>
             <groupId>org.apache.poi</groupId>
             <artifactId>poi-ooxml</artifactId>
@@ -121,6 +128,13 @@
         <dependency>
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- 软件模拟的安全密钥，用来在测试里走通 WebAuthn 的注册与登录。 -->
+        <dependency>
+            <groupId>com.webauthn4j</groupId>
+            <artifactId>webauthn4j-test</artifactId>
+            <version>${webauthn4j.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

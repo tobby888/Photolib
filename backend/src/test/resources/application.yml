@@ -38,6 +38,8 @@ photolib:
     access-ttl: 15m
     idle-ttl: 30m
     secure-cookie: false
+    mfa:
+      encryption-key: dGVzdC1vbmx5LW1mYS1lbmNyeXB0aW9uLWtleS0zMmI=
   bootstrap:
     enabled: false
     admin-password: TestPassword123!

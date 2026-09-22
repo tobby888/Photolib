@@ -1,6 +1,8 @@
 package cn.photolib.auth;
 
 import cn.photolib.auth.mapper.AuthSessionMapper;
+import cn.photolib.auth.mfa.MfaService;
+import cn.photolib.auth.mfa.WebAuthnSupport;
 import cn.photolib.auth.model.AuthSessionEntity;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
@@ -17,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Function;
 
 @Service
 public class AuthService {
@@ -27,25 +30,46 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final AuthProperties properties;
     private final PermissionGroupService permissionGroups;
+    private final MfaService mfa;
 
     @Autowired
     public AuthService(UserMapper userMapper, AuthSessionMapper sessionMapper,
                        PasswordEncoder passwordEncoder, AuthProperties properties,
-                       PermissionGroupService permissionGroups) {
+                       PermissionGroupService permissionGroups, MfaService mfa) {
         this.userMapper = userMapper;
         this.sessionMapper = sessionMapper;
         this.passwordEncoder = passwordEncoder;
         this.properties = properties;
         this.permissionGroups = permissionGroups;
+        this.mfa = mfa;
     }
 
     public AuthService(UserMapper userMapper, AuthSessionMapper sessionMapper,
                        PasswordEncoder passwordEncoder, AuthProperties properties) {
-        this(userMapper, sessionMapper, passwordEncoder, properties, null);
+        this(userMapper, sessionMapper, passwordEncoder, properties, null, null);
     }
 
+    /**
+     * 只用密码登录，不认信任浏览器。两步验证对账号生效时拿不到会话——调用方
+     * （测试、内部工具）不该绕开第二步。
+     */
     @Transactional
     public TokenPair login(String loginIdentifier, String password) {
+        LoginOutcome outcome = login(loginIdentifier, password, userId -> null);
+        if (outcome.pair() == null) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "该账号需要完成两步验证");
+        }
+        return outcome.pair();
+    }
+
+    /**
+     * 密码登录。两步验证对账号生效时，只有带着有效信任令牌的浏览器能直接拿到会话；
+     * 其余情况返回一张登录票据，会话要等 {@link #completeMfaLogin} 验过第二步才签发。
+     *
+     * @param trustedToken 按账号取出浏览器带来的信任令牌（Cookie 名里带账号 id）
+     */
+    @Transactional
+    public LoginOutcome login(String loginIdentifier, String password, Function<Long, String> trustedToken) {
         String identifier = loginIdentifier == null ? "" : loginIdentifier.trim();
         UserEntity user = userMapper.selectOne(Wrappers.<UserEntity>lambdaQuery()
                 .eq(UserEntity::getUsername, identifier));
@@ -60,7 +84,22 @@ public class AuthService {
         if (user == null || !Boolean.TRUE.equals(user.getEnabled()) || !passwordMatches) {
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "账号、邮箱或密码错误");
         }
-        return issue(user);
+        if (mfa != null && toPrincipal(user).mfa().active()) {
+            String token = trustedToken.apply(user.getId());
+            if (token != null && mfa.useTrustedBrowser(user.getId(), token)) {
+                return new LoginOutcome(issue(user, null), null, token);
+            }
+            return new LoginOutcome(null, mfa.startLogin(user.getId()), null);
+        }
+        return new LoginOutcome(issue(user, null), null, null);
+    }
+
+    /** 验过第二步、消费登录票据之后签发会话。账号在两步之间被停用的，照样拒绝。 */
+    @Transactional
+    public TokenPair completeMfaLogin(String ticket, MfaService.Verification verification,
+                                      WebAuthnSupport.RelyingParty rp) {
+        Long userId = mfa.completeLogin(ticket, verification, rp);
+        return issue(requireEnabledUser(userId), null);
     }
 
     @Transactional
@@ -78,7 +117,9 @@ public class AuthService {
         if (sessionMapper.revokeActive(session.getId(), now) != 1) {
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "会话已失效");
         }
-        return issue(user);
+        // 访问令牌 15 分钟就换一次会话，敏感操作的 15 分钟信任期要跟着带过去，
+        // 否则刚验证完就可能因为一次续期而失效。
+        return issue(user, session.getStepUpUntil());
     }
 
     /**
@@ -92,7 +133,7 @@ public class AuthService {
      */
     @Transactional
     public TokenPair issueForPairedClient(Long userId) {
-        return issue(requireEnabledUser(userId));
+        return issue(requireEnabledUser(userId), null);
     }
 
     public SessionAuthentication authenticate(String rawAccessToken) {
@@ -139,7 +180,7 @@ public class AuthService {
         }
         updatePassword(user, newPassword, false);
         revokeAll(user.getId());
-        return issue(user);
+        return issue(user, null);
     }
 
     @Transactional
@@ -161,7 +202,7 @@ public class AuthService {
                 .set(AuthSessionEntity::getRevokedAt, now));
     }
 
-    private TokenPair issue(UserEntity user) {
+    private TokenPair issue(UserEntity user, LocalDateTime stepUpUntil) {
         String access = TokenSupport.randomToken();
         String refresh = TokenSupport.randomToken();
         LocalDateTime now = LocalDateTime.now();
@@ -171,6 +212,7 @@ public class AuthService {
         session.setRefreshTokenHash(TokenSupport.hash(refresh));
         session.setAccessExpiresAt(now.plus(properties.accessTtl()));
         session.setIdleExpiresAt(now.plus(properties.idleTtl()));
+        session.setStepUpUntil(stepUpUntil);
         session.setCreatedAt(now);
         session.setUpdatedAt(now);
         sessionMapper.insert(session);
@@ -204,5 +246,12 @@ public class AuthService {
     }
 
     public record SessionAuthentication(Long sessionId, AuthenticatedUser user) {
+    }
+
+    /**
+     * 密码登录的结果：要么已签发会话（{@code pair}），要么还差第二步（{@code challenge}）。
+     * {@code trustedToken} 非空表示这次凭信任浏览器跳过了第二步，调用方要顺延那枚 Cookie。
+     */
+    public record LoginOutcome(TokenPair pair, MfaService.LoginChallenge challenge, String trustedToken) {
     }
 }

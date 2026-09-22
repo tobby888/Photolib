@@ -15,7 +15,7 @@ import {
   PERMISSION_GROUP_ACTION_MIN_WIDTH,
 } from './tableActionWidths'
 import type {
-  Campus, DataScope, EntityId, PageData, PermissionCategoryDefinition, PermissionCode,
+  Campus, DataScope, EntityId, MfaPolicy, PageData, PermissionCategoryDefinition, PermissionCode,
   PermissionGroup, PhotoVisibility, User,
 } from './types'
 import { serverTablePagination, turnPage } from './pagination'
@@ -29,12 +29,22 @@ const PHOTO_VISIBILITY_OPTIONS: { value: PhotoVisibility; label: string }[] = [
 const photoVisibilityLabel = (visibility: PhotoVisibility) =>
   PHOTO_VISIBILITY_OPTIONS.find(option => option.value === visibility)?.label || visibility
 
+const MFA_POLICY_OPTIONS: { value: MfaPolicy; label: string }[] = [
+  { value: 'OFF', label: '不使用' },
+  { value: 'SUGGESTED', label: '建议启用' },
+  { value: 'REQUIRED', label: '强制启用' },
+]
+
+const mfaPolicyLabel = (policy: MfaPolicy = 'OFF') =>
+  MFA_POLICY_OPTIONS.find(option => option.value === policy)?.label || policy
+
 type GroupFormValues = {
   code: string
   name: string
   description?: string
   dataScope: Exclude<DataScope, 'NONE'>
   photoVisibility: PhotoVisibility
+  mfaPolicy: MfaPolicy
 }
 
 type AuthorizationDraft = { permissionGroupId: EntityId; campusIds: EntityId[] }
@@ -93,7 +103,7 @@ export default function PermissionGroupsPanel() {
     setEditing(null)
     setPermissions([])
     form.resetFields()
-    form.setFieldsValue({ dataScope: 'CAMPUS', photoVisibility: 'SELF' })
+    form.setFieldsValue({ dataScope: 'CAMPUS', photoVisibility: 'SELF', mfaPolicy: 'OFF' })
     setGroupOpen(true)
   }
 
@@ -106,6 +116,7 @@ export default function PermissionGroupsPanel() {
       description: group.description || undefined,
       dataScope: group.dataScope === 'GLOBAL' ? 'GLOBAL' : 'CAMPUS',
       photoVisibility: group.photoVisibility,
+      mfaPolicy: group.mfaPolicy ?? 'OFF',
     })
     setGroupOpen(true)
   }
@@ -132,6 +143,7 @@ export default function PermissionGroupsPanel() {
           description: values.description?.trim() || null,
           dataScope: values.dataScope,
           photoVisibility: values.photoVisibility,
+          mfaPolicy: values.mfaPolicy,
           permissions,
           version: editing.version,
         } })
@@ -229,6 +241,10 @@ export default function PermissionGroupsPanel() {
               <Tag color={visibility === 'GLOBAL' ? 'blue' : visibility === 'CAMPUS' ? 'cyan' : 'default'}>
                 {photoVisibilityLabel(visibility)}
               </Tag> },
+          { title: '两步验证', dataIndex: 'mfaPolicy', render: (policy?: MfaPolicy) =>
+            <Tag color={policy === 'REQUIRED' ? 'red' : policy === 'SUGGESTED' ? 'gold' : 'default'}>
+              {mfaPolicyLabel(policy)}
+            </Tag> },
           { title: '权限数', render: (_: unknown, group: PermissionGroup) => group.permissions.length },
           { title: '账号数', dataIndex: 'memberCount' },
           { title: '属性', render: (_: unknown, group: PermissionGroup) => <Space>
@@ -323,6 +339,11 @@ export default function PermissionGroupsPanel() {
             extra="决定账号在图库里能看到谁的图片，以及能下载哪些图片。编辑、归档、删除他人图片始终不放开；好图精选选图也始终只限授权校区。">
             <Select disabled={editing?.code === 'ADMIN'} options={PHOTO_VISIBILITY_OPTIONS} />
           </Form.Item></Col>
+          {/* 系统管理员组固定强制：它是整套权限的入口。全站开关关着时这里的设置不生效。 */}
+          <Col xs={24} md={12}><Form.Item label="两步验证" name="mfaPolicy" rules={[{ required: true }]}
+            extra="强制：未绑定的成员必须先绑定才能使用系统；建议：未绑定的成员每次登录后看到提醒。需在「两步验证」页签打开全站开关后生效。">
+            <Select disabled={editing?.code === 'ADMIN'} options={MFA_POLICY_OPTIONS} />
+          </Form.Item></Col>
         </Row>
         <Form.Item label="说明" name="description" rules={[{ max: 500 }]}><Input.TextArea rows={2} disabled={editing?.builtIn} /></Form.Item>
         <Typography.Title level={5}>权限明细</Typography.Title>
@@ -366,6 +387,7 @@ export default function PermissionGroupsPanel() {
             <Descriptions.Item label="图库可见范围">
               {photoVisibilityLabel(detailGroupState.data.photoVisibility)}
             </Descriptions.Item>
+            <Descriptions.Item label="两步验证">{mfaPolicyLabel(detailGroupState.data.mfaPolicy)}</Descriptions.Item>
             <Descriptions.Item label="成员数">{detailGroupState.data.memberCount}</Descriptions.Item>
             <Descriptions.Item label="说明" span={2}>{detailGroupState.data.description || '-'}</Descriptions.Item>
           </Descriptions>

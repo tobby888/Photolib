@@ -460,6 +460,21 @@ button, input, textarea, select { font-family: inherit; }
 .password-strength { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 12px; margin: -14px 0 20px; }
 .password-strength span { font-size: 11px; }
 
+/* 两步验证：登录第二步、再验证框、绑定页和管理弹窗共用。 */
+.two-factor-verify .ant-otp { display: flex; justify-content: center; margin: 4px 0 8px; }
+.two-factor-error, .two-factor-note { margin-top: 16px; }
+.two-factor-trust { display: block; margin-top: 18px; }
+.login-card .two-factor-verify + .ant-btn { margin-top: 12px; }
+.two-factor-setup { display: grid; gap: 16px; }
+.two-factor-setup .ant-steps { margin-top: 4px; }
+.two-factor-qr { display: grid; justify-items: start; gap: 8px; margin: 8px 0 4px; }
+/* 二维码必须是浅底深码，深色主题下也一样，否则部分 App 扫不出来。 */
+.two-factor-qr .ant-qrcode { padding: 10px; border-radius: 10px; background: #fff; }
+.two-factor-status { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.two-factor-loading { display: grid; place-items: center; min-height: 120px; }
+.two-factor-card { width: min(560px, 100%); }
+.admin-step-up-card { max-width: 480px; }
+
 @media (max-width: 900px) {
   .login-page { grid-template-columns: 1fr; }
   .login-story { display: none; }

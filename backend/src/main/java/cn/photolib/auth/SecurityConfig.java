@@ -38,9 +38,11 @@ public class SecurityConfig {
                                 "/notifications/**", "/statistics", "/manager-campuses", "/admin",
                                 "/recruitment", "/recruitments/**", "/recruitment-applications/**",
                                 "/docs", "/docs/**", "/documents", "/documents/**",
-                                "/share/**", "/upload/**", "/mcp/authorize",
+                                "/share/**", "/upload/**", "/mcp/authorize", "/two-factor",
                                 "/api", "/api/",
                                 "/api/v1/auth/login", "/api/v1/auth/refresh",
+                                // 登录第二步：凭据是密码登录换来的一次性票据，此时还没有会话。
+                                "/api/v1/auth/login/mfa", "/api/v1/auth/login/mfa/webauthn-options",
                                 // MCP 客户端的配对通道。三条都由"还没有身份"的客户端调用，
                                 // 凭据是它自己持有的 deviceCode / 刷新令牌，不是登录会话；
                                 // 查看与批准两条接口不在这里，它们要求浏览器里的登录身份。

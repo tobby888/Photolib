@@ -21,8 +21,24 @@ public record AuthenticatedUser(
         PhotoVisibility photoVisibility,
         Set<PermissionCode> permissions,
         Set<Long> campusIds,
-        String avatarUrl
+        String avatarUrl,
+        MfaSummary mfa
 ) {
+    public AuthenticatedUser {
+        mfa = mfa == null ? MfaSummary.NONE : mfa;
+    }
+
+    /** 不关心两步验证的构造点（历史代码、绝大多数测试）按"未启用"处理。 */
+    public AuthenticatedUser(Long id, String username, String displayName, UserRole role,
+                             Long campusId, boolean mustChangePassword, Long permissionGroupId,
+                             String permissionGroupCode, String permissionGroupName,
+                             DataScope dataScope, PhotoVisibility photoVisibility,
+                             Set<PermissionCode> permissions, Set<Long> campusIds, String avatarUrl) {
+        this(id, username, displayName, role, campusId, mustChangePassword, permissionGroupId,
+                permissionGroupCode, permissionGroupName, dataScope, photoVisibility, permissions,
+                campusIds, avatarUrl, MfaSummary.NONE);
+    }
+
     public AuthenticatedUser(Long id, String username, String displayName, UserRole role,
                              Long campusId, boolean mustChangePassword) {
         this(id, username, displayName, role, campusId, mustChangePassword, null);

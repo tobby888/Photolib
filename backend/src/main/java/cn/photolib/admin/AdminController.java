@@ -1,6 +1,7 @@
 package cn.photolib.admin;
 
 import cn.photolib.auth.AuthenticatedUser;
+import cn.photolib.auth.mfa.RequiresStepUp;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.photo.model.PhotoStatus;
 import cn.photolib.project.model.ProjectStatus;
@@ -41,6 +42,7 @@ public class AdminController {
 
     @GetMapping("/admin-alerts")
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<List<AdminAlertEntity>> alerts(@RequestParam(defaultValue = "false") boolean resolved) {
         return ApiResponse.ok(alertMapper.selectList(Wrappers.<AdminAlertEntity>lambdaQuery()
                 .eq(AdminAlertEntity::getResolved, resolved)
@@ -49,6 +51,7 @@ public class AdminController {
 
     @PostMapping("/admin-alerts/{id}/resolve")
     @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
     ApiResponse<Void> resolve(@PathVariable Long id, @AuthenticationPrincipal AuthenticatedUser user) {
         AdminAlertEntity alert = alertMapper.selectById(id);
         if (alert != null) {
