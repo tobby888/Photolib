@@ -25,6 +25,8 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -352,11 +354,16 @@ public class BatchUploadService {
         return "0".repeat(64).equals(normalized) ? null : normalized;
     }
 
+    /**
+     * 全库查重。处理失败留下的行（停在 {@code UPLOADING} 且带 {@code failure_reason}）
+     * 不算：那张图从没进过相册，重传同一个 ZIP 正是为了把它补上，算作重复就永远补不进来。
+     */
     private ExistingPhoto findExistingPhoto(String sha256) {
         if (sha256 == null) return null;
         return jdbc.sql("""
                 SELECT title FROM photo
                 WHERE sha256=:sha256 AND deleted=0
+                  AND NOT (status='UPLOADING' AND failure_reason IS NOT NULL)
                 ORDER BY id LIMIT 1
                 """).param("sha256", sha256)
                 .query((rs, rowNum) -> new ExistingPhoto(rs.getString("title")))
@@ -373,52 +380,51 @@ public class BatchUploadService {
         itemMapper.clearTempLocalPath(item.getId(), LocalDateTime.now());
     }
 
+    /**
+     * 删掉重复项的临时字节。放到事务提交之后：同一批里后面的条目失败导致回滚时，
+     * 这一条会回到待整理状态，{@code temp_local_path} 也跟着回来，文件必须还在。
+     */
     private void cleanupDuplicateSource(PhotoUploadItemEntity item) {
-        if (item.getTempLocalPath() != null && !item.getTempLocalPath().isBlank()) {
-            try {
-                workspace.deleteBatchFile(workspace.resolveStoredPath(item.getTempLocalPath()));
-            } catch (RuntimeException exception) {
-                log.warn("清理重复图片的本地临时文件失败: itemId={}, path={}",
-                        item.getId(), item.getTempLocalPath(), exception);
+        Long itemId = item.getId();
+        String localPath = item.getTempLocalPath();
+        String objectKey = item.getTempObjectKey();
+        item.setTempLocalPath(null);
+        afterCommit(() -> {
+            if (localPath != null && !localPath.isBlank()) {
+                try {
+                    workspace.deleteBatchFile(workspace.resolveStoredPath(localPath));
+                } catch (RuntimeException exception) {
+                    log.warn("清理重复图片的本地临时文件失败: itemId={}, path={}",
+                            itemId, localPath, exception);
+                }
+                return;
             }
-            item.setTempLocalPath(null);
+            if (objectKey != null && !objectKey.isBlank()) {
+                try {
+                    storage.delete(objectKey);
+                } catch (RuntimeException exception) {
+                    log.warn("清理重复图片的临时对象失败: itemId={}, objectKey={}",
+                            itemId, objectKey, exception);
+                }
+            }
+        });
+    }
+
+    private static void afterCommit(Runnable action) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            action.run();
             return;
         }
-        if (item.getTempObjectKey() != null && !item.getTempObjectKey().isBlank()) {
-            try {
-                storage.delete(item.getTempObjectKey());
-            } catch (RuntimeException exception) {
-                log.warn("清理重复图片的临时对象失败: itemId={}, objectKey={}",
-                        item.getId(), item.getTempObjectKey(), exception);
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                action.run();
             }
-        }
+        });
     }
 
     private void refreshBatch(String batchId) {
-        PhotoUploadBatchEntity batch = batchMapper.selectById(batchId);
-        if (batch == null) return;
-        long success = itemMapper.selectCount(Wrappers.<PhotoUploadItemEntity>lambdaQuery()
-                .eq(PhotoUploadItemEntity::getBatchId, batchId)
-                .eq(PhotoUploadItemEntity::getStatus, BatchItemStatus.SUCCEEDED));
-        long failed = itemMapper.selectCount(Wrappers.<PhotoUploadItemEntity>lambdaQuery()
-                .eq(PhotoUploadItemEntity::getBatchId, batchId)
-                .eq(PhotoUploadItemEntity::getStatus, BatchItemStatus.FAILED));
-        long waitingMetadata = itemMapper.selectCount(Wrappers.<PhotoUploadItemEntity>lambdaQuery()
-                .eq(PhotoUploadItemEntity::getBatchId, batchId)
-                .eq(PhotoUploadItemEntity::getStatus, BatchItemStatus.WAITING_METADATA));
-        long processing = itemMapper.selectCount(Wrappers.<PhotoUploadItemEntity>lambdaQuery()
-                .eq(PhotoUploadItemEntity::getBatchId, batchId)
-                .in(PhotoUploadItemEntity::getStatus, BatchItemStatus.PROCESSING, BatchItemStatus.UPLOADING));
-        batch.setSuccessCount((int) success);
-        batch.setFailureCount((int) failed);
-        if (waitingMetadata == 0 && processing == 0) {
-            batch.setStatus(failed > 0 ? BatchStatus.PARTIALLY_SUCCEEDED : BatchStatus.SUCCEEDED);
-        } else if (waitingMetadata > 0) {
-            batch.setStatus(BatchStatus.WAITING_METADATA);
-        } else {
-            batch.setStatus(BatchStatus.PROCESSING);
-        }
-        batchMapper.updateById(batch);
+        batchMapper.refreshCounters(batchId, LocalDateTime.now());
     }
 
     /**
