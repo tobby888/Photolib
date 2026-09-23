@@ -14,7 +14,13 @@ import httpx
 
 from .config import Settings
 from .credentials import CredentialStore, StoredCredentials
-from .errors import NotAuthenticatedError, PermissionDeniedError, PhotoLibError
+from .errors import (
+    MfaEnrollmentRequiredError,
+    NotAuthenticatedError,
+    PermissionDeniedError,
+    PhotoLibError,
+    StepUpRequiredError,
+)
 
 
 class PhotoLibSession:
@@ -216,6 +222,11 @@ def _raise_for_status(response: httpx.Response) -> None:
     if response.status_code == 401:
         raise NotAuthenticatedError(message)
     if response.status_code == 403:
+        # 两步验证的两种 403 不是"没权限"，各有下一步可做，不能并进权限错误里。
+        if code == "STEP_UP_REQUIRED":
+            raise StepUpRequiredError(message)
+        if code == "MFA_ENROLLMENT_REQUIRED":
+            raise MfaEnrollmentRequiredError(message)
         raise PermissionDeniedError(message)
     raise PhotoLibError(
         message or f"请求失败（HTTP {response.status_code}）",

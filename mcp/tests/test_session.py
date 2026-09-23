@@ -6,7 +6,13 @@ import httpx
 import pytest
 
 from photolib_mcp.credentials import StoredCredentials
-from photolib_mcp.errors import NotAuthenticatedError, PermissionDeniedError, PhotoLibError
+from photolib_mcp.errors import (
+    MfaEnrollmentRequiredError,
+    NotAuthenticatedError,
+    PermissionDeniedError,
+    PhotoLibError,
+    StepUpRequiredError,
+)
 from photolib_mcp.session import PhotoLibSession
 
 
@@ -100,6 +106,36 @@ async def test_403_is_reported_as_a_permission_problem(session: PhotoLibSession)
 
     with pytest.raises(PermissionDeniedError):
         await session.request("POST", "/projects", json_body={})
+
+
+async def test_step_up_403_says_how_to_step_up_instead_of_no_permission(
+        session: PhotoLibSession) -> None:
+    """再验证的 403 不是"没权限"：报成权限错误的话，模型只会告诉用户"做不了"。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"code": "STEP_UP_REQUIRED", "message": "该操作需要先完成两步验证"})
+
+    session.remember(StoredCredentials(access_token="a", refresh_token="r"))
+    _mount(session, handler)
+
+    with pytest.raises(StepUpRequiredError) as caught:
+        await session.request("DELETE", "/photos/1")
+    assert not isinstance(caught.value, PermissionDeniedError)
+    assert caught.value.code == "STEP_UP_REQUIRED"
+    assert "photolib_step_up" in str(caught.value)
+
+
+async def test_enrollment_403_points_to_the_browser(session: PhotoLibSession) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"code": "MFA_ENROLLMENT_REQUIRED", "message": "请先绑定两步验证设备"})
+
+    session.remember(StoredCredentials(access_token="a", refresh_token="r"))
+    _mount(session, handler)
+
+    with pytest.raises(MfaEnrollmentRequiredError) as caught:
+        await session.request("GET", "/projects")
+    assert caught.value.code == "MFA_ENROLLMENT_REQUIRED"
+    assert "浏览器" in str(caught.value)
 
 
 async def test_validation_details_reach_the_caller(session: PhotoLibSession) -> None:

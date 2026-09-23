@@ -116,6 +116,17 @@ def register(registry: ToolRegistry) -> None:
         """
         return await session.request("GET", "/auth/me")
 
+    # 不标 write：它不改任何业务数据，而只读模式下同样要用——审计日志等管理查询也要求再验证。
+    @registry.tool("step_up", tags=("auth",))
+    async def step_up(code: str) -> dict[str, Any]:
+        """用验证器 App 的 6 位验证码完成两步验证的"再验证"，之后 15 分钟内的删除和管理操作不再拦。
+
+        只在某个工具报 STEP_UP_REQUIRED 时调用。`code` 必须是**用户本人**从验证器 App 上读给你的
+        当前验证码：不要猜、不要自己重试多个值——连续输错会锁定再验证，还会通知本人。
+        验证成功后重新执行刚才被拦下的操作。只绑了安全密钥的账号无法在这里验证，请用户去浏览器操作。
+        """
+        return await session.request("POST", "/auth/mfa/step-up", json_body={"code": code.strip()})
+
     @registry.tool("logout", write=True, tags=("auth",))
     async def logout() -> dict[str, Any]:
         """注销本机的登录凭据，并让对应的会话在服务端失效。"""
