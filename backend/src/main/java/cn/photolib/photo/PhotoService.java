@@ -110,7 +110,7 @@ public class PhotoService {
         photo.setStatus(PhotoStatus.UPLOADING);
         // 直传地址的有效期跟着一起记下来：传了一半就走的那些，要等这个时刻过了
         // 才轮得到清理任务动手（Flyway V50）。
-        photo.setUploadUrlExpiresAt(LocalDateTime.now().plus(properties.uploadUrlTtl()));
+        photo.setUploadUrlExpiresAt(abandonedUploads.uploadUrlExpiresAt());
         mapper.insert(photo);
         // 归属链接：项目相册/计数以 photo_project 为准。新照片 id 全新，(photo_id,project_id) 不会撞主键。
         if (projectId != null) {

@@ -260,9 +260,14 @@ public class AbandonedUploadCleanupJob {
         }
     }
 
-    /** 直传地址的有效期，签票据时写进库里的那一份按这个算。 */
-    Duration uploadUrlTtl() {
-        return storageProperties.uploadUrlTtl();
+    /**
+     * 签票据时写进 {@code upload_url_expires_at} 的值。必须和上面比较用的是同一只时钟：
+     * 写的一方要是用 JVM 默认时区的 {@code LocalDateTime.now()}，宿主不在 Asia/Shanghai 时
+     * （CI 的 UTC runner）刚签出的票据就已经"过期"八小时，下一次 {@link #nudge()} 会把
+     * 还没传完的压缩包删掉。
+     */
+    public LocalDateTime uploadUrlExpiresAt() {
+        return LocalDateTime.now(clock).plus(storageProperties.uploadUrlTtl());
     }
 
     private record KeyedRow<T>(T id, String objectKey) {}
