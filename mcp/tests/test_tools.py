@@ -156,3 +156,21 @@ async def test_guest_share_tools_send_the_session_header(settings: Settings) -> 
     assert seen["share_session"] == "guest-session-1"
     # 访客通道整条不看登录令牌，带上它只会把一个受限会话卷进来。
     assert seen["authorization"] is None
+
+
+async def test_step_up_posts_the_code_to_the_step_up_endpoint(settings: Settings) -> None:
+    """复制来的验证码常带首尾空白；后端按 6 位数字校验，别让一个空格算成一次输错。"""
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["call"] = f"{request.method} {request.url.path}"
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"data": {
+            "required": True, "verified": True, "verifiedUntil": "2026-09-23T12:15:00",
+        }})
+
+    server = _server(settings, handler)
+    result = await server.call_tool("photolib_step_up", {"code": " 123456\n"})
+
+    assert seen == {"call": "POST /api/v1/auth/mfa/step-up", "body": {"code": "123456"}}
+    assert _payload(result)["verified"] is True

@@ -19,7 +19,7 @@ async def test_default_build_registers_every_module(settings: Settings) -> None:
 
     # 抽查每个模块的一个代表工具，确认整批都挂上了。
     for expected in [
-        "photolib_login", "photolib_whoami",
+        "photolib_login", "photolib_whoami", "photolib_step_up",
         "photolib_projects_list", "photolib_requests_list", "photolib_photos_list",
         "photolib_adoptions_ranking", "photolib_worklogs_list", "photolib_statistics_overview",
         "photolib_notifications_list", "photolib_directory_members_list",
@@ -47,6 +47,8 @@ async def test_read_only_mode_drops_write_tools(settings: Settings) -> None:
     assert "photolib_projects_delete" not in names
     assert "photolib_photos_batch_delete" not in names
     assert "photolib_database_backups_restore" not in names
+    # 再验证不改业务数据，而审计日志这类只读的管理查询同样要求它，只读模式下必须还在。
+    assert "photolib_step_up" in names
     # 通用出口仍在，但它自己会挡住写方法（见 tools/misc.py 的注释）。
     assert "photolib_api_request" in names
 

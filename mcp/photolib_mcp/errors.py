@@ -49,3 +49,39 @@ class PermissionDeniedError(PhotoLibError):
             code="FORBIDDEN",
             status=403,
         )
+
+
+class StepUpRequiredError(PhotoLibError):
+    """两步验证对这个账号生效，而这次操作（删除、系统管理）要求 15 分钟内再验证过一次。
+
+    后端回的是 403，但它不是"没权限"：权限够，只差本人再确认一次。按
+    :class:`PermissionDeniedError` 报的话，模型只会告诉用户"做不了"。
+    """
+
+    def __init__(self, message: str = "") -> None:
+        super().__init__(
+            _sentence(message or "该操作需要先完成两步验证")
+            + "请向用户要他验证器 App 上当前显示的 6 位验证码（必须由用户本人提供，不要猜、不要重复试），"
+              "调用 photolib_step_up 提交，成功后重新执行刚才的操作。15 分钟内的同类操作不必再验证。"
+              "只绑定了安全密钥的账号没法在这里验证，请用户到浏览器里完成这项操作。",
+            code="STEP_UP_REQUIRED",
+            status=403,
+        )
+
+
+class MfaEnrollmentRequiredError(PhotoLibError):
+    """账号所在权限组强制两步验证，但还没绑定设备：除了绑定什么都做不了。"""
+
+    def __init__(self, message: str = "") -> None:
+        super().__init__(
+            _sentence(message or "请先绑定两步验证设备")
+            + "账号所在的权限组要求两步验证，绑定要扫码或插安全密钥，只能由用户本人在浏览器里"
+              "登录 PhotoLib 完成；绑好之后这里的操作即可继续。",
+            code="MFA_ENROLLMENT_REQUIRED",
+            status=403,
+        )
+
+
+def _sentence(text: str) -> str:
+    """后端的报错不带句号，后面还要接一句指引。"""
+    return text.rstrip("。") + "。"
