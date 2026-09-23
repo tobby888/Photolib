@@ -172,7 +172,7 @@ git tag v1.0.0 && git push origin v1.0.0
 
 工作流固定了 Zig 版本与 SHA-256 校验值，升级 Zig 时需同步修改 `ZIG_VERSION` 与 `ZIG_SHA256`；
 Node 版本 `BUILD_NODE_VERSION` 应与 `backend/pom.xml` 的 `node.version` 保持一致。
-`TZ` 固定为 `Asia/Shanghai`：应用的业务时钟写死在该时区，runner 默认 UTC 会让依赖当前时间的测试失败。
+runner 有意保持默认的 UTC 时区：应用的业务时钟写死在 `Asia/Shanghai`，凡是和业务时钟比较的时间都必须用注入的 `Clock` 算，不能用 `LocalDateTime.now()`；CI 跑在 UTC 上正好把这类混用暴露出来。
 附件名里的 tag 只是给下载者看的，JAR 内部版本号仍来自 `backend/pom.xml`。
 
 ### Linux systemd 示例
