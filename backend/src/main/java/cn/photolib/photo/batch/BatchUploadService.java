@@ -102,7 +102,7 @@ public class BatchUploadService {
             item.setSize(file.size());
             item.setSha256(file.sha256());
             item.setStatus(BatchItemStatus.UPLOADING);
-            item.setUploadUrlExpiresAt(now.plus(storageProperties.uploadUrlTtl()));
+            item.setUploadUrlExpiresAt(abandonedUploads.uploadUrlExpiresAt());
             item.setCreatedAt(now);
             item.setUpdatedAt(now);
             itemMapper.insert(item);
@@ -219,7 +219,7 @@ public class BatchUploadService {
         batch.setArchiveObjectKey(key);
         batch.setArchiveFileName(request.archiveFileName());
         batch.setArchiveSize(request.archiveSize());
-        batch.setUploadUrlExpiresAt(now.plus(storageProperties.uploadUrlTtl()));
+        batch.setUploadUrlExpiresAt(abandonedUploads.uploadUrlExpiresAt());
         batch.setCreatedAt(now);
         batch.setUpdatedAt(now);
         batchMapper.insert(batch);

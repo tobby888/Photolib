@@ -1,5 +1,6 @@
 package cn.photolib.photo;
 
+import cn.photolib.photo.batch.BatchUploadService;
 import cn.photolib.storage.ObjectStorageService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -30,6 +31,7 @@ class AbandonedUploadCleanupJobTests {
     private static final long UPLOADER_ID = 7_951L;
 
     @Autowired private AbandonedUploadCleanupJob job;
+    @Autowired private BatchUploadService batchUploads;
     @Autowired private PhotoProcessingWorkspace workspace;
     @Autowired private ObjectStorageService storage;
     @Autowired private JdbcClient jdbc;
@@ -153,6 +155,24 @@ class AbandonedUploadCleanupJobTests {
         // 标成 FAILED，界面上才看得出这一包没成，而不是永远"上传中"。
         assertThat(batch[0]).isEqualTo("FAILED");
         assertThat(batch[1]).isNull();
+    }
+
+    @Test
+    void aFreshlySignedArchiveTicketIsNotAlreadyExpiredOnTheJobsClock() {
+        // 签票据时写的过期时间必须和本任务比较用的是同一只时钟。写的一方曾用 JVM 默认时区，
+        // 在 UTC 的 CI runner 上刚签出来的票据就比 Asia/Shanghai 的"现在"早了八小时，
+        // 签票据时顺手触发的清理会把还没传完的压缩包直接删掉。
+        BatchUploadService.BatchTicket ticket = batchUploads.createZipBatch(new BatchUploadService.ZipBatch(
+                null, null, UPLOADER_ID, null, "刚签的.zip", 1024L));
+
+        LocalDateTime expiresAt = jdbc.sql("SELECT upload_url_expires_at FROM photo_upload_batch WHERE id = :id")
+                .param("id", ticket.batchId()).query(LocalDateTime.class).single();
+        assertThat(expiresAt).isAfter(LocalDateTime.now(clock));
+
+        job.cleanup();
+
+        assertThat(jdbc.sql("SELECT archive_object_key FROM photo_upload_batch WHERE id = :id")
+                .param("id", ticket.batchId()).query(String.class).optional()).isPresent();
     }
 
     @Test
