@@ -114,10 +114,23 @@ public class MfaService {
         return settings();
     }
 
-    /** 系统管理员组固定为强制：它是整套权限的入口，不能被设成"不使用"。 */
+    /**
+     * 系统管理员组固定为强制：它是整套权限的入口，不能被设成"不使用"。
+     *
+     * <p>每个带令牌的请求都会走到这里（{@code AuthService.authenticate} → {@code toPrincipal}），
+     * 所以开关和设备数合成一条语句取，只多一次往返。设备数不能按"开关关着就不数"省掉：
+     * 前端要在开关关着时显示"已绑定，尚未生效"。开关也不做进程内缓存——改它的不止
+     * {@link #updateSettings}，缓存一旦和库对不上，就是整站的两步验证开关失灵。
+     */
     public MfaSummary summarize(Long userId, String groupCode, MfaPolicy groupPolicy) {
         MfaPolicy policy = "ADMIN".equals(groupCode) ? MfaPolicy.REQUIRED : groupPolicy;
-        return MfaSummary.of(systemEnabled(), policy, userId != null && confirmedDeviceCount(userId) > 0);
+        return jdbc.sql("""
+                        SELECT (SELECT enabled FROM mfa_setting WHERE id = 1) AS enabled,
+                               (SELECT COUNT(*) FROM mfa_device
+                                WHERE user_id = :userId AND confirmed_at IS NOT NULL) AS devices
+                        """).param("userId", userId)
+                .query((rs, row) -> MfaSummary.of(rs.getBoolean("enabled"), policy, rs.getLong("devices") > 0))
+                .single();
     }
 
     // ------------------------------------------------------------------ 设备
