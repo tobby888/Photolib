@@ -77,6 +77,15 @@ public class EndpointUploadLimitFilter extends OncePerRequestFilter {
                     && path.endsWith("/pdf"))) {
             return PdfUpload.MAX_BYTES + MULTIPART_OVERHEAD;
         }
+        // 直接作为教学资料上传的 PDF，和文档中心共用同一个上限。
+        // POST /api/v1/teaching 建新的，PUT /api/v1/teaching/{id}/file 换文件。
+        // 少了这条，Spring 会先把整个 multipart 正文落盘再交给 PdfUpload 拒绝——
+        // 上限只剩 spring.servlet.multipart.max-file-size（1.5 GiB），白等一场还占磁盘。
+        if (("POST".equals(request.getMethod()) && path.endsWith("/teaching"))
+                || ("PUT".equals(request.getMethod()) && path.contains("/teaching/")
+                    && path.endsWith("/file"))) {
+            return PdfUpload.MAX_BYTES + MULTIPART_OVERHEAD;
+        }
         if ("POST".equals(request.getMethod()) && path.endsWith("/database-backups/upload")) {
             return DATABASE_BACKUP_MAX_BYTES + MULTIPART_OVERHEAD;
         }

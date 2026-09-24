@@ -55,6 +55,8 @@ class PermissionGroupServiceTests {
                 PermissionCode.RECRUITMENT_PUBLISH, PermissionCode.FEATURED_MANAGE,
                 // 文档中心由管理员和部长负责编写，所以 V37 把 DOC_MANAGE 也发给了部长。
                 PermissionCode.DOC_MANAGE,
+                // 教学资料同样由管理员和部长维护，所以 V55 把 TEACHING_MANAGE 也发给了部长。
+                PermissionCode.TEACHING_MANAGE,
                 PermissionCode.STATISTICS_DOWNLOAD, PermissionCode.MANAGER_CAMPUS_ASSIGN);
         assertThat(manager.dataScope()).isEqualTo(DataScope.CAMPUS);
         // 校区负责人刻意不补 PROJECT_VIEW_ALL：它改动前就只看得到自己接到需求的选题。

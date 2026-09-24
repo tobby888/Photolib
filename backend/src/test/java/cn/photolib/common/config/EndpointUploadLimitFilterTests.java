@@ -1,5 +1,6 @@
 package cn.photolib.common.config;
 
+import cn.photolib.common.upload.PdfUpload;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -75,6 +76,29 @@ class EndpointUploadLimitFilterTests {
         assertThat(response.getStatus()).isEqualTo(413);
         assertThat(response.getContentAsString()).contains("FILE_TOO_LARGE");
     }
+    @Test
+    void rejectsOversizedTeachingMaterialUploadByDeclaredContentLength() throws Exception {
+        // 教学资料的 PDF 上限与文档中心共用 PdfUpload.MAX_BYTES；
+        // 用声明的 Content-Length 判断，避免测试真的分配 50 MiB 数组。
+        for (String[] call : new String[][]{
+                {"POST", "/api/v1/teaching"},
+                {"PUT", "/api/v1/teaching/7/file"}}) {
+            MockHttpServletRequest request = new MockHttpServletRequest(call[0], call[1]) {
+                @Override
+                public long getContentLengthLong() {
+                    return PdfUpload.MAX_BYTES + 1024 * 1024;
+                }
+            };
+            request.setRequestURI(call[1]);
+            MockHttpServletResponse response = new MockHttpServletResponse();
+
+            new EndpointUploadLimitFilter().doFilter(request, response, new MockFilterChain());
+
+            assertThat(response.getStatus()).isEqualTo(413);
+            assertThat(response.getContentAsString()).contains("FILE_TOO_LARGE");
+        }
+    }
+
     @Test
     void rejectsOversizedDatabaseBackupUploadByDeclaredContentLength() throws Exception {
         // 备份文件上限是 512 MiB，用声明的 Content-Length 判断，避免测试真的分配这么大的数组。
