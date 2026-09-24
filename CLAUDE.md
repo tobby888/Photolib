@@ -52,3 +52,17 @@ Run verification proportional to the change. Frontend changes: `npm run build` +
 ## OSS integration tests
 
 OSS integration tests must only run when valid credentials are explicitly provided — ordinary local/CI runs must not connect to a real bucket. Never commit AccessKeys, private bucket endpoints, signing secrets, or `.env`.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live as GitHub issues in `tobby888/Photolib`, managed via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Uses the five default triage role labels (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` at the repo root plus `docs/adr/`. See `docs/agents/domain.md`.
