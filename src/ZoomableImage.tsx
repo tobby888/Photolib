@@ -167,7 +167,7 @@ export default function ZoomableImage({ src, alt, refresh, resetKey, previewHint
       ref={frameRef}
       onPointerDown={startDrag} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag}
       onDoubleClick={event => zoomTo(zoomed ? MIN_SCALE : actualScale, { x: event.clientX, y: event.clientY })}>
-      <PreviewPhotoImg src={src} alt={alt} decoding="async" draggable={false} refresh={refresh}
+      <PreviewPhotoImg src={src} alt={alt} loading="eager" draggable={false} refresh={refresh}
         style={{ transform: `translate(${zoom.x}px, ${zoom.y}px) scale(${zoom.scale})` }}
         onLoad={event => setNatural({
           width: event.currentTarget.naturalWidth,

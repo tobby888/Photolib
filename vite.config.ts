@@ -5,6 +5,7 @@ import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { iconBarrelExports, parseBarrelExports, rewriteBarrelImports, type BarrelExports } from './build/barrelImports'
 import { createManualChunks } from './build/chunkStrategy'
+import { precompressAssets } from './build/precompress'
 
 /**
  * Rewrites `antd` / `@ant-design/icons` barrel imports to deep imports at build time. Importing the
@@ -40,7 +41,7 @@ function deepBarrelImports(): Plugin {
 const manualChunks = createManualChunks()
 
 export default defineConfig({
-  plugins: [react(), deepBarrelImports()],
+  plugins: [react(), deepBarrelImports(), precompressAssets()],
   build: {
     rollupOptions: {
       output: { manualChunks },

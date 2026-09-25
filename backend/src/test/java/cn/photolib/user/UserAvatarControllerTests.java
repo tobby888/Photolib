@@ -19,6 +19,7 @@ import org.springframework.security.test.context.support.WithMockUser;
 import javax.imageio.ImageIO;
 import java.awt.Color;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -82,7 +83,7 @@ class UserAvatarControllerTests {
         assertThat(userService.get(user.getId()).avatarUrl()).isEqualTo(firstUrl);
         assertThat(permissionGroups.toPrincipal(first).avatarUrl()).isEqualTo(firstUrl);
 
-        var imageResponse = controller.current(principal);
+        var imageResponse = controller.current(principal, null);
         assertThat(imageResponse.getHeaders().getCacheControl()).contains("private").contains("no-cache");
         assertThat(imageResponse.getHeaders().getFirst("X-Content-Type-Options")).isEqualTo("nosniff");
         assertThat(imageResponse.getHeaders().getContentType()).hasToString("image/png");
@@ -104,8 +105,38 @@ class UserAvatarControllerTests {
         assertThat(userMapper.selectById(user.getId()).getAvatarObjectKey()).isNull();
         assertThatThrownBy(() -> storage.stat(second.getAvatarObjectKey()))
                 .isInstanceOf(RuntimeException.class);
-        assertThatThrownBy(() -> controller.current(principal))
+        assertThatThrownBy(() -> controller.current(principal, null))
                 .isInstanceOf(BusinessException.class).hasMessageContaining("尚未设置头像");
+    }
+
+    @Test
+    void revisionedAvatarUrlIsCachedUntilTheAvatarChanges() throws Exception {
+        byte[] bytes = {(byte) 0x89, 'P', 'N', 'G'};
+        String objectKey = "avatars/" + user.getId() + "/cache-test.png";
+        storage.put(objectKey, new ByteArrayInputStream(bytes), bytes.length, "image/png");
+        user.setAvatarObjectKey(objectKey);
+        user.setAvatarContentType("image/png");
+        user.setAvatarSize((long) bytes.length);
+        userMapper.updateById(user);
+        int revision = userMapper.selectById(user.getId()).getVersion();
+        assertThat(userService.get(user.getId()).avatarUrl()).endsWith("?v=" + revision);
+
+        // 地址里的版本就是当前版本：换头像会换地址，这条地址下的内容不会再变。
+        var current = controller.get(user.getId(), revision);
+        assertThat(current.getHeaders().getCacheControl())
+                .contains("private").contains("immutable").doesNotContain("no-cache");
+        current.getBody().getInputStream().close();
+
+        // 拿着旧版本号来的请求，拿到的已经是换过的头像，不能按那条旧地址长期缓存。
+        var stale = controller.get(user.getId(), revision - 1);
+        assertThat(stale.getHeaders().getCacheControl())
+                .contains("private").contains("no-cache").doesNotContain("immutable");
+        stale.getBody().getInputStream().close();
+
+        var unversioned = controller.current(principal, null);
+        assertThat(unversioned.getHeaders().getCacheControl())
+                .contains("private").contains("no-cache").doesNotContain("immutable");
+        unversioned.getBody().getInputStream().close();
     }
 
     @Test

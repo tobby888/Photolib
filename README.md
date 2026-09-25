@@ -210,6 +210,11 @@ curl --fail http://127.0.0.1:8080/api/v1/actuator/health
 
 打包后的前端从 `http://服务器地址:8080/` 访问，页面路由形如 `/#/projects`。生产环境应在 HTTPS 反向代理后运行，并只允许反向代理访问应用端口。
 
+前端静态资源的缓存与压缩由应用自己负责（`StaticResourceConfig`），反向代理原样转发即可，不要改写这些响应头：
+
+- `/assets/*`：文件名带内容哈希，返回 `Cache-Control: public, max-age=31536000, immutable`；构建时已生成 `.br` / `.gz`，按浏览器的 `Accept-Encoding` 直接返回（带 `Content-Encoding` 和 `Vary: Accept-Encoding`）。代理上的 gzip 不会对已压缩的响应重复压缩。
+- `index.html`（以及 forward 到它的各条前端路由）：`Cache-Control: no-cache` + 按内容计算的 `ETag`，每次打开都回源确认，内容没变只回 304。发版后浏览器因此总能拿到引用新文件名的入口。
+
 ## 生产环境配置
 
 敏感配置只能通过环境变量、JAR 工作目录下受限权限的 `.env` 或密钥管理服务注入，不要提交到版本库。

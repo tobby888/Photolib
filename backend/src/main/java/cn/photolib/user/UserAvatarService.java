@@ -86,7 +86,7 @@ public class UserAvatarService {
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "用户尚未设置头像");
         }
         return new AvatarContent(storage.open(user.getAvatarObjectKey()),
-                user.getAvatarContentType(), user.getAvatarSize());
+                user.getAvatarContentType(), user.getAvatarSize(), revision(user));
     }
 
     public void cleanupAfterCommit(String objectKey) {
@@ -109,8 +109,12 @@ public class UserAvatarService {
         if (user == null || user.getId() == null || !StringUtils.hasText(user.getAvatarObjectKey())) {
             return null;
         }
-        int revision = user.getVersion() == null ? 1 : user.getVersion();
-        return "/api/v1/users/" + user.getId() + "/avatar?v=" + revision;
+        return "/api/v1/users/" + user.getId() + "/avatar?v=" + revision(user);
+    }
+
+    /** 头像地址里的 {@code v}：每次换头像都会随乐观锁版本号一起变。 */
+    private static int revision(UserEntity user) {
+        return user.getVersion() == null ? 1 : user.getVersion();
     }
 
     private boolean registerRollbackCleanup(String objectKey) {
@@ -151,6 +155,7 @@ public class UserAvatarService {
         }
     }
 
-    public record AvatarContent(InputStream input, String contentType, long size) {
+    /** @param revision 当前的头像版本，和 {@link #avatarUrl} 里的 {@code v} 是同一个数。 */
+    public record AvatarContent(InputStream input, String contentType, long size, int revision) {
     }
 }
