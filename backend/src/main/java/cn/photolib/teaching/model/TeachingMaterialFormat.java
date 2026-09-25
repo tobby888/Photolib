@@ -3,12 +3,32 @@ package cn.photolib.teaching.model;
 /**
  * 教学资料的文件格式。
  *
- * <p>首版只真正支持 {@link #PDF}：上传接口只收 PDF，展示也只有一个分支。
- * {@link #WORD} 与 {@link #PPT} 是<b>预留值</b>——把格式做成列而不是硬编码成 PDF，
- * 以后开放 Word/PPT 时不用改表结构，只需放开上传校验与展示分支。</p>
+ * <p>PDF 可在线预览；WORD / PPT 仅下载（浏览器原生无法预览 Office 文件）。
+ * 扩展名与 Content-Type 用在这里拼对象键、下载文件名和响应头。</p>
  */
 public enum TeachingMaterialFormat {
-    PDF,
-    WORD,
-    PPT
+    PDF("pdf", "application/pdf"),
+    WORD("docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+    PPT("pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+
+    private final String extension;
+    private final String contentType;
+
+    TeachingMaterialFormat(String extension, String contentType) {
+        this.extension = extension;
+        this.contentType = contentType;
+    }
+
+    public String extension() {
+        return extension;
+    }
+
+    public String contentType() {
+        return contentType;
+    }
+
+    /** 只有 PDF 有在线预览；Word/PPT 一律走下载。 */
+    public boolean previewable() {
+        return this == PDF;
+    }
 }

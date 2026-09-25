@@ -3,7 +3,6 @@ package cn.photolib.teaching;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
-import cn.photolib.common.upload.PdfUpload;
 import cn.photolib.common.util.PublicId;
 import cn.photolib.notification.NotificationService;
 import cn.photolib.storage.ObjectStorageService;
@@ -31,9 +30,9 @@ import java.util.Locale;
  *   <li><b>上传/替换/编辑/删除</b>由控制器上的 {@code TEACHING_MANAGE} 把门：默认只有管理员和部长。</li>
  * </ul>
  *
- * <p>首版只有 PDF：上传走 {@link PdfUpload} 校验（只看文件头，不信声明的 Content-Type），
- * 存储格式列写成 {@link TeachingMaterialFormat#PDF}。Word/PPT 的枚举值先留着，
- * 以后放开时不用改表结构。</p>
+ * <p>支持 PDF / Word(.docx) / PPT(.pptx)：上传时按文件字节嗅探格式（见
+ * {@link TeachingFileUpload}），一份资料只含一个文件、格式在创建时固定，换文件必须同格式。
+ * PDF 可在线预览，Word/PPT 仅下载。</p>
  *
  * <p>上传即发布：没有草稿态，新建完成立刻对图库成员可见，并给所有 {@code PHOTO_VIEW} 账户
  * 发一条站内通知（见 {@link #notifyPublished}）。</p>
@@ -51,7 +50,6 @@ public class TeachingService {
     public static final String FILE_URL_SUFFIX = "/file";
     public static final String DOWNLOAD_URL_SUFFIX = "/download";
     static final String EVENT_PUBLISHED = "TEACHING_PUBLISHED";
-    private static final String PDF_CONTENT_TYPE = "application/pdf";
     /**
      * 「图库成员」的定义：启用、未删除，且权限组带 {@code PHOTO_VIEW}。
      * 作者选择、发布通知、作者校验三处都从这一份里取，避免三份 SQL 慢慢走样。
@@ -134,7 +132,7 @@ public class TeachingService {
     @Transactional
     public Material create(String title, String description, String category, Long authorId,
                            MultipartFile file, AuthenticatedUser user) throws IOException {
-        PdfUpload.validate(file);
+        TeachingMaterialFormat format = TeachingFileUpload.detectAndValidate(file);
         if (mapper.countAll() >= MAX_MATERIALS) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
                     "教学资料数量已达上限（" + MAX_MATERIALS + "），请先清理不再需要的资料");
@@ -147,14 +145,14 @@ public class TeachingService {
         material.setDescription(normalizeDescription(description));
         material.setCategory(normalizeCategory(category));
         material.setAuthorId(requireGalleryMemberAuthor(authorId));
-        material.setFormat(TeachingMaterialFormat.PDF);
-        material.setObjectKey(objectKey(material.getPublicId()));
+        material.setFormat(format);
+        material.setObjectKey(objectKey(material.getPublicId(), format));
         material.setContentSize(file.getSize());
         material.setDownloadCount(0L);
         material.setCreatedBy(user.id());
         material.setUpdatedBy(user.id());
         mapper.insert(material);
-        storePdf(material.getObjectKey(), file);
+        storeFile(material.getObjectKey(), file, format);
         notifyPublished(material);
         return get(material.getPublicId());
     }
@@ -174,12 +172,18 @@ public class TeachingService {
     @Transactional
     public Material replaceFile(long id, MultipartFile file, int version, AuthenticatedUser user)
             throws IOException {
-        PdfUpload.validate(file);
         TeachingMaterialEntity material = requireMaterial(id);
-        String objectKey = objectKey(material.getPublicId());
+        TeachingMaterialFormat format = material.getFormat() == null
+                ? TeachingMaterialFormat.PDF : material.getFormat();
+        TeachingMaterialFormat detected = TeachingFileUpload.detectAndValidate(file);
+        if (detected != format) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                    "只能替换为相同格式的文件（当前是 " + format.extension() + "）");
+        }
+        String objectKey = objectKey(material.getPublicId(), format);
         requireUpdated(mapper.updateFile(id, objectKey, file.getSize(),
-                TeachingMaterialFormat.PDF.name(), user.id(), version, LocalDateTime.now()));
-        storePdf(objectKey, file);
+                format.name(), user.id(), version, LocalDateTime.now()));
+        storeFile(objectKey, file, format);
         return get(material.getPublicId());
     }
 
@@ -287,13 +291,14 @@ public class TeachingService {
         return value != null && value.toLowerCase(Locale.ROOT).contains(lowercaseNeedle);
     }
 
-    private String objectKey(String publicId) {
-        return "teaching/" + publicId + "/document.pdf";
+    private String objectKey(String publicId, TeachingMaterialFormat format) {
+        return "teaching/" + publicId + "/document." + format.extension();
     }
 
-    private void storePdf(String objectKey, MultipartFile file) throws IOException {
+    private void storeFile(String objectKey, MultipartFile file, TeachingMaterialFormat format)
+            throws IOException {
         try (InputStream input = file.getInputStream()) {
-            storage.put(objectKey, input, file.getSize(), PDF_CONTENT_TYPE);
+            storage.put(objectKey, input, file.getSize(), format.contentType());
         }
     }
 

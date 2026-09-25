@@ -1,6 +1,7 @@
 package cn.photolib.common.config;
 
 import cn.photolib.common.upload.InlineImageUpload;
+import cn.photolib.common.upload.OfficeUpload;
 import cn.photolib.common.upload.PdfUpload;
 import cn.photolib.common.util.UploadSizeLimitExceededException;
 import jakarta.servlet.ReadListener;
@@ -77,14 +78,15 @@ public class EndpointUploadLimitFilter extends OncePerRequestFilter {
                     && path.endsWith("/pdf"))) {
             return PdfUpload.MAX_BYTES + MULTIPART_OVERHEAD;
         }
-        // 直接作为教学资料上传的 PDF，和文档中心共用同一个上限。
+        // 教学资料现在也收 Word/PPT，早筛上限取各格式上限的最大值（OfficeUpload.MAX_BYTES），
+        // 服务层再按嗅探出的格式细分（PDF 50 / Word 20 / PPT 100 MiB）。
         // POST /api/v1/teaching 建新的，PUT /api/v1/teaching/{id}/file 换文件。
         // 少了这条，Spring 会先把整个 multipart 正文落盘再交给 PdfUpload 拒绝——
         // 上限只剩 spring.servlet.multipart.max-file-size（1.5 GiB），白等一场还占磁盘。
         if (("POST".equals(request.getMethod()) && path.endsWith("/teaching"))
                 || ("PUT".equals(request.getMethod()) && path.contains("/teaching/")
                     && path.endsWith("/file"))) {
-            return PdfUpload.MAX_BYTES + MULTIPART_OVERHEAD;
+            return OfficeUpload.MAX_BYTES + MULTIPART_OVERHEAD;
         }
         if ("POST".equals(request.getMethod()) && path.endsWith("/database-backups/upload")) {
             return DATABASE_BACKUP_MAX_BYTES + MULTIPART_OVERHEAD;
