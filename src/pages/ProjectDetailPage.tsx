@@ -14,7 +14,7 @@ import { useAuth } from '../auth'
 import { api, emptyPage } from '../api'
 import type {
   Adoption, BatchPublishResult, Campus, EntityId, PageData, Photo, PhotoRequest, Project, ProjectSelector,
-  SelectionCleanupPlan, SelectionCleanupResult, TaggedPhoto,
+  TaggedPhoto,
 } from '../types'
 import { DataState, StatusTag, PhotoStatusTag } from '../components'
 import { ContentFitTable } from '../ContentFitTable'
@@ -35,6 +35,7 @@ import { isPortalEvent, selectablePreview, usePhotoCardClick } from '../usePhoto
 import { matchPhotoCardShortcut, photoCardHint, usePhotoCardShortcuts } from '../photoCardShortcuts'
 import BatchTagModal from '../BatchTagModal'
 import type { BatchTagMode } from '../BatchTagModal'
+import type { SelectionCleanupMode } from '../SelectionCleanupModal'
 import TagSelect from '../TagSelect'
 import {
   DEPRECATED_TAG_LABEL, collectPhotographers, collectTagOptions, emptyProjectPhotoFilters, filterPhotos,
@@ -47,6 +48,7 @@ import ListPagination from '../ListPagination'
 import { GRID_PAGE_SIZES, clientTablePagination } from '../pagination'
 
 const ProjectShareLinksModal = lazy(() => import('../ProjectShareLinksModal'))
+const SelectionCleanupModal = lazy(() => import('../SelectionCleanupModal'))
 
 const projectStateCopy = {
   DRAFT: {
@@ -295,7 +297,8 @@ export default function ProjectDetailPage() {
   // 对只是来看看选题的人没有必要。
   const [selectorsOpen, setSelectorsOpen] = useState(false)
   const [selectorIds, setSelectorIds] = useState<string[]>([])
-  const [cleanupPlan, setCleanupPlan] = useState<SelectionCleanupPlan | null>(null)
+  // 活动选题结束时的图片清理弹窗：`complete` 是点「标记为已完成」打开的，`cleanup` 是完成之后再清理。
+  const [cleanupMode, setCleanupMode] = useState<SelectionCleanupMode | null>(null)
   const [batchDownloading, setBatchDownloading] = useState(false)
   // 部分校区发布失败时记下已成功的那一批；重试时带回这个批次号，重试成功的校区才会并进同一行。
   const [retryBatch, setRetryBatch] = useState<{ projectId: string; batchId: string } | null>(null)
@@ -699,40 +702,11 @@ export default function ProjectDetailPage() {
     } catch (reason) { message.error((reason as Error).message) } finally { setSaving(false) }
   }
 
-  // 清理不可撤销，所以先向后端要一份预演（要删几张、跳过几张），把数字写进确认框里。
-  const confirmCleanup = async () => {
-    let plan = cleanupPlan
-    try {
-      plan = await api<SelectionCleanupPlan>({ url: `/projects/${projectId}/selection/cleanup` })
-      setCleanupPlan(plan)
-    } catch (reason) {
-      message.error((reason as Error).message)
-      return
-    }
-    if (!plan.deletableCount) {
-      message.info(plan.adoptedSkippedCount
-        ? `没有可清理的图片：${plan.adoptedSkippedCount} 张虽然标记为${DEPRECATED_TAG_LABEL}，但已经被引用`
-        : `没有图片被标记为${DEPRECATED_TAG_LABEL}`)
-      return
-    }
-    modal.confirm({
-      title: '确认清理未选中的图片？',
-      content: <div>
-        <p>将永久删除 <strong>{plan.deletableCount}</strong> 张标记为{DEPRECATED_TAG_LABEL}的图片，
-          包括它们在对象存储里的原图、成品图和预览图。<strong>此操作不可撤销。</strong></p>
-        {!!plan.adoptedSkippedCount && <p>另有 {plan.adoptedSkippedCount} 张已经被引用，会被跳过。</p>}
-      </div>,
-      okText: `确认删除 ${plan.deletableCount} 张`,
-      okButtonProps: { danger: true },
-      onOk: async () => {
-        const result = await api<SelectionCleanupResult>({
-          method: 'POST', url: `/projects/${projectId}/selection/cleanup` })
-        message.success(`已删除 ${result.deletedCount} 张`
-          + (result.skippedAdoptedCount ? `，跳过已被引用的 ${result.skippedAdoptedCount} 张` : ''))
-        setCleanupPlan(null)
-        await reload()
-      },
-    })
+  // 只改状态、不提示也不刷新：由清理弹窗决定之后是否继续删图、何时刷新。
+  const markCompleted = async () => {
+    if (!data.project) return
+    await api({ method: 'POST', url: `/projects/${projectId}/status`,
+      data: { status: 'COMPLETED', version: data.project.version } })
   }
 
   const project = data.project
@@ -835,13 +809,16 @@ export default function ProjectDetailPage() {
         </div>
         <Space wrap>
           {canEdit && project.status === 'DRAFT' && <Button type="primary" icon={<RocketOutlined />} onClick={() => void changeStatus('ACTIVE')}>启动项目</Button>}
-          {canComplete && project.status === 'ACTIVE' && <Button type="primary" icon={<CheckCircleOutlined />} onClick={() => void changeStatus('COMPLETED')}>标记为已完成</Button>}
+          {canComplete && project.status === 'ACTIVE' && <Button type="primary" icon={<CheckCircleOutlined />}
+            onClick={() => project.canManageSelection
+              ? setCleanupMode('complete')
+              : void changeStatus('COMPLETED')}>标记为已完成</Button>}
           {canEdit && ['DRAFT', 'ACTIVE'].includes(project.status) && <Button danger icon={<StopOutlined />}
             onClick={() => modal.confirm({ title: '确认取消这个项目？', content: '取消后不能再创建需求，已有记录会继续保留。',
               okText: '确认取消', okButtonProps: { danger: true }, onOk: () => changeStatus('CANCELLED') })}>取消项目</Button>}
           {project.canManageSelection && project.status === 'COMPLETED' &&
-            <Button danger icon={<DeleteOutlined />} onClick={() => void confirmCleanup()}>
-              清理未选中的图片{project.deprecatedCount ? `（${project.deprecatedCount}）` : ''}</Button>}
+            <Button danger icon={<DeleteOutlined />} onClick={() => setCleanupMode('cleanup')}>
+              清理图片{project.deprecatedCount ? `（${DEPRECATED_TAG_LABEL} ${project.deprecatedCount}）` : ''}</Button>}
           {project.status === 'COMPLETED' && user?.permissionGroupCode === 'ADMIN' && <Button type="primary" onClick={reopen}>重新开放</Button>}
           {canDelete && (hasBusinessData
             ? <Tooltip title="选题下已有需求、图片或采用记录，只能取消，不能删除">
@@ -1048,6 +1025,10 @@ export default function ProjectDetailPage() {
       {shareOpen && <Suspense fallback={null}>
         <ProjectShareLinksModal projectId={projectId} open onClose={() => setShareOpen(false)}
           uploadLinksAvailable={isEvent && project.status === 'ACTIVE'} />
+      </Suspense>}
+      {cleanupMode && <Suspense fallback={null}>
+        <SelectionCleanupModal key={cleanupMode} open mode={cleanupMode} project={project} photos={data.photos}
+          onCancel={() => setCleanupMode(null)} onComplete={markCompleted} onFinished={reload} />
       </Suspense>}
     </>}
   </DataState>

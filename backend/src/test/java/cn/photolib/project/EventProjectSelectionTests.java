@@ -8,6 +8,7 @@ import cn.photolib.photo.PhotoTags;
 import cn.photolib.project.model.ProjectEntity;
 import cn.photolib.project.model.ProjectStatus;
 import cn.photolib.project.model.ProjectType;
+import cn.photolib.share.ProjectShareService;
 import cn.photolib.storage.ObjectStorageService;
 import cn.photolib.user.model.UserRole;
 import org.junit.jupiter.api.BeforeEach;
@@ -19,6 +20,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
 
@@ -262,8 +265,8 @@ class EventProjectSelectionTests {
     @Test
     void cleanupIsRefusedBeforeTheProjectIsCompleted() {
         insertAlbumPhoto(event.getId(), List.of(PhotoTags.DEPRECATED));
-        assertThat(selectionService.plan(event.getId(), owner).ready()).isFalse();
-        assertThatThrownBy(() -> selectionService.cleanup(event.getId(), owner))
+        assertThat(selectionService.plan(event.getId(), null, owner).ready()).isFalse();
+        assertThatThrownBy(() -> selectionService.cleanup(event.getId(), null, null, owner))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("选题完成之后");
     }
@@ -278,12 +281,12 @@ class EventProjectSelectionTests {
         assertThat(storage.find(droppedKey)).isPresent();
 
         complete();
-        var plan = selectionService.plan(event.getId(), owner);
+        var plan = selectionService.plan(event.getId(), null, owner);
         assertThat(plan.ready()).isTrue();
         assertThat(plan.deletableCount()).isEqualTo(1);
         assertThat(plan.adoptedSkippedCount()).isEqualTo(1);
 
-        var result = selectionService.cleanup(event.getId(), owner);
+        var result = selectionService.cleanup(event.getId(), null, null, owner);
         assertThat(result.deletedCount()).isEqualTo(1);
         assertThat(result.skippedAdoptedCount()).isEqualTo(1);
 
@@ -299,8 +302,8 @@ class EventProjectSelectionTests {
         // LIKE '%deprecated%' 会把它捞出来，但逐张重新解析标签之后必须排除掉。
         long lookalike = insertAlbumPhoto(event.getId(), List.of("not-deprecated-at-all"));
         complete();
-        assertThat(selectionService.plan(event.getId(), owner).deletableCount()).isZero();
-        assertThat(selectionService.cleanup(event.getId(), owner).deletedCount()).isZero();
+        assertThat(selectionService.plan(event.getId(), null, owner).deletableCount()).isZero();
+        assertThat(selectionService.cleanup(event.getId(), null, null, owner).deletedCount()).isZero();
         assertThat(deleted(lookalike)).isFalse();
     }
 
@@ -309,8 +312,143 @@ class EventProjectSelectionTests {
         projectService.replaceSelectors(event.getId(), List.of(SELECTOR_ID), owner);
         insertAlbumPhoto(event.getId(), List.of(PhotoTags.DEPRECATED));
         complete();
-        assertThatThrownBy(() -> selectionService.cleanup(event.getId(), selector))
+        assertThatThrownBy(() -> selectionService.cleanup(event.getId(), null, null, selector))
                 .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void cleanupFollowsTheChosenFilterAndStillNeverTouchesAdoptedPhotos() {
+        long opening = insertAlbumPhoto(event.getId(), List.of("开幕"));
+        long openingDropped = insertAlbumPhoto(event.getId(), List.of("开幕", PhotoTags.DEPRECATED));
+        long group = insertAlbumPhoto(event.getId(), List.of("合影"));
+        long openingAdopted = insertAlbumPhoto(event.getId(), List.of("开幕"));
+        adopt(event.getId(), openingAdopted);
+        // 在别的选题里被采用也算被引：跳过的依据比筛选里的「本选题被引」更宽。
+        long openingAdoptedElsewhere = insertAlbumPhoto(event.getId(), List.of("开幕"));
+        adopt(creation.getId(), openingAdoptedElsewhere);
+        var filter = filter(List.of("开幕"), null, null, List.of(), null);
+
+        var plan = selectionService.plan(event.getId(), filter, owner);
+        assertThat(plan.ready()).isFalse();
+        assertThat(plan.deletableCount()).isEqualTo(2);
+        assertThat(plan.adoptedSkippedCount()).isEqualTo(2);
+        assertThat(plan.samples()).extracting(ProjectSelectionService.CleanupSample::id)
+                .containsExactly(opening, openingDropped);
+        assertThat(plan.samples().getFirst().thumbnailUrl()).isNotBlank();
+
+        complete();
+        var result = selectionService.cleanup(event.getId(), filter, plan.planToken(), owner);
+        assertThat(result.deletedCount()).isEqualTo(2);
+        assertThat(result.skippedAdoptedCount()).isEqualTo(2);
+        assertThat(deleted(opening)).isTrue();
+        assertThat(deleted(openingDropped)).isTrue();
+        assertThat(deleted(group)).isFalse();
+        assertThat(deleted(openingAdopted)).isFalse();
+        assertThat(deleted(openingAdoptedElsewhere)).isFalse();
+    }
+
+    @Test
+    void photographerDateAndAdoptionFiltersMatchTheProjectDetailPage() {
+        long early = insertAlbumPhoto(event.getId(), List.of(), "张三", LocalDateTime.of(2026, 5, 1, 23, 59));
+        long lastDay = insertAlbumPhoto(event.getId(), List.of(), "张三", LocalDateTime.of(2026, 5, 3, 23, 59));
+        long nextDay = insertAlbumPhoto(event.getId(), List.of(), "张三", LocalDateTime.of(2026, 5, 4, 0, 0));
+        long otherPhotographer = insertAlbumPhoto(event.getId(), List.of(), "李四", LocalDateTime.of(2026, 5, 2, 12, 0));
+
+        // 两端都含整天：5 月 3 日 23:59 在内，5 月 4 日零点不在。
+        var byDate = selectionService.plan(event.getId(), filter(List.of(),
+                LocalDate.of(2026, 5, 2), LocalDate.of(2026, 5, 3), List.of("张三"), null), owner);
+        assertThat(byDate.samples()).extracting(ProjectSelectionService.CleanupSample::id)
+                .containsExactly(lastDay);
+
+        var byPhotographer = selectionService.plan(event.getId(),
+                filter(List.of(), null, null, List.of("李四", "王五"), null), owner);
+        assertThat(byPhotographer.samples()).extracting(ProjectSelectionService.CleanupSample::id)
+                .containsExactly(otherPhotographer);
+
+        adopt(event.getId(), early);
+        var notAdopted = selectionService.plan(event.getId(),
+                filter(List.of(), null, null, List.of(), ProjectShareService.AdoptionFilter.NOT_ADOPTED), owner);
+        assertThat(notAdopted.samples()).extracting(ProjectSelectionService.CleanupSample::id)
+                .containsExactly(lastDay, nextDay, otherPhotographer);
+        assertThat(notAdopted.adoptedSkippedCount()).isZero();
+
+        // 选「已被引」的结果一张也删不了：它们全都会被跳过。
+        var adopted = selectionService.plan(event.getId(),
+                filter(List.of(), null, null, List.of(), ProjectShareService.AdoptionFilter.ADOPTED), owner);
+        assertThat(adopted.deletableCount()).isZero();
+        assertThat(adopted.adoptedSkippedCount()).isEqualTo(1);
+    }
+
+    @Test
+    void anEmptyFilterFallsBackToTheDeprecatedTag() {
+        long dropped = insertAlbumPhoto(event.getId(), List.of(PhotoTags.DEPRECATED));
+        // 保留标签和以前一样不分大小写。
+        long droppedUpperCase = insertAlbumPhoto(event.getId(), List.of("Deprecated"));
+        long kept = insertAlbumPhoto(event.getId(), List.of("合影"));
+        complete();
+        var result = selectionService.cleanup(event.getId(),
+                filter(List.of(" "), null, null, List.of(""), null), null, owner);
+        assertThat(result.deletedCount()).isEqualTo(2);
+        assertThat(deleted(dropped)).isTrue();
+        assertThat(deleted(droppedUpperCase)).isTrue();
+        assertThat(deleted(kept)).isFalse();
+    }
+
+    @Test
+    void cleanupIsRefusedWhenTheResultChangedSinceThePreview() {
+        long first = insertAlbumPhoto(event.getId(), List.of("合影"));
+        long second = insertAlbumPhoto(event.getId(), List.of("开幕"));
+        var filter = filter(List.of("合影"), null, null, List.of(), null);
+        var plan = selectionService.plan(event.getId(), filter, owner);
+        assertThat(plan.deletableCount()).isEqualTo(1);
+
+        // 预览之后又有一张被打上「合影」：负责人确认的不是这一批了。
+        jdbc.sql("UPDATE photo SET tags_json = :tags WHERE id = :id")
+                .param("tags", PhotoTags.toJson(List.of("开幕", "合影"))).param("id", second).update();
+        complete();
+        assertThatThrownBy(() -> selectionService.cleanup(event.getId(), filter, plan.planToken(), owner))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("重新预览");
+        assertThat(deleted(first)).isFalse();
+        assertThat(deleted(second)).isFalse();
+
+        var fresh = selectionService.plan(event.getId(), filter, owner);
+        assertThat(fresh.planToken()).isNotEqualTo(plan.planToken());
+        assertThat(selectionService.cleanup(event.getId(), filter, fresh.planToken(), owner).deletedCount())
+                .isEqualTo(2);
+    }
+
+    @Test
+    void photosStillInThePipelineAreNeverCleanupCandidates() {
+        long processing = insertAlbumPhoto(event.getId(), List.of(PhotoTags.DEPRECATED));
+        jdbc.sql("UPDATE photo SET status='PROCESSING' WHERE id=:id").param("id", processing).update();
+        complete();
+        assertThat(selectionService.plan(event.getId(), null, owner).deletableCount()).isZero();
+        assertThat(selectionService.cleanup(event.getId(), null, null, owner).deletedCount()).isZero();
+        assertThat(deleted(processing)).isFalse();
+    }
+
+    @Test
+    void anInvertedDateRangeIsRejected() {
+        assertThatThrownBy(() -> filter(List.of(), LocalDate.of(2026, 5, 3), LocalDate.of(2026, 5, 2),
+                List.of(), null))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("不能晚于");
+    }
+
+    @Test
+    void theSampleIsSpreadAcrossTheWholeResultAndCappedInSize() {
+        int total = ProjectSelectionService.CLEANUP_SAMPLE_SIZE * 2 + 1;
+        List<Long> ids = new java.util.ArrayList<>();
+        for (int index = 0; index < total; index++) {
+            ids.add(insertAlbumPhoto(event.getId(), List.of(PhotoTags.DEPRECATED)));
+        }
+        var plan = selectionService.plan(event.getId(), null, owner);
+        assertThat(plan.deletableCount()).isEqualTo(total);
+        assertThat(plan.samples()).hasSize(ProjectSelectionService.CLEANUP_SAMPLE_SIZE);
+        assertThat(plan.samples().getFirst().id()).isEqualTo(ids.getFirst());
+        // 不是只给最前面那一段：最后一张样本落在后半截。
+        assertThat(plan.samples().getLast().id()).isGreaterThan(ids.get(total / 2));
     }
 
     @Test
@@ -335,8 +473,18 @@ class EventProjectSelectionTests {
         projectService.changeStatus(event.getId(), ProjectStatus.COMPLETED, current.getVersion(), owner);
     }
 
+    private static ProjectSelectionService.CleanupFilter filter(
+            List<String> tags, LocalDate takenFrom, LocalDate takenTo, List<String> photographers,
+            ProjectShareService.AdoptionFilter adoption) {
+        return new ProjectSelectionService.CleanupFilter(tags, takenFrom, takenTo, photographers, adoption);
+    }
+
     /** 直接建一张已经发布的图片并挂进相册；选片流程不关心它是怎么传上来的。 */
     private long insertAlbumPhoto(Long projectId, List<String> tags) {
+        return insertAlbumPhoto(projectId, tags, "活动拍摄者", LocalDateTime.now());
+    }
+
+    private long insertAlbumPhoto(Long projectId, List<String> tags, String photographer, LocalDateTime takenAt) {
         seed++;
         String objectKey = "photos/2026/event-" + projectId + "-" + seed + ".jpg";
         storage.put(objectKey, new ByteArrayInputStream("fake-jpeg".getBytes(StandardCharsets.UTF_8)),
@@ -345,11 +493,13 @@ class EventProjectSelectionTests {
                 INSERT INTO photo (project_id, title, photographer_student_id, photographer_name,
                                    uploaded_by, campus_id, taken_at, tags_json, width, height, size,
                                    content_type, object_key, stored_file_name, sha256, status, version, deleted)
-                VALUES (:projectId, :title, '20269500', '活动拍摄者', 9600, 9500, CURRENT_TIMESTAMP,
+                VALUES (:projectId, :title, '20269500', :photographer, 9600, 9500, :takenAt,
                         :tags, 6000, 4000, 9, 'image/jpeg', :objectKey, 'photo.jpg', :sha, 'AVAILABLE', 1, false)
                 """)
                 .param("projectId", projectId)
                 .param("title", "活动图片 " + seed)
+                .param("photographer", photographer)
+                .param("takenAt", takenAt)
                 .param("tags", PhotoTags.toJson(tags))
                 .param("objectKey", objectKey)
                 .param("sha", String.format("%064d", seed))

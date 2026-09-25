@@ -165,7 +165,7 @@ export interface Project extends BaseEntity {
   selectors?: ProjectSelector[]
   /** 当前账号能不能进这个选题的选片页。 */
   canSelect?: boolean
-  /** 当前账号能不能改选片人、能不能清理未选中的图片。 */
+  /** 当前账号能不能改选片人、能不能在选题结束时清理图片。 */
   canManageSelection?: boolean
   /** 相册里打了 deprecated 的图片数。 */
   deprecatedCount?: number
@@ -190,11 +190,27 @@ export interface SelectionPhoto {
   version: number
 }
 
-/** 清理未选中图片前的预演。`ready` 为 false 表示选题还没完成，只能看数字。 */
+/** 清理确认框里展示的一张待删图片。 */
+export interface SelectionCleanupSample {
+  id: EntityId
+  title?: string
+  photographerName: string
+  takenAt: string
+  tags: string[]
+  thumbnailUrl?: string
+}
+
+/**
+ * 按筛选条件清理图片前的预演。`ready` 为 false 表示选题还没完成，只能预览。
+ * `samples` 是从待删图片里均匀挑出的几张；`planToken` 是这批图片的指纹，执行时原样带回，
+ * 期间结果变了后端会拒绝。
+ */
 export interface SelectionCleanupPlan {
   ready: boolean
   deletableCount: number
   adoptedSkippedCount: number
+  samples: SelectionCleanupSample[]
+  planToken: string
 }
 
 export interface SelectionCleanupResult {

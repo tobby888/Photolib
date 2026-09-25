@@ -13,14 +13,16 @@ interface ProjectPhotoFilterBarProps {
   photographerOptions: readonly string[]
   /** 记录最近标签历史的范围；不传则不显示历史，也不记录。 */
   historyScope?: string
+  /** 标签在下拉里的显示名；不传就原样显示。 */
+  tagLabel?: (tag: string) => string
 }
 
 /**
- * 选题相册的一排筛选：标签、拍摄日期、拍摄者、被引状态。选题详情页（前端筛）和
- * 分享访客页（服务端筛）共用这一个组件，两边的筛选项因此不会各自漂移。
+ * 选题相册的一排筛选：标签、拍摄日期、拍摄者、被引状态。选题详情页（前端筛）、
+ * 分享访客页（服务端筛）和选题结束时的清理（服务端筛）共用这一个组件，几处的筛选项因此不会各自漂移。
  */
 export default function ProjectPhotoFilterBar(
-  { value, onChange, tagOptions, photographerOptions, historyScope }: ProjectPhotoFilterBarProps,
+  { value, onChange, tagOptions, photographerOptions, historyScope, tagLabel }: ProjectPhotoFilterBarProps,
 ) {
   // 只有在下拉框里新选的标签才记进历史；点「最近标签」只切换筛选，见 RecentTagChips。
   const selectTags = (tags: string[]) => {
@@ -35,8 +37,8 @@ export default function ProjectPhotoFilterBar(
     {historyScope && <RecentTagChips scope={historyScope} selected={value.tags}
       onChange={tags => onChange({ ...value, tags })} />}
     <Select mode="multiple" allowClear showSearch maxTagCount="responsive" style={{ minWidth: 220, flex: '1 1 220px' }}
-      placeholder="按标签筛选（同时包含）" value={value.tags}
-      options={tagOptions.map(tag => ({ value: tag, label: tag }))}
+      placeholder="按标签筛选（同时包含）" value={value.tags} optionFilterProp="label"
+      options={tagOptions.map(tag => ({ value: tag, label: tagLabel ? tagLabel(tag) : tag }))}
       notFoundContent="这些图片还没有标签"
       onChange={selectTags} />
     <DatePicker.RangePicker allowEmpty={[true, true]} style={{ flex: '0 1 280px' }}
