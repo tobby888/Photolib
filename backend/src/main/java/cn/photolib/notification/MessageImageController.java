@@ -34,7 +34,10 @@ public class MessageImageController {
     private final MessageImageAuthorizationService authorization;
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @PreAuthorize("hasAuthority('MESSAGE_SEND')")
+    // 上传对任何已登录成员开放：图片本体是谁的、谁能看，由 MessageImageAuthorizationService
+    // 在读侧收紧（上传人 + ADMIN + 投递到的人 + 反馈参与者），不是靠上传这道门。
+    // 否则普通成员无法在「问题反馈」正文里贴图。
+    @PreAuthorize("isAuthenticated()")
     ApiResponse<UploadResult> upload(@RequestPart("file") MultipartFile file,
                                      @AuthenticationPrincipal AuthenticatedUser user) throws IOException {
         if (file.isEmpty()) throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择图片");

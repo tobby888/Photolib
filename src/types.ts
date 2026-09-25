@@ -769,3 +769,50 @@ export interface McpAuthorizationRequest {
   /** 配对码还能猜错几次，归零后该请求作废。 */
   remainingAttempts: number
 }
+
+// ---------------------------------------------------------------------------
+// 网站问题反馈（消息中心承担）
+// ---------------------------------------------------------------------------
+
+/** 反馈分类：问题 / 建议。与后端 {@code FeedbackCategory} 名值一致。 */
+export type FeedbackCategory = 'ISSUE' | 'SUGGESTION'
+
+/** 反馈工单状态：待处理 / 处理中 / 已解决。与后端 {@code FeedbackStatus} 名值一致。 */
+export type FeedbackStatus = 'PENDING' | 'IN_PROGRESS' | 'RESOLVED'
+
+export interface FeedbackSummary {
+  id: EntityId
+  submitterId: EntityId
+  submitterName: string
+  title: string
+  category: FeedbackCategory
+  status: FeedbackStatus
+  createdAt: string
+  updatedAt: string
+  version: number
+}
+
+export interface FeedbackReply {
+  id: EntityId
+  authorId: EntityId
+  authorName: string
+  content?: string | null
+  contentHtml?: string | null
+  createdAt: string
+}
+
+export interface FeedbackStatusChange {
+  id: EntityId
+  fromStatus?: FeedbackStatus | null
+  toStatus: FeedbackStatus
+  operatorId: EntityId
+  operatorName: string
+  createdAt: string
+}
+
+export interface FeedbackDetail extends FeedbackSummary {
+  content?: string | null
+  contentHtml?: string | null
+  replies: FeedbackReply[]
+  statusChanges: FeedbackStatusChange[]
+}
