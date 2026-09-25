@@ -19,6 +19,7 @@ import { afterLoginRoute } from './loginRedirect'
 import {
   canManageTwoFactor, canViewProjects, hasAnyPermission, hasPermission, hasSystemAccess,
 } from './permissions'
+import RouteErrorBoundary from './RouteErrorBoundary'
 import SiteFooter from './SiteFooter'
 import UserAvatar from './UserAvatar'
 
@@ -330,7 +331,7 @@ function Shell() {
           <Alert className="preview-generation-alert" type="warning" showIcon
             message={previewStatus.message} description={previewStatus.errorMessage} />}
         <div className="route-stage" key={location.pathname}>
-          <Suspense fallback={<div className="route-loading">正在整理工作台…</div>}><Routes>
+          <RouteErrorBoundary><Suspense fallback={<div className="route-loading">正在整理工作台…</div>}><Routes>
             <Route path="/" element={<DashboardPage />} />
             <Route path="/projects" element={canViewProjects(user) ? <ProjectsPage /> : <Navigate to="/" />} />
             <Route path="/projects/:projectId" element={canViewProjects(user) ? <ProjectDetailPage /> : <Navigate to="/" />} />
@@ -369,7 +370,7 @@ function Shell() {
             <Route path="/mcp/authorize" element={<McpAuthorizePage />} />
             <Route path="/admin" element={user.permissionGroupCode === 'ADMIN' ? <AdminPage /> : <Navigate to="/" />} />
             <Route path="*" element={<NotFound />} />
-          </Routes></Suspense>
+          </Routes></Suspense></RouteErrorBoundary>
         </div>
         {/* 页脚对每个能进工作台的角色都显示，内容由管理员配置。 */}
         <SiteFooter className="shell-footer" />
