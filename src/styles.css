@@ -3061,3 +3061,24 @@ body {
 /* 内容区的页面级错误（RouteErrorBoundary）：只换掉这一页，侧栏和顶栏照常可用。 */
 .route-error { min-height: 45vh; }
 .route-error-detail { display: block; max-width: 640px; margin: 0 auto; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; word-break: break-all; }
+
+/* 选题结束时清理图片的确认框：把将被删除的图片摆出来让人过目。 */
+.cleanup-sample-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 12px;
+  max-height: 420px; overflow-y: auto; padding-right: 4px;
+}
+.cleanup-sample { margin: 0; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.cleanup-sample img, .cleanup-sample-empty {
+  width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block; border-radius: 6px;
+  background: var(--studio-paper);
+}
+.cleanup-sample-empty {
+  display: flex; align-items: center; justify-content: center; font-size: 12px;
+  color: var(--studio-muted);
+}
+.cleanup-sample figcaption {
+  display: flex; flex-direction: column; gap: 2px; font-size: 12px; line-height: 1.4;
+  color: var(--studio-muted);
+}
+.cleanup-sample figcaption span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cleanup-sample-title { color: var(--studio-ink); font-weight: 500; }

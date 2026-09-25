@@ -389,8 +389,8 @@ type BatchItemStatus = 'UPLOADING' | 'WAITING_METADATA' | 'PROCESSING' | 'SUCCEE
 | `POST /projects/{id}/selection/tags` | 选片人 | `{ photoIds, addTags?, removeTags? }` | `TaggedPhoto[]` |
 | `POST /projects/{id}/selection/photos/{photoId}/edit-tickets` | 选片人 | `{ contentType, size }` | `EditTicket` |
 | `POST /projects/{id}/selection/photos/{photoId}/apply-edit` | 选片人 | `{ sourceObjectKey, contentType, size, sha256 }` | `PhotoView` |
-| `GET /projects/{id}/selection/cleanup` | 选题负责人 | — | `{ ready, deletableCount, adoptedSkippedCount }` |
-| `POST /projects/{id}/selection/cleanup` | 选题负责人 | — | `{ deletedCount, skippedAdoptedCount }` |
+| `GET /projects/{id}/selection/cleanup` | 选题负责人 | 筛选参数（见下） | `{ ready, deletableCount, adoptedSkippedCount, samples, planToken }` |
+| `POST /projects/{id}/selection/cleanup` | 选题负责人 | `{ tags?, takenFrom?, takenTo?, photographers?, adoption?, planToken? }`（可省略请求体） | `{ deletedCount, skippedAdoptedCount }` |
 
 - `Selector` = `{ userId, displayName, username }`。
 - `SelectionPhoto` 比 `PhotoView` 少：没有学号、上传者和校区；多一个 `imageUrl`——成品图的
@@ -399,8 +399,17 @@ type BatchItemStatus = 'UPLOADING' | 'WAITING_METADATA' | 'PROCESSING' | 'SUCCEE
 - 标签规则与 §预设标签一致，另加一条：保留标签 `deprecated` 永远可加，且永远不会出现在选题预设里。
 - `apply-edit` 会**就地替换成品图**：新的 `objectKey`（全新 UUID）、新的 `sha256`/`size`/`width`/`height`，
   重新生成预览，并删掉被替换掉的旧对象。任何一步失败，图片记录保持原样。
-- `POST .../cleanup` 会永久删除打了 `deprecated` 的图片及其 OSS 对象，**不可撤销**；
-  仅在选题 `COMPLETED` 之后可用，已被引（`adoption`）的图片一律跳过。先调 `GET` 拿预演数字再确认。
+- 清理按筛选条件删除图片，条件与选题详情页那一排筛选一致：`tags` 同时包含（多值写成
+  `tags=a&tags=b`，「不可用」是 `deprecated`）、`takenFrom`/`takenTo`（`YYYY-MM-DD`，两端都含整天）、
+  `photographers` 任意其一、`adoption`（`ADOPTED`/`NOT_ADOPTED`，指在本选题里是否被采用）。
+  **一个条件都不带时按 `tags=deprecated` 处理**，与引入筛选之前的行为一致。开始日期晚于结束日期返回 `400`。
+- 只考虑相册里 `AVAILABLE`/`ARCHIVED` 的图片；在**任何**选题里被采用过的图片一律跳过，计入
+  `adoptedSkippedCount`，不论筛选条件怎么选。
+- `GET` 是预演，选题没完成时也能调（`ready=false`）。`samples` 是从待删图片里均匀挑出的至多 24 张
+  （`{ id, title, photographerName, takenAt, tags, thumbnailUrl }`），`planToken` 是这批待删图片的指纹。
+- `POST` 会永久删除图片及其 OSS 对象，**不可撤销**；仅在选题 `COMPLETED` 之后可用。带上预演拿到的
+  `planToken` 时，若此后结果变了（有人改了标签、采用了图片）返回 `409`，要求重新预览；不带则按当下的结果删除。
+  审计日志的 `details` 记录筛选条件和删除/跳过张数。
 
 ### 4.4 图片需求 `PhotoRequestEntity`
 
