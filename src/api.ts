@@ -1,4 +1,5 @@
 import axios, { type AxiosRequestConfig } from 'axios'
+import { isEnvelope, noCacheHeaders } from './apiEnvelope'
 import type { PageData, User } from './types'
 
 export interface ApiErrorDetail {
@@ -125,9 +126,12 @@ http.interceptors.response.use(
 )
 
 export async function api<T>(config: AxiosRequestConfig): Promise<T> {
+  let response
   try {
-    const { data } = await http.request<Envelope<T>>(config)
-    return data.data
+    response = await http.request<Envelope<T>>({
+      ...config,
+      headers: { ...noCacheHeaders(config.method), ...config.headers },
+    })
   } catch (error) {
     if (axios.isAxiosError(error)) {
       const body = error.response?.data as Envelope<unknown> | undefined
@@ -141,6 +145,11 @@ export async function api<T>(config: AxiosRequestConfig): Promise<T> {
     }
     throw error
   }
+  // 见 apiEnvelope.ts：拿到的不是本系统的信封时报一个可重试的错误，不把 undefined 交给页面。
+  if (!isEnvelope(response.status, response.data)) {
+    throw new ApiError('服务器返回的数据无法识别，请重试', 'INVALID_RESPONSE', response.status)
+  }
+  return response.data?.data as T
 }
 
 export const qs = (values: Record<string, unknown>) => Object.fromEntries(
