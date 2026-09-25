@@ -59,9 +59,16 @@ export interface PreviewPhotoProps
   fallback?: string
 }
 
-export default function PreviewPhoto({ src, refresh, fallback, ...rest }: PreviewPhotoProps) {
+/**
+ * 网格里一屏常有几十上百张，解码默认放到主线程之外，滚动和点选不被整批解码卡住。
+ *
+ * 这里不默认 `loading="lazy"`：antd 的 `<Image>` 会另起一个 `<img>` 探测同一个地址
+ * （见 `src/previewImage.ts`），那一份总是立即下载，给可见的这张加 lazy 也省不下流量。
+ * 真要按需加载得用下面的 `PreviewPhotoImg`。
+ */
+export default function PreviewPhoto({ src, refresh, fallback, decoding = 'async', ...rest }: PreviewPhotoProps) {
   const retry = usePreviewRetry(src, refresh)
-  return <Image {...rest} src={retry.src} crossOrigin={PREVIEW_CROSS_ORIGIN}
+  return <Image {...rest} decoding={decoding} src={retry.src} crossOrigin={PREVIEW_CROSS_ORIGIN}
     onError={retry.onError} fallback={retry.failed ? fallback : undefined} />
 }
 
@@ -72,11 +79,18 @@ export interface PreviewPhotoImgProps
   fallback?: string
 }
 
-/** 裸 `<img>` 版本，给不能接受 antd 多包一层 DOM 的位置用。 */
-export function PreviewPhotoImg({ src, refresh, fallback, ...rest }: PreviewPhotoImgProps) {
+/**
+ * 裸 `<img>` 版本，给不能接受 antd 多包一层 DOM 的位置用。
+ *
+ * 默认 `loading="lazy"`：没有 antd 的探测请求，屏幕外的图真的不会下载，长网格只取看得见的
+ * 那几张。首屏就要看的大图（例如详情页的缩放视图）自己传 `loading="eager"`。
+ */
+export function PreviewPhotoImg({
+  src, refresh, fallback, loading = 'lazy', decoding = 'async', ...rest
+}: PreviewPhotoImgProps) {
   const retry = usePreviewRetry(src, refresh)
   const showFallback = retry.failed && !!fallback
-  return <img {...rest} src={showFallback ? fallback : retry.src}
+  return <img {...rest} loading={loading} decoding={decoding} src={showFallback ? fallback : retry.src}
     crossOrigin={PREVIEW_CROSS_ORIGIN}
     // 占位图自己再失败时不能绕回来，否则就是一个死循环。
     onError={showFallback ? undefined : retry.onError} />

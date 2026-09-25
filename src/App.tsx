@@ -111,7 +111,8 @@ function Shell() {
   const screens = Grid.useBreakpoint()
   const [collapsed, setCollapsed] = useState(false)
   const branding = useBranding()
-  const [notifications, setNotifications] = useState<Notification[]>([])
+  // 列表只在铃铛面板打开时才取；在此之前是 null，面板显示"正在加载"而不是"暂无消息"。
+  const [notifications, setNotifications] = useState<Notification[] | null>(null)
   const [unreadCount, setUnreadCount] = useState(0)
   const [notificationOpen, setNotificationOpen] = useState(false)
   const [avatarSettingsOpen, setAvatarSettingsOpen] = useState(false)
@@ -133,17 +134,48 @@ function Shell() {
       setUnreadCount(unread.count)
     } catch {
       // The shell stays usable during a temporary notification service failure.
+      setNotifications((current) => current ?? [])
+    }
+  }
+  const loadUnreadCount = async () => {
+    try {
+      setUnreadCount((await api<{ count: number }>({ url: '/notifications/unread-count' })).count)
+    } catch {
+      // 同上：角标取不到就先保持原样。
     }
   }
   // 未登录时外壳只是"马上跳登录页"的一层壳（早退发生在下面的 Navigate），但 Hook
   // 已经跑过了：不挡住下面两个轮询，匿名访客每次落到外壳（首页，或路径式深链被
   // 弹回来的那一下）都会去打需要鉴权的接口，连带触发一次注定失败的 /auth/refresh。
   const shellPollingEnabled = !!user && user.dataScope !== 'NONE'
+  // 轮询只为铃铛上的角标，所以只取未读数；整张列表等面板打开时再取（见 Popover 的 onOpenChange）。
+  // 标签页在后台时停掉：一个人常常开着好几个标签页，看不见的角标没必要每 30 秒各问一次，
+  // 切回来时立刻补一次。
   useEffect(() => {
     if (!shellPollingEnabled) return
-    void loadNotifications()
-    const timer = window.setInterval(() => void loadNotifications(), 30_000)
-    return () => window.clearInterval(timer)
+    let timer: number | undefined
+    const start = () => {
+      timer ??= window.setInterval(() => void loadUnreadCount(), 30_000)
+    }
+    const stop = () => {
+      if (timer !== undefined) window.clearInterval(timer)
+      timer = undefined
+    }
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        stop()
+        return
+      }
+      void loadUnreadCount()
+      start()
+    }
+    void loadUnreadCount()
+    if (document.visibilityState !== 'hidden') start()
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      stop()
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
   }, [shellPollingEnabled])
   useEffect(() => {
     if (!shellPollingEnabled) return
@@ -175,8 +207,8 @@ function Shell() {
   const markRead = async (item: Notification) => {
     if (!item.readAt) {
       await api<void>({ method: 'post', url: `/notifications/${item.id}/read` })
-      setNotifications((current) => current.map((value) =>
-        value.id === item.id ? { ...value, readAt: new Date().toISOString() } : value))
+      setNotifications((current) => current?.map((value) =>
+        value.id === item.id ? { ...value, readAt: new Date().toISOString() } : value) ?? current)
       setUnreadCount((count) => Math.max(0, count - 1))
     }
     const feedbackUrl = feedbackThreadUrl(item)
@@ -193,7 +225,7 @@ function Shell() {
   }
   const markAllRead = async () => {
     await api<void>({ method: 'post', url: '/notifications/read-all' })
-    setNotifications((current) => current.map((item) => ({ ...item, readAt: item.readAt || new Date().toISOString() })))
+    setNotifications((current) => current?.map((item) => ({ ...item, readAt: item.readAt || new Date().toISOString() })) ?? current)
     setUnreadCount(0)
   }
   const nav = useMemo(() => {
@@ -256,10 +288,8 @@ function Shell() {
   const selected = location.pathname.startsWith('/recruitment-applications/')
     ? '/recruitments'
     : location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`
-  return <Layout className="app-shell" onPointerMove={(event) => {
-    event.currentTarget.style.setProperty('--pointer-x', `${event.clientX}px`)
-    event.currentTarget.style.setProperty('--pointer-y', `${event.clientY}px`)
-  }}>
+  const notificationLoading = <div className="notification-panel notification-loading">正在加载消息…</div>
+  return <Layout className="app-shell">
     <Sider className="side-nav" width={236} collapsedWidth={mobile ? 0 : 72}
       collapsed={collapsed} breakpoint="md" trigger={null} theme="light">
       <div className="brand" onClick={() => navigate('/')}>
@@ -297,10 +327,12 @@ function Shell() {
           }} trigger="click" placement="bottomRight" content={
             // The element itself must stay truthy even while closed: antd keeps a popover with
             // empty content shut, which would leave the bell dead until the panel loads.
-            <Suspense fallback={<div className="notification-panel notification-loading">正在加载消息…</div>}>
-              {notificationOpen && <NotificationPanel notifications={notifications} unreadCount={unreadCount}
-                onOpen={(item) => void markRead(item)} onMarkAllRead={() => void markAllRead()}
-                onViewAll={() => { setNotificationOpen(false); navigate('/notifications') }} />}
+            <Suspense fallback={notificationLoading}>
+              {notificationOpen && (notifications
+                ? <NotificationPanel notifications={notifications} unreadCount={unreadCount}
+                  onOpen={(item) => void markRead(item)} onMarkAllRead={() => void markAllRead()}
+                  onViewAll={() => { setNotificationOpen(false); navigate('/notifications') }} />
+                : notificationLoading)}
             </Suspense>}>
             <Badge count={unreadCount} size="small" overflowCount={99}>
               <Button aria-label="消息通知" type="text" shape="circle" icon={<BellOutlined />} />
