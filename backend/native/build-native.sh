@@ -17,8 +17,14 @@ OUTPUT_DIRECTORY=$(CDPATH= cd -- "$OUTPUT_DIRECTORY" && pwd)
 BUILD_DIRECTORY=$(CDPATH= cd -- "$BUILD_DIRECTORY" && pwd)
 
 DEPENDENCY_DIRECTORY="$BUILD_DIRECTORY/dependencies"
-ARCHIVE_DIRECTORY="$DEPENDENCY_DIRECTORY/archives"
+# 下载的压缩包放在 target 之外、整台机器共用（和 ~/.m2 同理）：放在 target 里的话，
+# 每次 clean、每个新 worktree 都要重新从 GitHub 拉。每个包都核对 SHA256，共用是安全的。
+# PHOTOLIB_NATIVE_CACHE 可改位置。
+ARCHIVE_DIRECTORY=${PHOTOLIB_NATIVE_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/photolib/native-archives}
 DEPENDENCY_SOURCE_DIRECTORY="$DEPENDENCY_DIRECTORY/sources"
+# GitHub 慢的网络可以设 PHOTOLIB_GITHUB_MIRROR 为镜像前缀（如 https://ghfast.top/），
+# 只作用于 github.com / codeload.github.com 的地址；校验和不变，镜像给错字节会直接失败。
+GITHUB_MIRROR=${PHOTOLIB_GITHUB_MIRROR:-}
 
 mkdir -p "$ARCHIVE_DIRECTORY" "$DEPENDENCY_SOURCE_DIRECTORY"
 
@@ -33,8 +39,17 @@ get_verified_archive() {
         fi
     fi
     if [ ! -f "$path" ]; then
-        curl -fsSL --connect-timeout 30 --retry 5 --retry-all-errors \
-            -o "$path" "$url"
+        case "$url" in
+            https://github.com/*|https://codeload.github.com/*)
+                if [ -n "$GITHUB_MIRROR" ]; then
+                    url="${GITHUB_MIRROR%/}/$url"
+                fi
+                ;;
+        esac
+        # 先下到临时文件再改名：下到一半被打断的话，共享缓存里不会留下半截文件。
+        curl -fSL --connect-timeout 30 --retry 5 --retry-all-errors \
+            -o "$path.part" "$url"
+        mv -f "$path.part" "$path"
     fi
     actual_sha256=$(sha256sum "$path" | awk '{print $1}')
     if [ "$actual_sha256" != "$expected_sha256" ]; then
@@ -99,7 +114,7 @@ VIPS_VERSION=1.3.2
 VIPS_WINDOWS_ARCHIVE="$ARCHIVE_DIRECTORY/sharp-libvips-win32-x64-$VIPS_VERSION.tgz"
 VIPS_WINDOWS_SOURCE="$DEPENDENCY_SOURCE_DIRECTORY/sharp-libvips-win32-x64-$VIPS_VERSION"
 get_verified_archive \
-    "https://registry.npmjs.org/@img/sharp-libvips-win32-x64/-/sharp-libvips-win32-x64-$VIPS_VERSION.tgz" \
+    "https://registry.npmmirror.com/@img/sharp-libvips-win32-x64/-/sharp-libvips-win32-x64-$VIPS_VERSION.tgz" \
     "$VIPS_WINDOWS_ARCHIVE" \
     bcae355919358e0406c1674d0beaf841e9b11f321f8a54b927cddf4935c27668
 if [ ! -f "$VIPS_WINDOWS_SOURCE/package/lib/libvips-42.dll" ]; then
@@ -110,7 +125,7 @@ fi
 VIPS_LINUX_ARCHIVE="$ARCHIVE_DIRECTORY/sharp-libvips-linux-x64-$VIPS_VERSION.tgz"
 VIPS_LINUX_SOURCE="$DEPENDENCY_SOURCE_DIRECTORY/sharp-libvips-linux-x64-$VIPS_VERSION"
 get_verified_archive \
-    "https://registry.npmjs.org/@img/sharp-libvips-linux-x64/-/sharp-libvips-linux-x64-$VIPS_VERSION.tgz" \
+    "https://registry.npmmirror.com/@img/sharp-libvips-linux-x64/-/sharp-libvips-linux-x64-$VIPS_VERSION.tgz" \
     "$VIPS_LINUX_ARCHIVE" \
     8cf0eafeaca832b68942fe1a770fb5f3b490504d3a9f2e3f56ee8784c9d65c45
 if [ ! -f "$VIPS_LINUX_SOURCE/package/lib/libvips-cpp.so.8.18.3" ]; then
