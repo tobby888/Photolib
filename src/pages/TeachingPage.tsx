@@ -29,9 +29,6 @@ interface MaterialFormValues {
 
 const FILE_ACCEPT = '.pdf,.docx,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation'
 
-const formatExtension = (format: TeachingMaterialFormat) =>
-  format === 'PDF' ? 'pdf' : format === 'WORD' ? 'docx' : 'pptx'
-
 const formatLabel = (format: TeachingMaterialFormat) =>
   format === 'PDF' ? 'PDF' : format === 'WORD' ? 'Word' : 'PPT'
 
@@ -53,8 +50,8 @@ const fileListOf = (file: File | null) =>
 
 /**
  * PDF 走 `/file`（inline，不计数）在线预览；Word/PPT 不支持预览，只给下载。
- * 下载一律走 `/download`（attachment，计数 +1）。
- * 和文档中心一样必须带令牌取 Blob：`<iframe src>` 不会带 localStorage 里的令牌。
+ * 下载一律走 `POST /download`（计数 +1，换一个签名地址交给浏览器直接去取）。
+ * 预览和文档中心一样必须带令牌取 Blob：`<iframe src>` 不会带 localStorage 里的令牌。
  */
 function FilePreview({ material, onDownload }: {
   material: TeachingMaterial
@@ -153,6 +150,12 @@ export default function TeachingPage() {
 
   const [category, setCategory] = useState<string>()
   const [keyword, setKeyword] = useState('')
+  // 请求只跟着停手 300ms 后的关键字走，不是每敲一个字就查一次。
+  const [query, setQuery] = useState('')
+  useEffect(() => {
+    const timer = window.setTimeout(() => setQuery(keyword), 300)
+    return () => window.clearTimeout(timer)
+  }, [keyword])
   const [reloadToken, setReloadToken] = useState(0)
   const [submitting, setSubmitting] = useState(false)
 
@@ -170,8 +173,8 @@ export default function TeachingPage() {
   const [renameForm] = Form.useForm<{ from: string; to: string }>()
 
   const list = useLoad(
-    () => api<TeachingMaterial[]>({ url: '/teaching/materials', params: qs({ category, q: keyword }) }),
-    [] as TeachingMaterial[], [category, keyword, reloadToken])
+    () => api<TeachingMaterial[]>({ url: '/teaching/materials', params: qs({ category, q: query }) }),
+    [] as TeachingMaterial[], [category, query, reloadToken])
   const categories = useLoad(
     () => api<string[]>({ url: '/teaching/materials/categories' }), [] as string[], [reloadToken])
   const authors = useLoad(
@@ -195,16 +198,12 @@ export default function TeachingPage() {
 
   const download = async (material: TeachingMaterial) => {
     try {
-      const blob = await http.get<Blob>(`/teaching/materials/${material.publicId}/download`,
-        { responseType: 'blob' }).then(response => response.data)
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = `${material.title}.${formatExtension(material.format)}`
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-      URL.revokeObjectURL(url)
+      const target = await api<{ downloadUrl: string }>({
+        method: 'post', url: `/teaching/materials/${material.publicId}/download`,
+      })
+      // 交给浏览器直接取签名地址（响应是 attachment，页面不会跳走），不把整个文件读进内存。
+      // **不要**用 axios 实例转发：请求拦截器带上的 Bearer 头会让 OSS 预签名地址失效。
+      window.location.assign(target.downloadUrl)
       refresh()
     } catch (reason) {
       reportError(reason)
@@ -400,18 +399,15 @@ export default function TeachingPage() {
           <Space size="small" wrap style={{ marginBottom: 8 }}>
             <Tag color="blue">{formatLabel(selected.format)}</Tag>
             <Tag>{selected.category}</Tag>
-            {/* 作者/上传人/大小/下载次数/时间只给有编辑权限的人看：这些是管理信息，
-                普通图库成员只需要标题、分类和简介。 */}
-            {canManage && <>
-              {selected.authorName && <Typography.Text type="secondary">作者：{selected.authorName}</Typography.Text>}
-              {selected.uploaderName && <Typography.Text type="secondary">上传人：{selected.uploaderName}</Typography.Text>}
-              <Typography.Text type="secondary">{formatSize(selected.size)}</Typography.Text>
-              <Typography.Text type="secondary">下载 {selected.downloadCount} 次</Typography.Text>
-              {selected.createdAt && <Typography.Text type="secondary">
-                上传 {dayjs(selected.createdAt).format('YYYY-MM-DD HH:mm')}</Typography.Text>}
-              {selected.updatedAt && <Typography.Text type="secondary">
-                更新 {dayjs(selected.updatedAt).format('YYYY-MM-DD HH:mm')}</Typography.Text>}
-            </>}
+            {/* 元数据给全体图库成员看：打开或下载前就能知道这是谁的、多大、什么时候传的。 */}
+            {selected.authorName && <Typography.Text type="secondary">作者：{selected.authorName}</Typography.Text>}
+            {selected.uploaderName && <Typography.Text type="secondary">上传人：{selected.uploaderName}</Typography.Text>}
+            <Typography.Text type="secondary">{formatSize(selected.size)}</Typography.Text>
+            <Typography.Text type="secondary">下载 {selected.downloadCount} 次</Typography.Text>
+            {selected.createdAt && <Typography.Text type="secondary">
+              上传 {dayjs(selected.createdAt).format('YYYY-MM-DD HH:mm')}</Typography.Text>}
+            {selected.updatedAt && <Typography.Text type="secondary">
+              更新 {dayjs(selected.updatedAt).format('YYYY-MM-DD HH:mm')}</Typography.Text>}
           </Space>
           {selected.description && <Typography.Paragraph type="secondary">
             {selected.description}</Typography.Paragraph>}

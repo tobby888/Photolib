@@ -6,6 +6,7 @@ import cn.photolib.common.error.ErrorCode;
 import cn.photolib.common.util.PublicId;
 import cn.photolib.notification.NotificationService;
 import cn.photolib.storage.ObjectStorageService;
+import cn.photolib.storage.StorageProperties;
 import cn.photolib.teaching.mapper.TeachingMaterialMapper;
 import cn.photolib.teaching.model.TeachingMaterialEntity;
 import cn.photolib.teaching.model.TeachingMaterialFormat;
@@ -18,9 +19,11 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 
 /**
  * 教学资料。两条访问路径的规则分开：
@@ -69,6 +72,7 @@ public class TeachingService {
     private final ObjectStorageService storage;
     private final NotificationService notifications;
     private final JdbcClient jdbc;
+    private final StorageProperties storageProperties;
 
     // ------------------------------------------------------------------
     // 读取（图库成员）
@@ -119,10 +123,21 @@ public class TeachingService {
         return storage.open(material.getObjectKey());
     }
 
-    /** 下载计数只在真正下载时 +1；预览读同一个对象，不计数。 */
+    /**
+     * 下载：确认对象确实在存储里之后计数 +1，再签一个短时的下载地址，由浏览器直接去存储取，
+     * 不经后端转发。预览读同一个对象，不走这里，所以不计数。
+     */
     @Transactional
-    public void recordDownload(long id) {
-        mapper.incrementDownloadCount(id);
+    public Download download(String publicId) {
+        TeachingMaterialEntity material = requireReadable(publicId);
+        if (storage.find(material.getObjectKey()).isEmpty()) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "教学资料的文件不存在");
+        }
+        mapper.incrementDownloadCount(material.getId());
+        String fileName = material.getTitle() + "." + material.getFormat().extension();
+        ObjectStorageService.SignedUrl signed = storage.presignGet(
+                material.getObjectKey(), fileName, storageProperties.downloadUrlTtl());
+        return new Download(signed.url().toString(), signed.expiresAt(), fileName);
     }
 
     // ------------------------------------------------------------------
@@ -163,8 +178,11 @@ public class TeachingService {
         TeachingMaterialEntity material = requireMaterial(id);
         String cleanTitle = normalizeTitle(title);
         requireUniqueTitle(cleanTitle, id);
+        // 只校验新选的作者：原作者后来被禁用或移出图库，不该挡住改错别字这类编辑。
+        Long cleanAuthorId = Objects.equals(authorId, material.getAuthorId())
+                ? authorId : requireGalleryMemberAuthor(authorId);
         requireUpdated(mapper.updateMetadata(id, cleanTitle, normalizeDescription(description),
-                normalizeCategory(category), requireGalleryMemberAuthor(authorId), user.id(),
+                normalizeCategory(category), cleanAuthorId, user.id(),
                 version, LocalDateTime.now()));
         return get(material.getPublicId());
     }
@@ -227,12 +245,11 @@ public class TeachingService {
         return found;
     }
 
-    /** 新建即发布：给所有图库成员发一条站内通知。 */
+    /** 新建即发布：给所有图库成员发一条站内通知。只发站内信，不走企业微信/邮件。 */
     private void notifyPublished(TeachingMaterialEntity material) {
         String subject = "新的教学资料：" + material.getTitle();
         String body = NotificationService.paragraphs(material.getTitle(), material.getCategory());
-        galleryMemberIds().forEach(userId -> notifications.notifyUser(
-                userId, EVENT_PUBLISHED, subject, body));
+        notifications.notifyInApp(galleryMemberIds(), EVENT_PUBLISHED, subject, body);
     }
 
     private List<Long> galleryMemberIds() {
@@ -335,5 +352,9 @@ public class TeachingService {
 
     /** 作者下拉的一个候选项。 */
     public record AuthorOption(long id, String displayName) {
+    }
+
+    /** 一次下载的签名地址。 */
+    public record Download(String downloadUrl, Instant expiresAt, String fileName) {
     }
 }

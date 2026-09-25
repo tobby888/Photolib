@@ -24,7 +24,7 @@ public interface TeachingMaterialMapper extends BaseMapper<TeachingMaterialEntit
                    u.display_name AS uploader_display_name
             FROM teaching_material m
             LEFT JOIN app_user a ON a.id = m.author_id
-            LEFT JOIN app_user u ON u.id = COALESCE(m.updated_by, m.created_by)
+            LEFT JOIN app_user u ON u.id = m.created_by
             WHERE m.deleted = FALSE
             ORDER BY m.created_at DESC, m.id DESC
             """)
@@ -35,7 +35,7 @@ public interface TeachingMaterialMapper extends BaseMapper<TeachingMaterialEntit
                    u.display_name AS uploader_display_name
             FROM teaching_material m
             LEFT JOIN app_user a ON a.id = m.author_id
-            LEFT JOIN app_user u ON u.id = COALESCE(m.updated_by, m.created_by)
+            LEFT JOIN app_user u ON u.id = m.created_by
             WHERE m.public_id = #{publicId} AND m.deleted = FALSE
             """)
     TeachingMaterialEntity findByPublicId(@Param("publicId") String publicId);
