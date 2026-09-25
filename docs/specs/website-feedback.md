@@ -69,12 +69,12 @@
 - **提交入口**：消息中心页加「我要反馈」按钮（对所有能进系统的成员可见）；同时在页脚配置里加一条「问题反馈」链接指向它（页脚链接现有后端白名单校验，`#/` 开头的站内 hash 路由走站内跳转）。
 - **正文与图片**：正文复用 `RichTextEditor`，贴图复用现有 `message_image`（对话参与者可见），不新增附件上传。
 - **权限**：提交/看自己/回复自己的反馈 = 任何已登录、能进系统的账号；全量列表 / 改状态 = `hasRole('ADMIN')`。**不新增 `PermissionCode`**，因此无需动权限组种子与 `StepUpPermissionCoverageTests`。
-- **限流**：每人每分钟 1 条、每天 20 条（简单计数实现，不进风控体系）。
+- **限流**：提交每人每分钟 1 条、每天 20 条；提交人追加回复每分钟 3 条、每天 50 条（每条追加都会推给所有 ADMIN；ADMIN 回复不限）。简单计数实现，不进风控体系；计数前锁住提交人的 `app_user` 行，同一人的并发请求串行化，不会一起数到 0。
 - **生命周期**：不提供删除/撤回；`RESOLVED` 为终态、ADMIN 可重开；量小不自动归档。
 - **实名**：提交人身份对 ADMIN 可见（`submitter_id` 关联），普通成员仅能查询自己的反馈。
-- **贴图鉴权（落地补充）**：为让普通成员能在反馈里贴图，`POST /notifications/images` 的上传门从 `MESSAGE_SEND` 放宽到 `isAuthenticated()`；读侧 `MessageImageAuthorizationService` 增加「该图片被引用在调用者提交的反馈（含其回复）里即可读」的判定。图片可读性最终由「上传人 / ADMIN / 投递对象 / 反馈提交人」四个条件共同决定。`page_url` 字段未实现——提交入口只在消息中心，自动采集到的恒为消息中心本身，价值不足，故去掉。
+- **贴图鉴权（落地补充）**：为让普通成员能在反馈里贴图，`POST /notifications/images` 的上传门从 `MESSAGE_SEND` 放宽到 `isAuthenticated()`；读侧 `MessageImageAuthorizationService` 增加「该图片出现在调用者所提交反馈里、由**别人**写的回复中即可读」的判定——反馈正文和提交人自己的追加由提交人随意填写，若也算数，任何人把别处拿到的图片链接贴进自己的反馈就能读到它。图片可读性最终由「上传人 / ADMIN / 投递对象 / 反馈提交人（仅限别人回复里的图）」四个条件共同决定。上传门放宽后：没有 `MESSAGE_SEND` 的成员每 24 小时最多上传 30 张；`OrphanMessageImageCleanupJob` 每天收走上传超过 7 天、却没被任何消息 / 反馈引用的图片。`page_url` 字段未实现——提交入口只在消息中心，自动采集到的恒为消息中心本身，价值不足，故去掉。
 - **审计**：写操作自动进审计（复用 `AuditInterceptor`），确认资源类型 / 资源 ID / 请求 ID / 详情被捕获。
-- **API**：`POST /api/v1/feedback`（提交）、`GET /api/v1/feedback`（ADMIN 全量 / 非 ADMIN 仅自己，支持 `status` 筛选）、`GET /api/v1/feedback/{id}`（线程 + 状态变更，ADMIN 或提交人可见）、`POST /api/v1/feedback/{id}/reply`（提交人或 ADMIN）、`PATCH /api/v1/feedback/{id}/status`（仅 ADMIN）。
+- **API**：`POST /api/v1/feedback`（提交）、`GET /api/v1/feedback`（ADMIN 全量 / 非 ADMIN 仅自己，支持 `status` 筛选，`page` / `pageSize` 分页，返回 `PageResponse`）、`GET /api/v1/feedback/{id}`（线程 + 状态变更，ADMIN 或提交人可见）、`POST /api/v1/feedback/{id}/reply`（提交人或 ADMIN）、`PATCH /api/v1/feedback/{id}/status`（仅 ADMIN）。
 
 ## Testing Decisions
 

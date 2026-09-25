@@ -14,7 +14,7 @@ import java.util.List;
 public interface FeedbackMapper extends BaseMapper<FeedbackEntity> {
 
     /**
-     * 列表：ADMIN 传 {@code submitterId = null} 看全量，普通成员传自己的 id 只看自己的。
+     * 分页列表：ADMIN 传 {@code submitterId = null} 看全量，普通成员传自己的 id 只看自己的。
      * {@code status} 可选，为空不过滤。提交人显示名一次 join 出来。
      */
     @Select("""
@@ -26,9 +26,22 @@ public interface FeedbackMapper extends BaseMapper<FeedbackEntity> {
             <if test="submitterId != null">AND f.submitter_id = #{submitterId}</if>
             <if test="status != null">AND f.status = #{status}</if>
             ORDER BY f.created_at DESC, f.id DESC
+            LIMIT #{limit} OFFSET #{offset}
             </script>
             """)
-    List<FeedbackEntity> list(@Param("submitterId") Long submitterId, @Param("status") String status);
+    List<FeedbackEntity> list(@Param("submitterId") Long submitterId, @Param("status") String status,
+                              @Param("limit") int limit, @Param("offset") long offset);
+
+    /** 与 {@link #list} 同一组筛选条件下的总条数。 */
+    @Select("""
+            <script>
+            SELECT COUNT(*) FROM feedback f
+            WHERE 1 = 1
+            <if test="submitterId != null">AND f.submitter_id = #{submitterId}</if>
+            <if test="status != null">AND f.status = #{status}</if>
+            </script>
+            """)
+    long count(@Param("submitterId") Long submitterId, @Param("status") String status);
 
     @Select("""
             SELECT f.*, u.display_name AS submitter_display_name

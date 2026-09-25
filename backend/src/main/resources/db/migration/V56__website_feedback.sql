@@ -8,12 +8,15 @@
 -- 状态机：提交即 PENDING；ADMIN 改 IN_PROGRESS / RESOLVED；RESOLVED 可重开回 IN_PROGRESS。
 -- 生命周期：不删除、不撤回、不归档，所以 feedback 表没有 deleted 列（对齐 featured_entry
 -- 这类「物理增删 / 无软删」的表）。
+--
+-- 正文用 MEDIUMTEXT：接口按清洗前的字符数限 20000，TEXT 只有 65535 字节，
+-- 2 万个中文字（每字 3 字节）加上 Jsoup 转义（& → &amp;）后可能写不进去。
 CREATE TABLE feedback (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     submitter_id BIGINT NOT NULL,
     title VARCHAR(200) NOT NULL,
-    content TEXT NULL,
-    content_html TEXT NULL,
+    content MEDIUMTEXT NULL,
+    content_html MEDIUMTEXT NULL,
     category VARCHAR(32) NOT NULL,
     status VARCHAR(32) NOT NULL,
     version INT NOT NULL DEFAULT 1,
@@ -28,12 +31,13 @@ CREATE TABLE feedback_reply (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     feedback_id BIGINT NOT NULL,
     author_id BIGINT NOT NULL,
-    content TEXT NULL,
-    content_html TEXT NULL,
+    content MEDIUMTEXT NULL,
+    content_html MEDIUMTEXT NULL,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     CONSTRAINT fk_feedback_reply_feedback FOREIGN KEY (feedback_id) REFERENCES feedback(id),
     CONSTRAINT fk_feedback_reply_author FOREIGN KEY (author_id) REFERENCES app_user(id),
-    INDEX idx_feedback_reply_feedback (feedback_id, created_at)
+    INDEX idx_feedback_reply_feedback (feedback_id, created_at),
+    INDEX idx_feedback_reply_author_created (author_id, created_at)
 );
 
 CREATE TABLE feedback_status_change (
@@ -47,3 +51,6 @@ CREATE TABLE feedback_status_change (
     CONSTRAINT fk_feedback_status_change_operator FOREIGN KEY (operator_id) REFERENCES app_user(id),
     INDEX idx_feedback_status_change_feedback (feedback_id, created_at)
 );
+
+-- 反馈开放给所有成员贴图后，消息图片上传按「上传人 + 时间」做配额，孤儿图清理也按时间扫。
+CREATE INDEX idx_message_image_uploader_created ON message_image (uploaded_by, created_at);

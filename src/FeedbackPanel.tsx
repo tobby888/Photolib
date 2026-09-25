@@ -3,11 +3,11 @@ import { MessageOutlined, PlusOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api } from './api'
+import { api, emptyPage } from './api'
 import { DataState } from './components'
 import { useAuth } from './auth'
 import { useLoad } from './hooks'
-import type { FeedbackCategory, FeedbackStatus, FeedbackSummary } from './types'
+import type { FeedbackCategory, FeedbackStatus, FeedbackSummary, PageData } from './types'
 import { FEEDBACK_CATEGORY_LABEL, FEEDBACK_STATUS_COLOR, FEEDBACK_STATUS_LABEL } from './feedback'
 import { richTextIsEmpty } from './richText'
 import RichTextEditor from './RichTextEditor'
@@ -16,12 +16,15 @@ import RichTextEditor from './RichTextEditor'
  * 消息中心的「反馈」标签：成员提交网站问题/建议，ADMIN 看全量并按状态筛选。
  * 提交后是轻量工单，点开进 `/notifications/feedback/{id}` 的线程页。
  */
+const PAGE_SIZE = 20
+
 export default function FeedbackPanel() {
   const { user } = useAuth()
   const { message } = App.useApp()
   const navigate = useNavigate()
   const isAdmin = user?.permissionGroupCode === 'ADMIN'
   const [status, setStatus] = useState<FeedbackStatus | ''>('')
+  const [page, setPage] = useState(1)
   const [open, setOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [title, setTitle] = useState('')
@@ -29,8 +32,10 @@ export default function FeedbackPanel() {
   const [contentHtml, setContentHtml] = useState('')
 
   const { data, loading, error, reload } = useLoad(
-    () => api<FeedbackSummary[]>({ url: '/feedback', params: status ? { status } : {} }),
-    [] as FeedbackSummary[], [status],
+    () => api<PageData<FeedbackSummary>>({
+      url: '/feedback', params: { page, pageSize: PAGE_SIZE, ...(status ? { status } : {}) },
+    }),
+    emptyPage<FeedbackSummary>(), [status, page],
   )
 
   const submit = async () => {
@@ -44,7 +49,9 @@ export default function FeedbackPanel() {
       setTitle('')
       setCategory('ISSUE')
       setContentHtml('')
-      await reload()
+      // 新反馈排在第一页最前面；已经在第一页就直接刷新，否则切页会触发重新加载。
+      if (page === 1) await reload()
+      else setPage(1)
     } catch (error) {
       message.error((error as Error).message)
     } finally {
@@ -55,15 +62,19 @@ export default function FeedbackPanel() {
   return <div>
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
       {isAdmin && <Select allowClear placeholder="全部状态" style={{ width: 160 }} value={status || undefined}
-        onChange={(value) => setStatus((value as FeedbackStatus) || '')}
+        onChange={(value) => { setStatus((value as FeedbackStatus) || ''); setPage(1) }}
         options={[{ value: 'PENDING', label: '待处理' }, { value: 'IN_PROGRESS', label: '处理中' },
           { value: 'RESOLVED', label: '已解决' }]} />}
       <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>我要反馈</Button>
     </div>
-    <DataState loading={loading} error={error} empty={!data.length} onRetry={reload}
+    <DataState loading={loading} error={error} empty={!data.items.length} onRetry={reload}
       emptyText={isAdmin ? '还没有收到反馈' : '你还没有提交过反馈'}
       emptyHint={isAdmin ? '成员提交的网站问题与建议会出现在这里。' : '点「我要反馈」报告网站问题或提建议。'}>
-      <List dataSource={data} renderItem={(item) => (
+      <List dataSource={data.items}
+        pagination={data.total > PAGE_SIZE ? {
+          current: page, pageSize: PAGE_SIZE, total: data.total, showSizeChanger: false, onChange: setPage,
+        } : false}
+        renderItem={(item) => (
         <List.Item className="message-list-item" onClick={() => navigate(`/notifications/feedback/${item.id}`)}>
           <div className="message-list-icon"><MessageOutlined /></div>
           <div className="message-list-main">

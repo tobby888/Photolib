@@ -10,6 +10,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -59,7 +61,7 @@ class FeedbackServiceTests {
         assertThat(view.title()).isEqualTo("网站打不开");
         assertThat(view.status()).isEqualTo("PENDING");
         assertThat(view.replies()).isEmpty();
-        assertThat(service.list(null, admin)).extracting(FeedbackService.FeedbackSummary::id)
+        assertThat(service.list(null, 1, 20, admin).items()).extracting(FeedbackService.FeedbackSummary::id)
                 .containsExactly(view.id());
         assertThat(jdbc.sql("""
                 SELECT COUNT(*) FROM user_notification
@@ -72,9 +74,9 @@ class FeedbackServiceTests {
         long mine = service.submit("我的反馈", "SUGGESTION", "<p>建议</p>", submitter).id();
         long otherFeedback = service.submit("别人的反馈", "ISSUE", "<p>问题</p>", other).id();
 
-        assertThat(service.list(null, submitter)).extracting(FeedbackService.FeedbackSummary::id)
+        assertThat(service.list(null, 1, 20, submitter).items()).extracting(FeedbackService.FeedbackSummary::id)
                 .containsExactly(mine);
-        assertThat(service.list(null, admin)).extracting(FeedbackService.FeedbackSummary::id)
+        assertThat(service.list(null, 1, 20, admin).items()).extracting(FeedbackService.FeedbackSummary::id)
                 .containsExactlyInAnyOrder(mine, otherFeedback);
     }
 
@@ -128,5 +130,64 @@ class FeedbackServiceTests {
         assertThatThrownBy(() -> service.changeStatus(id, "RESOLVED", 1, admin))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("已被其他操作修改");
+    }
+
+    @Test
+    void list_shouldPage() {
+        long first = service.submit("第一条", "ISSUE", "<p>一</p>", submitter).id();
+        long second = service.submit("第二条", "ISSUE", "<p>二</p>", other).id();
+
+        var page = service.list(null, 1, 1, admin);
+        assertThat(page.total()).isEqualTo(2);
+        assertThat(page.totalPages()).isEqualTo(2);
+        assertThat(page.items()).hasSize(1);
+        assertThat(service.list(null, 2, 1, admin).items()).extracting(FeedbackService.FeedbackSummary::id)
+                .doesNotContain(page.items().getFirst().id())
+                .hasSize(1);
+        assertThat(java.util.List.of(first, second)).contains(page.items().getFirst().id());
+    }
+
+    @Test
+    void submit_shouldEnforcePerMinuteLimit() {
+        service.submit("第一条", "ISSUE", "<p>一</p>", submitter);
+
+        assertThatThrownBy(() -> service.submit("第二条", "ISSUE", "<p>二</p>", submitter))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("提交太频繁");
+    }
+
+    @Test
+    void submit_shouldEnforcePerDayLimit() {
+        for (int i = 0; i < FeedbackService.RATE_LIMIT_PER_DAY; i++) {
+            jdbc.sql("""
+                    INSERT INTO feedback (id, submitter_id, title, content, content_html, category, status, created_at)
+                    VALUES (:id, :submitter, '旧反馈', '正文', '<p>正文</p>', 'ISSUE', 'PENDING', :createdAt)
+                    """)
+                    .param("id", 9_400_000L + i)
+                    .param("submitter", SUBMITTER_ID)
+                    .param("createdAt", LocalDateTime.now().minusHours(2))
+                    .update();
+        }
+
+        assertThatThrownBy(() -> service.submit("又一条", "ISSUE", "<p>正文</p>", submitter))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("今天提交的反馈已达上限");
+    }
+
+    @Test
+    void reply_shouldLimitSubmitterFollowUpsButNotAdmins() {
+        long id = service.submit("追加限流", "ISSUE", "<p>正文</p>", submitter).id();
+        for (int i = 0; i < FeedbackService.REPLY_LIMIT_PER_MINUTE; i++) {
+            service.reply(id, "<p>补充 " + i + "</p>", submitter);
+        }
+
+        assertThatThrownBy(() -> service.reply(id, "<p>再补充</p>", submitter))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("回复太频繁");
+        for (int i = 0; i <= FeedbackService.REPLY_LIMIT_PER_MINUTE; i++) {
+            service.reply(id, "<p>管理员回复 " + i + "</p>", admin);
+        }
+        assertThat(service.get(id, admin).replies())
+                .hasSize(FeedbackService.REPLY_LIMIT_PER_MINUTE * 2 + 1);
     }
 }

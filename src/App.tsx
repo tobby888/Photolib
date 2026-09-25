@@ -16,6 +16,7 @@ import { api } from './api'
 import type { BrandingSettings, Notification, PreviewGenerationStatus } from './types'
 import { BrandGlyph, useBranding } from './branding'
 import { afterLoginRoute } from './loginRedirect'
+import { feedbackThreadUrl } from './feedback'
 import {
   canManageTwoFactor, canViewProjects, hasAnyPermission, hasPermission, hasSystemAccess,
 } from './permissions'
@@ -178,7 +179,11 @@ function Shell() {
         value.id === item.id ? { ...value, readAt: new Date().toISOString() } : value))
       setUnreadCount((count) => Math.max(0, count - 1))
     }
-    if (item.contentHtml) {
+    const feedbackUrl = feedbackThreadUrl(item)
+    if (feedbackUrl) {
+      setNotificationOpen(false)
+      navigate(feedbackUrl)
+    } else if (item.contentHtml) {
       setNotificationOpen(false)
       navigate(`/notifications/${item.id}`)
     } else if (item.actionUrl) {

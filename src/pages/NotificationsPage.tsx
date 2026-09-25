@@ -12,6 +12,7 @@ import RichTextEditor from '../RichTextEditor'
 import { hasPermission } from '../permissions'
 import { richTextIsEmpty } from '../richText'
 import FeedbackPanel from '../FeedbackPanel'
+import { feedbackThreadUrl } from '../feedback'
 
 export default function NotificationsPage() {
   const { user } = useAuth()
@@ -33,6 +34,19 @@ export default function NotificationsPage() {
       : Promise.resolve([] as MessageRecipient[]),
     [] as MessageRecipient[], [canSend],
   )
+  // 通用详情页打开时自己标已读；反馈通知直接跳进工单线程、不经过它，所以在这里先标。
+  // 标已读失败不拦跳转：用户要看的是那条反馈，红点下次刷新还在而已。
+  const openNotification = async (item: Notification) => {
+    const feedbackUrl = feedbackThreadUrl(item)
+    if (!feedbackUrl) {
+      navigate(`/notifications/${item.id}`)
+      return
+    }
+    if (!item.readAt) {
+      await api<void>({ method: 'POST', url: `/notifications/${item.id}/read` }).catch(() => undefined)
+    }
+    navigate(feedbackUrl)
+  }
   const send = async () => {
     try {
       const values = await form.validateFields()
@@ -64,7 +78,7 @@ export default function NotificationsPage() {
               emptyText="还没有收到消息"
               emptyHint="需求发布、工时审核这些事发生时，通知会送到这里。">
               <List dataSource={data} renderItem={(item) =>
-                <List.Item className="message-list-item" onClick={() => navigate(notificationTarget(item))}>
+                <List.Item className="message-list-item" onClick={() => void openNotification(item)}>
                   <Badge dot={!item.readAt} offset={[-3, 4]}>
                     <div className="message-list-icon"><NotificationOutlined /></div>
                   </Badge>
@@ -108,14 +122,4 @@ export default function NotificationsPage() {
       </Form>
     </Modal>
   </>
-}
-
-/**
- * 点开一条通知去哪儿。反馈通知要跳进它自己的线程（spec Q7「跳进该反馈」），
- * 其余通知仍看通用详情页——和管理消息列表一直以来的行为一致。
- */
-function notificationTarget(item: Notification) {
-  return item.eventType.startsWith('FEEDBACK_') && item.actionUrl
-    ? item.actionUrl
-    : `/notifications/${item.id}`
 }

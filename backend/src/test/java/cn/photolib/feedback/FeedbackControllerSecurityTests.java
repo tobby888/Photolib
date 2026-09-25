@@ -64,11 +64,11 @@ class FeedbackControllerSecurityTests {
         // 这几条端点上没有 @PreAuthorize——"能进系统的登录成员"即可，
         // 具体可见范围由 Service 裁。非 ADMIN 因此不该被方法安全挡住。
         controller.submit(new FeedbackController.SubmitRequest("标题", "ISSUE", "<p>正文</p>"), principal);
-        controller.list(null, principal);
+        controller.list(null, 1, 20, principal);
         controller.get(7L, principal);
         controller.reply(7L, new FeedbackController.ReplyRequest("<p>补充</p>"), principal);
         verify(service).submit("标题", "ISSUE", "<p>正文</p>", principal);
-        verify(service).list(null, principal);
+        verify(service).list(null, 1, 20, principal);
         verify(service).get(7L, principal);
         verify(service).reply(7L, "<p>补充</p>", principal);
     }

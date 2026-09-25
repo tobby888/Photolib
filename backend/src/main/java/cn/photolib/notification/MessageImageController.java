@@ -5,6 +5,7 @@ import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.common.util.PublicId;
+import cn.photolib.permission.PermissionCode;
 import cn.photolib.storage.ObjectStorageService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.InputStreamResource;
@@ -26,6 +27,11 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class MessageImageController {
     private static final long MAX_SIZE = 5 * 1024 * 1024;
+    /**
+     * 没有 {@code MESSAGE_SEND} 的成员（只为在反馈里贴图）24 小时内最多传多少张。
+     * 反馈本身每天最多 20 条，这个数给每条留几张图的余量，又不至于被当成免费图床。
+     */
+    static final int MEMBER_DAILY_UPLOAD_LIMIT = 30;
     private static final Set<String> IMAGE_TYPES = Set.of(
             MediaType.IMAGE_JPEG_VALUE, MediaType.IMAGE_PNG_VALUE, "image/webp");
 
@@ -35,12 +41,14 @@ public class MessageImageController {
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     // 上传对任何已登录成员开放：图片本体是谁的、谁能看，由 MessageImageAuthorizationService
-    // 在读侧收紧（上传人 + ADMIN + 投递到的人 + 反馈参与者），不是靠上传这道门。
-    // 否则普通成员无法在「问题反馈」正文里贴图。
+    // 在读侧收紧（上传人 + ADMIN + 投递到的人 + 反馈提交人读别人回复里的图），不是靠上传这道门。
+    // 否则普通成员无法在「问题反馈」正文里贴图。放开之后用每日额度防滥用，
+    // 没被任何消息 / 反馈引用的图由 OrphanMessageImageCleanupJob 定期收走。
     @PreAuthorize("isAuthenticated()")
     ApiResponse<UploadResult> upload(@RequestPart("file") MultipartFile file,
                                      @AuthenticationPrincipal AuthenticatedUser user) throws IOException {
         if (file.isEmpty()) throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择图片");
+        requireWithinUploadQuota(user);
         if (file.getSize() > MAX_SIZE) {
             throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "消息图片不能超过 5 MiB");
         }
@@ -68,6 +76,17 @@ public class MessageImageController {
         image.setCreatedAt(LocalDateTime.now());
         mapper.insert(image);
         return ApiResponse.ok(new UploadResult("/api/v1/notifications/images/" + id));
+    }
+
+    /**
+     * 管理员与持有 {@code MESSAGE_SEND} 的人发消息本来就要传图，不设额度；其余成员只为反馈贴图，
+     * 按滚动 24 小时计数。「先数再插」在并发下可能多放一两张，这里只防滥用，不求精确。
+     */
+    private void requireWithinUploadQuota(AuthenticatedUser user) {
+        if (user.isAdministrator() || user.hasPermission(PermissionCode.MESSAGE_SEND)) return;
+        if (mapper.countUploadedSince(user.id(), LocalDateTime.now().minusDays(1)) >= MEMBER_DAILY_UPLOAD_LIMIT) {
+            throw new BusinessException(ErrorCode.RATE_LIMITED, "今天上传的图片已达上限，请明天再试");
+        }
     }
 
     @GetMapping("/{id}")

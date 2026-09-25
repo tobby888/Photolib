@@ -53,6 +53,11 @@ photolib:
     # 请求体上限对应，解压后的上限用于挡住压缩炸弹。
     max-upload-bytes: ${DATABASE_BACKUP_MAX_UPLOAD_BYTES:512MB}
     max-decompressed-bytes: ${DATABASE_BACKUP_MAX_DECOMPRESSED_BYTES:2GB}
+  message-image-cleanup:
+    # 每天凌晨收走上传超过宽限期、却没被任何管理消息或反馈引用的消息图片（行 + 对象）。
+    # 宽限期留给还在编辑框里没发出去的图。
+    enabled: ${MESSAGE_IMAGE_CLEANUP_ENABLED:true}
+    grace-days: ${MESSAGE_IMAGE_CLEANUP_GRACE_DAYS:7}
   photo-processing:
     threads: ${PHOTO_PROCESSING_THREADS:1}
     temporary-directory: ${PHOTO_PROCESSING_TEMPORARY_DIRECTORY:./data/photo-processing}

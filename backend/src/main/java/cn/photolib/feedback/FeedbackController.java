@@ -2,6 +2,7 @@ package cn.photolib.feedback;
 
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
+import cn.photolib.common.api.PageResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -17,8 +18,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-
-import java.util.List;
 
 /**
  * 网站问题反馈接口，挂在 {@code /api/v1/feedback} 下。
@@ -42,10 +41,12 @@ public class FeedbackController {
     }
 
     @GetMapping
-    ApiResponse<List<FeedbackService.FeedbackSummary>> list(
+    ApiResponse<PageResponse<FeedbackService.FeedbackSummary>> list(
             @RequestParam(required = false) String status,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int pageSize,
             @AuthenticationPrincipal AuthenticatedUser user) {
-        return ApiResponse.ok(service.list(status, user));
+        return ApiResponse.ok(service.list(status, page, pageSize, user));
     }
 
     @GetMapping("/{id}")

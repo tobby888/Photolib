@@ -1,6 +1,7 @@
 package cn.photolib.feedback;
 
 import cn.photolib.auth.AuthenticatedUser;
+import cn.photolib.common.api.PageResponse;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.feedback.mapper.FeedbackMapper;
@@ -38,8 +39,15 @@ import java.util.Locale;
 public class FeedbackService {
     static final int MAX_TITLE_CHARS = 200;
     static final int MAX_CONTENT_CHARS = 20000;
+    static final int MAX_PAGE_SIZE = 100;
     static final int RATE_LIMIT_PER_MINUTE = 1;
     static final int RATE_LIMIT_PER_DAY = 20;
+    /**
+     * 提交人追加回复的频率上限。每条追加都会给所有 ADMIN 发站内信 + 企业微信，
+     * 不设上限就能拿回复刷屏；ADMIN 回复只通知一个人，不受此限。
+     */
+    static final int REPLY_LIMIT_PER_MINUTE = 3;
+    static final int REPLY_LIMIT_PER_DAY = 50;
 
     /** 「管理员」= 权限组 code 为 ADMIN，与 {@code AccessTokenFilter} 授予 ROLE_ADMIN 的口径一致。 */
     private static final String ADMIN_IDS_FROM = """
@@ -66,6 +74,7 @@ public class FeedbackService {
         String safeHtml = NotificationService.sanitizeMessageHtml(contentHtml);
         String plain = Jsoup.parse(safeHtml).text();
         requireNonEmpty(plain, safeHtml);
+        lockSubmitter(user.id());
         requireWithinRateLimit(user.id());
 
         FeedbackEntity feedback = new FeedbackEntity();
@@ -84,12 +93,19 @@ public class FeedbackService {
         return get(feedback.getId(), user);
     }
 
-    public List<FeedbackSummary> list(String status, AuthenticatedUser user) {
+    public PageResponse<FeedbackSummary> list(String status, int page, int pageSize,
+                                              AuthenticatedUser user) {
         String filter = normalizeStatusFilter(status);
         Long submitterId = user.isAdministrator() ? null : user.id();
-        return feedbackMapper.list(submitterId, filter).stream()
+        int safePage = Math.max(1, page);
+        int safeSize = Math.max(1, Math.min(MAX_PAGE_SIZE, pageSize));
+        long total = feedbackMapper.count(submitterId, filter);
+        List<FeedbackSummary> items = feedbackMapper
+                .list(submitterId, filter, safeSize, (long) (safePage - 1) * safeSize).stream()
                 .map(this::toSummary)
                 .toList();
+        return new PageResponse<>(items, safePage, safeSize, total,
+                total == 0 ? 0 : (total + safeSize - 1) / safeSize);
     }
 
     public FeedbackView get(long id, AuthenticatedUser user) {
@@ -109,6 +125,10 @@ public class FeedbackService {
         String safeHtml = NotificationService.sanitizeMessageHtml(contentHtml);
         String plain = Jsoup.parse(safeHtml).text();
         requireNonEmpty(plain, safeHtml);
+        if (!user.isAdministrator()) {
+            lockSubmitter(user.id());
+            requireWithinReplyLimit(user.id());
+        }
 
         FeedbackReplyEntity reply = new FeedbackReplyEntity();
         reply.setFeedbackId(id);
@@ -174,6 +194,27 @@ public class FeedbackService {
             throw new BusinessException(ErrorCode.FORBIDDEN, "只能查看自己提交的反馈");
         }
         return feedback;
+    }
+
+    /**
+     * 限流是「先数再插」，两个并发请求会同时数到 0、一起插进去。锁住提交人自己那一行
+     * {@code app_user}，把同一个人的提交 / 追加串行化；不同人之间互不影响，锁随事务释放。
+     */
+    private void lockSubmitter(long userId) {
+        jdbc.sql("SELECT id FROM app_user WHERE id = :id FOR UPDATE")
+                .param("id", userId)
+                .query(Long.class)
+                .optional();
+    }
+
+    private void requireWithinReplyLimit(long userId) {
+        LocalDateTime now = LocalDateTime.now();
+        if (replyMapper.countByAuthorSince(userId, now.minusSeconds(60)) >= REPLY_LIMIT_PER_MINUTE) {
+            throw new BusinessException(ErrorCode.RATE_LIMITED, "回复太频繁，请稍后再试");
+        }
+        if (replyMapper.countByAuthorSince(userId, now.minusDays(1)) >= REPLY_LIMIT_PER_DAY) {
+            throw new BusinessException(ErrorCode.RATE_LIMITED, "今天的回复已达上限");
+        }
     }
 
     private void requireWithinRateLimit(long userId) {

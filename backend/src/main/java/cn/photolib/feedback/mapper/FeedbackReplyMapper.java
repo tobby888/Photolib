@@ -6,6 +6,7 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Mapper
@@ -19,4 +20,10 @@ public interface FeedbackReplyMapper extends BaseMapper<FeedbackReplyEntity> {
             ORDER BY r.created_at ASC, r.id ASC
             """)
     List<FeedbackReplyEntity> findByFeedbackId(@Param("feedbackId") long feedbackId);
+
+    @Select("""
+            SELECT COUNT(*) FROM feedback_reply
+            WHERE author_id = #{authorId} AND created_at >= #{since}
+            """)
+    long countByAuthorSince(@Param("authorId") long authorId, @Param("since") LocalDateTime since);
 }

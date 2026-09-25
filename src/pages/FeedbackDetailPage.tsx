@@ -9,7 +9,7 @@ import { DataState } from '../components'
 import { useAuth } from '../auth'
 import { useLoad } from '../hooks'
 import type { FeedbackDetail, FeedbackStatus } from '../types'
-import { FEEDBACK_CATEGORY_LABEL, FEEDBACK_STATUS_COLOR, FEEDBACK_STATUS_LABEL } from '../feedback'
+import { FEEDBACK_CATEGORY_LABEL, FEEDBACK_NEXT_STATUSES, FEEDBACK_STATUS_COLOR, FEEDBACK_STATUS_LABEL } from '../feedback'
 import { richTextIsEmpty } from '../richText'
 import RichTextEditor from '../RichTextEditor'
 import RichTextContent from '../RichTextContent'
@@ -78,9 +78,8 @@ export default function FeedbackDetailPage() {
           </div>
           {isAdmin && <Space wrap style={{ marginBottom: 16 }}>
             <Typography.Text type="secondary">改状态：</Typography.Text>
-            {(['PENDING', 'IN_PROGRESS', 'RESOLVED'] as FeedbackStatus[]).map((status) => (
-              <Button key={status} size="small" type={data.status === status ? 'primary' : 'default'}
-                onClick={() => void changeStatus(status)}>{FEEDBACK_STATUS_LABEL[status]}</Button>
+            {FEEDBACK_NEXT_STATUSES[data.status].map(({ status, label }) => (
+              <Button key={status} size="small" onClick={() => void changeStatus(status)}>{label}</Button>
             ))}
           </Space>}
           <div>
