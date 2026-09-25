@@ -1,4 +1,4 @@
-import { App, Badge, Button, Card, Form, Input, List, Modal, Radio, Select, Space, Typography } from 'antd'
+import { App, Badge, Button, Card, Form, Input, List, Modal, Radio, Select, Space, Tabs, Typography } from 'antd'
 import { NotificationOutlined, SendOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useState } from 'react'
@@ -10,12 +10,16 @@ import { useLoad } from '../hooks'
 import type { MessageRecipient, Notification } from '../types'
 import RichTextEditor from '../RichTextEditor'
 import { hasPermission } from '../permissions'
+import { richTextIsEmpty } from '../richText'
+import FeedbackPanel from '../FeedbackPanel'
+import { feedbackThreadUrl } from '../feedback'
 
 export default function NotificationsPage() {
   const { user } = useAuth()
   const { message } = App.useApp()
   const navigate = useNavigate()
   const canSend = hasPermission(user, 'MESSAGE_SEND')
+  const [tab, setTab] = useState('messages')
   const [open, setOpen] = useState(false)
   const [sending, setSending] = useState(false)
   const [broadcast, setBroadcast] = useState(true)
@@ -30,12 +34,23 @@ export default function NotificationsPage() {
       : Promise.resolve([] as MessageRecipient[]),
     [] as MessageRecipient[], [canSend],
   )
+  // 通用详情页打开时自己标已读；反馈通知直接跳进工单线程、不经过它，所以在这里先标。
+  // 标已读失败不拦跳转：用户要看的是那条反馈，红点下次刷新还在而已。
+  const openNotification = async (item: Notification) => {
+    const feedbackUrl = feedbackThreadUrl(item)
+    if (!feedbackUrl) {
+      navigate(`/notifications/${item.id}`)
+      return
+    }
+    if (!item.readAt) {
+      await api<void>({ method: 'POST', url: `/notifications/${item.id}/read` }).catch(() => undefined)
+    }
+    navigate(feedbackUrl)
+  }
   const send = async () => {
     try {
       const values = await form.validateFields()
-      if (!contentHtml.replace(/<[^>]+>/g, '').trim() && !contentHtml.includes('<img')) {
-        throw new Error('请输入消息内容')
-      }
+      if (richTextIsEmpty(contentHtml)) throw new Error('请输入消息内容')
       setSending(true)
       const result = await api<{ recipientCount: number }>({
         method: 'POST', url: '/notifications/messages',
@@ -51,27 +66,36 @@ export default function NotificationsPage() {
     }
   }
   return <>
-    <PageTitle eyebrow="MESSAGE CENTER" title="消息中心" description="查看工作通知与管理消息。"
-      extra={canSend && <Button type="primary" icon={<SendOutlined />} onClick={() => setOpen(true)}>发送消息</Button>} />
+    <PageTitle eyebrow="MESSAGE CENTER" title="消息中心" description="查看工作通知与管理消息，提交网站问题反馈。" />
     <Card>
-      <DataState loading={loading} error={error} empty={!data.length} onRetry={reload}
-        emptyText="还没有收到消息"
-        emptyHint="需求发布、工时审核这些事发生时，通知会送到这里。">
-        <List dataSource={data} renderItem={(item) =>
-          <List.Item className="message-list-item" onClick={() => navigate(`/notifications/${item.id}`)}>
-            <Badge dot={!item.readAt} offset={[-3, 4]}>
-              <div className="message-list-icon"><NotificationOutlined /></div>
-            </Badge>
-            <div className="message-list-main">
-              <Space><Typography.Text strong={!item.readAt}>{item.title}</Typography.Text>
-                {(item.eventType === 'BROADCAST_MESSAGE' || item.eventType === 'DIRECT_MESSAGE') &&
-                  <Typography.Text type="secondary">管理消息</Typography.Text>}
-              </Space>
-              <Typography.Paragraph type="secondary" ellipsis={{ rows: 1 }}>{item.content}</Typography.Paragraph>
-              <Typography.Text type="secondary">{dayjs(item.createdAt).format('YYYY-MM-DD HH:mm')}</Typography.Text>
-            </div>
-          </List.Item>} />
-      </DataState>
+      <Tabs activeKey={tab} onChange={setTab} items={[
+        {
+          key: 'messages', label: '消息', children: <>
+            {canSend && <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+              <Button type="primary" icon={<SendOutlined />} onClick={() => setOpen(true)}>发送消息</Button>
+            </div>}
+            <DataState loading={loading} error={error} empty={!data.length} onRetry={reload}
+              emptyText="还没有收到消息"
+              emptyHint="需求发布、工时审核这些事发生时，通知会送到这里。">
+              <List dataSource={data} renderItem={(item) =>
+                <List.Item className="message-list-item" onClick={() => void openNotification(item)}>
+                  <Badge dot={!item.readAt} offset={[-3, 4]}>
+                    <div className="message-list-icon"><NotificationOutlined /></div>
+                  </Badge>
+                  <div className="message-list-main">
+                    <Space><Typography.Text strong={!item.readAt}>{item.title}</Typography.Text>
+                      {(item.eventType === 'BROADCAST_MESSAGE' || item.eventType === 'DIRECT_MESSAGE') &&
+                        <Typography.Text type="secondary">管理消息</Typography.Text>}
+                    </Space>
+                    <Typography.Paragraph type="secondary" ellipsis={{ rows: 1 }}>{item.content}</Typography.Paragraph>
+                    <Typography.Text type="secondary">{dayjs(item.createdAt).format('YYYY-MM-DD HH:mm')}</Typography.Text>
+                  </div>
+                </List.Item>} />
+            </DataState>
+          </>,
+        },
+        { key: 'feedback', label: '反馈', children: <FeedbackPanel /> },
+      ]} />
     </Card>
     <Modal title="发送消息" open={open} width={760} confirmLoading={sending} onOk={() => void send()}
       okText="发送" cancelText="取消" onCancel={() => setOpen(false)} destroyOnHidden>
@@ -92,7 +116,7 @@ export default function NotificationsPage() {
           <Input placeholder="请输入消息标题" />
         </Form.Item>
         <Form.Item label="消息正文" required
-          extra="消息同时推送到收件人的企业微信（未绑定的成员只收站内信）。企业微信不支持图片，正文里的图片会显示成占位，收件人点“查看详情”回站内看完整内容。">
+          extra="消息同时推送到收件人的企业微信（未绑定的成员只收站内信）。企业微信不支持图片，正文里的图片会显示成占位，收件人点「查看详情」回站内看完整内容。">
           <RichTextEditor value={contentHtml} onChange={setContentHtml} />
         </Form.Item>
       </Form>

@@ -16,6 +16,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -24,6 +25,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Transactional
 @WithMockUser(authorities = "MESSAGE_SEND")
 class MessageImageControllerTests {
+    private static final AtomicLong FEEDBACK_SEQUENCE = new AtomicLong();
+
     @Autowired
     private MessageImageController controller;
     @Autowired
@@ -146,6 +149,85 @@ class MessageImageControllerTests {
         assertThatThrownBy(() -> controller.get(id, other))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("无权读取该消息图片");
+    }
+
+    @Test
+    void embeddingSomeoneElsesImageInYourOwnFeedbackDoesNotUnlockIt() throws Exception {
+        String id = uploadImage();
+        MessageImageEntity image = mapper.selectById(id);
+        String html = "<img src=\"/api/v1/notifications/images/" + id + "\">";
+        long feedbackId = insertFeedback(805, html);
+        // The submitter writes both the body and their own follow-ups, and the sanitizer only
+        // checks the URL shape — neither may count as someone having shared the image.
+        insertReply(feedbackId, 805, html);
+        try {
+            assertThatThrownBy(() -> controller.get(id, other))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("无权读取该消息图片");
+        } finally {
+            storage.delete(image.getObjectKey());
+        }
+    }
+
+    @Test
+    void feedbackSubmitterMayReadAnImageSomeoneElseRepliedWith() throws Exception {
+        String id = uploadImage();
+        MessageImageEntity image = mapper.selectById(id);
+        long feedbackId = insertFeedback(805, "<p>网站打不开</p>");
+        insertReply(feedbackId, 804, "<p>看这张</p><img src=\"/api/v1/notifications/images/" + id + "\">");
+        try {
+            assertThat(controller.get(id, other).getStatusCode().value()).isEqualTo(200);
+        } finally {
+            storage.delete(image.getObjectKey());
+        }
+    }
+
+    @Test
+    void membersWithoutMessageSendHaveADailyUploadQuota() {
+        insertRecentImages(805, MessageImageController.MEMBER_DAILY_UPLOAD_LIMIT);
+        byte[] png = {(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3};
+
+        assertThatThrownBy(() -> controller.upload(
+                new MockMultipartFile("file", "a.png", "image/png", png), other))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("今天上传的图片已达上限");
+    }
+
+    @Test
+    void messageSendersAreNotSubjectToTheMemberQuota() throws Exception {
+        insertRecentImages(804, MessageImageController.MEMBER_DAILY_UPLOAD_LIMIT);
+
+        String id = uploadImage();
+        storage.delete(mapper.selectById(id).getObjectKey());
+    }
+
+    private long insertFeedback(long submitterId, String html) {
+        long id = 9_300_000L + FEEDBACK_SEQUENCE.incrementAndGet();
+        jdbc.sql("""
+                INSERT INTO feedback (id, submitter_id, title, content, content_html, category, status)
+                VALUES (:id, :submitter, '反馈', '正文', :html, 'ISSUE', 'PENDING')
+                """).param("id", id).param("submitter", submitterId).param("html", html).update();
+        return id;
+    }
+
+    private void insertReply(long feedbackId, long authorId, String html) {
+        jdbc.sql("""
+                INSERT INTO feedback_reply (feedback_id, author_id, content, content_html, created_at)
+                VALUES (:feedback, :author, '回复', :html, CURRENT_TIMESTAMP)
+                """).param("feedback", feedbackId).param("author", authorId).param("html", html).update();
+    }
+
+    private void insertRecentImages(long uploaderId, int count) {
+        for (int i = 0; i < count; i++) {
+            MessageImageEntity image = new MessageImageEntity();
+            image.setId(cn.photolib.common.util.PublicId.next());
+            image.setObjectKey("messages/quota-" + i + ".png");
+            image.setContentType("image/png");
+            image.setSize(11L);
+            image.setUploadedBy(uploaderId);
+            image.setCreatedAt(LocalDateTime.now().minusMinutes(5));
+            mapper.insert(image);
+        }
     }
 
     private String uploadImage() throws java.io.IOException {

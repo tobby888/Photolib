@@ -71,6 +71,16 @@ public class NotificationService {
 
     @Transactional
     public void notifyUser(Long userId, String event, String subject, String html) {
+        notifyUser(userId, event, subject, html, actionUrl(event));
+    }
+
+    /**
+     * 与 {@link #notifyUser} 相同，但跳转地址由调用方显式给出，而不是按事件前缀推导。
+     * 反馈这类通知要跳到具体那条工单（{@code /notifications/feedback/{id}}），
+     * 事件类型本身带不出那个 id，所以需要这个入口。
+     */
+    @Transactional
+    public void notifyUser(Long userId, String event, String subject, String html, String actionUrl) {
         UserEntity user = userMapper.selectById(userId);
         if (user == null || !Boolean.TRUE.equals(user.getEnabled())) return;
         String safeSubject = Jsoup.parse(subject == null ? "" : subject).text();
@@ -81,11 +91,25 @@ public class NotificationService {
         notification.setEventType(event);
         notification.setTitle(safeSubject);
         notification.setContent(toPlainText(safeHtml));
-        notification.setActionUrl(actionUrl(event));
+        notification.setActionUrl(actionUrl);
         notification.setCreatedAt(LocalDateTime.now());
         userNotificationMapper.insert(notification);
 
-        queueDelivery(user, event, safeSubject, safeHtml, actionUrl(event));
+        queueDelivery(user, event, safeSubject, safeHtml, actionUrl);
+    }
+
+    /**
+     * 把一条「消息正文」HTML 清洗成可入库、可回显的安全片段：只保留白名单标签，
+     * 图片只认走 {@code /api/v1/notifications/images/...} 的消息图片，其余一律剥掉。
+     * 管理消息与反馈正文共用这一份，避免两处各写一套、慢慢走样。
+     */
+    public static String sanitizeMessageHtml(String contentHtml) {
+        String cleaned = Jsoup.clean(contentHtml == null ? "" : contentHtml, "", MESSAGE_HTML,
+                new org.jsoup.nodes.Document.OutputSettings().prettyPrint(false));
+        org.jsoup.nodes.Document document = Jsoup.parseBodyFragment(cleaned);
+        document.select("img").removeIf(image -> !image.attr("src")
+                .matches("^/api/v1/notifications/images/[0-9A-HJKMNP-TV-Z]{26}$"));
+        return document.body().html();
     }
 
     /**
@@ -262,12 +286,7 @@ public class NotificationService {
     @Transactional
     public int sendMessage(Long senderId, Long targetUserId, boolean broadcast,
                            String title, String contentHtml) {
-        String cleaned = Jsoup.clean(contentHtml, "", MESSAGE_HTML,
-                new org.jsoup.nodes.Document.OutputSettings().prettyPrint(false));
-        org.jsoup.nodes.Document document = Jsoup.parseBodyFragment(cleaned);
-        document.select("img").removeIf(image -> !image.attr("src")
-                .matches("^/api/v1/notifications/images/[0-9A-HJKMNP-TV-Z]{26}$"));
-        String safeHtml = document.body().html();
+        String safeHtml = sanitizeMessageHtml(contentHtml);
         String plainText = Jsoup.parse(safeHtml).text();
         if (plainText.isBlank() && !safeHtml.contains("<img")) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "消息内容不能为空");

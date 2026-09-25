@@ -19,6 +19,9 @@ photolib:
   featured:
     # 同上：关掉好图精选的到期自动截止定时任务。
     deadline-enabled: false
+  message-image-cleanup:
+    # 同上：关掉孤儿消息图片清理，用例自己直接调 cleanup()。
+    enabled: false
   photo:
     missing-upload-scan:
       # 同上：关掉「卡在上传中」的定时扫描。共享的测试上下文里跑一整轮会软删掉别的

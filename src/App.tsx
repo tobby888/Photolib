@@ -16,6 +16,7 @@ import { api } from './api'
 import type { BrandingSettings, Notification, PreviewGenerationStatus } from './types'
 import { BrandGlyph, useBranding } from './branding'
 import { afterLoginRoute } from './loginRedirect'
+import { feedbackThreadUrl } from './feedback'
 import {
   canManageTwoFactor, canViewProjects, hasAnyPermission, hasPermission, hasSystemAccess,
 } from './permissions'
@@ -42,6 +43,7 @@ const ManagerCampusesPage = lazy(() => import('./pages/ManagerCampusesPage'))
 const AdminPage = lazy(() => import('./pages/AdminPage'))
 const NotificationsPage = lazy(() => import('./pages/NotificationsPage'))
 const NotificationDetailPage = lazy(() => import('./pages/NotificationDetailPage'))
+const FeedbackDetailPage = lazy(() => import('./pages/FeedbackDetailPage'))
 const PublicRecruitmentPage = lazy(() => import('./pages/PublicRecruitmentPage'))
 const SharedProjectPage = lazy(() => import('./pages/SharedProjectPage'))
 const SharedUploadPage = lazy(() => import('./pages/SharedUploadPage'))
@@ -177,7 +179,11 @@ function Shell() {
         value.id === item.id ? { ...value, readAt: new Date().toISOString() } : value))
       setUnreadCount((count) => Math.max(0, count - 1))
     }
-    if (item.contentHtml) {
+    const feedbackUrl = feedbackThreadUrl(item)
+    if (feedbackUrl) {
+      setNotificationOpen(false)
+      navigate(feedbackUrl)
+    } else if (item.contentHtml) {
       setNotificationOpen(false)
       navigate(`/notifications/${item.id}`)
     } else if (item.actionUrl) {
@@ -352,6 +358,7 @@ function Shell() {
             <Route path="/featured" element={<FeaturedCollectionsPage />} />
             <Route path="/featured/:collectionId" element={<FeaturedCollectionDetailPage />} />
             <Route path="/notifications" element={<NotificationsPage />} />
+            <Route path="/notifications/feedback/:feedbackId" element={<FeedbackDetailPage />} />
             <Route path="/notifications/:notificationId" element={<NotificationDetailPage />} />
             <Route path="/statistics" element={hasPermission(user, 'STATISTICS_DOWNLOAD') ? <StatisticsPage /> : <Navigate to="/" />} />
             <Route path="/manager-campuses" element={hasPermission(user, 'MANAGER_CAMPUS_ASSIGN') ? <ManagerCampusesPage /> : <Navigate to="/" />} />

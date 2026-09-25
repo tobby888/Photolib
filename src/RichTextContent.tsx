@@ -19,24 +19,26 @@ const ALLOWED_TAGS = new Set([
  * <p>图片必须带鉴权头才读得到，普通 <code>&lt;img src&gt;</code> 不会带上访问令牌，
  * 所以站内说明图片统一下载成 Blob 再渲染，卸载时回收 URL。</p>
  */
-export default function RichTextContent({ value, className = '' }: {
+export default function RichTextContent({ value, className = '', imagePrefix = DESCRIPTION_IMAGE_PREFIX }: {
   value?: string | null
   className?: string
+  /** 图片地址前缀：站内说明图片用 description-images，反馈正文用 notifications/images。 */
+  imagePrefix?: string
 }) {
   if (!value?.trim()) return null
   const parsed = new DOMParser().parseFromString(value, 'text/html')
-  const children = Array.from(parsed.body.childNodes).map((node, index) => render(node, `n${index}`))
+  const children = Array.from(parsed.body.childNodes).map((node, index) => render(node, `n${index}`, imagePrefix))
   return <div className={`rich-text-content ${className}`.trim()}>{children}</div>
 }
 
-function render(node: Node, key: string): ReactNode {
+function render(node: Node, key: string, imagePrefix: string): ReactNode {
   if (node.nodeType === Node.TEXT_NODE) return node.textContent
   if (node.nodeType !== Node.ELEMENT_NODE) return null
   const element = node as Element
   const tag = element.tagName.toLowerCase()
   if (tag === 'img') {
     const src = element.getAttribute('src') || ''
-    if (!src.startsWith(DESCRIPTION_IMAGE_PREFIX)) {
+    if (!src.startsWith(imagePrefix)) {
       return <span key={key} className="markdown-image-error">仅支持通过编辑器上传的图片</span>
     }
     return <ProtectedImage key={key} src={src} alt={element.getAttribute('alt') || ''} />
@@ -46,7 +48,7 @@ function render(node: Node, key: string): ReactNode {
     return <span key={key}>{element.textContent}</span>
   }
   if (tag === 'br') return <br key={key} />
-  const children = Array.from(element.childNodes).map((child, index) => render(child, `${key}-${index}`))
+  const children = Array.from(element.childNodes).map((child, index) => render(child, `${key}-${index}`, imagePrefix))
   return createElement(tag, { key }, children.length ? children : undefined)
 }
 
