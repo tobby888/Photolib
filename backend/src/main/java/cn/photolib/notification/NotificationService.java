@@ -113,6 +113,29 @@ public class NotificationService {
     }
 
     /**
+     * 只发站内信、不排企业微信外发的群发，给"全员知会"一类的事件用。
+     *
+     * <p>调用方负责只传启用中的账号：这里不再逐个查用户，标题和正文也只清洗一次。</p>
+     */
+    @Transactional
+    public void notifyInApp(List<Long> userIds, String event, String subject, String html) {
+        String safeSubject = Jsoup.parse(subject == null ? "" : subject).text();
+        String content = toPlainText(Jsoup.clean(html == null ? "" : html, "", SYSTEM_MAIL_HTML,
+                new org.jsoup.nodes.Document.OutputSettings().prettyPrint(false)));
+        LocalDateTime now = LocalDateTime.now();
+        for (Long userId : userIds) {
+            UserNotificationEntity notification = new UserNotificationEntity();
+            notification.setUserId(userId);
+            notification.setEventType(event);
+            notification.setTitle(safeSubject);
+            notification.setContent(content);
+            notification.setActionUrl(actionUrl(event));
+            notification.setCreatedAt(now);
+            userNotificationMapper.insert(notification);
+        }
+    }
+
+    /**
      * 为一条已经落库的站内信排一次外发。
      *
      * <p>系统通知和管理消息共用这一条路径，两边的收件规则、投递日志和重试因此不会走偏。
@@ -307,6 +330,7 @@ public class NotificationService {
         if (event.startsWith("REQUEST_")) return "/requests";
         if (event.startsWith("WORKLOG_")) return "/worklogs";
         if (event.startsWith("PROJECT_")) return "/projects";
+        if (event.startsWith("TEACHING_")) return "/teaching";
         return null;
     }
 

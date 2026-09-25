@@ -3,7 +3,7 @@ import {
 } from 'antd'
 import {
   BarChartOutlined, BellOutlined, BookOutlined, CameraOutlined, ContactsOutlined,
-  DashboardOutlined, EnvironmentOutlined, FolderOutlined, KeyOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SettingOutlined,
+  DashboardOutlined, EnvironmentOutlined, FilePdfOutlined, FolderOutlined, KeyOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SettingOutlined,
   SafetyCertificateOutlined,
   MessageOutlined, ReadOutlined, StarOutlined, TeamOutlined, TrophyOutlined,
   UnorderedListOutlined, UserOutlined,
@@ -19,6 +19,7 @@ import { afterLoginRoute } from './loginRedirect'
 import {
   canManageTwoFactor, canViewProjects, hasAnyPermission, hasPermission, hasSystemAccess,
 } from './permissions'
+import RouteErrorBoundary from './RouteErrorBoundary'
 import SiteFooter from './SiteFooter'
 import UserAvatar from './UserAvatar'
 
@@ -47,6 +48,7 @@ const SharedProjectPage = lazy(() => import('./pages/SharedProjectPage'))
 const SharedUploadPage = lazy(() => import('./pages/SharedUploadPage'))
 const DocsPage = lazy(() => import('./pages/DocsPage'))
 const DocumentsPage = lazy(() => import('./pages/DocumentsPage'))
+const TeachingPage = lazy(() => import('./pages/TeachingPage'))
 const FeaturedCollectionsPage = lazy(() => import('./pages/FeaturedCollectionsPage'))
 const FeaturedCollectionDetailPage = lazy(() => import('./pages/FeaturedCollectionDetailPage'))
 const RecruitmentsPage = lazy(() => import('./pages/RecruitmentsPage'))
@@ -211,6 +213,9 @@ function Shell() {
     // "需要登录才能看"的文档正是给普通成员准备的，按编辑权限藏入口
     // 等于让唯一能看到它们的人找不到入口。编辑器在页面内按权限收起。
     common.push({ key: '/documents', icon: <ReadOutlined />, label: '文档中心' })
+    // 教学资料和图片库同受众：能进图库就能看，所以入口跟着 PHOTO_VIEW 显示。
+    if (hasPermission(user, 'PHOTO_VIEW')) common.push(
+      { key: '/teaching', icon: <FilePdfOutlined />, label: '教学资料' })
     common.push({ key: '/notifications', icon: <MessageOutlined />, label: '消息中心' })
     if (hasPermission(user, 'STATISTICS_DOWNLOAD')) common.push(
       { key: '/statistics', icon: <BarChartOutlined />, label: '数据统计' })
@@ -327,7 +332,7 @@ function Shell() {
           <Alert className="preview-generation-alert" type="warning" showIcon
             message={previewStatus.message} description={previewStatus.errorMessage} />}
         <div className="route-stage" key={location.pathname}>
-          <Suspense fallback={<div className="route-loading">正在整理工作台…</div>}><Routes>
+          <RouteErrorBoundary><Suspense fallback={<div className="route-loading">正在整理工作台…</div>}><Routes>
             <Route path="/" element={<DashboardPage />} />
             <Route path="/projects" element={canViewProjects(user) ? <ProjectsPage /> : <Navigate to="/" />} />
             <Route path="/projects/:projectId" element={canViewProjects(user) ? <ProjectDetailPage /> : <Navigate to="/" />} />
@@ -357,6 +362,8 @@ function Shell() {
             <Route path="/recruitment-applications/:applicationId" element={hasPermission(user, 'RECRUITMENT_VIEW') ? <RecruitmentApplicationDetailPage /> : <Navigate to="/" />} />
             <Route path="/documents" element={<DocumentsPage />} />
             <Route path="/documents/:publicId" element={<DocumentsPage />} />
+            <Route path="/teaching" element={hasPermission(user, 'PHOTO_VIEW') ? <TeachingPage /> : <Navigate to="/" />} />
+            <Route path="/teaching/:publicId" element={hasPermission(user, 'PHOTO_VIEW') ? <TeachingPage /> : <Navigate to="/" />} />
             {/*
               MCP 客户端的批准页。不挂任何权限：MCP 不是一个新的权限边界，它拿到的
               就是这个成员自己的会话，能做的事由他原本的权限决定。放在外壳里是为了
@@ -365,7 +372,7 @@ function Shell() {
             <Route path="/mcp/authorize" element={<McpAuthorizePage />} />
             <Route path="/admin" element={user.permissionGroupCode === 'ADMIN' ? <AdminPage /> : <Navigate to="/" />} />
             <Route path="*" element={<NotFound />} />
-          </Routes></Suspense>
+          </Routes></Suspense></RouteErrorBoundary>
         </div>
         {/* 页脚对每个能进工作台的角色都显示，内容由管理员配置。 */}
         <SiteFooter className="shell-footer" />

@@ -10,7 +10,7 @@ export type PermissionCode =
   | 'PHOTO_VIEW' | 'PHOTO_DELETE' | 'PHOTO_UPLOAD' | 'PHOTO_DOWNLOAD'
   | 'WORKLOG_SUBMIT' | 'WORKLOG_SUBMIT_ANY' | 'WORKLOG_CONFIRM' | 'WORKLOG_EXPORT'
   | 'DIRECTORY_VIEW' | 'DIRECTORY_MANAGE' | 'MESSAGE_SEND'
-  | 'RECRUITMENT_VIEW' | 'RECRUITMENT_PUBLISH' | 'FEATURED_MANAGE' | 'DOC_MANAGE'
+  | 'RECRUITMENT_VIEW' | 'RECRUITMENT_PUBLISH' | 'FEATURED_MANAGE' | 'DOC_MANAGE' | 'TEACHING_MANAGE'
   | 'STATISTICS_DOWNLOAD' | 'MANAGER_CAMPUS_ASSIGN'
 
 export interface User {
@@ -768,6 +768,38 @@ export interface McpAuthorizationRequest {
   expiresAt: string
   /** 配对码还能猜错几次，归零后该请求作废。 */
   remainingAttempts: number
+}
+
+// ---------------------------------------------------------------------------
+// 教学资料
+// ---------------------------------------------------------------------------
+
+/** 首版只有 PDF；WORD/PPT 是服务端预留值，前端暂不展示。 */
+export type TeachingMaterialFormat = 'PDF' | 'WORD' | 'PPT'
+
+/**
+ * 一份教学资料。authorName 是「作者」（内容原作者，从图库成员中选），
+ * uploaderName 是「上传人」（把文件录入系统的管理者），两者是不同概念。
+ */
+export interface TeachingMaterial {
+  id: EntityId
+  publicId: string
+  title: string
+  description?: string | null
+  category: string
+  authorId?: number | null
+  authorName?: string | null
+  uploaderName?: string | null
+  format: TeachingMaterialFormat
+  size: number
+  downloadCount: number
+  createdAt?: string | null
+  updatedAt?: string | null
+  version: number
+  /** 预览地址（inline，不计数），形如 `/api/v1/teaching/materials/{publicId}/file`。 */
+  fileUrl: string
+  /** 下载入口（POST，计数 +1 并返回签名地址），形如 `/api/v1/teaching/materials/{publicId}/download`。 */
+  downloadUrl: string
 }
 
 // ---------------------------------------------------------------------------

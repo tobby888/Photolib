@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory = $true)]
     [string]$OutputDirectory,
     [Parameter(Mandatory = $true)]
@@ -18,8 +18,17 @@ $BuildDirectory = [System.IO.Path]::GetFullPath(
     [System.IO.Path]::Combine((Get-Location).ProviderPath, $BuildDirectory))
 
 $dependencyDirectory = Join-Path $BuildDirectory "dependencies"
-$archiveDirectory = Join-Path $dependencyDirectory "archives"
+# 下载的压缩包放在 target 之外、整台机器共用（和 ~/.m2 同理）：放在 target 里的话，
+# 每次 clean、每个新 worktree 都要重新从 GitHub 拉。每个包都核对 SHA256，共用是安全的。
+# PHOTOLIB_NATIVE_CACHE 可改位置。
+$archiveDirectory = $env:PHOTOLIB_NATIVE_CACHE
+if (-not $archiveDirectory) {
+    $archiveDirectory = Join-Path $env:LOCALAPPDATA "photolib\native-archives"
+}
 $dependencySourceDirectory = Join-Path $dependencyDirectory "sources"
+# GitHub 慢的网络可以设 PHOTOLIB_GITHUB_MIRROR 为镜像前缀（如 https://ghfast.top/），
+# 只作用于 github.com / codeload.github.com 的地址；校验和不变，镜像给错字节会直接失败。
+$githubMirror = $env:PHOTOLIB_GITHUB_MIRROR
 
 New-Item -ItemType Directory -Force -Path $archiveDirectory | Out-Null
 New-Item -ItemType Directory -Force -Path $dependencySourceDirectory | Out-Null
@@ -62,8 +71,14 @@ function Get-VerifiedArchive {
         }
     }
     if (-not (Test-Path -LiteralPath $Path)) {
-        & curl.exe -fsSL --ssl-no-revoke --connect-timeout 30 --retry 5 --retry-all-errors -o $Path $Url
+        if ($githubMirror -and $Url -match '^https://(codeload\.)?github\.com/') {
+            $Url = $githubMirror.TrimEnd('/') + '/' + $Url
+        }
+        # 先下到临时文件再改名：下到一半被打断的话，共享缓存里不会留下半截文件。
+        $partial = "$Path.part"
+        & curl.exe -fSL --ssl-no-revoke --connect-timeout 30 --retry 5 --retry-all-errors -o $partial $Url
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        Move-Item -Force -LiteralPath $partial -Destination $Path
     }
     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
     if ($actual -ne $Sha256) {
@@ -128,7 +143,7 @@ $vipsVersion = "1.3.2"
 $vipsWindowsArchive = Join-Path $archiveDirectory "sharp-libvips-win32-x64-$vipsVersion.tgz"
 $vipsWindowsSource = Join-Path $dependencySourceDirectory "sharp-libvips-win32-x64-$vipsVersion"
 Get-VerifiedArchive `
-    -Url "https://registry.npmjs.org/@img/sharp-libvips-win32-x64/-/sharp-libvips-win32-x64-$vipsVersion.tgz" `
+    -Url "https://registry.npmmirror.com/@img/sharp-libvips-win32-x64/-/sharp-libvips-win32-x64-$vipsVersion.tgz" `
     -Path $vipsWindowsArchive `
     -Sha256 "bcae355919358e0406c1674d0beaf841e9b11f321f8a54b927cddf4935c27668"
 if (-not (Test-Path -LiteralPath (Join-Path $vipsWindowsSource "package/lib/libvips-42.dll"))) {
@@ -139,7 +154,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $vipsWindowsSource "package/lib/libv
 $vipsLinuxArchive = Join-Path $archiveDirectory "sharp-libvips-linux-x64-$vipsVersion.tgz"
 $vipsLinuxSource = Join-Path $dependencySourceDirectory "sharp-libvips-linux-x64-$vipsVersion"
 Get-VerifiedArchive `
-    -Url "https://registry.npmjs.org/@img/sharp-libvips-linux-x64/-/sharp-libvips-linux-x64-$vipsVersion.tgz" `
+    -Url "https://registry.npmmirror.com/@img/sharp-libvips-linux-x64/-/sharp-libvips-linux-x64-$vipsVersion.tgz" `
     -Path $vipsLinuxArchive `
     -Sha256 "8cf0eafeaca832b68942fe1a770fb5f3b490504d3a9f2e3f56ee8784c9d65c45"
 if (-not (Test-Path -LiteralPath (Join-Path $vipsLinuxSource "package/lib/libvips-cpp.so.8.18.3"))) {

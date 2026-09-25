@@ -38,6 +38,7 @@ public class SecurityConfig {
                                 "/notifications/**", "/statistics", "/manager-campuses", "/admin",
                                 "/recruitment", "/recruitments/**", "/recruitment-applications/**",
                                 "/docs", "/docs/**", "/documents", "/documents/**",
+                                "/teaching", "/teaching/**",
                                 "/share/**", "/upload/**", "/mcp/authorize", "/two-factor",
                                 "/api", "/api/",
                                 "/api/v1/auth/login", "/api/v1/auth/refresh",

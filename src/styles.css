@@ -2554,11 +2554,35 @@ body {
 .docs-manage-hint { margin-bottom: 10px; }
 .docs-manage-detail { min-height: 420px; }
 
+/* 教学资料 ---------------------------------------------------------------- */
+/* 左侧列出资料、右侧阅读 PDF，与文档中心阅读页同构；PDF 查看器复用 docs-pdf 的样式。 */
+.teaching-body {
+  display: grid;
+  grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+.teaching-sidebar {
+  position: sticky;
+  top: 20px;
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+}
+.teaching-list { margin-top: 12px; }
+.teaching-content { min-height: 60vh; }
+.teaching-item { cursor: pointer; }
+.teaching-item:hover,
+.teaching-item-active { background: var(--studio-tint, #eef6fb); }
+.teaching-item .ant-list-item-meta { min-width: 0; }
+.teaching-item .ant-list-item-action { margin-inline-start: 8px; }
+
 @media (max-width: 900px) {
   .docs-body,
-  .docs-manage-page { grid-template-columns: minmax(0, 1fr); }
+  .docs-manage-page,
+  .teaching-body { grid-template-columns: minmax(0, 1fr); }
   .docs-sidebar,
-  .docs-manage-tree { position: static; max-height: none; }
+  .docs-manage-tree,
+  .teaching-sidebar { position: static; max-height: none; }
 }
 
 /* 站点定制 ---------------------------------------------------------------- */
@@ -3033,3 +3057,7 @@ body {
   .selection-filmstrip { flex-direction: row; overflow-x: auto; overflow-y: hidden; }
   .selection-filmstrip .selection-thumb { width: 140px; flex: 0 0 140px; height: 100%; aspect-ratio: auto; }
 }
+
+/* 内容区的页面级错误（RouteErrorBoundary）：只换掉这一页，侧栏和顶栏照常可用。 */
+.route-error { min-height: 45vh; }
+.route-error-detail { display: block; max-width: 640px; margin: 0 auto; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; word-break: break-all; }
