@@ -48,11 +48,11 @@ public class TeachingReaderController {
         return ApiResponse.ok(service.get(publicId));
     }
 
-    /** 在线预览：inline，不计数。 */
+    /** 在线预览：只有 PDF inline；Word/PPT 前端不调这个地址，只会走 /download。 */
     @GetMapping("/{publicId}/file")
     ResponseEntity<InputStreamResource> file(@PathVariable String publicId) {
         TeachingMaterialEntity material = service.requireReadable(publicId);
-        return TeachingPdfResponse.of(material, service.open(material), false);
+        return TeachingFileResponse.of(material, service.open(material), false);
     }
 
     /** 下载：attachment，计数 +1。 */
@@ -60,6 +60,6 @@ public class TeachingReaderController {
     ResponseEntity<InputStreamResource> download(@PathVariable String publicId) {
         TeachingMaterialEntity material = service.requireReadable(publicId);
         service.recordDownload(material.getId());
-        return TeachingPdfResponse.of(material, service.open(material), true);
+        return TeachingFileResponse.of(material, service.open(material), true);
     }
 }

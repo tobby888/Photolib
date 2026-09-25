@@ -1,6 +1,6 @@
 package cn.photolib.common.config;
 
-import cn.photolib.common.upload.PdfUpload;
+import cn.photolib.common.upload.OfficeUpload;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -78,15 +78,15 @@ class EndpointUploadLimitFilterTests {
     }
     @Test
     void rejectsOversizedTeachingMaterialUploadByDeclaredContentLength() throws Exception {
-        // 教学资料的 PDF 上限与文档中心共用 PdfUpload.MAX_BYTES；
-        // 用声明的 Content-Length 判断，避免测试真的分配 50 MiB 数组。
+        // 教学资料现在也收 Word/PPT，早筛上限取各格式最大值（OfficeUpload.MAX_BYTES）；
+        // 用声明的 Content-Length 判断，避免测试真的分配 100 MiB 数组。
         for (String[] call : new String[][]{
                 {"POST", "/api/v1/teaching"},
                 {"PUT", "/api/v1/teaching/7/file"}}) {
             MockHttpServletRequest request = new MockHttpServletRequest(call[0], call[1]) {
                 @Override
                 public long getContentLengthLong() {
-                    return PdfUpload.MAX_BYTES + 1024 * 1024;
+                    return OfficeUpload.MAX_BYTES + 1024 * 1024;
                 }
             };
             request.setRequestURI(call[1]);

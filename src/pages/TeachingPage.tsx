@@ -1,6 +1,6 @@
 import {
-  DeleteOutlined, DownloadOutlined, EditOutlined, FilePdfOutlined, PlusOutlined,
-  ReloadOutlined, SearchOutlined, SwapOutlined, TagsOutlined,
+  DeleteOutlined, DownloadOutlined, EditOutlined, FilePdfOutlined, FilePptOutlined, FileWordOutlined,
+  PlusOutlined, ReloadOutlined, SearchOutlined, SwapOutlined, TagsOutlined, UploadOutlined,
 } from '@ant-design/icons'
 import {
   Alert, App as AntApp, AutoComplete, Button, Card, Empty, Form, Input, List, Modal,
@@ -13,7 +13,7 @@ import { api, http, qs } from '../api'
 import { useAuth } from '../auth'
 import { useLoad } from '../hooks'
 import { hasPermission } from '../permissions'
-import type { TeachingMaterial } from '../types'
+import type { TeachingMaterial, TeachingMaterialFormat } from '../types'
 
 interface AuthorOption {
   id: number
@@ -27,7 +27,20 @@ interface MaterialFormValues {
   authorId?: number
 }
 
-const PDF_ACCEPT = 'application/pdf,.pdf'
+const FILE_ACCEPT = '.pdf,.docx,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation'
+
+const formatExtension = (format: TeachingMaterialFormat) =>
+  format === 'PDF' ? 'pdf' : format === 'WORD' ? 'docx' : 'pptx'
+
+const formatLabel = (format: TeachingMaterialFormat) =>
+  format === 'PDF' ? 'PDF' : format === 'WORD' ? 'Word' : 'PPT'
+
+const formatIcon = (format: TeachingMaterialFormat) =>
+  format === 'PDF'
+    ? <FilePdfOutlined style={{ fontSize: 20 }} />
+    : format === 'WORD'
+      ? <FileWordOutlined style={{ fontSize: 20 }} />
+      : <FilePptOutlined style={{ fontSize: 20 }} />
 
 const formatSize = (bytes: number) => (bytes < 1024
   ? `${bytes} B`
@@ -39,18 +52,25 @@ const fileListOf = (file: File | null) =>
   (file ? [{ uid: 'selected', name: file.name, status: 'done' as const }] : [])
 
 /**
- * 预览走 `/file`（inline，不计数），下载走 `/download`（attachment，计数 +1）。
+ * PDF 走 `/file`（inline，不计数）在线预览；Word/PPT 不支持预览，只给下载。
+ * 下载一律走 `/download`（attachment，计数 +1）。
  * 和文档中心一样必须带令牌取 Blob：`<iframe src>` 不会带 localStorage 里的令牌。
  */
-function PdfPreview({ material, onDownload }: {
+function FilePreview({ material, onDownload }: {
   material: TeachingMaterial
   onDownload: () => void
 }) {
+  const isPdf = material.format === 'PDF'
   const [objectUrl, setObjectUrl] = useState<string>()
   const [error, setError] = useState<string>()
   const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
+    if (!isPdf) {
+      setObjectUrl(undefined)
+      setError(undefined)
+      return
+    }
     let active = true
     let currentUrl: string | undefined
     setObjectUrl(undefined)
@@ -66,7 +86,20 @@ function PdfPreview({ material, onDownload }: {
       active = false
       if (currentUrl) URL.revokeObjectURL(currentUrl)
     }
-  }, [material.publicId, attempt])
+  }, [material.publicId, material.format, isPdf, attempt])
+
+  if (!isPdf) {
+    return <div className="docs-pdf">
+      <Space className="docs-pdf-actions">
+        <Button type="primary" icon={<DownloadOutlined />} onClick={onDownload}>
+          下载 {formatLabel(material.format)} 文件
+        </Button>
+      </Space>
+      <Typography.Text type="secondary">
+        该格式暂不支持在线预览，下载后用 Word / PowerPoint 打开。
+      </Typography.Text>
+    </div>
+  }
 
   if (error) return <Alert type="warning" showIcon message={error}
     action={<Button size="small" icon={<ReloadOutlined />}
@@ -75,7 +108,7 @@ function PdfPreview({ material, onDownload }: {
 
   return <div className="docs-pdf">
     <Space className="docs-pdf-actions">
-      <Button icon={<DownloadOutlined />} onClick={onDownload}>下载（计入下载次数）</Button>
+      <Button icon={<DownloadOutlined />} onClick={onDownload}>下载</Button>
       <Typography.Text type="secondary">浏览器里看不了的，下载后用本地阅读器打开。</Typography.Text>
     </Space>
     <iframe className="docs-pdf-frame" style={{ height: '60vh' }} src={objectUrl} title={material.title} />
@@ -98,7 +131,10 @@ function MaterialFields({ categories, authors }: { categories: string[]; authors
       <Input.TextArea rows={3} placeholder="这份资料讲什么，选填" />
     </Form.Item>
     <Form.Item name="authorId" label="作者">
-      <Select allowClear placeholder="从图库成员中选择，选填"
+      {/* showSearch + optionFilterProp="label"：下拉里直接敲名字过滤（按显示名匹配，大小写不敏感）。
+          候选是全体图库成员，数量在部门规模内，前端过滤足够；真到几百人以上再换服务端搜索。 */}
+      <Select allowClear showSearch optionFilterProp="label"
+        placeholder="输入姓名搜索图库成员，选填"
         options={authors.map(author => ({ value: author.id, label: author.displayName }))} />
     </Form.Item>
   </>
@@ -164,7 +200,7 @@ export default function TeachingPage() {
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      link.download = `${material.title}.pdf`
+      link.download = `${material.title}.${formatExtension(material.format)}`
       document.body.appendChild(link)
       link.click()
       link.remove()
@@ -178,7 +214,7 @@ export default function TeachingPage() {
   const submitUpload = async () => {
     const values = await uploadForm.validateFields()
     if (!uploadFile) {
-      message.warning('请选择要上传的 PDF 文件')
+      message.warning('请选择要上传的文件')
       return
     }
     setSubmitting(true)
@@ -238,7 +274,7 @@ export default function TeachingPage() {
   const submitReplace = async () => {
     if (!replaceTarget) return
     if (!replaceFile) {
-      message.warning('请选择新的 PDF 文件')
+      message.warning('请选择新的文件')
       return
     }
     setSubmitting(true)
@@ -294,11 +330,11 @@ export default function TeachingPage() {
     }
   }
 
-  const pdfPicker = (file: File | null, setFile: (value: File | null) => void) =>
-    <Upload accept={PDF_ACCEPT} maxCount={1} fileList={fileListOf(file)}
+  const filePicker = (file: File | null, setFile: (value: File | null) => void) =>
+    <Upload accept={FILE_ACCEPT} maxCount={1} fileList={fileListOf(file)}
       beforeUpload={next => { setFile(next); return false }}
       onRemove={() => setFile(null)}>
-      <Button icon={<FilePdfOutlined />}>选择 PDF 文件</Button>
+      <Button icon={<UploadOutlined />}>选择文件（PDF / Word / PPT）</Button>
     </Upload>
 
   return <div className="documents-page">
@@ -306,7 +342,7 @@ export default function TeachingPage() {
       <div>
         <Typography.Title level={4} style={{ margin: 0 }}>教学资料</Typography.Title>
         <Typography.Text type="secondary">
-          课程文件（首版为 PDF）。图库成员都能查看与下载；有教学资料管理权限的人可以上传和维护。
+        教学文件，摄影分享与后期工具
         </Typography.Text>
       </div>
       {canManage && <Space>
@@ -348,13 +384,11 @@ export default function TeachingPage() {
                 </Popconfirm>,
               ] : undefined}>
               <List.Item.Meta
-                avatar={<FilePdfOutlined style={{ fontSize: 20 }} />}
+                avatar={formatIcon(material.format)}
                 title={material.title}
                 description={<Space size="small" wrap>
                   <Tag>{material.category}</Tag>
                   {material.authorName && <span>作者 {material.authorName}</span>}
-                  <span>{formatSize(material.size)}</span>
-                  <span>下载 {material.downloadCount}</span>
                 </Space>} />
             </List.Item>} />}
         </div>
@@ -364,19 +398,24 @@ export default function TeachingPage() {
         {selected ? <>
           <Typography.Title level={3} style={{ marginTop: 0 }}>{selected.title}</Typography.Title>
           <Space size="small" wrap style={{ marginBottom: 8 }}>
+            <Tag color="blue">{formatLabel(selected.format)}</Tag>
             <Tag>{selected.category}</Tag>
-            {selected.authorName && <Typography.Text type="secondary">作者：{selected.authorName}</Typography.Text>}
-            {selected.uploaderName && <Typography.Text type="secondary">上传人：{selected.uploaderName}</Typography.Text>}
-            <Typography.Text type="secondary">{formatSize(selected.size)}</Typography.Text>
-            <Typography.Text type="secondary">下载 {selected.downloadCount} 次</Typography.Text>
-            {selected.createdAt && <Typography.Text type="secondary">
-              上传 {dayjs(selected.createdAt).format('YYYY-MM-DD HH:mm')}</Typography.Text>}
-            {selected.updatedAt && <Typography.Text type="secondary">
-              更新 {dayjs(selected.updatedAt).format('YYYY-MM-DD HH:mm')}</Typography.Text>}
+            {/* 作者/上传人/大小/下载次数/时间只给有编辑权限的人看：这些是管理信息，
+                普通图库成员只需要标题、分类和简介。 */}
+            {canManage && <>
+              {selected.authorName && <Typography.Text type="secondary">作者：{selected.authorName}</Typography.Text>}
+              {selected.uploaderName && <Typography.Text type="secondary">上传人：{selected.uploaderName}</Typography.Text>}
+              <Typography.Text type="secondary">{formatSize(selected.size)}</Typography.Text>
+              <Typography.Text type="secondary">下载 {selected.downloadCount} 次</Typography.Text>
+              {selected.createdAt && <Typography.Text type="secondary">
+                上传 {dayjs(selected.createdAt).format('YYYY-MM-DD HH:mm')}</Typography.Text>}
+              {selected.updatedAt && <Typography.Text type="secondary">
+                更新 {dayjs(selected.updatedAt).format('YYYY-MM-DD HH:mm')}</Typography.Text>}
+            </>}
           </Space>
           {selected.description && <Typography.Paragraph type="secondary">
             {selected.description}</Typography.Paragraph>}
-          <PdfPreview material={selected} onDownload={() => void download(selected)} />
+          <FilePreview material={selected} onDownload={() => void download(selected)} />
         </> : (!list.loading && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE}
           description="从左边选一份资料开始阅读" />)}
       </div>
@@ -387,7 +426,7 @@ export default function TeachingPage() {
       onCancel={() => { setUploadOpen(false); setUploadFile(null); uploadForm.resetFields() }}>
       <Form form={uploadForm} layout="vertical">
         <MaterialFields categories={categories.data} authors={authors.data} />
-        <Form.Item label="PDF 文件" required>{pdfPicker(uploadFile, setUploadFile)}</Form.Item>
+        <Form.Item label="文件" required>{filePicker(uploadFile, setUploadFile)}</Form.Item>
       </Form>
     </Modal>
 
@@ -404,7 +443,7 @@ export default function TeachingPage() {
       <Typography.Paragraph type="secondary">
         替换后资料的 id 与链接不变，读者刷新即可看到新版本。
       </Typography.Paragraph>
-      {pdfPicker(replaceFile, setReplaceFile)}
+      {filePicker(replaceFile, setReplaceFile)}
     </Modal>
 
     <Modal open={renameOpen} title="重命名分类" okText="重命名" confirmLoading={submitting}

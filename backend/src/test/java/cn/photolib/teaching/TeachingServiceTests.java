@@ -16,11 +16,14 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -102,6 +105,44 @@ class TeachingServiceTests {
                 .isInstanceOf(BusinessException.class)
                 .extracting("code").isEqualTo(ErrorCode.FILE_TOO_LARGE);
         assertThat(service.list(null, null)).isEmpty();
+    }
+
+    @Test
+    void wordAndPptUploadsAreDetectedAndStoredWithTheirFormat() throws IOException {
+        TeachingService.Material handout = service.create("讲义", null, "摄影基础",
+                null, docxUpload(), minister);
+        assertThat(handout.format()).isEqualTo("WORD");
+        assertThat(mapper.findByPublicId(handout.publicId()).getObjectKey())
+                .isEqualTo("teaching/" + handout.publicId() + "/document.docx");
+
+        TeachingService.Material slides = service.create("课件", null, "摄影基础",
+                null, pptxUpload(), minister);
+        assertThat(slides.format()).isEqualTo("PPT");
+        assertThat(mapper.findByPublicId(slides.publicId()).getObjectKey())
+                .isEqualTo("teaching/" + slides.publicId() + "/document.pptx");
+    }
+
+    @Test
+    void aZipThatIsNeitherWordNorPptIsRejected() {
+        MockMultipartFile zip = zipUpload("notes.zip", "application/zip", "random.txt");
+
+        assertThatThrownBy(() -> service.create("假 zip", null, "摄影基础", null, zip, minister))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo(ErrorCode.UNSUPPORTED_FILE_TYPE);
+    }
+
+    @Test
+    void replacingAFileWithADifferentFormatIsRejected() throws IOException {
+        TeachingService.Material created = service.create("格式固定", null, "摄影基础",
+                null, pdfUpload(), minister);
+
+        assertThatThrownBy(() -> service.replaceFile(created.id(), docxUpload(),
+                created.version(), minister))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo(ErrorCode.VALIDATION_ERROR);
+        // 换不同格式被拒后，原 PDF 对象键保持不动。
+        assertThat(mapper.findByPublicId(created.publicId()).getObjectKey())
+                .isEqualTo("teaching/" + created.publicId() + "/document.pdf");
     }
 
     @Test
@@ -249,5 +290,33 @@ class TeachingServiceTests {
     private MockMultipartFile pdfUpload(String content) {
         return new MockMultipartFile("file", "课件.pdf", "application/pdf",
                 content.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private MockMultipartFile docxUpload() {
+        return zipUpload("讲义.docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "[Content_Types].xml", "word/document.xml");
+    }
+
+    private MockMultipartFile pptxUpload() {
+        return zipUpload("课件.pptx",
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                "[Content_Types].xml", "ppt/presentation.xml");
+    }
+
+    private MockMultipartFile zipUpload(String filename, String contentType, String... entries) {
+        try {
+            ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+            try (ZipOutputStream zip = new ZipOutputStream(buffer)) {
+                for (String entry : entries) {
+                    zip.putNextEntry(new ZipEntry(entry));
+                    zip.write(new byte[]{1, 2, 3});
+                    zip.closeEntry();
+                }
+            }
+            return new MockMultipartFile("file", filename, contentType, buffer.toByteArray());
+        } catch (IOException failure) {
+            throw new IllegalStateException(failure);
+        }
     }
 }
