@@ -796,8 +796,8 @@ export interface TeachingMaterial {
   createdAt?: string | null
   updatedAt?: string | null
   version: number
-  /** 预览地址（inline，不计数），形如 `/api/v1/teaching/{publicId}/file`。 */
+  /** 预览地址（inline，不计数），形如 `/api/v1/teaching/materials/{publicId}/file`。 */
   fileUrl: string
-  /** 下载地址（attachment，计数 +1），形如 `/api/v1/teaching/{publicId}/download`。 */
+  /** 下载入口（POST，计数 +1 并返回签名地址），形如 `/api/v1/teaching/materials/{publicId}/download`。 */
   downloadUrl: string
 }

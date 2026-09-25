@@ -3,7 +3,7 @@ package cn.photolib.teaching;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
-import cn.photolib.common.upload.PdfUpload;
+import cn.photolib.common.upload.OfficeUpload;
 import cn.photolib.storage.ObjectStorageService;
 import cn.photolib.teaching.mapper.TeachingMaterialMapper;
 import cn.photolib.teaching.model.TeachingMaterialEntity;
@@ -92,12 +92,12 @@ class TeachingServiceTests {
 
     @Test
     void oversizedPdfUploadsAreRejected() {
-        // 只改 size，不真的分配 50 MiB：校验必须在读字节之前就按声明大小拒绝。
+        // 只改 size，不真的分配 100 MiB：校验必须在读字节之前就按声明大小拒绝。
         MockMultipartFile oversized = new MockMultipartFile("file", "超大.pdf", "application/pdf",
                 "%PDF-1.4".getBytes(StandardCharsets.UTF_8)) {
             @Override
             public long getSize() {
-                return PdfUpload.MAX_BYTES + 1;
+                return OfficeUpload.MAX_BYTES + 1;
             }
         };
 
@@ -166,10 +166,12 @@ class TeachingServiceTests {
         TeachingService.Material created = service.create("计数课件", null, "器材",
                 null, pdfUpload(), minister);
 
-        // 预览读的是同一个对象，不经过 recordDownload，所以计数保持 0。
+        // 预览读的是同一个对象，不经过 download，所以计数保持 0。
         assertThat(service.get(created.publicId()).downloadCount()).isZero();
-        service.recordDownload(created.id());
+        TeachingService.Download download = service.download(created.publicId());
 
+        assertThat(download.fileName()).isEqualTo("计数课件.pdf");
+        assertThat(download.downloadUrl()).isNotBlank();
         assertThat(service.get(created.publicId()).downloadCount()).isEqualTo(1);
     }
 
@@ -205,6 +207,30 @@ class TeachingServiceTests {
         assertThat(notificationsFor(MINISTER_ID)).isEqualTo(1);
         // NO_ACCESS 账号不是图库成员，收不到。
         assertThat(notificationsFor(OUTSIDER_ID)).isZero();
+        // 只发站内信：绑了企业微信的成员也不该排外发。
+        jdbc.sql("UPDATE app_user SET wecom_userid = 'teaching-member' WHERE id = :id")
+                .param("id", MEMBER_ID).update();
+        service.create("又一份课件", null, "摄影基础", null, pdfUpload(), minister);
+        assertThat(jdbc.sql("""
+                SELECT COUNT(*) FROM notification_log WHERE event_type = 'TEACHING_PUBLISHED'
+                """).query(Long.class).single()).isZero();
+    }
+
+    @Test
+    void editingKeepsAnAuthorWhoLeftTheGalleryAndTheOriginalUploader() throws IOException {
+        TeachingService.Material created = service.create("作者离开", null, "摄影基础",
+                MEMBER_ID, pdfUpload(), minister);
+        jdbc.sql("UPDATE app_user SET enabled = FALSE WHERE id = :id").param("id", MEMBER_ID).update();
+        AuthenticatedUser editor = new AuthenticatedUser(OUTSIDER_ID, "teaching-outsider", "外部账号",
+                UserRole.CAMPUS_MANAGER, null, false);
+
+        // 只改标题、作者原样提交：原作者已不是图库成员，也不能挡住这次编辑。
+        TeachingService.Material edited = service.updateMetadata(created.id(), "作者离开（修订）",
+                null, "摄影基础", MEMBER_ID, created.version(), editor);
+
+        assertThat(edited.authorId()).isEqualTo(MEMBER_ID);
+        // 上传人是录入的人，不随最后一次编辑变。
+        assertThat(edited.uploaderName()).isEqualTo("教学部长");
     }
 
     @Test

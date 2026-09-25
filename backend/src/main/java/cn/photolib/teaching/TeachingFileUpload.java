@@ -3,7 +3,6 @@ package cn.photolib.teaching;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.common.upload.OfficeUpload;
-import cn.photolib.common.upload.PdfUpload;
 import cn.photolib.teaching.model.TeachingMaterialFormat;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -33,8 +32,9 @@ final class TeachingFileUpload {
             throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "文件不能超过 100 MiB");
         }
         byte[] head = head(file, 5);
+        // 不走 PdfUpload.validate：它要求声明的 Content-Type 是 application/pdf、上限 50 MiB，
+        // 而这里只认字节，PDF 的上限按 spec 就是上面的 100 MiB。
         if (startsWith(head, PDF_SIGNATURE)) {
-            PdfUpload.validate(file);
             return TeachingMaterialFormat.PDF;
         }
         if (startsWith(head, ZIP_SIGNATURE) || startsWith(head, ZIP_EMPTY_SIGNATURE)) {

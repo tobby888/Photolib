@@ -79,7 +79,7 @@ public class EndpointUploadLimitFilter extends OncePerRequestFilter {
             return PdfUpload.MAX_BYTES + MULTIPART_OVERHEAD;
         }
         // 教学资料现在也收 Word/PPT，早筛上限取各格式上限的最大值（OfficeUpload.MAX_BYTES），
-        // 服务层再按嗅探出的格式细分（PDF 50 / Word 20 / PPT 100 MiB）。
+        // 服务层再按嗅探出的格式细分（PDF 100 / Word 20 / PPT 100 MiB）。
         // POST /api/v1/teaching 建新的，PUT /api/v1/teaching/{id}/file 换文件。
         // 少了这条，Spring 会先把整个 multipart 正文落盘再交给 PdfUpload 拒绝——
         // 上限只剩 spring.servlet.multipart.max-file-size（1.5 GiB），白等一场还占磁盘。

@@ -49,7 +49,9 @@ public final class OfficeUpload {
                     ppt = true;
                 }
             }
-        } catch (java.util.zip.ZipException failure) {
+        } catch (java.util.zip.ZipException | java.io.EOFException | IllegalArgumentException failure) {
+            // 截断的包在读条目或解压时抛 EOFException，条目名编码坏了抛 IllegalArgumentException：
+            // 都是文件本身坏了，不是服务端故障，不能落到兜底的 500。
             throw new BusinessException(ErrorCode.UNSUPPORTED_FILE_TYPE,
                     "文件内容不是有效的 Word/PPT 文件");
         }
