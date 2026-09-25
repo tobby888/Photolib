@@ -8,13 +8,12 @@ import { api } from '../api'
 import { DataState } from '../components'
 import { useAuth } from '../auth'
 import { useLoad } from '../hooks'
-import type { FeedbackCategory, FeedbackDetail, FeedbackStatus } from '../types'
+import type { FeedbackDetail, FeedbackStatus } from '../types'
+import { FEEDBACK_CATEGORY_LABEL, FEEDBACK_STATUS_COLOR, FEEDBACK_STATUS_LABEL } from '../feedback'
+import { richTextIsEmpty } from '../richText'
 import RichTextEditor from '../RichTextEditor'
 import RichTextContent from '../RichTextContent'
 
-const CATEGORY_LABEL: Record<FeedbackCategory, string> = { ISSUE: '问题', SUGGESTION: '建议' }
-const STATUS_LABEL: Record<FeedbackStatus, string> = { PENDING: '待处理', IN_PROGRESS: '处理中', RESOLVED: '已解决' }
-const STATUS_COLOR: Record<FeedbackStatus, string> = { PENDING: 'gold', IN_PROGRESS: 'processing', RESOLVED: 'green' }
 const IMAGE_PREFIX = '/api/v1/notifications/images/'
 
 /** 一条反馈的线程：标题、状态、正文、回复与状态流转按时间串起来。 */
@@ -32,8 +31,7 @@ export default function FeedbackDetailPage() {
   const [sending, setSending] = useState(false)
 
   const reply = async () => {
-    const text = replyHtml.replace(/<[^>]+>/g, '').trim()
-    if (!text && !replyHtml.includes('<img')) { message.error('请填写回复内容'); return }
+    if (richTextIsEmpty(replyHtml)) { message.error('请填写回复内容'); return }
     try {
       setSending(true)
       await api({ method: 'POST', url: `/feedback/${feedbackId}/reply`, data: { contentHtml: replyHtml } })
@@ -69,8 +67,8 @@ export default function FeedbackDetailPage() {
           <div style={{ marginBottom: 16 }}>
             <Typography.Title level={4} style={{ margin: 0 }}>{data.title}</Typography.Title>
             <Space wrap style={{ marginTop: 8 }}>
-              <Tag>{CATEGORY_LABEL[data.category]}</Tag>
-              <Tag color={STATUS_COLOR[data.status]} variant="filled">{STATUS_LABEL[data.status]}</Tag>
+              <Tag>{FEEDBACK_CATEGORY_LABEL[data.category]}</Tag>
+              <Tag color={FEEDBACK_STATUS_COLOR[data.status]} variant="filled">{FEEDBACK_STATUS_LABEL[data.status]}</Tag>
             </Space>
             <div style={{ marginTop: 6 }}>
               <Typography.Text type="secondary">
@@ -82,7 +80,7 @@ export default function FeedbackDetailPage() {
             <Typography.Text type="secondary">改状态：</Typography.Text>
             {(['PENDING', 'IN_PROGRESS', 'RESOLVED'] as FeedbackStatus[]).map((status) => (
               <Button key={status} size="small" type={data.status === status ? 'primary' : 'default'}
-                onClick={() => void changeStatus(status)}>{STATUS_LABEL[status]}</Button>
+                onClick={() => void changeStatus(status)}>{FEEDBACK_STATUS_LABEL[status]}</Button>
             ))}
           </Space>}
           <div>
@@ -129,7 +127,7 @@ function buildTimeline(data: FeedbackDetail) {
     node: <div key={`status-${change.id}`} style={{ marginBottom: 16, color: '#60798a' }}>
       <Space>
         <Tag>状态</Tag>
-        <span>{STATUS_LABEL[change.fromStatus ?? 'PENDING']} → {STATUS_LABEL[change.toStatus]}</span>
+        <span>{FEEDBACK_STATUS_LABEL[change.fromStatus ?? 'PENDING']} → {FEEDBACK_STATUS_LABEL[change.toStatus]}</span>
         <Typography.Text type="secondary">{change.operatorName} · {dayjs(change.createdAt).format('MM-DD HH:mm')}</Typography.Text>
       </Space>
     </div>,

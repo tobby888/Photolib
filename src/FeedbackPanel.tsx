@@ -8,11 +8,9 @@ import { DataState } from './components'
 import { useAuth } from './auth'
 import { useLoad } from './hooks'
 import type { FeedbackCategory, FeedbackStatus, FeedbackSummary } from './types'
+import { FEEDBACK_CATEGORY_LABEL, FEEDBACK_STATUS_COLOR, FEEDBACK_STATUS_LABEL } from './feedback'
+import { richTextIsEmpty } from './richText'
 import RichTextEditor from './RichTextEditor'
-
-const CATEGORY_LABEL: Record<FeedbackCategory, string> = { ISSUE: '问题', SUGGESTION: '建议' }
-const STATUS_LABEL: Record<FeedbackStatus, string> = { PENDING: '待处理', IN_PROGRESS: '处理中', RESOLVED: '已解决' }
-const STATUS_COLOR: Record<FeedbackStatus, string> = { PENDING: 'gold', IN_PROGRESS: 'processing', RESOLVED: 'green' }
 
 /**
  * 消息中心的「反馈」标签：成员提交网站问题/建议，ADMIN 看全量并按状态筛选。
@@ -36,9 +34,8 @@ export default function FeedbackPanel() {
   )
 
   const submit = async () => {
-    const text = contentHtml.replace(/<[^>]+>/g, '').trim()
     if (!title.trim()) { message.error('请填写标题'); return }
-    if (!text && !contentHtml.includes('<img')) { message.error('请填写反馈内容'); return }
+    if (richTextIsEmpty(contentHtml)) { message.error('请填写反馈内容'); return }
     try {
       setSubmitting(true)
       await api({ method: 'POST', url: '/feedback', data: { title, category, contentHtml } })
@@ -72,8 +69,8 @@ export default function FeedbackPanel() {
           <div className="message-list-main">
             <Space wrap>
               <Typography.Text strong>{item.title}</Typography.Text>
-              <Tag>{CATEGORY_LABEL[item.category]}</Tag>
-              <Tag color={STATUS_COLOR[item.status]} variant="filled">{STATUS_LABEL[item.status]}</Tag>
+              <Tag>{FEEDBACK_CATEGORY_LABEL[item.category]}</Tag>
+              <Tag color={FEEDBACK_STATUS_COLOR[item.status]} variant="filled">{FEEDBACK_STATUS_LABEL[item.status]}</Tag>
             </Space>
             <div>
               <Typography.Text type="secondary">

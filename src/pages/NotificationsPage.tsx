@@ -10,6 +10,7 @@ import { useLoad } from '../hooks'
 import type { MessageRecipient, Notification } from '../types'
 import RichTextEditor from '../RichTextEditor'
 import { hasPermission } from '../permissions'
+import { richTextIsEmpty } from '../richText'
 import FeedbackPanel from '../FeedbackPanel'
 
 export default function NotificationsPage() {
@@ -35,9 +36,7 @@ export default function NotificationsPage() {
   const send = async () => {
     try {
       const values = await form.validateFields()
-      if (!contentHtml.replace(/<[^>]+>/g, '').trim() && !contentHtml.includes('<img')) {
-        throw new Error('请输入消息内容')
-      }
+      if (richTextIsEmpty(contentHtml)) throw new Error('请输入消息内容')
       setSending(true)
       const result = await api<{ recipientCount: number }>({
         method: 'POST', url: '/notifications/messages',
@@ -65,7 +64,7 @@ export default function NotificationsPage() {
               emptyText="还没有收到消息"
               emptyHint="需求发布、工时审核这些事发生时，通知会送到这里。">
               <List dataSource={data} renderItem={(item) =>
-                <List.Item className="message-list-item" onClick={() => navigate(`/notifications/${item.id}`)}>
+                <List.Item className="message-list-item" onClick={() => navigate(notificationTarget(item))}>
                   <Badge dot={!item.readAt} offset={[-3, 4]}>
                     <div className="message-list-icon"><NotificationOutlined /></div>
                   </Badge>
@@ -109,4 +108,14 @@ export default function NotificationsPage() {
       </Form>
     </Modal>
   </>
+}
+
+/**
+ * 点开一条通知去哪儿。反馈通知要跳进它自己的线程（spec Q7「跳进该反馈」），
+ * 其余通知仍看通用详情页——和管理消息列表一直以来的行为一致。
+ */
+function notificationTarget(item: Notification) {
+  return item.eventType.startsWith('FEEDBACK_') && item.actionUrl
+    ? item.actionUrl
+    : `/notifications/${item.id}`
 }
