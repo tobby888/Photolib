@@ -9,6 +9,7 @@ import App from './App'
 import AppErrorBoundary from './AppErrorBoundary'
 import { cacheBustedUrl } from './clientCacheReset'
 import { hashRouteForDeepLink } from './deepLink'
+import { markReloadPending } from './routeErrors'
 import './styles.css'
 
 // 路径式深链（后端 forward 到 index.html 的那批）在 HashRouter 挂载之前搬进 hash，
@@ -23,6 +24,7 @@ window.addEventListener('vite:preloadError', (event) => {
   if (Date.now() - lastReload < 30_000) return
 
   event.preventDefault()
+  markReloadPending()
   sessionStorage.setItem(PRELOAD_RELOAD_KEY, Date.now().toString())
   window.location.replace(cacheBustedUrl(window.location.href))
 })

@@ -3057,3 +3057,7 @@ body {
   .selection-filmstrip { flex-direction: row; overflow-x: auto; overflow-y: hidden; }
   .selection-filmstrip .selection-thumb { width: 140px; flex: 0 0 140px; height: 100%; aspect-ratio: auto; }
 }
+
+/* 内容区的页面级错误（RouteErrorBoundary）：只换掉这一页，侧栏和顶栏照常可用。 */
+.route-error { min-height: 45vh; }
+.route-error-detail { display: block; max-width: 640px; margin: 0 auto; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; word-break: break-all; }
