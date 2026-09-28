@@ -1,9 +1,11 @@
 package cn.photolib.recruitment;
 
 import cn.photolib.common.api.ApiResponse;
+import cn.photolib.form.FormFileService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
@@ -61,7 +63,28 @@ public class RecruitmentPublicController {
                 request.studentId(), request.answers()));
     }
 
+    @PostMapping("/{publicId}/drafts/{draftId}/files")
+    ApiResponse<FormFileService.UploadTicket> createFileTicket(
+            @PathVariable String publicId,
+            @PathVariable String draftId,
+            @RequestHeader("X-Recruitment-Draft-Token") String draftToken,
+            @Valid @RequestBody FileTicketRequest request,
+            HttpServletRequest servletRequest) {
+        String activePublicId = taskService.requireActivePublicId(publicId);
+        rateLimiter.requireAllowed(AnonymousRecruitmentRateLimiter.Action.FILE_UPLOAD_CREATE,
+                activePublicId, servletRequest.getRemoteAddr());
+        return ApiResponse.ok(applicationService.createFileTicket(activePublicId, draftId, draftToken,
+                new FormFileService.TicketRequest(request.fieldId(), request.fileName(),
+                        request.contentType(), request.size())));
+    }
+
     record CreateDraftRequest(@NotBlank @Size(max = 128) String studentId) {
+    }
+
+    record FileTicketRequest(@NotBlank @Size(max = 64) String fieldId,
+                             @NotBlank @Size(max = 255) String fileName,
+                             @Size(max = 255) String contentType,
+                             @NotNull @Positive Long size) {
     }
 
     record SubmitRequest(@NotBlank @Size(max = 128) String studentId,

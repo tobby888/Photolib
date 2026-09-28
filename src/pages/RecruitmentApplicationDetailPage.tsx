@@ -14,6 +14,7 @@ import { api, http } from '../api'
 import { formatBytes } from '../components'
 import { useLoad, useRefreshOnResume } from '../hooks'
 import MarkdownRenderer from '../MarkdownRenderer'
+import { FormFileList } from '../FormFields'
 import { buildApplicationDetailsMarkdown, normalizeRecruitmentFormSchema } from '../recruitmentForm'
 import {
   normalizeApplicationDetail,
@@ -113,6 +114,13 @@ export default function RecruitmentApplicationDetailPage() {
       )
     : '')
 
+  const schemaFields = detail ? normalizeRecruitmentFormSchema(detail.formSchema).fields : []
+  const fileGroups = detail ? [...new Set(detail.files.map(file => file.fieldId))].map(fieldId => ({
+    fieldId,
+    label: schemaFields.find(field => field.id === fieldId)?.label || '上传的文件',
+    files: detail.files.filter(file => file.fieldId === fieldId),
+  })) : []
+
   return <>
     <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => detail?.taskId
       ? navigate(`/recruitments/${detail.taskId}`)
@@ -126,7 +134,7 @@ export default function RecruitmentApplicationDetailPage() {
         <Space wrap size="large">
           <Typography.Text><IdcardOutlined /> 学号：<strong>{detail.studentId}</strong></Typography.Text>
           <Typography.Text type="secondary">提交时间：{dayjs(detail.submittedAt).format('YYYY-MM-DD HH:mm:ss')}</Typography.Text>
-          <Typography.Text type="secondary"><PaperClipOutlined /> 带了 {detail.attachments.length} 个文件</Typography.Text>
+          <Typography.Text type="secondary"><PaperClipOutlined /> 带了 {detail.attachments.length + detail.files.length} 个文件</Typography.Text>
         </Space>
       </section>
 
@@ -136,6 +144,16 @@ export default function RecruitmentApplicationDetailPage() {
             {markdown ? <MarkdownRenderer value={markdown} allowLinks={false} /> : <Alert type="info" showIcon title="这份报名没有文字回答" />}
           </Card>
         </Col>
+        {!!detail.files.length && <Col xs={24} xl={detail.attachments.length ? 14 : 24}>
+          <Card title={<Space><PaperClipOutlined />上传的文件</Space>}>
+            <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+              {fileGroups.map(group => <div key={group.fieldId}>
+                <Typography.Text strong style={{ display: 'block', marginBottom: 8 }}>{group.label}</Typography.Text>
+                <FormFileList files={group.files} />
+              </div>)}
+            </Space>
+          </Card>
+        </Col>}
         {!!detail.attachments.length && <Col xs={24} xl={10}>
           <Card title={<Space><PaperClipOutlined />交上来的作品</Space>}>
             <Row gutter={[12, 12]}>

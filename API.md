@@ -1671,7 +1671,7 @@ PENDING -> FAILED
 
 项目和需求说明是受控 Markdown，后端只保存文本；前端建议使用 GFM 渲染并禁止任意 HTML。
 
-上传：`POST /description-images`，A/M，`multipart/form-data`，字段名 `file`。
+上传：`POST /description-images`，需要 `PROJECT_CREATE`、`REQUEST_CREATE`、`FEATURED_MANAGE` 或 `SURVEY_CREATE` 之一，`multipart/form-data`，字段名 `file`。
 
 ```json
 { "url": "/api/v1/description-images/01K..." }
@@ -1688,6 +1688,7 @@ PENDING -> FAILED
 - A/M 可读取所有说明图片。
 - 上传者可读取自己上传的图片。
 - C 只有在图片被其可见的项目或已参与的非草稿需求说明引用时可读取。
+- 问卷简介里的图片：发放对象在问卷发布后可读取；持有 `SURVEY_CREATE` 或 `SURVEY_RESULT_VIEW` 的人都可读取。
 
 当前没有删除接口、引用计数或自动垃圾回收。客户端不要构造外部图片 URL；现有 Markdown 渲染策略只支持站内说明图片。
 
@@ -2338,3 +2339,75 @@ interface SharePhoto {
 13. 统计总览中的资源数量不受日期过滤，日期只影响工时统计。
 14. 通知、邮件日志、管理员告警均为固定上限数组，不是分页接口。
 15. 说明图片和消息图片读取需要认证；在 HTML `<img>` 中直接使用路径不会自动携带 Bearer header，跨客户端应使用认证 Blob 加载器。
+
+## 22. 问卷与「上传文件」题
+
+问卷发给系统内的成员填写（招募面向匿名访客，两者题目结构相同，共用 `formSchema` 和校验）。三个权限相互独立：
+
+| 权限 | 能做什么 |
+| --- | --- |
+| `SURVEY_CREATE` | 新建、编辑、发布、结束问卷；删除草稿；选择发放对象 |
+| `SURVEY_ACCESS` | 作为发放对象查看和填写问卷，每人每份只能交一次 |
+| `SURVEY_RESULT_VIEW` | 查看答卷、选择题统计，导出 Excel |
+
+默认 A/M 三个都有，C 只有 `SURVEY_ACCESS`。校区范围（`dataScope=CAMPUS`）的发起人只能选与自己有共同授权校区的人；校区范围的结果查看人只看得到授权校区成员的答卷（列表、详情、统计、导出同一口径）。
+
+### 22.1 发起人
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/surveys/audience` | 可选的发放对象：`{ candidates[], permissionGroups[], campuses[] }`，只含启用且持有 `SURVEY_ACCESS` 的账号 |
+| POST | `/surveys` | 新建草稿 |
+| PUT | `/surveys/{id}` | 编辑，请求体多一个 `version`；发布后 `formSchema` 不能再变，改名单时新增的人会收到站内通知 |
+| POST | `/surveys/{id}/publish` | `{ version }`，至少一道题、至少一个发放对象；给名单上每个人发站内通知（跳转 `/surveys/{id}/fill`） |
+| POST | `/surveys/{id}/close` | `{ version }` |
+| DELETE | `/surveys/{id}?version=` | 只能删草稿 |
+
+新建 / 编辑请求体：
+
+```json
+{
+  "title": "秋季活动满意度调查",
+  "description": "一句话描述，纯文本，≤1000",
+  "introMarkdown": "## 简介，Markdown，可插 description-images",
+  "formSchema": { "fields": [ { "id": "q1", "type": "SINGLE_CHOICE", "label": "满意度", "required": true, "options": ["满意", "一般"] } ] },
+  "endsAt": "2026-10-05T23:59:59",
+  "targetUserIds": ["2104506240687181825"]
+}
+```
+
+`endsAt` 可为 `null`（一直开放到手动结束）。`targetUserIds` 里不在候选名单上的人会被拒绝。
+
+### 22.2 管理与结果
+
+| 方法 | 路径 | 权限 | 说明 |
+| --- | --- | --- | --- |
+| GET | `/surveys?page&pageSize&keyword&status` | CREATE 或 RESULT_VIEW | 分页；只有 RESULT_VIEW 时看不到草稿 |
+| GET | `/surveys/{id}` | CREATE 或 RESULT_VIEW | 带 `targetUserIds`、`targetCount`、`responseCount`、`open` |
+| GET | `/surveys/{id}/targets` | CREATE 或 RESULT_VIEW | 发放名单和每人的提交情况 |
+| GET | `/surveys/{id}/responses?page&pageSize&keyword` | RESULT_VIEW | 答卷列表，`keyword` 匹配姓名或账号 |
+| GET | `/surveys/responses/{responseId}` | RESULT_VIEW | 单份答卷：冻结的 `formSchema`、`answers`、`files`（带临时下载地址） |
+| GET | `/surveys/{id}/summary` | RESULT_VIEW | 单选 / 多选题按选项计数 |
+| GET | `/surveys/{id}/responses/export` | RESULT_VIEW | XLSX 二进制：「答卷」「未提交」「选择题统计」三个工作表 |
+
+### 22.3 填写人（`SURVEY_ACCESS`）
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/surveys/assigned` | 发给我的、已发布过的问卷，带 `submittedAt` |
+| GET | `/surveys/{id}/fill` | 问卷内容、`uploadLimits`；交过的话带 `myResponse` |
+| POST | `/surveys/{id}/files` | 「上传文件」题的直传票据，见 22.4 |
+| POST | `/surveys/{id}/responses` | `{ answers }`，重复提交返回 `DUPLICATE_RESOURCE` |
+
+草稿、以及没发给自己的问卷一律返回 `404`。
+
+### 22.4 「上传文件」题（招募和问卷通用）
+
+题型 `FILE_UPLOAD`，不能有 `options`。每题最多 10 个文件，单个 ≤ 50 MiB，任意格式，原样保存。
+
+1. 申请票据：`POST /surveys/{id}/files`，或匿名招募 `POST /public/recruitments/{publicId}/drafts/{draftId}/files`（带 `X-Recruitment-Draft-Token`，有匿名限速）。请求体 `{ fieldId, fileName, contentType, size }`，响应 `{ fileId, fileName, uploadUrl, method, contentType, expiresAt }`。
+2. 按票据 `PUT` 到 `uploadUrl`，`Content-Type` 必须用票据里的 `contentType`（服务端已规整过）。
+3. 提交时该题答案传 `fileId` 数组。服务端核对文件属于这份答卷的这道题、对象确实存在且大小一致，再把答案存成 `[{ id, fileName, contentType, size }]`。同一个文件不能被第二份答卷引用。
+
+签名过期后仍未被提交引用的文件，由定时任务连对象带记录一起清掉（`photolib.form-files.cleanup-enabled`，默认开启）。
+

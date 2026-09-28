@@ -2,7 +2,7 @@ import {
   Alert, App as AntApp, Badge, Button, Dropdown, Grid, Layout, Menu, Popover, Progress, Result, Space, Typography,
 } from 'antd'
 import {
-  BarChartOutlined, BellOutlined, BookOutlined, CameraOutlined, ContactsOutlined,
+  BarChartOutlined, BellOutlined, BookOutlined, CameraOutlined, ContactsOutlined, FormOutlined,
   DashboardOutlined, EnvironmentOutlined, FilePdfOutlined, FolderOutlined, KeyOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SettingOutlined,
   SafetyCertificateOutlined,
   MessageOutlined, ReadOutlined, StarOutlined, TeamOutlined, TrophyOutlined,
@@ -55,6 +55,10 @@ const FeaturedCollectionDetailPage = lazy(() => import('./pages/FeaturedCollecti
 const RecruitmentsPage = lazy(() => import('./pages/RecruitmentsPage'))
 const RecruitmentDetailPage = lazy(() => import('./pages/RecruitmentDetailPage'))
 const RecruitmentApplicationDetailPage = lazy(() => import('./pages/RecruitmentApplicationDetailPage'))
+const SurveysPage = lazy(() => import('./pages/SurveysPage'))
+const SurveyDetailPage = lazy(() => import('./pages/SurveyDetailPage'))
+const SurveyFillPage = lazy(() => import('./pages/SurveyFillPage'))
+const SurveyResponseDetailPage = lazy(() => import('./pages/SurveyResponseDetailPage'))
 const McpAuthorizePage = lazy(() => import('./pages/McpAuthorizePage'))
 const AvatarSettingsModal = lazy(() => import('./AvatarSettingsModal'))
 const PhotoCardShortcutsModal = lazy(() => import('./PhotoCardShortcutsModal'))
@@ -246,6 +250,9 @@ function Shell() {
     common.push({ key: '/featured', icon: <TrophyOutlined />, label: '好图精选' })
     if (hasPermission(user, 'RECRUITMENT_VIEW')) common.push(
       { key: '/recruitments', icon: <TeamOutlined />, label: '成员招募' })
+    // 三个问卷权限任一都能进：填写人看「发给我的」，发起人和看结果的人看「问卷管理」。
+    if (hasAnyPermission(user, 'SURVEY_ACCESS', 'SURVEY_CREATE', 'SURVEY_RESULT_VIEW')) common.push(
+      { key: '/surveys', icon: <FormOutlined />, label: '问卷' })
     // 文档中心对每个能进系统的账号都显示，不按 DOC_MANAGE 收起：
     // "需要登录才能看"的文档正是给普通成员准备的，按编辑权限藏入口
     // 等于让唯一能看到它们的人找不到入口。编辑器在页面内按权限收起。
@@ -287,7 +294,9 @@ function Shell() {
   </div>
   const selected = location.pathname.startsWith('/recruitment-applications/')
     ? '/recruitments'
-    : location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`
+    : location.pathname.startsWith('/survey-responses/')
+      ? '/surveys'
+      : location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`
   const notificationLoading = <div className="notification-panel notification-loading">正在加载消息…</div>
   return <Layout className="app-shell">
     <Sider className="side-nav" width={236} collapsedWidth={mobile ? 0 : 72}
@@ -397,6 +406,10 @@ function Shell() {
             <Route path="/recruitments" element={hasPermission(user, 'RECRUITMENT_VIEW') ? <RecruitmentsPage /> : <Navigate to="/" />} />
             <Route path="/recruitments/:taskId" element={hasPermission(user, 'RECRUITMENT_VIEW') ? <RecruitmentDetailPage /> : <Navigate to="/" />} />
             <Route path="/recruitment-applications/:applicationId" element={hasPermission(user, 'RECRUITMENT_VIEW') ? <RecruitmentApplicationDetailPage /> : <Navigate to="/" />} />
+            <Route path="/surveys" element={hasAnyPermission(user, 'SURVEY_ACCESS', 'SURVEY_CREATE', 'SURVEY_RESULT_VIEW') ? <SurveysPage /> : <Navigate to="/" />} />
+            <Route path="/surveys/:surveyId" element={hasAnyPermission(user, 'SURVEY_CREATE', 'SURVEY_RESULT_VIEW') ? <SurveyDetailPage /> : <Navigate to="/surveys" />} />
+            <Route path="/surveys/:surveyId/fill" element={hasPermission(user, 'SURVEY_ACCESS') ? <SurveyFillPage /> : <Navigate to="/" />} />
+            <Route path="/survey-responses/:responseId" element={hasPermission(user, 'SURVEY_RESULT_VIEW') ? <SurveyResponseDetailPage /> : <Navigate to="/" />} />
             <Route path="/documents" element={<DocumentsPage />} />
             <Route path="/documents/:publicId" element={<DocumentsPage />} />
             <Route path="/teaching" element={hasPermission(user, 'PHOTO_VIEW') ? <TeachingPage /> : <Navigate to="/" />} />

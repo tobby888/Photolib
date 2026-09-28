@@ -358,6 +358,23 @@ button, input, textarea, select { font-family: inherit; }
 .markdown-editor .ant-input-data-count { right: 12px; bottom: 5px; }
 .markdown-editor-preview { min-height: 216px; max-height: 450px; overflow: auto; padding: 16px; color: #27342f; }
 .markdown-editor-preview > span { color: #a0a7a4; }
+
+/* 选择题选项编辑：一行一个输入框，拖动把手调整顺序。 */
+.choice-options-editor { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.choice-option-row { display: flex; align-items: center; gap: 6px; width: 100%; border-radius: 8px; transition: background-color .15s ease, box-shadow .15s ease; }
+.choice-option-row.is-dragging { opacity: .45; }
+.choice-option-row.is-drop-target { box-shadow: 0 -2px 0 0 #3f7b65; }
+.choice-option-handle { display: grid; place-items: center; width: 24px; height: 32px; flex: 0 0 24px; border-radius: 6px; color: var(--studio-muted, #6f7975); cursor: grab; }
+.choice-option-handle:hover, .choice-option-handle:focus-visible { background: rgba(40,89,79,.08); color: #28594f; outline: none; }
+.choice-option-handle[aria-disabled="true"] { cursor: default; opacity: .4; }
+/* 表单文件题：已提交文件的一行。 */
+.form-file-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.form-file-icon { display: grid; place-items: center; width: 48px; height: 48px; flex: 0 0 48px; border-radius: 6px; background: #edf3f0; color: #28594f; font-size: 20px; }
+/* 问卷发放对象选择器 */
+.audience-picker-list { max-height: 320px; overflow: auto; border: 1px solid var(--studio-rule, #e4e3dc); border-radius: 8px; padding: 4px 0; }
+.audience-picker-row { display: flex; align-items: center; gap: 10px; padding: 6px 12px; }
+.audience-picker-row:hover { background: rgba(40,89,79,.05); }
+.audience-picker-meta { color: var(--studio-muted, #6f7975); font-size: 12px; }
 .markdown-body { overflow-wrap: anywhere; color: #27342f; font-size: 14px; line-height: 1.75; }
 .markdown-body > :first-child { margin-top: 0; }
 .markdown-body > :last-child { margin-bottom: 0; }

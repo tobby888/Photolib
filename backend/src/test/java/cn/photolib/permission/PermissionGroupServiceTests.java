@@ -57,6 +57,9 @@ class PermissionGroupServiceTests {
                 PermissionCode.DOC_MANAGE,
                 // 教学资料同样由管理员和部长维护，所以 V55 把 TEACHING_MANAGE 也发给了部长。
                 PermissionCode.TEACHING_MANAGE,
+                // 问卷由管理员和部长发起和查看结果，V57 把三个问卷权限都发给了部长。
+                PermissionCode.SURVEY_CREATE, PermissionCode.SURVEY_ACCESS,
+                PermissionCode.SURVEY_RESULT_VIEW,
                 PermissionCode.STATISTICS_DOWNLOAD, PermissionCode.MANAGER_CAMPUS_ASSIGN);
         assertThat(manager.dataScope()).isEqualTo(DataScope.CAMPUS);
         // 校区负责人刻意不补 PROJECT_VIEW_ALL：它改动前就只看得到自己接到需求的选题。
@@ -66,7 +69,9 @@ class PermissionGroupServiceTests {
                 PermissionCode.PHOTO_DOWNLOAD, PermissionCode.REQUEST_VIEW,
                 PermissionCode.REQUEST_PHOTO_MANAGE, PermissionCode.WORKLOG_SUBMIT,
                 PermissionCode.DIRECTORY_VIEW, PermissionCode.DIRECTORY_MANAGE,
-                PermissionCode.RECRUITMENT_VIEW);
+                PermissionCode.RECRUITMENT_VIEW,
+                // 校区负责人默认只作为问卷的发放对象（V57）。
+                PermissionCode.SURVEY_ACCESS);
         assertThat(noAccess.dataScope()).isEqualTo(DataScope.NONE);
         assertThat(noAccess.permissions()).isEmpty();
         assertThat(noAccess.lowest()).isTrue();
