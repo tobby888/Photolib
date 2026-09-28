@@ -5,13 +5,14 @@ import {
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { api, emptyPage } from './api'
+import { api, emptyPage, largeUploadConfig } from './api'
 import { ContentFitTable, TableEllipsisText } from './ContentFitTable'
 import { DataState } from './components'
 import { useLoad } from './hooks'
 import type { DatabaseBackup, DatabaseBackupDownload, DatabaseRestore, PageData } from './types'
 import { clientTablePagination } from './pagination'
 import { describeBytes } from './uploadLimits'
+import UploadProgress from './UploadProgress'
 import { useUploadLimits } from './useUploadLimits'
 
 const typeLabels: Record<DatabaseBackup['type'], string> = {
@@ -49,6 +50,7 @@ export default function DatabaseBackupPanel() {
   const { message, modal } = App.useApp()
   const [starting, setStarting] = useState(false)
   const [importing, setImporting] = useState(false)
+  const [importPercent, setImportPercent] = useState<number | null>(null)
   const [restoreTarget, setRestoreTarget] = useState<DatabaseBackup | null>(null)
   const [confirmation, setConfirmation] = useState('')
   const [restoring, setRestoring] = useState(false)
@@ -97,16 +99,20 @@ export default function DatabaseBackupPanel() {
       return
     }
     setImporting(true)
+    setImportPercent(0)
     try {
       const data = new FormData()
       data.append('file', file)
-      const imported = await api<DatabaseBackup>({ method: 'POST', url: '/database-backups/upload', data })
+      const imported = await api<DatabaseBackup>({
+        method: 'POST', url: '/database-backups/upload', data, ...largeUploadConfig(setImportPercent),
+      })
       message.success(`已导入 ${imported.tableCount} 张表 / ${imported.rowCount} 行，可在列表中选择回滚`)
       refresh.current()
     } catch (e) {
       message.error((e as Error).message)
     } finally {
       setImporting(false)
+      setImportPercent(null)
     }
   }
 
@@ -156,6 +162,7 @@ export default function DatabaseBackupPanel() {
           onClick={() => void startBackup()}>立即备份</Button>
       </Space>
     </div>
+    {importPercent !== null && <div style={{ marginBottom: 16 }}><UploadProgress percent={importPercent} /></div>}
     <Alert type="warning" showIcon style={{ marginBottom: 16 }}
       message="回滚会用备份内容整体替换当前数据库"
       description={'回滚期间及之后，所有人在备份时间点之后产生的数据都会消失，登录会话也可能失效。'
