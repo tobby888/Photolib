@@ -96,8 +96,12 @@ if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
 fi
 
 # ---------------------------------------------------------------- 依赖预热
-log "安装前端依赖"
-npm install --no-audit --no-fund --loglevel=error >&2
+# 用 npm ci 而不是 npm install：容器里的 npm 版本和锁文件生成时不同，npm install
+# 会改写 package-lock.json。只在 node_modules 缺失或比锁文件旧时重装。
+if [ ! -f node_modules/.package-lock.json ] || [ package-lock.json -nt node_modules/.package-lock.json ]; then
+    log "安装前端依赖"
+    npm ci --no-audit --no-fund --loglevel=error >&2
+fi
 
 log "预热 Maven 依赖与原生图片组件"
 (cd backend && ./mvnw -q -DskipTests test-compile) >&2
