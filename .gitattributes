@@ -1,2 +1,4 @@
 # 原生构建脚本会按 SHA-256 校验随仓库分发的许可证正文，任何换行符转换都会让校验失败。
 backend/native/licenses/*.txt -text
+# 静态资源缓存测试按字节断言夹具内容（.br / .gz 只是可读文本冒充的压缩变体），Windows 上转成 CRLF 就对不上。
+backend/src/test/resources/static/** -text
