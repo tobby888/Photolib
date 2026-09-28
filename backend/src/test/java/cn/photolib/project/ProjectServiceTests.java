@@ -488,7 +488,7 @@ class ProjectServiceTests {
         jdbc.sql("""
                 INSERT INTO photo_request
                     (id, project_id, title, campus_id, required_count, deadline, status, created_by)
-                VALUES (:requestId, :projectId, :campusId, 1,
+                VALUES (:requestId, :projectId, '测试需求', :campusId, 1,
                         DATEADD('DAY', 1, CURRENT_TIMESTAMP), 'ACCEPTED', :adminId)
                 """).param("requestId", requestId).param("projectId", projectId)
                 .param("campusId", campusId).param("adminId", adminUser.id()).update();
