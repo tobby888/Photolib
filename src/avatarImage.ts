@@ -1,4 +1,7 @@
-export const AVATAR_MAX_BYTES = 1024 * 1024
+import { DEFAULT_UPLOAD_LIMITS, describeBytes } from './uploadLimits.ts'
+
+/** 头像大小上限的内置默认值；真实值由管理员设（AVATAR_MAX_BYTES），调用方传进来。 */
+export const AVATAR_MAX_BYTES = DEFAULT_UPLOAD_LIMITS.AVATAR_MAX_BYTES
 export const AVATAR_MAX_DIMENSION = 1024
 export const AVATAR_OUTPUT_DIMENSION = 512
 export const AVATAR_ACCEPT = 'image/jpeg,image/png'
@@ -23,13 +26,16 @@ export type AvatarValidationResult =
   | { valid: false; message: string }
 
 /** Pure metadata validation shared by the picker and future tests. */
-export function validateAvatarFile(file: Pick<File, 'size' | 'type'>): AvatarValidationResult {
+export function validateAvatarFile(
+  file: Pick<File, 'size' | 'type'>,
+  maxBytes: number = AVATAR_MAX_BYTES,
+): AvatarValidationResult {
   if (!AVATAR_ALLOWED_TYPES.has(file.type.toLowerCase())) {
     return { valid: false, message: '头像仅支持 JPEG 或 PNG 图片' }
   }
   if (file.size <= 0) return { valid: false, message: '所选图片为空，请重新选择' }
-  if (file.size > AVATAR_MAX_BYTES) {
-    return { valid: false, message: '头像原图不能超过 1 MiB' }
+  if (file.size > maxBytes) {
+    return { valid: false, message: `头像原图不能超过 ${describeBytes(maxBytes)}` }
   }
   return { valid: true }
 }
@@ -90,7 +96,11 @@ function canvasToJpeg(canvas: HTMLCanvasElement): Promise<Blob> {
   })
 }
 
-export async function createCroppedAvatar(source: string, crop: PixelCrop): Promise<File> {
+export async function createCroppedAvatar(
+  source: string,
+  crop: PixelCrop,
+  maxBytes: number = AVATAR_MAX_BYTES,
+): Promise<File> {
   const image = await loadImage(source)
   const safeCrop = clampPixelCrop(crop, {
     width: image.naturalWidth,
@@ -119,8 +129,8 @@ export async function createCroppedAvatar(source: string, crop: PixelCrop): Prom
     outputSize,
   )
   const blob = await canvasToJpeg(canvas)
-  if (blob.size > AVATAR_MAX_BYTES) {
-    throw new Error('裁切后的头像仍超过 1 MiB，请缩小裁切范围后重试')
+  if (blob.size > maxBytes) {
+    throw new Error(`裁切后的头像仍超过 ${describeBytes(maxBytes)}，请缩小裁切范围后重试`)
   }
   return new File([blob], 'avatar.jpg', { type: blob.type, lastModified: Date.now() })
 }

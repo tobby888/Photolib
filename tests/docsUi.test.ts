@@ -108,6 +108,7 @@ test('编辑器把 PDF 当成一等文档：能传、能换、能设发布与可
   // 发布/可见范围那一整块按"不是文件夹"展开，写死 DOCUMENT 会让上传的 PDF
   // 永远停在草稿上——它连开关都看不到。
   assert.match(manage, /selected\.nodeType !== 'FOLDER' && <>/)
-  // 前端的上限必须和后端 PdfUpload.MAX_BYTES 对上。
-  assert.match(manage, /const PDF_MAX_BYTES = 50 \* 1024 \* 1024/)
+  // PDF 上限由管理员在「上传限额」里设，前端取同一个值，不再写死。
+  assert.match(manage, /useUploadLimits\(\)\.DOC_PDF_MAX_BYTES/)
+  assert.doesNotMatch(manage, /50 MiB/)
 })

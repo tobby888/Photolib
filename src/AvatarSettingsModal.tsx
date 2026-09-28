@@ -14,6 +14,8 @@ import {
   validateAvatarFile,
 } from './avatarImage'
 import { useAuth } from './auth'
+import { describeBytes } from './uploadLimits'
+import { useUploadLimits } from './useUploadLimits'
 import UserAvatar from './UserAvatar'
 
 interface AvatarMutationResult {
@@ -30,6 +32,7 @@ function AvatarCropModal({ candidate, onCancel, onSaved }: {
   onSaved: (avatarUrl: string) => void
 }) {
   const { message } = App.useApp()
+  const avatarMaxBytes = useUploadLimits().AVATAR_MAX_BYTES
   const [crop, setCrop] = useState<Point>({ x: 0, y: 0 })
   const [zoom, setZoom] = useState(1)
   const [cropPixels, setCropPixels] = useState<Area>()
@@ -43,8 +46,8 @@ function AvatarCropModal({ candidate, onCancel, onSaved }: {
     }
     setSaving(true)
     try {
-      const file = await createCroppedAvatar(candidate.source, cropPixels)
-      const validation = validateAvatarFile(file)
+      const file = await createCroppedAvatar(candidate.source, cropPixels, avatarMaxBytes)
+      const validation = validateAvatarFile(file, avatarMaxBytes)
       if (!validation.valid) throw new Error(validation.message)
       const data = new FormData()
       data.append('file', file)
@@ -116,6 +119,7 @@ export default function AvatarSettingsModal({ open, onClose }: {
 }) {
   const { user, updateUser } = useAuth()
   const { message, modal } = App.useApp()
+  const avatarMaxBytes = useUploadLimits().AVATAR_MAX_BYTES
   const [candidate, setCandidate] = useState<AvatarCandidate>()
   const [validating, setValidating] = useState(false)
   const [removing, setRemoving] = useState(false)
@@ -134,7 +138,7 @@ export default function AvatarSettingsModal({ open, onClose }: {
   if (!user) return null
 
   const chooseFile = async (file: File) => {
-    const metadataValidation = validateAvatarFile(file)
+    const metadataValidation = validateAvatarFile(file, avatarMaxBytes)
     if (!metadataValidation.valid) {
       message.error(metadataValidation.message)
       return
@@ -191,7 +195,7 @@ export default function AvatarSettingsModal({ open, onClose }: {
           <Typography.Title level={4}>{user.displayName}</Typography.Title>
           <Typography.Text type="secondary">@{user.username}</Typography.Text>
           <Typography.Paragraph type="secondary">
-            支持 JPEG、PNG；原图不超过 1 MiB，宽高均不超过 1024 像素。
+            支持 JPEG、PNG；原图不超过 {describeBytes(avatarMaxBytes)}，宽高均不超过 1024 像素。
           </Typography.Paragraph>
           <Space wrap>
             <Upload

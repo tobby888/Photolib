@@ -2,7 +2,8 @@ package cn.photolib.share;
 
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
-import cn.photolib.common.upload.ImageUploadPolicy;
+import cn.photolib.uploadlimit.UploadLimit;
+import cn.photolib.uploadlimit.UploadLimitService;
 import cn.photolib.photo.PhotoProcessingService;
 import cn.photolib.photo.PhotoService;
 import cn.photolib.photo.batch.BatchUploadService;
@@ -51,8 +52,8 @@ import java.util.UUID;
  *   <li><b>每一次上传都重判选题还收不收图。</b> 链接没过期不等于选题还开着：活动结束
  *       把选题置为完成之后，已经拿着链接和会话的人必须立刻传不进来，而不是等会话过期。</li>
  *   <li><b>ZIP 批量走站内那条批次通道，限额一份不改。</b> 建批次、解包、落照片全部是
- *       {@link BatchUploadService} 和 {@code SafeImageZipExtractor}（{@link ImageUploadPolicy}：
- *       ZIP ≤ 1.5 GB、包内 ≤ 100 张、单张 ≤ 100 MiB、解压总量 ≤ 10 GiB），这里只是在前面
+ *       {@link BatchUploadService} 和 {@code SafeImageZipExtractor}（限额是管理员在
+ *       {@link UploadLimitService} 里设的站内那一套：ZIP 大小、包内张数、单张大小），这里只是在前面
  *       加一层"这条链接能不能开批次、这个批次是不是它开的"。给站外单独开一套阈值的结果，
  *       是两套数字各改各的，而松的那一套就是被用来打进来的那一套。</li>
  * </ol>
@@ -75,6 +76,7 @@ public class ProjectShareUploadService {
     private final ApplicationEventPublisher events;
     private final JdbcClient jdbc;
     private final Clock clock;
+    private final UploadLimitService uploadLimits;
 
     /**
      * 签一张上传票据，并在库里占好这一行（状态 UPLOADING）。
@@ -146,8 +148,9 @@ public class ProjectShareUploadService {
         PhotoEntity photo = requireOwnUpload(link, photoId);
 
         ObjectStorageService.ObjectInfo info = storage.stat(photo.getOriginalObjectKey());
-        if (info.size() <= 0 || info.size() > storageProperties.imageMaxBytes()) {
-            throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "图片为空或超过 100 MiB");
+        if (info.size() <= 0 || info.size() > uploadLimits.value(UploadLimit.PHOTO_IMAGE_MAX_BYTES)) {
+            throw new BusinessException(ErrorCode.FILE_TOO_LARGE,
+                    "图片为空或超过 " + uploadLimits.describe(UploadLimit.PHOTO_IMAGE_MAX_BYTES));
         }
         photo.setTitle(trimmedOrNull(command.title(), 200));
         photo.setDescription(trimmedOrNull(command.description(), 500));
@@ -189,8 +192,8 @@ public class ProjectShareUploadService {
     /**
      * 签一个 ZIP 批次的上传地址。
      *
-     * <p>限额一律沿用站内那一套（{@link ImageUploadPolicy}：ZIP ≤ 1.5 GB、包内 ≤ 100 张、
-     * 单张 ≤ 100 MiB、解压总量 ≤ 10 GiB），解包也走同一个 {@code SafeImageZipExtractor}
+     * <p>限额一律沿用站内那一套（{@link UploadLimitService} 里的 {@code PHOTO_*} 各项：
+     * ZIP 大小、包内张数、单张大小），解包也走同一个 {@code SafeImageZipExtractor}
      * ——zip slip、zip bomb、包里混的非图片文件都在那里处理。不给站外单独开一套阈值：
      * 两套数字迟早各改各的，而松的那一套就是被用来打进来的那一套。</p>
      */
@@ -347,7 +350,7 @@ public class ProjectShareUploadService {
 
     public record CompleteCommand(String title, String description) {}
 
-    /** ZIP 批量：{@code archiveSize} 的上限是 {@link ImageUploadPolicy#MAX_ARCHIVE_BYTES}。 */
+    /** ZIP 批量：{@code archiveSize} 的上限是管理员设的 {@link UploadLimit#PHOTO_ZIP_MAX_BYTES}。 */
     public record ZipCommand(String archiveFileName, Long archiveSize) {}
 
     public record GuestBatch(String batchId, BatchStatus status, int totalCount, int successCount,

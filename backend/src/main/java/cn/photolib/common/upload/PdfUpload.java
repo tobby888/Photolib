@@ -20,7 +20,6 @@ import java.io.InputStream;
  * 而回吐时浏览器是按我们声明的类型渲染的。</p>
  */
 public final class PdfUpload {
-    public static final long MAX_BYTES = 50L * 1024 * 1024;
     public static final String CONTENT_TYPE = "application/pdf";
     /** PDF 的文件头固定是 "%PDF-"。 */
     private static final byte[] SIGNATURE = {0x25, 0x50, 0x44, 0x46, 0x2d};
@@ -31,14 +30,16 @@ public final class PdfUpload {
     /**
      * 校验大小、声明类型与文件头。通过之后调用方可以放心地把
      * {@link MultipartFile#getInputStream()} 直接交给对象存储。
+     *
+     * @param maxBytes 管理员设的文档 PDF 上限（{@code DOC_PDF_MAX_BYTES}）
      */
-    public static void validate(MultipartFile file) throws IOException {
+    public static void validate(MultipartFile file, long maxBytes) throws IOException {
         if (file == null || file.isEmpty()) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择 PDF 文件");
         }
-        if (file.getSize() > MAX_BYTES) {
+        if (file.getSize() > maxBytes) {
             throw new BusinessException(ErrorCode.FILE_TOO_LARGE,
-                    "PDF 不能超过 " + ImageUploadPolicy.describe(MAX_BYTES));
+                    "PDF 不能超过 " + ImageUploadPolicy.describe(maxBytes));
         }
         String contentType = file.getContentType();
         if (contentType == null || !contentType.toLowerCase().startsWith(CONTENT_TYPE)) {

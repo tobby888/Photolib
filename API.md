@@ -1071,7 +1071,7 @@ GET /photos?page=1&pageSize=30
 
 - 只支持 JPG/JPEG 和 PNG。
 - `fileName` 扩展名必须与 `contentType` 一致。
-- 单张大小 `1..104857600` 字节（100 MiB）。
+- 单张大小 `1..104857600` 字节（默认 100 MiB，管理员可调，见 16.5）。
 - `sha256` 必须为 64 位十六进制；服务端转小写并对未删除图片做全库查重。
 - 拍摄者必须来自通讯录。需求上传按需求校区校验；C 的普通图库上传按本人校区校验；A/M 普通图库上传可使用 `/campus-members/deduped` 返回的代表 ID。
 - 文件校验和参与权限在拍摄者校验之前执行，客户端不要依赖错误顺序之外的推断。
@@ -1137,8 +1137,8 @@ await axios.request({
 
 批量模式：
 
-- `FILES`：1～100 个 JPG/PNG，每个最多 100 MiB，每个必须提供 SHA-256。
-- `ZIP`：一个最多 1,500,000,000 字节的 ZIP；解压后只接受 JPG/JPEG/PNG，最多 100 张有效图片，单张最多 100 MiB，总展开大小最多 10 GiB。
+- `FILES`：1～100 个 JPG/PNG，每个最多 100 MiB（默认值，见 16.5），每个必须提供 SHA-256。
+- `ZIP`：一个最多 1,500,000,000 字节的 ZIP；解压后只接受 JPG/JPEG/PNG，最多 100 张有效图片，单张最多 100 MiB，总展开大小最多「张数 × 单张」且不超过 10 GiB。以上均为默认值，管理员可调，见 16.5。
 
 ZIP 请求：
 
@@ -1909,7 +1909,7 @@ operatorId? action? resourceType? keyword? from? to? page=1 pageSize=20
 }
 ```
 
-客户端可用它生成筛选选项和上传限制，但角色对应的中文标签仍由客户端本地化。
+客户端可用它生成筛选选项和上传限制（上传限额为管理员设的当前值，完整列表见 16.5），但角色对应的中文标签仍由客户端本地化。
 
 ### 16.4 数据库备份与回滚
 
@@ -1956,6 +1956,41 @@ operatorId? action? resourceType? keyword? from? to? page=1 pageSize=20
 - 回滚只替换业务数据，不会删除对象存储中的图片文件；但数据库中已不存在的图片记录将无法再访问。回滚后所有会话可能失效，客户端应能正常走 401 → refresh → 登录页链路。
 - 下载响应是 `{ "url": "...", "fileName": "...", "expiresAt": "..." }`，`url` 是短期签名地址，直接跳转下载，不要加 Bearer 头。
 - **导入备份文件**：`POST /database-backups/upload` 是 `multipart/form-data`，字段名固定为 `file`，只接受本系统导出的 `.jsonl.gz`。该接口**同步**完成校验和入库，成功返回一条 `status=SUCCEEDED` 的 `UPLOADED` 备份，随后按普通备份调用 `/restore` 回滚；导入本身不会改动数据库。校验不通过时不会留下任何记录，按错误码区分：`413 FILE_TOO_LARGE`（体积或解压体积超限）、`415 UNSUPPORTED_FILE_TYPE`（不是 gzip 文件）、`409 RESOURCE_STATE_CONFLICT`（当前库缺少备份里的表，或结构版本不一致）、`400 VALIDATION_ERROR`（归档损坏、格式无法识别、表或字段与当前表结构对不上、行结构非法），`message` 会指出具体是哪张表、哪个字段。
+
+### 16.5 上传限额
+
+所有上传的文件大小上限、以及 ZIP 压缩包内的图片张数上限，都由管理员在「系统管理 → 上传限额」里统一管理，保存后立即生效（多实例部署时其他实例最迟 30 秒内跟上）。本文其余章节写的 100 MiB、1.5 GB、100 张等数字都是**默认值**；客户端应按下面的接口取当前值做提示和预检，真正的拦截始终在服务端。
+
+| 方法 | 路径 | 权限 | 说明 |
+| --- | --- | --- | --- |
+| GET | `/upload-limits` | 匿名可读 | 当前生效的全部限额，`{ "<键>": 数值 }`；选题上传链接、公开招募等访客页面也用它 |
+| GET | `/upload-limits/settings` | A（需两步验证复核） | 管理页面用：每一项的当前值、默认值、可调范围、分组与说明 |
+| PUT | `/upload-limits` | A（需两步验证复核） | `{ "values": { "<键>": 数值 } }`，只传要改的项；值等于默认值即恢复默认 |
+
+键（字节数，`*_IMAGES` 为张数）：
+
+| 键 | 默认值 | 可调范围 | 作用范围 |
+| --- | --- | --- | --- |
+| `PHOTO_IMAGE_MAX_BYTES` | 100 MiB | 1 MiB – `storage.image-max-bytes`（≤ 100 MiB） | 图库单张、需求交付、选题上传链接、ZIP 内每张 |
+| `PHOTO_ZIP_MAX_BYTES` | 1.5 GB | 1 MiB – 5 GB | 站内批量上传与选题上传链接的 ZIP |
+| `PHOTO_ZIP_MAX_IMAGES` | 100 | 1 – 1000 | ZIP 内图片张数 |
+| `RECRUITMENT_IMAGE_MAX_BYTES` | 20 MiB | 1 MiB – 100 MiB | 公开招募单张作品 |
+| `RECRUITMENT_ZIP_MAX_BYTES` | 200 MiB | 1 MiB – 1.5 GB | 公开招募 ZIP |
+| `RECRUITMENT_MAX_IMAGES` | 20 | 1 – 200 | 公开招募逐张一次最多张数 / ZIP 内张数 |
+| `FORM_FILE_MAX_BYTES` | 50 MiB | 1 MiB – 1 GiB | 招募与问卷「上传文件」题单个文件 |
+| `INLINE_IMAGE_MAX_BYTES` | 5 MiB | 256 KiB – 20 MiB | 需求/选题描述、站内消息与反馈、文档正文插图 |
+| `DOC_PDF_MAX_BYTES` | 50 MiB | 1 MiB – 1 GiB | 文档中心 PDF |
+| `TEACHING_PDF_MAX_BYTES` / `TEACHING_WORD_MAX_BYTES` / `TEACHING_PPT_MAX_BYTES` | 100 / 20 / 100 MiB | 1 MiB – 1 GiB | 教学资料 |
+| `AVATAR_MAX_BYTES` | 1 MiB | 256 KiB – 5 MiB | 个人头像 |
+| `BRAND_ICON_MAX_BYTES` | 512 KiB | 64 KiB – 2 MiB | 站点图标、定时图标 |
+| `PLACEHOLDER_IMAGE_MAX_BYTES` | 3 MiB | 256 KiB – 10 MiB | 缺图占位图 |
+| `DATABASE_BACKUP_MAX_BYTES` | 512 MiB（`photolib.backup.max-upload-bytes`） | 1 MiB – 1500 MiB | 数据备份导入 |
+
+- 招募三项的默认值仍取自 `photolib.recruitment.upload.*`，备份一项取自 `photolib.backup.max-upload-bytes`，图库单张取自 `photolib.storage.image-max-bytes`：管理员没改过之前，升级上来的部署行为不变。
+- 可调范围的上限是系统能力（解码内存、对象存储单次 PUT、multipart 请求体上限），不是业务偏好；越界的 `PUT` 整批返回 `400 VALIDATION_ERROR`，一项都不改。
+- ZIP 解压总量不单独设置：按「张数 × 单张上限」推出，再以 10 GiB 封顶防压缩炸弹。
+- `PUT` 会写审计日志（资源类型 `UPLOAD-LIMITS`），详情里记录每一项的旧值和新值。
+- `/metadata/options` 里的 `singleImageMaxBytes`、`batchImageMaxCount`、`zipMaxBytes` 同样返回当前生效值。
 
 ## 17. 好图精选
 
@@ -2220,9 +2255,9 @@ interface ProjectShareLink {
 - 传了一半就走留下的临时对象由 `AbandonedUploadCleanupJob` 回收（站内同一套）：直传地址过期一小时后才删，处理失败的照片不碰，解包后 24 小时没人整理的条目连本地文件一起收。启动、定时、以及每次签发上传票据时各触发一次（后者节流 5 分钟且异步）。
 
 ZIP 批量走的是**站内需求批量上传的同一条通道**（`photo_upload_batch` / `photo_upload_item` +
-`SafeImageZipExtractor`），限额一份不改（`ImageUploadPolicy`）：
+`SafeImageZipExtractor`），限额与站内是同一份（管理员在「上传限额」里设的 `PHOTO_*` 各项，见 16.5；下表为默认值）：
 
-| 限制 | 值 |
+| 限制 | 默认值 |
 | --- | --- |
 | 压缩包大小 | ≤ 1.5 GB（签票据按客户端自报的 size 判一次，`complete` 再按对象存储上的真实大小判一次） |
 | 包内图片张数 | ≤ 100 |

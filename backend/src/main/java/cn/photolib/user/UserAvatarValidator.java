@@ -2,6 +2,7 @@ package cn.photolib.user;
 
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
+import cn.photolib.common.upload.ImageUploadPolicy;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
@@ -26,18 +27,18 @@ import java.util.Set;
 
 @Component
 class UserAvatarValidator {
-    static final long MAX_BYTES = 1024L * 1024;
     static final int MAX_DIMENSION = 1024;
     private static final float JPEG_QUALITY = 0.9f;
     private static final Set<String> IMAGE_TYPES = Set.of(
             MediaType.IMAGE_JPEG_VALUE, MediaType.IMAGE_PNG_VALUE);
 
-    ValidatedAvatar validate(MultipartFile file) throws IOException {
+    /** @param maxBytes 管理员设的头像上限（{@code AVATAR_MAX_BYTES}），原图和规范化后的结果都受它约束 */
+    ValidatedAvatar validate(MultipartFile file, long maxBytes) throws IOException {
         if (file == null || file.isEmpty()) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择头像图片");
         }
-        if (file.getSize() > MAX_BYTES) {
-            throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "头像图片不能超过 1 MB");
+        if (file.getSize() > maxBytes) {
+            throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "头像图片不能超过 " + ImageUploadPolicy.describe(maxBytes));
         }
 
         String contentType = file.getContentType() == null
@@ -50,8 +51,8 @@ class UserAvatarValidator {
         if (bytes.length == 0) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择头像图片");
         }
-        if (bytes.length > MAX_BYTES) {
-            throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "头像图片不能超过 1 MB");
+        if (bytes.length > maxBytes) {
+            throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "头像图片不能超过 " + ImageUploadPolicy.describe(maxBytes));
         }
         if (!matchesSignature(bytes, contentType)) {
             throw unsupported("头像内容与声明的图片类型不匹配");
@@ -59,9 +60,9 @@ class UserAvatarValidator {
 
         DecodedImage decoded = decode(bytes, contentType);
         byte[] normalized = encode(decoded.image(), contentType);
-        if (normalized.length > MAX_BYTES) {
+        if (normalized.length > maxBytes) {
             throw new BusinessException(ErrorCode.FILE_TOO_LARGE,
-                    "规范化后的头像不能超过 1 MB，请降低图片质量后重试");
+                    "规范化后的头像不能超过 " + ImageUploadPolicy.describe(maxBytes) + "，请降低图片质量后重试");
         }
         String extension = MediaType.IMAGE_PNG_VALUE.equals(contentType) ? "png" : "jpg";
         return new ValidatedAvatar(normalized, contentType, extension,

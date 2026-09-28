@@ -2,6 +2,10 @@ package cn.photolib.admin;
 
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
+import cn.photolib.common.upload.ImageUploadPolicy;
+import cn.photolib.uploadlimit.UploadLimit;
+import cn.photolib.uploadlimit.UploadLimitService;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
@@ -17,21 +21,23 @@ import java.util.Iterator;
 import java.util.Set;
 
 @Component
+@RequiredArgsConstructor
 public class BrandIconValidator {
-    public static final long MAX_ICON_BYTES = 512 * 1024;
-    public static final long MAX_PLACEHOLDER_BYTES = 3L * 1024 * 1024;
     private static final int MAX_ICON_PIXELS = 1024;
     private static final int MAX_PLACEHOLDER_PIXELS = 4096;
     private static final Set<String> IMAGE_TYPES = Set.of(
             MediaType.IMAGE_PNG_VALUE, MediaType.IMAGE_JPEG_VALUE);
+    private final UploadLimitService uploadLimits;
 
     NormalizedIcon normalize(MultipartFile file) throws IOException {
-        return normalize(file, new Limits("图标", MAX_ICON_BYTES, "512 KiB", MAX_ICON_PIXELS));
+        return normalize(file, new Limits("图标",
+                uploadLimits.value(UploadLimit.BRAND_ICON_MAX_BYTES), MAX_ICON_PIXELS));
     }
 
-    /** 占位图铺在图片卡片上，比图标宽松：允许 3 MiB、4096 像素见方。 */
+    /** 占位图铺在图片卡片上，比图标宽松：默认允许 3 MiB、4096 像素见方。 */
     NormalizedIcon normalizePlaceholder(MultipartFile file) throws IOException {
-        return normalize(file, new Limits("占位图", MAX_PLACEHOLDER_BYTES, "3 MiB", MAX_PLACEHOLDER_PIXELS));
+        return normalize(file, new Limits("占位图",
+                uploadLimits.value(UploadLimit.PLACEHOLDER_IMAGE_MAX_BYTES), MAX_PLACEHOLDER_PIXELS));
     }
 
     private NormalizedIcon normalize(MultipartFile file, Limits limits) throws IOException {
@@ -40,7 +46,7 @@ public class BrandIconValidator {
         }
         if (file.getSize() > limits.maxBytes()) {
             throw new BusinessException(ErrorCode.FILE_TOO_LARGE,
-                    limits.label() + "不能超过 " + limits.maxBytesText());
+                    limits.label() + "不能超过 " + ImageUploadPolicy.describe(limits.maxBytes()));
         }
         String contentType = file.getContentType();
         if (!IMAGE_TYPES.contains(contentType)) {
@@ -81,7 +87,7 @@ public class BrandIconValidator {
         }
     }
 
-    private record Limits(String label, long maxBytes, String maxBytesText, int maxPixels) {
+    private record Limits(String label, long maxBytes, int maxPixels) {
     }
 
     record NormalizedIcon(byte[] bytes, String contentType) {

@@ -150,7 +150,7 @@ class RecruitmentUploadProcessorRaceTests {
                 batches, items, storage, workspace, mock(SafeImageZipExtractor.class),
                 mock(ImageCompressor.class), directTransactions(),
                 mock(RecruitmentUploadDispatchQueue.class),
-                new RecruitmentUploadProperties(null, null, null, null, null));
+                mock(cn.photolib.uploadlimit.UploadLimitService.class));
         return new Fixture(processor, items, storage, bytes);
     }
 

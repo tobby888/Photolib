@@ -11,7 +11,8 @@ import cn.photolib.recruitment.mapper.RecruitmentTaskMapper;
 import cn.photolib.recruitment.model.RecruitmentFormSchema;
 import cn.photolib.recruitment.model.RecruitmentTaskEntity;
 import cn.photolib.recruitment.model.RecruitmentTaskStatus;
-import cn.photolib.recruitment.upload.RecruitmentUploadProperties;
+import cn.photolib.uploadlimit.UploadLimit;
+import cn.photolib.uploadlimit.UploadLimitService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,7 +28,7 @@ public class RecruitmentTaskService {
     private final RecruitmentTaskMapper mapper;
     private final RecruitmentDraftMapper draftMapper;
     private final RecruitmentFormSchemaValidator schemaValidator;
-    private final RecruitmentUploadProperties uploadProperties;
+    private final UploadLimitService uploadLimits;
     private final Clock recruitmentClock;
 
     @Transactional
@@ -202,8 +203,9 @@ public class RecruitmentTaskService {
                 schemaValidator.readSchema(task.getFormSchemaJson()), task.getStudentIdLabel(),
                 task.getStudentIdHelp(), task.getUploadLabel(), task.getUploadHelp(),
                 Boolean.TRUE.equals(task.getUploadRequired()), task.getStartsAt(), task.getEndsAt(),
-                new UploadLimitsView(uploadProperties.maxImageCount(),
-                        uploadProperties.maxImageBytes(), uploadProperties.maxArchiveBytes()));
+                new UploadLimitsView(uploadLimits.count(UploadLimit.RECRUITMENT_MAX_IMAGES),
+                        uploadLimits.value(UploadLimit.RECRUITMENT_IMAGE_MAX_BYTES),
+                        uploadLimits.value(UploadLimit.RECRUITMENT_ZIP_MAX_BYTES)));
     }
 
     private TaskView toView(RecruitmentTaskEntity task) {

@@ -3,6 +3,8 @@ package cn.photolib.recruitment.upload;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.common.upload.ImageUploadPolicy;
+import cn.photolib.uploadlimit.UploadLimit;
+import cn.photolib.uploadlimit.UploadLimitService;
 import cn.photolib.common.util.PublicId;
 import cn.photolib.recruitment.RecruitmentDraftService;
 import cn.photolib.recruitment.RecruitmentTimeConfig;
@@ -34,7 +36,7 @@ public class RecruitmentUploadService {
     private final ObjectStorageService storage;
     private final StorageProperties storageProperties;
     private final ApplicationEventPublisher events;
-    private final RecruitmentUploadProperties uploadProperties;
+    private final UploadLimitService uploadLimits;
     private final Clock recruitmentClock;
 
     @Transactional
@@ -116,7 +118,7 @@ public class RecruitmentUploadService {
                     .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
                             "ZIP 尚未上传完成"));
             boolean invalidArchive = archive.size() <= 0
-                    || archive.size() > uploadProperties.maxArchiveBytes()
+                    || archive.size() > uploadLimits.value(UploadLimit.RECRUITMENT_ZIP_MAX_BYTES)
                     || archive.size() != batch.getArchiveSize()
                     || !"application/zip".equalsIgnoreCase(archive.contentType());
             if (invalidArchive) {
@@ -158,18 +160,17 @@ public class RecruitmentUploadService {
         }
         if (command.mode() == RecruitmentUploadMode.FILES) {
             if (command.files() == null || command.files().isEmpty()
-                    || command.files().size() > uploadProperties.maxImageCount()) {
+                    || command.files().size() > uploadLimits.count(UploadLimit.RECRUITMENT_MAX_IMAGES)) {
                 throw new BusinessException(ErrorCode.VALIDATION_ERROR,
-                        "一次可上传 1 至 " + uploadProperties.maxImageCount() + " 张图片");
+                        "一次可上传 1 至 " + uploadLimits.count(UploadLimit.RECRUITMENT_MAX_IMAGES) + " 张图片");
             }
             command.files().forEach(this::validateFile);
             return;
         }
         if (command.archiveSize() == null || command.archiveSize() <= 0
-                || command.archiveSize() > uploadProperties.maxArchiveBytes()) {
+                || command.archiveSize() > uploadLimits.value(UploadLimit.RECRUITMENT_ZIP_MAX_BYTES)) {
             throw new BusinessException(ErrorCode.FILE_TOO_LARGE,
-                    "压缩包不得超过 " + ImageUploadPolicy.describe(
-                            uploadProperties.maxArchiveBytes()));
+                    "压缩包不得超过 " + uploadLimits.describe(UploadLimit.RECRUITMENT_ZIP_MAX_BYTES));
         }
         String archiveName = command.archiveFileName();
         if (archiveName == null || archiveName.isBlank()
@@ -184,10 +185,9 @@ public class RecruitmentUploadService {
                 || file.fileName().codePointCount(0, file.fileName().length()) > 255) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "图片文件名不合法");
         }
-        if (file.size() <= 0 || file.size() > uploadProperties.maxImageBytes()) {
+        if (file.size() <= 0 || file.size() > uploadLimits.value(UploadLimit.RECRUITMENT_IMAGE_MAX_BYTES)) {
             throw new BusinessException(ErrorCode.FILE_TOO_LARGE,
-                    "单张图片不得超过 " + ImageUploadPolicy.describe(
-                            uploadProperties.maxImageBytes()));
+                    "单张图片不得超过 " + uploadLimits.describe(UploadLimit.RECRUITMENT_IMAGE_MAX_BYTES));
         }
         if (!ImageUploadPolicy.fileNameMatchesContentType(file.fileName(), file.contentType())) {
             throw new BusinessException(ErrorCode.UNSUPPORTED_FILE_TYPE, "仅支持 JPG 和 PNG");

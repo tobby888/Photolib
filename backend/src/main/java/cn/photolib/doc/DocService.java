@@ -13,6 +13,8 @@ import cn.photolib.doc.model.DocNodeEntity;
 import cn.photolib.doc.model.DocNodeType;
 import cn.photolib.doc.model.DocVisibility;
 import cn.photolib.storage.ObjectStorageService;
+import cn.photolib.uploadlimit.UploadLimit;
+import cn.photolib.uploadlimit.UploadLimitService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -95,6 +97,7 @@ public class DocService {
     private final DocNodeMapper nodeMapper;
     private final DocAssetMapper assetMapper;
     private final ObjectStorageService storage;
+    private final UploadLimitService uploadLimits;
 
     // ------------------------------------------------------------------
     // 读取
@@ -412,7 +415,7 @@ public class DocService {
     @Transactional
     public TreeMutation createPdf(Long parentId, String title, MultipartFile file,
                                   AuthenticatedUser user) throws IOException {
-        PdfUpload.validate(file);
+        PdfUpload.validate(file, uploadLimits.value(UploadLimit.DOC_PDF_MAX_BYTES));
         if (nodeMapper.countAll() >= MAX_NODES) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
                     "文档数量已达上限（" + MAX_NODES + "），请先清理不再需要的内容");
@@ -451,7 +454,7 @@ public class DocService {
     @Transactional
     public TreeMutation replacePdf(long id, MultipartFile file, int version, AuthenticatedUser user)
             throws IOException {
-        PdfUpload.validate(file);
+        PdfUpload.validate(file, uploadLimits.value(UploadLimit.DOC_PDF_MAX_BYTES));
         DocNodeEntity node = requireNode(id);
         if (node.getNodeType() != DocNodeType.PDF) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "只有 PDF 文档能替换文件");
@@ -484,7 +487,7 @@ public class DocService {
         if (node.getNodeType() != DocNodeType.DOCUMENT) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "只能给文档上传插图");
         }
-        byte[] bytes = InlineImageUpload.read(file);
+        byte[] bytes = InlineImageUpload.read(file, uploadLimits.value(UploadLimit.INLINE_IMAGE_MAX_BYTES));
         String contentType = file.getContentType();
         String id = PublicId.next();
         String objectKey = "docs/assets/" + id + "." + InlineImageUpload.extension(contentType);

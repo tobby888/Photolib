@@ -3,10 +3,10 @@ package cn.photolib.teaching;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
-import cn.photolib.common.upload.OfficeUpload;
 import cn.photolib.storage.ObjectStorageService;
 import cn.photolib.teaching.mapper.TeachingMaterialMapper;
 import cn.photolib.teaching.model.TeachingMaterialEntity;
+import cn.photolib.uploadlimit.UploadLimit;
 import cn.photolib.user.model.UserRole;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -97,7 +97,7 @@ class TeachingServiceTests {
                 "%PDF-1.4".getBytes(StandardCharsets.UTF_8)) {
             @Override
             public long getSize() {
-                return OfficeUpload.MAX_BYTES + 1;
+                return UploadLimit.TEACHING_PDF_MAX_BYTES.defaultValue() + 1;
             }
         };
 

@@ -4,6 +4,8 @@ import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.common.upload.ImageUploadPolicy;
+import cn.photolib.uploadlimit.UploadLimit;
+import cn.photolib.uploadlimit.UploadLimitService;
 import cn.photolib.common.util.PublicId;
 import cn.photolib.photo.PhotoProcessingService;
 import cn.photolib.photo.PhotoProcessingWorkspace;
@@ -50,6 +52,7 @@ public class BatchUploadService {
     private final cn.photolib.directory.CampusMemberService campusMemberService;
     private final cn.photolib.photo.AbandonedUploadCleanupJob abandonedUploads;
     private final PhotoProcessingWorkspace workspace;
+    private final UploadLimitService uploadLimits;
 
     @Transactional
     public BatchTicket create(CreateBatch command, AuthenticatedUser user) {
@@ -132,7 +135,7 @@ public class BatchUploadService {
             ObjectStorageService.ObjectInfo info = storage.stat(item.getTempObjectKey());
             if (info.size() > imageMaxBytes()) {
                 item.setStatus(BatchItemStatus.FAILED);
-                item.setFailureReason("图片超过 100 MiB");
+                item.setFailureReason("图片超过 " + uploadLimits.describe(UploadLimit.PHOTO_IMAGE_MAX_BYTES));
             } else {
                 item.setStatus(BatchItemStatus.WAITING_METADATA);
                 item.setSize(info.size());
@@ -199,8 +202,8 @@ public class BatchUploadService {
     @Transactional
     public BatchTicket createZipBatch(ZipBatch request) {
         if (request.archiveSize() == null || request.archiveSize() <= 0
-                || request.archiveSize() > ImageUploadPolicy.MAX_ARCHIVE_BYTES) {
-            throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "ZIP 不得超过 1.5 GB");
+                || request.archiveSize() > uploadLimits.value(UploadLimit.PHOTO_ZIP_MAX_BYTES)) {
+            throw zipTooLarge();
         }
         String batchId = PublicId.next();
         LocalDateTime now = LocalDateTime.now();
@@ -248,8 +251,8 @@ public class BatchUploadService {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "批次不处于上传状态");
         }
         ObjectStorageService.ObjectInfo info = storage.stat(batch.getArchiveObjectKey());
-        if (info.size() > ImageUploadPolicy.MAX_ARCHIVE_BYTES) {
-            throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "ZIP 不得超过 1.5 GB");
+        if (info.size() > uploadLimits.value(UploadLimit.PHOTO_ZIP_MAX_BYTES)) {
+            throw zipTooLarge();
         }
         transitionBatch(batchId, BatchStatus.UPLOADING, BatchStatus.PROCESSING);
         events.publishEvent(new BatchProcessingService.ZipProcessRequested(batchId));
@@ -448,19 +451,24 @@ public class BatchUploadService {
 
     private void validateFile(FileSpec file) {
         if (file.size() <= 0 || file.size() > imageMaxBytes()) {
-            throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "单张图片不得超过 100 MiB");
+            throw new BusinessException(ErrorCode.FILE_TOO_LARGE,
+                    "单张图片不得超过 " + uploadLimits.describe(UploadLimit.PHOTO_IMAGE_MAX_BYTES));
         }
         boolean valid = ImageUploadPolicy.fileNameMatchesContentType(file.fileName(), file.contentType());
         if (!valid) throw new BusinessException(ErrorCode.UNSUPPORTED_FILE_TYPE, "仅支持 JPG 和 PNG");
     }
 
     /**
-     * {@code storage.image-max-bytes} stays authoritative for the gallery so an
-     * operator can tighten the limit, while the shared policy constant remains
-     * the hard ceiling a looser configuration cannot raise.
+     * 管理员设的单张上限。{@link UploadLimitService} 已经把它夹在
+     * {@code storage.image-max-bytes} 和 {@link ImageUploadPolicy#MAX_IMAGE_BYTES} 之内。
      */
     private long imageMaxBytes() {
-        return Math.min(storageProperties.imageMaxBytes(), ImageUploadPolicy.MAX_IMAGE_BYTES);
+        return uploadLimits.value(UploadLimit.PHOTO_IMAGE_MAX_BYTES);
+    }
+
+    private BusinessException zipTooLarge() {
+        return new BusinessException(ErrorCode.FILE_TOO_LARGE,
+                "ZIP 不得超过 " + uploadLimits.describe(UploadLimit.PHOTO_ZIP_MAX_BYTES));
     }
 
     private PhotoUploadBatchEntity requireOwned(String id, AuthenticatedUser user) {

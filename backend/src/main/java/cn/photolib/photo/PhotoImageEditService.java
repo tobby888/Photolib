@@ -8,6 +8,8 @@ import cn.photolib.photo.model.PhotoEntity;
 import cn.photolib.photo.model.PhotoStatus;
 import cn.photolib.storage.ObjectStorageService;
 import cn.photolib.storage.StorageProperties;
+import cn.photolib.uploadlimit.UploadLimit;
+import cn.photolib.uploadlimit.UploadLimitService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -77,6 +79,7 @@ public class PhotoImageEditService {
     private final PreviewProfilePolicy previewProfiles;
     private final TransactionTemplate transactions;
     private final AbandonedUploadCleanupJob abandonedUploads;
+    private final UploadLimitService uploadLimits;
 
     /**
      * 为一次编辑签发直传地址。
@@ -118,8 +121,9 @@ public class PhotoImageEditService {
         photos.requireUniqueSha256(sha256, photo.getId());
 
         ObjectStorageService.ObjectInfo info = storage.stat(command.sourceObjectKey());
-        if (info.size() <= 0 || info.size() > properties.imageMaxBytes()) {
-            throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "编辑结果为空或超过 100 MiB");
+        if (info.size() <= 0 || info.size() > uploadLimits.value(UploadLimit.PHOTO_IMAGE_MAX_BYTES)) {
+            throw new BusinessException(ErrorCode.FILE_TOO_LARGE,
+                    "编辑结果为空或超过 " + uploadLimits.describe(UploadLimit.PHOTO_IMAGE_MAX_BYTES));
         }
 
         try {

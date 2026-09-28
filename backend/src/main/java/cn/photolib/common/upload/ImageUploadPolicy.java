@@ -39,18 +39,31 @@ public final class ImageUploadPolicy {
     /**
      * Renders a byte limit the way the UI states it, so an error message and the
      * constant behind it can be checked against each other at a glance.
+     *
+     * <p>Exact binary multiples read as GiB / MiB. Limits are administrator
+     * managed, so a round decimal value such as 1 500 000 000 reads as "1.5 GB"
+     * rather than a string of digits, anything else from 1 MiB up gets at most two
+     * decimals of the binary unit ("2.5 MiB"), and smaller values read as KiB.
+     * Mirrors {@code describeBytes} in the frontend.</p>
      */
     public static String describe(long bytes) {
-        if (bytes >= 1024L * 1024 * 1024 && bytes % (1024L * 1024 * 1024) == 0) {
-            return (bytes / (1024L * 1024 * 1024)) + " GiB";
-        }
-        if (bytes >= 1024L * 1024 && bytes % (1024L * 1024) == 0) {
-            return (bytes / (1024L * 1024)) + " MiB";
-        }
-        if (bytes >= 1024 && bytes % 1024 == 0) {
-            return (bytes / 1024) + " KiB";
-        }
+        long kib = 1024L;
+        long mib = 1024L * kib;
+        long gib = 1024L * mib;
+        if (bytes >= gib && bytes % gib == 0) return (bytes / gib) + " GiB";
+        if (bytes >= mib && bytes % mib == 0) return (bytes / mib) + " MiB";
+        if (bytes >= 1_000_000_000L && bytes % 100_000_000L == 0) return decimal(bytes / 1e9) + " GB";
+        if (bytes >= 1_000_000L && bytes % 1_000_000L == 0) return (bytes / 1_000_000L) + " MB";
+        if (bytes >= gib) return decimal((double) bytes / gib) + " GiB";
+        if (bytes >= mib) return decimal((double) bytes / mib) + " MiB";
+        if (bytes >= kib && bytes % kib == 0) return (bytes / kib) + " KiB";
         return bytes + " 字节";
+    }
+
+    /** Up to two decimals with trailing zeros dropped: 1.50 → "1.5", 2.00 → "2". */
+    private static String decimal(double value) {
+        return java.math.BigDecimal.valueOf(value).setScale(2, java.math.RoundingMode.HALF_UP)
+                .stripTrailingZeros().toPlainString();
     }
 
     public static String extension(String contentType) {

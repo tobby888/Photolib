@@ -66,7 +66,7 @@ class RecruitmentFileQuestionTests {
                 .isInstanceOf(BusinessException.class);
         assertThatThrownBy(() -> applications.createFileTicket(task.publicId(), draft.draftId(),
                 draft.draftToken(), new FormFileService.TicketRequest("resume", "huge.mov", "video/quicktime",
-                        FormFileService.MAX_FILE_BYTES + 1)))
+                        cn.photolib.uploadlimit.UploadLimit.FORM_FILE_MAX_BYTES.defaultValue() + 1)))
                 .isInstanceOf(BusinessException.class).hasMessageContaining("超过了");
 
         // 必填的上传题没交文件，不能报名。
