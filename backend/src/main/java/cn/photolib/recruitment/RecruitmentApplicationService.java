@@ -5,6 +5,8 @@ import cn.photolib.common.api.PageResponse;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.common.util.PublicId;
+import cn.photolib.form.FormAnswerText;
+import cn.photolib.form.FormFileService;
 import cn.photolib.permission.PermissionCode;
 import cn.photolib.recruitment.mapper.RecruitmentApplicationMapper;
 import cn.photolib.recruitment.model.RecruitmentApplicationEntity;
@@ -38,6 +40,7 @@ public class RecruitmentApplicationService {
     private final RecruitmentAttachmentReader attachmentReader;
     private final ObjectStorageService storage;
     private final StorageProperties storageProperties;
+    private final FormFileService formFiles;
     private final Clock recruitmentClock;
 
     @Transactional
@@ -57,7 +60,9 @@ public class RecruitmentApplicationService {
         draftService.requireNotSubmitted(task.getId(), normalizedStudentId.value());
 
         RecruitmentFormSchema schema = schemaValidator.readSchema(task.getFormSchemaJson());
-        Map<String, Object> checkedAnswers = schemaValidator.validateAnswers(schema, answers);
+        Map<String, Object> checkedAnswers = formFiles.attachAnswers(
+                FormFileService.Owner.recruitmentDraft(draft.getId()), schema,
+                schemaValidator.validateAnswers(schema, answers));
         RecruitmentAttachmentReader.DraftAttachmentState attachmentState =
                 attachmentReader.stateForDraft(draft.getId());
         if (attachmentState == null) {
@@ -92,6 +97,17 @@ public class RecruitmentApplicationService {
                     "招募申请草稿已提交或已失效");
         }
         return new SubmissionReceipt(application.getId(), application.getSubmittedAt());
+    }
+
+    /** 给「上传文件」题发一张直传票据；和作品上传一样要求草稿仍可写、招募仍在开放时间内。 */
+    @Transactional
+    public FormFileService.UploadTicket createFileTicket(String publicId, String draftId, String rawToken,
+                                                         FormFileService.TicketRequest request) {
+        RecruitmentDraftEntity draft = draftService.requireWritableForMutation(publicId, draftId, rawToken);
+        RecruitmentTaskEntity task = taskService.requireByPublicId(publicId);
+        RecruitmentFormSchema schema = schemaValidator.readSchema(task.getFormSchemaJson());
+        return formFiles.createTicket(FormFileService.Owner.recruitmentDraft(draft.getId()), schema,
+                request, draft.getExpiresAt());
     }
 
     public PageResponse<ApplicationSummary> list(long taskId, int page, int pageSize,
@@ -160,8 +176,12 @@ public class RecruitmentApplicationService {
         List<AttachmentView> attachmentViews = attachments.stream().map(this::toAttachmentView).toList();
         String detailsMarkdown = detailsMarkdown(task.getTitle(), application.getStudentId(),
                 application.getSubmittedAt(), schema, answers, attachments);
+        List<FormFileService.FileView> files = formFiles.views(
+                FormFileService.Owner.recruitmentDraft(application.getDraftId()),
+                FormFileService.fileIds(schema, answers));
         return new ApplicationDetail(application.getId(), application.getTaskId(), task.getTitle(),
-                application.getStudentId(), application.getSubmittedAt(), detailsMarkdown, attachmentViews);
+                application.getStudentId(), application.getSubmittedAt(), detailsMarkdown, attachmentViews,
+                schema, files);
     }
 
     String detailsMarkdown(String taskTitle, String studentId, LocalDateTime submittedAt,
@@ -213,11 +233,8 @@ public class RecruitmentApplicationService {
     }
 
     private static String answerText(Object answer) {
-        if (answer == null) return "（未填写）";
-        if (answer instanceof List<?> values) {
-            return String.join("、", values.stream().map(String::valueOf).toList());
-        }
-        return String.valueOf(answer);
+        String text = FormAnswerText.of(answer, "、");
+        return text.isEmpty() ? "（未填写）" : text;
     }
 
     private AttachmentView toAttachmentView(RecruitmentAttachmentReader.Attachment attachment) {
@@ -256,7 +273,9 @@ public class RecruitmentApplicationService {
 
     public record ApplicationDetail(String id, Long taskId, String taskTitle,
                                     String studentId, LocalDateTime submittedAt,
-                                    String detailsMarkdown, List<AttachmentView> attachments) {
+                                    String detailsMarkdown, List<AttachmentView> attachments,
+                                    RecruitmentFormSchema formSchema,
+                                    List<FormFileService.FileView> files) {
     }
 
     public record AttachmentView(long id, String fileName, String contentType, long size,

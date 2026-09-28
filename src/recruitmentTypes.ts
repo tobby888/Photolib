@@ -1,5 +1,6 @@
 import { normalizeRecruitmentFormSchema, type RecruitmentAnswers, type RecruitmentFormSchema } from './recruitmentForm.ts'
 import { RECRUITMENT_FALLBACK_UPLOAD_LIMITS, type RecruitmentUploadLimits } from './recruitmentUpload.ts'
+import { normalizeFormFileViews, type FormFileView } from './formFiles.ts'
 
 export type RecruitmentId = string | number
 export type RecruitmentTaskStatus = 'DRAFT' | 'PUBLISHED' | 'ACTIVE' | 'CLOSED' | 'CANCELLED'
@@ -93,6 +94,8 @@ export interface RecruitmentApplicationDetail extends RecruitmentApplicationSumm
   answers?: RecruitmentAnswers
   formSchema?: RecruitmentFormSchema | string | null
   attachments: RecruitmentAttachment[]
+  /** 「上传文件」题交上来的文件，按题目 fieldId 归组显示。 */
+  files: FormFileView[]
 }
 
 export interface RecruitmentPage<T> {
@@ -245,5 +248,6 @@ export function normalizeApplicationDetail(value: unknown): RecruitmentApplicati
     answers: object(raw.answers) as RecruitmentAnswers,
     formSchema: raw.formSchema as RecruitmentFormSchema | string | null | undefined,
     attachments,
+    files: normalizeFormFileViews(raw.files),
   }
 }

@@ -57,7 +57,9 @@ public class AnonymousRecruitmentRateLimiter {
         DRAFT_CREATE(8, Duration.ofMinutes(10)),
         SUBMIT(12, Duration.ofMinutes(10)),
         UPLOAD_CREATE(20, Duration.ofMinutes(10)),
-        UPLOAD_COMPLETE(40, Duration.ofMinutes(10));
+        UPLOAD_COMPLETE(40, Duration.ofMinutes(10)),
+        /** 「上传文件」题一次一个文件，所以额度比作品批次宽。 */
+        FILE_UPLOAD_CREATE(60, Duration.ofMinutes(10));
 
         private final int limit;
         private final Duration window;

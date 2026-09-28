@@ -4,6 +4,7 @@ export const RECRUITMENT_FIELD_TYPES = [
   'SINGLE_CHOICE',
   'MULTIPLE_CHOICE',
   'DATE',
+  'FILE_UPLOAD',
 ] as const
 
 export type RecruitmentFieldType = typeof RECRUITMENT_FIELD_TYPES[number]
@@ -35,6 +36,14 @@ export interface RecruitmentFormSchema {
   upload: RecruitmentUploadField
 }
 
+/** 已提交答卷里「上传文件」题的一项；提交时只传 id，服务端换成这个形状存档。 */
+export interface StoredFileAnswer {
+  id: string
+  fileName: string
+  contentType?: string
+  size?: number
+}
+
 export type RecruitmentAnswer = string | string[]
 export type RecruitmentAnswers = Record<string, RecruitmentAnswer>
 
@@ -44,6 +53,20 @@ export interface RecruitmentFormValidationIssue {
 }
 
 const choiceTypes = new Set<RecruitmentFieldType>(['SINGLE_CHOICE', 'MULTIPLE_CHOICE'])
+
+export function isChoiceField(type: RecruitmentFieldType) {
+  return choiceTypes.has(type)
+}
+
+/**
+ * 「上传文件」题的额度，和后端 FormFileService.MAX_FILE_BYTES /
+ * RecruitmentFormSchemaValidator.MAX_FILES_PER_FIELD 是同一组数。问卷接口会把它们
+ * 随问卷一起下发（uploadLimits）；招募页没有这个字段，就用这里的值。
+ */
+export const FORM_FILE_LIMITS = {
+  maxFileBytes: 50 * 1024 * 1024,
+  maxFilesPerField: 10,
+}
 
 export const EMPTY_RECRUITMENT_FORM: RecruitmentFormSchema = {
   fields: [],
@@ -78,7 +101,18 @@ function normalizeOptions(value: unknown) {
     .filter(option => option.length > 0 && !seen.has(option) && Boolean(seen.add(option)))
 }
 
-export function normalizeRecruitmentFormSchema(value: unknown): RecruitmentFormSchema {
+/**
+ * 编辑器里用：选项原样保留（包括空白和重复），否则正在清空重打的那一项会在下一次
+ * 渲染时直接消失。保存前页面仍然用严格模式整理一遍。
+ */
+function draftOptions(value: unknown) {
+  return Array.isArray(value) ? value.map(option => text(option)) : []
+}
+
+export function normalizeRecruitmentFormSchema(
+  value: unknown,
+  { keepDraftOptions = false }: { keepDraftOptions?: boolean } = {},
+): RecruitmentFormSchema {
   let source = value
   if (typeof source === 'string') {
     try {
@@ -105,7 +139,9 @@ export function normalizeRecruitmentFormSchema(value: unknown): RecruitmentFormS
       helpText: text(raw.helpText || raw.description).trim() || undefined,
       placeholder: text(raw.placeholder).trim() || undefined,
       required: boolean(raw.required),
-      options: choiceTypes.has(type) ? normalizeOptions(raw.options) : undefined,
+      options: choiceTypes.has(type)
+        ? keepDraftOptions ? draftOptions(raw.options) : normalizeOptions(raw.options)
+        : undefined,
     }]
   })
 
@@ -147,13 +183,12 @@ export function createRecruitmentField(type: RecruitmentFieldType, existingIds: 
   }
 }
 
-export function validateRecruitmentFormSchema(schema: RecruitmentFormSchema): RecruitmentFormValidationIssue[] {
+/** 题目本身的校验，招募和问卷共用。 */
+export function validateFormFields(fields: RecruitmentFormField[]): RecruitmentFormValidationIssue[] {
   const issues: RecruitmentFormValidationIssue[] = []
   const ids = new Set<string>()
-  if (schema.fields.length > 50) issues.push({ message: '问题最多只能加 50 个' })
-  if (!schema.studentId?.label?.trim()) issues.push({ fieldId: 'studentId', message: '学号这一项还没写标题' })
-  if (!schema.upload?.label?.trim()) issues.push({ fieldId: 'attachments', message: '作品上传区还没写标题' })
-  schema.fields.forEach((field, index) => {
+  if (fields.length > 50) issues.push({ message: '问题最多只能加 50 个' })
+  fields.forEach((field, index) => {
     const position = `第 ${index + 1} 个问题`
     if (!field.id.trim()) issues.push({ fieldId: field.id, message: `${position}还没有字段标识` })
     else if (!/^[a-z][a-z0-9_-]{0,63}$/.test(field.id) || ['student_id', 'studentid', 'uploads', 'attachments'].includes(field.id)) {
@@ -168,10 +203,44 @@ export function validateRecruitmentFormSchema(schema: RecruitmentFormSchema): Re
     if (choiceTypes.has(field.type)) {
       const options = normalizeOptions(field.options)
       if (options.length < 2) issues.push({ fieldId: field.id, message: `${position}至少要有两个不重复的选项` })
+      if (options.length > 50) issues.push({ fieldId: field.id, message: `${position}的选项最多 50 个` })
+      if (options.some(option => Array.from(option).length > 100)) {
+        issues.push({ fieldId: field.id, message: `${position}有选项超过了 100 个字` })
+      }
     }
   })
+  return issues
+}
+
+export function validateRecruitmentFormSchema(schema: RecruitmentFormSchema): RecruitmentFormValidationIssue[] {
+  const issues: RecruitmentFormValidationIssue[] = []
+  if (!schema.studentId?.label?.trim()) issues.push({ fieldId: 'studentId', message: '学号这一项还没写标题' })
+  if (!schema.upload?.label?.trim()) issues.push({ fieldId: 'attachments', message: '作品上传区还没写标题' })
+  issues.push(...validateFormFields(schema.fields))
   if (!schema.upload?.prompt?.trim()) issues.push({ message: '给作品上传区写一句提示吧，同学看了才知道该传什么' })
   return issues
+}
+
+export function validateSurveyFormFields(fields: RecruitmentFormField[]): RecruitmentFormValidationIssue[] {
+  if (!fields.length) return [{ message: '问卷至少要有一道题' }]
+  return validateFormFields(fields)
+}
+
+/** 下一个不和现有选项重名的默认选项文字。 */
+export function nextOptionLabel(options: string[]) {
+  const used = new Set(options.map(option => option.trim()))
+  let sequence = options.length + 1
+  while (used.has(`选项 ${sequence}`)) sequence += 1
+  return `选项 ${sequence}`
+}
+
+/** 把 from 位置的元素挪到 to 位置（拖动排序用），越界时原样返回。 */
+export function moveItem<T>(items: T[], from: number, to: number) {
+  if (from === to || from < 0 || to < 0 || from >= items.length || to >= items.length) return items
+  const next = [...items]
+  const [item] = next.splice(from, 1)
+  next.splice(to, 0, item)
+  return next
 }
 
 export function normalizeStudentId(value: unknown) {
@@ -200,6 +269,13 @@ export function normalizeRecruitmentAnswers(
   const answers: RecruitmentAnswers = {}
   schema.fields.forEach(field => {
     const raw = value[field.id]
+    if (field.type === 'FILE_UPLOAD') {
+      // 提交前页面已经把选中的文件换成了上传 id；还没换的（File 对象）不算答案。
+      answers[field.id] = Array.isArray(raw)
+        ? [...new Set(raw.filter((item): item is string => typeof item === 'string' && item.length > 0))]
+        : []
+      return
+    }
     if (field.type === 'MULTIPLE_CHOICE') {
       const allowed = new Set(field.options || [])
       const selected = Array.isArray(raw)
@@ -214,6 +290,32 @@ export function normalizeRecruitmentAnswers(
   return answers
 }
 
+/** 必填题有没有答。「上传文件」题看选中的文件数，这时文件还没上传、还不是 id。 */
+export function validateFormAnswers(
+  fields: RecruitmentFormField[],
+  value: Record<string, unknown>,
+): RecruitmentFormValidationIssue[] {
+  const issues: RecruitmentFormValidationIssue[] = []
+  const answers = normalizeRecruitmentAnswers({ ...EMPTY_RECRUITMENT_FORM, fields }, value)
+  fields.forEach(field => {
+    if (!field.required) return
+    const raw = value[field.id]
+    const answer = answers[field.id]
+    const empty = field.type === 'FILE_UPLOAD'
+      ? !Array.isArray(raw) || raw.length === 0
+      : Array.isArray(answer) ? answer.length === 0 : !answer
+    if (empty) {
+      issues.push({
+        fieldId: field.id,
+        message: field.type === 'FILE_UPLOAD'
+          ? `“${field.label || '这道题'}”还没传文件`
+          : `“${field.label || '这道题'}”还没填`,
+      })
+    }
+  })
+  return issues
+}
+
 export function validateRecruitmentAnswers(
   schema: RecruitmentFormSchema,
   studentIdValue: unknown,
@@ -223,18 +325,22 @@ export function validateRecruitmentAnswers(
   const issues: RecruitmentFormValidationIssue[] = []
   const studentIdMessage = validateStudentId(studentIdValue)
   if (studentIdMessage) issues.push({ fieldId: 'studentId', message: studentIdMessage })
-
-  const answers = normalizeRecruitmentAnswers(schema, value)
-  schema.fields.forEach(field => {
-    const answer = answers[field.id]
-    if (field.required && (Array.isArray(answer) ? answer.length === 0 : !answer)) {
-      issues.push({ fieldId: field.id, message: `“${field.label || '这道题'}”还没填` })
-    }
-  })
+  issues.push(...validateFormAnswers(schema.fields, value))
   if (schema.upload.required && attachmentCount === 0) {
     issues.push({ fieldId: 'attachments', message: '这次招募需要看看你的作品，请至少上传一张照片或一个压缩包' })
   }
   return issues
+}
+
+/** 存档答案给人看的样子：多选用顿号连起来，文件显示文件名。 */
+export function formAnswerText(value: unknown): string {
+  if (value === null || value === undefined) return ''
+  if (Array.isArray(value)) return value.map(formAnswerText).filter(Boolean).join('、')
+  if (typeof value === 'object') {
+    const fileName = (value as { fileName?: unknown }).fileName
+    return typeof fileName === 'string' ? fileName : ''
+  }
+  return String(value)
 }
 
 export function escapeMarkdownTableCell(value: unknown) {
@@ -254,8 +360,8 @@ export function buildApplicationDetailsMarkdown(
   const rows = [
     `| 学号 | ${escapeMarkdownTableCell(normalizeStudentId(studentId)) || '未填写'} |`,
     ...schema.fields.map(field => {
-      const answer = normalized[field.id]
-      const rendered = Array.isArray(answer) ? answer.join('、') : answer
+      const answer = field.type === 'FILE_UPLOAD' ? answers[field.id] : normalized[field.id]
+      const rendered = formAnswerText(answer)
       return `| ${escapeMarkdownTableCell(field.label)} | ${escapeMarkdownTableCell(rendered) || '未填写'} |`
     }),
   ]

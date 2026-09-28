@@ -29,7 +29,7 @@ public class DescriptionImageController {
     private final DescriptionImageAuthorizationService authorization;
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @PreAuthorize("hasAnyAuthority('PROJECT_CREATE','REQUEST_CREATE','FEATURED_MANAGE')")
+    @PreAuthorize("hasAnyAuthority('PROJECT_CREATE','REQUEST_CREATE','FEATURED_MANAGE','SURVEY_CREATE')")
     ApiResponse<UploadResult> upload(@RequestPart("file") MultipartFile file,
                                      @AuthenticationPrincipal AuthenticatedUser user) throws IOException {
         byte[] bytes = InlineImageUpload.read(file);

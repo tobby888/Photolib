@@ -1,6 +1,7 @@
 package cn.photolib.recruitment;
 
 import cn.photolib.common.util.SpreadsheetText;
+import cn.photolib.form.FormAnswerText;
 import cn.photolib.recruitment.model.RecruitmentFormSchema;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellStyle;
@@ -113,17 +114,9 @@ final class RecruitmentApplicationExport {
         }
     }
 
-    /** 空答案写成空单元格；多选答案在一个格子里用逗号连起来。 */
+    /** 空答案写成空单元格；多选答案在一个格子里用逗号连起来，上传文件题写文件名。 */
     private static String answerText(Object answer) {
-        if (answer == null) return "";
-        if (answer instanceof List<?> values) {
-            return values.stream()
-                    .filter(value -> value != null && !String.valueOf(value).isEmpty())
-                    .map(String::valueOf)
-                    .reduce((left, right) -> left + MULTI_VALUE_SEPARATOR + right)
-                    .orElse("");
-        }
-        return String.valueOf(answer);
+        return FormAnswerText.of(answer, MULTI_VALUE_SEPARATOR);
     }
 
     private static void header(Row row, CellStyle style, Sheet sheet, int column, String label) {

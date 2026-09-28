@@ -28,6 +28,9 @@ public class RecruitmentFormSchemaValidator {
     private static final int MAX_SCHEMA_JSON = 100_000;
     private static final int MAX_ANSWERS_JSON = 300_000;
     private static final Pattern FIELD_ID = Pattern.compile("[a-z][a-z0-9_-]{0,63}");
+    /** 一道「上传文件」题最多能交几个文件。前端 recruitmentForm.ts 里有同一个数。 */
+    public static final int MAX_FILES_PER_FIELD = 10;
+    private static final Pattern FILE_ID = Pattern.compile("[0-9A-HJKMNP-TV-Z]{26}");
     private static final Set<String> RESERVED_IDS = Set.of("student_id", "studentid", "uploads", "attachments");
 
     private final ObjectMapper objectMapper;
@@ -175,6 +178,7 @@ public class RecruitmentFormSchemaValidator {
             case DATE -> dateAnswer(field, value);
             case SINGLE_CHOICE -> singleChoice(field, value);
             case MULTIPLE_CHOICE -> multipleChoice(field, value);
+            case FILE_UPLOAD -> fileAnswer(field, value);
         };
     }
 
@@ -230,6 +234,33 @@ public class RecruitmentFormSchemaValidator {
                 throw invalidAnswer(field, "不能重复选择同一选项");
             }
             checked.add(text);
+        }
+        return List.copyOf(checked);
+    }
+
+    /**
+     * 只校验形状：一组不重复的上传 id。这些 id 是不是真属于这份答卷、文件是不是真传上去了，
+     * 要查库和对象存储，由 {@code FormFileService#attachAnswers} 在提交事务里核对。
+     */
+    private Object fileAnswer(RecruitmentFormSchema.Field field, Object value) {
+        if (value == null) return requiredAnswer(field, null);
+        if (!(value instanceof List<?> values)) {
+            throw invalidAnswer(field, "必须是文件列表");
+        }
+        if (values.isEmpty()) return requiredAnswer(field, null);
+        if (values.size() > MAX_FILES_PER_FIELD) {
+            throw invalidAnswer(field, "最多上传 " + MAX_FILES_PER_FIELD + " 个文件");
+        }
+        Set<String> unique = new HashSet<>();
+        List<String> checked = new ArrayList<>(values.size());
+        for (Object item : values) {
+            if (!(item instanceof String id) || !FILE_ID.matcher(id).matches()) {
+                throw invalidAnswer(field, "包含无效的文件");
+            }
+            if (!unique.add(id)) {
+                throw invalidAnswer(field, "不能重复提交同一个文件");
+            }
+            checked.add(id);
         }
         return List.copyOf(checked);
     }

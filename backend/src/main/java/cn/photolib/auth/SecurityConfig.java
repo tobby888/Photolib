@@ -82,6 +82,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST,
                                 "/api/v1/public/recruitments/*/drafts",
                                 "/api/v1/public/recruitments/*/drafts/*/submit",
+                                "/api/v1/public/recruitments/*/drafts/*/files",
                                 "/api/v1/public/recruitments/*/drafts/*/batches",
                                 "/api/v1/public/recruitments/*/drafts/*/batches/*/complete").permitAll()
                         .anyRequest().authenticated())

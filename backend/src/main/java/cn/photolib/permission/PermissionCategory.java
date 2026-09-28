@@ -8,6 +8,7 @@ public enum PermissionCategory {
     DIRECTORY("通讯录"),
     MESSAGE("消息"),
     RECRUITMENT("成员招募"),
+    SURVEY("问卷"),
     FEATURED("好图精选"),
     DOC("文档中心"),
     TEACHING("教学资料"),

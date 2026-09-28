@@ -1,15 +1,22 @@
 import {
   ArrowDownOutlined,
   ArrowUpOutlined,
+  CloseOutlined,
   DeleteOutlined,
   FileImageOutlined,
+  HolderOutlined,
   IdcardOutlined,
   PlusOutlined,
 } from '@ant-design/icons'
 import { Alert, Button, Card, Checkbox, Col, Input, Row, Select, Space, Switch, Tag, Typography } from 'antd'
+import { useState, type DragEvent, type KeyboardEvent } from 'react'
 import {
+  FORM_FILE_LIMITS,
   RECRUITMENT_FIELD_TYPES,
   createRecruitmentField,
+  isChoiceField,
+  moveItem,
+  nextOptionLabel,
   normalizeRecruitmentFormSchema,
   type RecruitmentFieldType,
   type RecruitmentFormField,
@@ -27,16 +34,76 @@ const fieldTypeOptions: { value: RecruitmentFieldType; label: string }[] = [
   { value: 'SINGLE_CHOICE', label: '单选' },
   { value: 'MULTIPLE_CHOICE', label: '多选' },
   { value: 'DATE', label: '日期' },
+  { value: 'FILE_UPLOAD', label: '上传文件' },
 ]
 
-const choiceTypes = new Set<RecruitmentFieldType>(['SINGLE_CHOICE', 'MULTIPLE_CHOICE'])
+/**
+ * 选择题的选项：一行一个输入框，拖动左边的把手调整顺序（键盘上 Alt + ↑/↓ 也行），
+ * 末尾「添加选项」新建一项。空白和重复的选项在编辑时保留，保存时由页面统一整理。
+ */
+export function ChoiceOptionsEditor({ options, onChange, disabled = false }: {
+  options: string[]
+  onChange: (options: string[]) => void
+  disabled?: boolean
+}) {
+  const [dragging, setDragging] = useState<number>()
+  const [over, setOver] = useState<number>()
+
+  const endDrag = () => {
+    setDragging(undefined)
+    setOver(undefined)
+  }
+  const drop = (event: DragEvent, target: number) => {
+    event.preventDefault()
+    if (dragging !== undefined) onChange(moveItem(options, dragging, target))
+    endDrag()
+  }
+  const keyboardMove = (event: KeyboardEvent, index: number) => {
+    if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return
+    event.preventDefault()
+    onChange(moveItem(options, index, event.key === 'ArrowUp' ? index - 1 : index + 1))
+  }
+
+  return <div className="choice-options-editor">
+    {options.map((option, index) => <div key={index}
+      className={`choice-option-row${dragging === index ? ' is-dragging' : ''}${over === index && dragging !== index ? ' is-drop-target' : ''}`}
+      onDragOver={event => {
+        if (dragging === undefined) return
+        event.preventDefault()
+        event.dataTransfer.dropEffect = 'move'
+        if (over !== index) setOver(index)
+      }}
+      onDrop={event => drop(event, index)}>
+      <span className="choice-option-handle" draggable={!disabled} tabIndex={disabled ? -1 : 0}
+        role="button" aria-label={`拖动调整第 ${index + 1} 个选项的位置（Alt + 上下方向键也可以移动）`}
+        aria-disabled={disabled}
+        onDragStart={event => {
+          event.dataTransfer.effectAllowed = 'move'
+          event.dataTransfer.setData('text/plain', String(index))
+          setDragging(index)
+        }}
+        onDragEnd={endDrag}
+        onKeyDown={event => keyboardMove(event, index)}><HolderOutlined /></span>
+      <Input value={option} disabled={disabled} maxLength={100} placeholder={`选项 ${index + 1}`}
+        aria-label={`第 ${index + 1} 个选项`}
+        onChange={event => onChange(options.map((current, position) => position === index ? event.target.value : current))}
+        onPressEnter={() => !disabled && onChange([...options, nextOptionLabel(options)])} />
+      {!disabled && <Button type="text" aria-label={`删除第 ${index + 1} 个选项`} icon={<CloseOutlined />}
+        disabled={options.length <= 2} onClick={() => onChange(options.filter((_, position) => position !== index))} />}
+    </div>)}
+    {!disabled && <Button type="dashed" size="small" icon={<PlusOutlined />} disabled={options.length >= 50}
+      onClick={() => onChange([...options, nextOptionLabel(options)])}>添加选项</Button>}
+  </div>
+}
 
 export default function RecruitmentFormEditor({
-  value, onChange, disabled = false, limits = RECRUITMENT_FALLBACK_UPLOAD_LIMITS,
+  value, onChange, disabled = false, limits = RECRUITMENT_FALLBACK_UPLOAD_LIMITS, variant = 'recruitment',
 }: {
   value?: RecruitmentFormSchema | string | null
   onChange?: (value: RecruitmentFormSchema) => void
   disabled?: boolean
+  /** 问卷没有学号项和作品上传区，只编辑题目。 */
+  variant?: 'recruitment' | 'survey'
   /**
    * Quota shown to the person building the form. Pass the task's own limits when
    * one exists; the fallback matches the shipped defaults and is only right for a
@@ -44,7 +111,8 @@ export default function RecruitmentFormEditor({
    */
   limits?: RecruitmentUploadLimits
 }) {
-  const schema = normalizeRecruitmentFormSchema(value)
+  const schema = normalizeRecruitmentFormSchema(value, { keepDraftOptions: true })
+  const recruitment = variant === 'recruitment'
 
   const updateField = (index: number, updates: Partial<RecruitmentFormField>) => {
     const fields = schema.fields.map((field, current) => current === index ? { ...field, ...updates } : field)
@@ -55,7 +123,7 @@ export default function RecruitmentFormEditor({
     const current = schema.fields[index]
     updateField(index, {
       type,
-      options: choiceTypes.has(type) ? current.options?.length ? current.options : ['选项 1', '选项 2'] : undefined,
+      options: isChoiceField(type) ? current.options?.length ? current.options : ['选项 1', '选项 2'] : undefined,
       placeholder: type === 'SHORT_TEXT' || type === 'LONG_TEXT' ? current.placeholder : undefined,
     })
   }
@@ -78,10 +146,10 @@ export default function RecruitmentFormEditor({
   }
 
   return <Space orientation="vertical" size={14} style={{ width: '100%' }}>
-    <Alert type="info" showIcon title="学号和作品上传是固定项"
-      description="学号用来防止同一个人重复报名，删不掉。同学传上来的照片会按原图保存，我们不压缩、不转格式。" />
+    {recruitment && <Alert type="info" showIcon title="学号和作品上传是固定项"
+      description="学号用来防止同一个人重复报名，删不掉。同学传上来的照片会按原图保存，我们不压缩、不转格式。" />}
 
-    <Card size="small" title={<Space><IdcardOutlined /><span>学号</span><Tag color="red">必填</Tag></Space>}>
+    {recruitment && <Card size="small" title={<Space><IdcardOutlined /><span>学号</span><Tag color="red">必填</Tag></Space>}>
       <Space orientation="vertical" size={10} style={{ width: '100%' }}>
         <Input value={schema.studentId.label} disabled={disabled} maxLength={100} placeholder="这一栏叫什么，比如「学号」"
           onChange={event => onChange?.({ ...schema, studentId: { ...schema.studentId, label: event.target.value } })} />
@@ -89,7 +157,10 @@ export default function RecruitmentFormEditor({
           onChange={event => onChange?.({ ...schema, studentId: { ...schema.studentId, helpText: event.target.value } })} />
         <Typography.Text type="secondary">永远排在表单第一项。学号按文本保存，开头的 0 不会丢。</Typography.Text>
       </Space>
-    </Card>
+    </Card>}
+
+    {!recruitment && !schema.fields.length && <Alert type="info" showIcon title="还没有题目"
+      description="点下面的「加一道题」开始出题。题型和招募报名表一样，还可以让大家上传文件。" />}
 
     {schema.fields.map((field, index) => <Card key={field.id} size="small"
       title={<Space wrap><span>问题 {index + 1}</span><Tag>{fieldTypeOptions.find(item => item.value === field.type)?.label}</Tag></Space>}
@@ -109,25 +180,30 @@ export default function RecruitmentFormEditor({
         <Col xs={24} sm={15}>
           <Typography.Text type="secondary">题目</Typography.Text>
           <Input value={field.label} disabled={disabled} maxLength={100} style={{ marginTop: 6 }}
-            placeholder="比如：为什么想加入摄影部？" onChange={event => updateField(index, { label: event.target.value })} />
+            placeholder={recruitment ? '比如：为什么想加入摄影部？' : '比如：你对这学期的活动满意吗？'} onChange={event => updateField(index, { label: event.target.value })} />
         </Col>
       </Row>
       <div style={{ marginTop: 12 }}>
         <Typography.Text type="secondary">补充说明（可以不写）</Typography.Text>
         <Input value={field.helpText} disabled={disabled} maxLength={500} style={{ marginTop: 6 }}
-          placeholder="想提醒同学注意什么，写在这里" onChange={event => updateField(index, { helpText: event.target.value })} />
+          placeholder={recruitment ? '想提醒同学注意什么，写在这里' : '想提醒大家注意什么，写在这里'} onChange={event => updateField(index, { helpText: event.target.value })} />
       </div>
       {(field.type === 'SHORT_TEXT' || field.type === 'LONG_TEXT') && <div style={{ marginTop: 12 }}>
         <Typography.Text type="secondary">输入框里的灰字提示（可以不写）</Typography.Text>
         <Input value={field.placeholder} disabled={disabled} maxLength={200} style={{ marginTop: 6 }}
           placeholder="比如：说说这张照片是在哪拍的" onChange={event => updateField(index, { placeholder: event.target.value })} />
       </div>}
-      {choiceTypes.has(field.type) && <div style={{ marginTop: 12 }}>
-        <Typography.Text type="secondary">选项（至少两个）</Typography.Text>
-        <Select mode="tags" value={field.options || []} disabled={disabled} style={{ width: '100%', marginTop: 6 }}
-          tokenSeparators={[',', '，']} placeholder="打一个选项按一下回车"
-          onChange={options => updateField(index, { options: options.map(option => option.trim()).filter(Boolean) })} />
+      {isChoiceField(field.type) && <div style={{ marginTop: 12 }}>
+        <Typography.Text type="secondary">选项（至少两个，拖动左边的把手调整顺序）</Typography.Text>
+        <div style={{ marginTop: 6 }}>
+          <ChoiceOptionsEditor options={field.options || []} disabled={disabled}
+            onChange={options => updateField(index, { options })} />
+        </div>
       </div>}
+      {field.type === 'FILE_UPLOAD' && <Typography.Paragraph type="secondary" style={{ margin: '12px 0 0' }}>
+        {recruitment ? '同学' : '填写的人'}可以在这道题里传 1–{FORM_FILE_LIMITS.maxFilesPerField} 个文件，
+        任意格式，单个不超过 {describeBytes(FORM_FILE_LIMITS.maxFileBytes)}。文件原样保存，只有能看结果的人才能下载。
+      </Typography.Paragraph>}
       <Checkbox checked={field.required} disabled={disabled} style={{ marginTop: 14 }}
         onChange={event => updateField(index, { required: event.target.checked })}>这题必须填</Checkbox>
     </Card>)}
@@ -136,7 +212,7 @@ export default function RecruitmentFormEditor({
       加一道题
     </Button>}
 
-    <Card size="small" title={<Space><FileImageOutlined /><span>作品上传</span><Tag>固定区域</Tag></Space>}>
+    {recruitment && <Card size="small" title={<Space><FileImageOutlined /><span>作品上传</span><Tag>固定区域</Tag></Space>}>
       <Space orientation="vertical" size={12} style={{ width: '100%' }}>
         <div>
           <Typography.Text type="secondary">这一栏叫什么</Typography.Text>
@@ -161,7 +237,7 @@ export default function RecruitmentFormEditor({
           也可以打包成一个不超过 {describeBytes(limits.maxArchiveBytes)} 的 ZIP。原图保存，不压缩。
         </Typography.Text>
       </Space>
-    </Card>
+    </Card>}
   </Space>
 }
 

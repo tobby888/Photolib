@@ -12,7 +12,6 @@ import {
   App,
   Button,
   Card,
-  Checkbox,
   Col,
   Empty,
   Form,
@@ -42,8 +41,9 @@ import {
   normalizeStudentId,
   validateRecruitmentAnswers,
   validateStudentId,
-  type RecruitmentFormField,
 } from '../recruitmentForm'
+import { FormAnswerField } from '../FormFields'
+import { uploadFileAnswers, type FormFileTicket } from '../formFiles'
 import {
   buildRecruitmentFilesRequest,
   buildRecruitmentZipRequest,
@@ -91,29 +91,6 @@ function friendlyUploadError(error: unknown) {
     return '图片没能上传成功。请检查网络后重试；如果一直不行，请把这个情况告诉摄影部的同学。'
   }
   return raw || '图片没能上传成功，请稍后重试。'
-}
-
-function DynamicAnswerField({ field }: { field: RecruitmentFormField }) {
-  const common = {
-    name: ['answers', field.id],
-    label: field.label,
-    extra: field.helpText,
-    rules: field.required ? [{ required: true, message: `请填写“${field.label}”` }] : undefined,
-  }
-  if (field.type === 'LONG_TEXT') {
-    return <Form.Item {...common}><Input.TextArea autoSize={{ minRows: 4, maxRows: 10 }} maxLength={5000}
-      showCount placeholder={field.placeholder || '请输入'} /></Form.Item>
-  }
-  if (field.type === 'SINGLE_CHOICE') {
-    return <Form.Item {...common}><Radio.Group options={(field.options || []).map(option => ({ label: option, value: option }))} /></Form.Item>
-  }
-  if (field.type === 'MULTIPLE_CHOICE') {
-    return <Form.Item {...common}><Checkbox.Group options={(field.options || []).map(option => ({ label: option, value: option }))} /></Form.Item>
-  }
-  if (field.type === 'DATE') {
-    return <Form.Item {...common}><Input type="date" style={{ maxWidth: 320 }} /></Form.Item>
-  }
-  return <Form.Item {...common}><Input maxLength={500} showCount placeholder={field.placeholder || '请输入'} /></Form.Item>
 }
 
 function PublicTaskForm({ task }: { task: PublicRecruitmentTask }) {
@@ -233,6 +210,15 @@ function PublicTaskForm({ task }: { task: PublicRecruitmentTask }) {
       }))
       if (!draft.draftId || !draft.token) throw new Error('没能开始提交，请刷新页面再试一次')
       await uploadAttachments(draft.draftId, draft.token)
+      // 「上传文件」题：每个文件先要一张票据再直传，最后答案里只带文件 id。
+      const answers = await uploadFileAnswers(task.formSchema.fields, values.answers || {},
+        request => api<FormFileTicket>({
+          method: 'POST',
+          url: `/public/recruitments/${task.publicId}/drafts/${draft.draftId}/files`,
+          headers: { [DRAFT_TOKEN_HEADER]: draft.token },
+          data: request,
+        }),
+        text => setPhase(text))
       setPhase('正在提交报名表…')
       const result = await api<{ submittedAt?: string }>({
         method: 'POST',
@@ -240,7 +226,7 @@ function PublicTaskForm({ task }: { task: PublicRecruitmentTask }) {
         headers: { [DRAFT_TOKEN_HEADER]: draft.token },
         data: {
           studentId,
-          answers: normalizeRecruitmentAnswers(task.formSchema, values.answers || {}),
+          answers: normalizeRecruitmentAnswers(task.formSchema, answers),
         },
       })
       setProgress(100)
@@ -270,7 +256,7 @@ function PublicTaskForm({ task }: { task: PublicRecruitmentTask }) {
       } }]}>
       <Input inputMode="text" autoComplete="off" maxLength={128} placeholder="填写你的学号" />
     </Form.Item>
-    {task.formSchema.fields.map(field => <DynamicAnswerField key={field.id} field={field} />)}
+    {task.formSchema.fields.map(field => <FormAnswerField key={field.id} field={field} />)}
 
     <Form.Item required={task.formSchema.upload.required}
       label={<Space><FileImageOutlined />{task.formSchema.upload.label}{task.formSchema.upload.required && <Tag color="red">必传</Tag>}</Space>}
