@@ -32,7 +32,7 @@ public class SecurityConfig {
                         // SpaForwardController（以及 src/App.tsx 的 <Route>）保持一致，
                         // 否则深链会被 401 的 JSON 顶掉而不是渲染成应用。
                         .requestMatchers("/", "/index.html", "/assets/**", "/favicon.ico",
-                                "/login", "/initial-password", "/projects/**", "/requests/**",
+                                "/login", "/register", "/initial-password", "/projects/**", "/requests/**",
                                 "/photos", "/photos/**", "/favorites", "/favorites/**",
                                 "/worklogs", "/directory", "/featured", "/featured/**",
                                 "/notifications/**", "/statistics", "/manager-campuses", "/admin",
@@ -82,6 +82,8 @@ public class SecurityConfig {
                         .requestMatchers(
                                 "/api/v1/public/shares/*",
                                 "/api/v1/public/shares/*/**").permitAll()
+                        // 持注册码的同学提交注册申请，此时还没有账号。
+                        .requestMatchers(HttpMethod.POST, "/api/v1/public/registrations").permitAll()
                         .requestMatchers(HttpMethod.POST,
                                 "/api/v1/public/recruitments/*/drafts",
                                 "/api/v1/public/recruitments/*/drafts/*/submit",

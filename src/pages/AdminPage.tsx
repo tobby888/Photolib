@@ -4,9 +4,10 @@ import {
 import {
   AimOutlined, BgColorsOutlined, BulbOutlined, CameraOutlined, CloudUploadOutlined, DatabaseOutlined, PictureOutlined,
   ClockCircleOutlined, DeleteOutlined, EditOutlined, FileTextOutlined, LayoutOutlined, PlusOutlined,
-  SafetyCertificateOutlined, StarOutlined, TeamOutlined, UploadOutlined,
+  AuditOutlined, IdcardOutlined, SafetyCertificateOutlined, StarOutlined, TeamOutlined, UploadOutlined,
 } from '@ant-design/icons'
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api, emptyPage } from '../api'
 import type {
   BrandingSettings, Campus, FooterLink, PageData, PermissionGroup, PlaceholderImage, ScheduledBrandIcon, User,
@@ -24,6 +25,8 @@ import UploadLimitsPanel from '../UploadLimitsPanel'
 import { describeBytes } from '../uploadLimits'
 import { useUploadLimits } from '../useUploadLimits'
 import PermissionGroupsPanel from '../PermissionGroupsPanel'
+import RegistrationCodesPanel from '../RegistrationCodesPanel'
+import RegistrationReviewPanel from '../RegistrationReviewPanel'
 import UserAvatar from '../UserAvatar'
 import { USER_ACTION_MIN_WIDTH } from '../tableActionWidths'
 import { GRID_PAGE_SIZES, clientTablePagination } from '../pagination'
@@ -126,6 +129,9 @@ function AdminPanel() {
   const [editingUser, setEditingUser] = useState<User | null>(null)
   const [campusOpen, setCampusOpen] = useState(false)
   const [userSearchText, setUserSearchText] = useState('')
+  // 页签进地址栏：「有新的注册申请待审核」的站内信直接落到注册审核页签（/admin?tab=registration-review）。
+  const [searchParams, setSearchParams] = useSearchParams()
+  const activeTab = searchParams.get('tab') || 'branding'
   const [userKeyword, setUserKeyword] = useState('')
   const { data: users, loading, error, reload } = useLoad(
     () => api<PageData<User>>({
@@ -388,7 +394,7 @@ function AdminPanel() {
   return <>
     <PageTitle eyebrow="ADMINISTRATION" title="系统管理" description="维护账号、校区和系统运行秩序。" />
     <Card>
-      <Tabs items={[
+      <Tabs activeKey={activeTab} onChange={key => setSearchParams({ tab: key }, { replace: true })} items={[
         { key: 'branding', label: <span><BgColorsOutlined /> 面板品牌</span>, children:
           <DataState loading={brandingLoading} error={brandingError} onRetry={reloadBranding}>
             <div className="branding-settings">
@@ -599,7 +605,7 @@ function AdminPanel() {
             </div>
           </DataState> },
         { key: 'users', label: <span><TeamOutlined /> 账号管理</span>, children: <>
-          <div className="tab-toolbar"><div><Typography.Title level={4}>成员账号</Typography.Title><Typography.Text type="secondary">系统不开放注册，账号均由管理员创建。</Typography.Text></div>
+          <div className="tab-toolbar"><div><Typography.Title level={4}>成员账号</Typography.Title><Typography.Text type="secondary">账号由管理员创建，或由同学持注册码申请、经审核通过后生成。</Typography.Text></div>
             <Space wrap>
               <Input.Search
                 allowClear
@@ -618,7 +624,7 @@ function AdminPanel() {
             emptyText={userKeyword ? `没有匹配“${userKeyword}”的账号` : '还没有创建任何成员账号'}
             emptyHint={userKeyword
               ? '姓名、账号和邮箱都会被搜索，换个词再试试。'
-              : '系统不开放注册，成员账号都要在这里创建。'}>
+              : '可以在这里创建账号，也可以生成注册码让同学自助申请。'}>
             <ContentFitTable rowKey="id" dataSource={users.items}
               pagination={clientTablePagination(users.items.length,
                 { defaultPageSize: 12, sizes: GRID_PAGE_SIZES, showTotal: total => `共 ${total} 个账号` })} columns={[
@@ -642,6 +648,9 @@ function AdminPanel() {
             ]} />
           </DataState>
         </> },
+        { key: 'registration-codes', label: <span><IdcardOutlined /> 注册码</span>, children:
+          <RegistrationCodesPanel permissionGroups={permissionGroups} campuses={campuses} /> },
+        { key: 'registration-review', label: <span><AuditOutlined /> 注册审核</span>, children: <RegistrationReviewPanel /> },
         { key: 'permissions', label: <span><SafetyCertificateOutlined /> 权限管理</span>, children: <PermissionGroupsPanel /> },
         { key: 'campuses', label: <span><SafetyCertificateOutlined /> 校区管理</span>, children: <>
           <div className="tab-toolbar"><div><Typography.Title level={4}>校区资源</Typography.Title><Typography.Text type="secondary">校区代码创建后不可修改。</Typography.Text></div>

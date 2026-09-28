@@ -459,6 +459,9 @@ button, input, textarea, select { font-family: inherit; }
 .login-card > .ant-card-body > p { margin-bottom: 35px; }
 .form-between { display: flex; align-items: center; justify-content: space-between; margin: -4px 0 28px; font-size: 12px; }
 .login-card .ant-btn-primary { height: 48px; margin-top: 2px; }
+.login-card .ant-btn.register-entry { margin-top: 8px; }
+.register-card .ant-result { padding: 24px 0 8px; }
+.register-name-notice { margin-bottom: 16px; }
 .login-help { display: block; text-align: center; color: #9aa19e !important; font-size: 11px; margin-top: 20px; }
 .password-page {
   min-height: 100vh;

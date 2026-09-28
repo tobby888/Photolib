@@ -40,6 +40,7 @@ class SpaForwardHttpTests {
     /** 和 src/App.tsx 的 <Route path=...> 一一对应，路径参数换成示例值。 */
     private static final List<String> SPA_PATHS = List.of(
             "/login",
+            "/register",
             "/initial-password",
             "/recruitment",
             "/docs",

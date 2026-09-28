@@ -25,6 +25,7 @@ import SiteFooter from './SiteFooter'
 import UserAvatar from './UserAvatar'
 
 const LoginPage = lazy(() => import('./pages/LoginPage'))
+const RegisterPage = lazy(() => import('./pages/RegisterPage'))
 const InitialPasswordPage = lazy(() => import('./pages/InitialPasswordPage'))
 const TwoFactorPage = lazy(() => import('./pages/TwoFactorPage'))
 const DashboardPage = lazy(() => import('./pages/DashboardPage'))
@@ -449,6 +450,10 @@ export default function App() {
   const location = useLocation()
   return <Suspense fallback={<div className="route-loading">正在进入{branding.title}…</div>}><Routes>
     <Route path="/login" element={user ? <Navigate to={afterLoginRoute(user, location.state)} replace /> : <LoginPage />} />
+    {/* 注册页和报名页同理：只把后端确认过的成员弹回去，光看乐观读出的 `user` 会把访客也弹走。 */}
+    <Route path="/register" element={user && sessionVerified
+      ? <Navigate to={afterLoginRoute(user, null)} replace />
+      : <RegisterPage />} />
     {/*
       报名页只把"后端确认过的成员"弹回工作台。光看 `user` 不行：它是从 localStorage
       乐观读出来的，浏览器上留着一份过期身份的人（在这台机器上登录过的部员，或者
