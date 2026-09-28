@@ -17,6 +17,7 @@ public class SpaForwardController {
     @GetMapping({
             // 未登录可达的页面
             "/login",
+            "/register",
             "/initial-password",
             "/recruitment",
             "/docs",

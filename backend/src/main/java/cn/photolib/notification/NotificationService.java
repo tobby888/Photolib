@@ -331,6 +331,8 @@ public class NotificationService {
         if (event.startsWith("WORKLOG_")) return "/worklogs";
         if (event.startsWith("PROJECT_")) return "/projects";
         if (event.startsWith("TEACHING_")) return "/teaching";
+        // 只给管理员发，直接落到系统管理面板的注册审核页签。
+        if (event.equals("REGISTRATION_PENDING")) return "/admin?tab=registration-review";
         return null;
     }
 

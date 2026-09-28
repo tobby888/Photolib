@@ -1,6 +1,6 @@
 import { Alert, App, Button, Card, Checkbox, Divider, Form, Input, Space, Typography } from 'antd'
 import {
-  ArrowLeftOutlined, ArrowRightOutlined, LockOutlined, ReadOutlined, TeamOutlined, UserOutlined,
+  ArrowLeftOutlined, ArrowRightOutlined, IdcardOutlined, LockOutlined, ReadOutlined, TeamOutlined, UserOutlined,
 } from '@ant-design/icons'
 import { useState } from 'react'
 import { LOGIN_NOTICE_KEY, type LoginResult } from '../api'
@@ -96,7 +96,7 @@ export default function LoginPage() {
         </> : <>
         <Typography.Text className="eyebrow">欢迎回来</Typography.Text>
         <Typography.Title level={2}>登录{branding.title}</Typography.Title>
-        <Typography.Paragraph type="secondary">使用管理员分配给你的账号或邮箱继续工作。</Typography.Paragraph>
+        <Typography.Paragraph type="secondary">使用你的账号或邮箱继续工作。</Typography.Paragraph>
         {sessionNotice && <Alert className="login-notice" type="info" showIcon title={sessionNotice} />}
         <Form layout="vertical" size="large" onFinish={submit} requiredMark={false}>
           <Form.Item label="账号或邮箱" name="identifier" rules={[{ required: true, message: '请输入账号或邮箱' }]}>
@@ -108,6 +108,8 @@ export default function LoginPage() {
           <div className="form-between"><Checkbox>记住账号</Checkbox><Typography.Text type="secondary">忘记密码请联系管理员</Typography.Text></div>
           <Button block type="primary" htmlType="submit" loading={loading}>登录 <ArrowRightOutlined /></Button>
         </Form>
+        <Button block type="link" className="register-entry" icon={<IdcardOutlined />}
+          onClick={() => navigate('/register')}>有注册码？申请注册账号</Button>
         </>}
         <Divider plain>不用登录也能看</Divider>
         <Space.Compact block>

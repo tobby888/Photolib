@@ -84,6 +84,42 @@ public class UserService {
         return new CreatedUser(toView(user), initialPassword);
     }
 
+    /**
+     * 注册申请审核通过时建账号（{@code RegistrationService.approve}）。和 {@link #create} 的区别：
+     * 密码是申请人自己设的，只传哈希进来，因此不要求首次改密，也不发「向管理员获取初始密码」的通知。
+     * 账号、邮箱唯一性与权限组 / 校区校验和管理员建号走的是同一套。
+     */
+    @Transactional
+    public UserView createRegistered(RegisteredUser command) {
+        PermissionGroupEntity group = permissionGroups.requireForAuthorization(command.permissionGroupId());
+        Set<Long> campusIds = command.campusIds() == null ? Set.of() : new LinkedHashSet<>(command.campusIds());
+        validateAuthorization(group, campusIds);
+        if (userMapper.selectCount(Wrappers.<UserEntity>lambdaQuery()
+                .eq(UserEntity::getUsername, command.username())) > 0) {
+            throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE,
+                    "登录账号「" + command.username() + "」已被其他用户使用");
+        }
+        String email = normalizeEmail(command.email());
+        validateEmailAvailable(email, null);
+        UserEntity user = new UserEntity();
+        user.setUsername(command.username());
+        user.setPasswordHash(command.passwordHash());
+        user.setDisplayName(command.displayName());
+        user.setRole(permissionGroups.compatibleRole(group));
+        user.setPermissionGroupId(group.getId());
+        user.setCampusId(campusIds.stream().findFirst().orElse(null));
+        user.setEmail(email);
+        user.setEnabled(true);
+        user.setMustChangePassword(false);
+        try {
+            userMapper.insert(user);
+            permissionGroups.replaceUserCampuses(user.getId(), group.getDataScope(), campusIds);
+        } catch (DuplicateKeyException exception) {
+            throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE, "登录账号或邮箱已被其他用户使用");
+        }
+        return toView(user);
+    }
+
     public PageResponse<UserView> list(int page, int pageSize, String keyword, UserRole role,
                                        Long campusId, Boolean enabled) {
         return list(page, pageSize, keyword, role, null, campusId, enabled);
@@ -409,6 +445,10 @@ public class UserService {
                            Integer version, Long permissionGroupId, String permissionGroupCode,
                            String permissionGroupName, DataScope dataScope, Set<Long> campusIds,
                            String avatarUrl) {
+    }
+
+    public record RegisteredUser(String username, String displayName, String email, String passwordHash,
+                                 Long permissionGroupId, Set<Long> campusIds) {
     }
 
     public record RecipientView(Long id, String displayName, String permissionGroupName) {}

@@ -865,3 +865,49 @@ export interface FeedbackDetail extends FeedbackSummary {
   replies: FeedbackReply[]
   statusChanges: FeedbackStatusChange[]
 }
+
+/** 注册码的状态由后端按启用开关、有效期、名额和权限组是否还在算出来，前端只展示。 */
+export type RegistrationCodeStatus = 'ACTIVE' | 'NOT_STARTED' | 'EXPIRED' | 'EXHAUSTED' | 'DISABLED' | 'INVALID'
+
+export interface RegistrationCode {
+  id: EntityId
+  code: string
+  name: string
+  permissionGroupId: EntityId
+  /** 权限组被删除后为空，这枚码随之失效。 */
+  permissionGroupName?: string | null
+  campusIds: EntityId[]
+  maxUses: number
+  /** 待审核 + 已通过的申请数；驳回会归还名额。 */
+  usedCount: number
+  pendingCount: number
+  validFrom: string
+  validUntil: string
+  enabled: boolean
+  status: RegistrationCodeStatus
+  createdAt: string
+  version: number
+}
+
+export type RegistrationStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
+
+export interface RegistrationApplication {
+  id: EntityId
+  username: string
+  displayName: string
+  email: string
+  status: RegistrationStatus
+  codeId: EntityId
+  codeName?: string | null
+  permissionGroupName?: string | null
+  createdAt: string
+  reviewedAt?: string | null
+  reviewerName?: string | null
+  rejectReason?: string | null
+  userId?: EntityId | null
+}
+
+export interface RegistrationReviewResult {
+  succeeded: EntityId[]
+  failed: { id: EntityId; username?: string | null; message: string }[]
+}
