@@ -115,6 +115,54 @@ class ProjectServiceTests {
     }
 
     @Test
+    void completeProject_shouldEndOpenRequests() {
+        var project = projectService.create("完成选题", "描述", ProjectStatus.ACTIVE, adminUser);
+        insertRequest(9201L, project.getId(), "DRAFT");
+        insertRequest(9202L, project.getId(), "PUBLISHED");
+        insertRequest(9203L, project.getId(), "ACCEPTED");
+        insertRequest(9204L, project.getId(), "SUBMITTED");
+        insertRequest(9205L, project.getId(), "COMPLETED");
+        insertRequest(9206L, project.getId(), "CANCELLED");
+        var other = projectService.create("其他选题", "描述", ProjectStatus.ACTIVE, adminUser);
+        insertRequest(9207L, other.getId(), "ACCEPTED");
+
+        projectService.changeStatus(project.getId(), ProjectStatus.COMPLETED, 1, adminUser);
+
+        assertThat(requestStatus(9201L)).isEqualTo("CANCELLED");
+        assertThat(requestStatus(9202L)).isEqualTo("CANCELLED");
+        assertThat(requestStatus(9203L)).isEqualTo("COMPLETED");
+        assertThat(requestStatus(9204L)).isEqualTo("COMPLETED");
+        assertThat(requestStatus(9205L)).isEqualTo("COMPLETED");
+        assertThat(requestStatus(9206L)).isEqualTo("CANCELLED");
+        assertThat(requestStatus(9207L)).isEqualTo("ACCEPTED");
+        assertThat(jdbc.sql("SELECT cancel_reason FROM photo_request WHERE id=9202")
+                .query(String.class).single()).contains("所属选题已完成");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM photo_request WHERE id IN (9203, 9204) AND completed_at IS NOT NULL")
+                .query(Long.class).single()).isEqualTo(2L);
+        // 已经结束的需求原样保留，版本号不动
+        assertThat(jdbc.sql("SELECT version FROM photo_request WHERE id=9206")
+                .query(Integer.class).single()).isEqualTo(1);
+    }
+
+    @Test
+    void cancelProject_shouldCancelAllOpenRequests() {
+        var project = projectService.create("取消选题", "描述", ProjectStatus.ACTIVE, adminUser);
+        insertRequest(9211L, project.getId(), "PUBLISHED");
+        insertRequest(9212L, project.getId(), "ACCEPTED");
+        insertRequest(9213L, project.getId(), "SUBMITTED");
+        insertRequest(9214L, project.getId(), "COMPLETED");
+
+        projectService.changeStatus(project.getId(), ProjectStatus.CANCELLED, 1, adminUser);
+
+        assertThat(requestStatus(9211L)).isEqualTo("CANCELLED");
+        assertThat(requestStatus(9212L)).isEqualTo("CANCELLED");
+        assertThat(requestStatus(9213L)).isEqualTo("CANCELLED");
+        assertThat(requestStatus(9214L)).isEqualTo("COMPLETED");
+        assertThat(jdbc.sql("SELECT cancel_reason FROM photo_request WHERE id=9213")
+                .query(String.class).single()).contains("所属选题已取消");
+    }
+
+    @Test
     void completeProject_twice_shouldThrowException() {
         // Given: 已完成的项目
         var project = projectService.create(
@@ -421,11 +469,26 @@ class ProjectServiceTests {
                 .hasMessageContaining("无权查看");
     }
 
+    private void insertRequest(Long requestId, Long projectId, String status) {
+        jdbc.sql("""
+                INSERT INTO photo_request
+                    (id, project_id, title, campus_id, required_count, deadline, status, created_by)
+                VALUES (:requestId, :projectId, '测试需求', 901, 1,
+                        DATEADD('DAY', 1, CURRENT_TIMESTAMP), :status, :adminId)
+                """).param("requestId", requestId).param("projectId", projectId)
+                .param("status", status).param("adminId", adminUser.id()).update();
+    }
+
+    private String requestStatus(Long requestId) {
+        return jdbc.sql("SELECT status FROM photo_request WHERE id=:id")
+                .param("id", requestId).query(String.class).single();
+    }
+
     private void assignRequest(Long requestId, Long projectId, Long campusId, Long userId) {
         jdbc.sql("""
                 INSERT INTO photo_request
                     (id, project_id, title, campus_id, required_count, deadline, status, created_by)
-                VALUES (:requestId, :projectId, '测试需求', :campusId, 1,
+                VALUES (:requestId, :projectId, :campusId, 1,
                         DATEADD('DAY', 1, CURRENT_TIMESTAMP), 'ACCEPTED', :adminId)
                 """).param("requestId", requestId).param("projectId", projectId)
                 .param("campusId", campusId).param("adminId", adminUser.id()).update();

@@ -244,7 +244,48 @@ public class ProjectService {
         project.setCompletedAt(target == ProjectStatus.COMPLETED ? LocalDateTime.now() : null);
         project.setVersion(version);
         updateChecked(project);
+        if (target == ProjectStatus.COMPLETED || target == ProjectStatus.CANCELLED) {
+            endOpenRequests(id, target);
+        }
         return get(id);
+    }
+
+    /**
+     * 选题结束（完成或取消）时，名下还没结束的需求随之自动结束，
+     * 否则已结束选题下的需求还能继续被接受、提交、确认。
+     *
+     * <p>选题完成时，已有人接手的需求（ACCEPTED / SUBMITTED）按完成处理；
+     * 没人接过的（DRAFT / PUBLISHED）、以及选题取消时的全部未结束需求一律取消并写明原因。
+     * 选题重新开放不会把这些需求恢复回来。</p>
+     *
+     * <p>直接走 SQL 而不是 RequestService：RequestService 依赖本类，反过来注入会成环。
+     * 版本号照常 +1，让前端手里的旧版本号在这之后提交会被乐观锁挡住。</p>
+     */
+    private void endOpenRequests(Long projectId, ProjectStatus target) {
+        LocalDateTime now = LocalDateTime.now();
+        if (target == ProjectStatus.COMPLETED) {
+            jdbc.sql("""
+                    UPDATE photo_request
+                    SET status='COMPLETED', completed_at=:now,
+                        return_reason=NULL, returned_by=NULL, returned_at=NULL,
+                        version=version+1, updated_at=:now
+                    WHERE project_id=:projectId AND deleted=0 AND status IN ('ACCEPTED', 'SUBMITTED')
+                    """)
+                    .param("now", now)
+                    .param("projectId", projectId)
+                    .update();
+        }
+        jdbc.sql("""
+                UPDATE photo_request
+                SET status='CANCELLED', cancel_reason=:reason, version=version+1, updated_at=:now
+                WHERE project_id=:projectId AND deleted=0
+                  AND status IN ('DRAFT', 'PUBLISHED', 'ACCEPTED', 'SUBMITTED')
+                """)
+                .param("reason", target == ProjectStatus.COMPLETED
+                        ? "所属选题已完成，需求自动结束" : "所属选题已取消，需求自动结束")
+                .param("now", now)
+                .param("projectId", projectId)
+                .update();
     }
 
     @Transactional
