@@ -11,7 +11,7 @@ import type { DataNode } from 'antd/es/tree'
 import dayjs from 'dayjs'
 import { useEffect, useMemo, useState, type Key } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api } from '../api'
+import { api, largeUploadConfig } from '../api'
 import DocPdfViewer from '../DocPdfViewer'
 import {
   ancestorKeysOf, findManageNode, manageNodesToTree, relativeDropPosition, resolveDrop,
@@ -22,6 +22,7 @@ import type {
   DocDocumentDetail, DocManageNode, DocNodeType, DocTreeMutation, DocVisibility,
 } from '../types'
 import { describeBytes } from '../uploadLimits'
+import UploadProgress from '../UploadProgress'
 import { useUploadLimits } from '../useUploadLimits'
 
 /**
@@ -76,6 +77,8 @@ export default function DocsManagePage({ onPreview }: {
   const [draft, setDraft] = useState('')
   const [detailLoading, setDetailLoading] = useState(false)
   const [busy, setBusy] = useState(false)
+  // PDF 上传进度：kind 决定进度条摆在目录旁（新建）还是替换按钮旁。
+  const [pdfUpload, setPdfUpload] = useState<{ kind: 'new' | 'replace'; percent: number } | null>(null)
   const [renaming, setRenaming] = useState('')
   // 替换文件后强制重新取一遍预览：地址没变，不加这个的话看到的还是旧文件。
   const [pdfToken, setPdfToken] = useState(0)
@@ -182,8 +185,12 @@ export default function DocsManagePage({ onPreview }: {
     form.append('file', file)
     form.append('title', title)
     if (parentId) form.append('parentId', parentId)
+    setPdfUpload({ kind: 'new', percent: 0 })
     const created = await mutate(
-      () => api<DocTreeMutation>({ method: 'POST', url: '/docs/pdf', data: form }),
+      () => api<DocTreeMutation>({
+        method: 'POST', url: '/docs/pdf', data: form,
+        ...largeUploadConfig(percent => setPdfUpload({ kind: 'new', percent })),
+      }).finally(() => setPdfUpload(null)),
       'PDF 已上传，可以设置发布与可见范围了')
     if (created && parentId) {
       setExpandedKeys(current => Array.from(new Set([...current, parentId])))
@@ -199,10 +206,12 @@ export default function DocsManagePage({ onPreview }: {
     }
     const form = new FormData()
     form.append('file', file)
+    setPdfUpload({ kind: 'replace', percent: 0 })
     await mutate(() => api<DocTreeMutation>({
       method: 'PUT', url: `/docs/${selected.id}/pdf`,
       params: { version: selected.version }, data: form,
-    }), 'PDF 已替换')
+      ...largeUploadConfig(percent => setPdfUpload({ kind: 'replace', percent })),
+    }).finally(() => setPdfUpload(null)), 'PDF 已替换')
     // 版本变了，预览要重新取一遍文件。
     setPdfToken(token => token + 1)
   }
@@ -295,6 +304,7 @@ export default function DocsManagePage({ onPreview }: {
       </Space>}>
       <Alert type="info" showIcon className="docs-manage-hint"
         message="拖动条目可以调整顺序，或把它拖进文件夹。" />
+      {pdfUpload?.kind === 'new' && <UploadProgress percent={pdfUpload.percent} />}
       {loaded.loading && <Skeleton active paragraph={{ rows: 8 }} />}
       {!loaded.loading && loaded.error && <Alert type="warning" showIcon message="目录没能加载出来"
         description={loaded.error} />}
@@ -378,6 +388,7 @@ export default function DocsManagePage({ onPreview }: {
                 最多 {describeBytes(pdfMaxBytes)}；替换后读者手上的链接继续有效。
               </Typography.Text>
             </Space>
+            {pdfUpload?.kind === 'replace' && <UploadProgress percent={pdfUpload.percent} />}
             <DocPdfViewer key={pdfToken} path={`/docs/${selected.id}/file`}
               title={selected.title} height="60vh" />
           </>}

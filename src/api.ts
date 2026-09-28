@@ -152,6 +152,24 @@ export async function api<T>(config: AxiosRequestConfig): Promise<T> {
   return response.data?.data as T
 }
 
+/**
+ * 经后端转存的大文件上传（教学资料、文档中心 PDF、备份导入）用的请求配置。
+ *
+ * <p>全局 20s 超时是给普通接口的；它要覆盖"浏览器传给后端 + 后端再转存到对象存储"整段，
+ * 上百 MB 的文件在一般校园网上根本传不完，结果是限额明明放得下却报"请求超时"。
+ * 这里不设超时，改用进度回调让人看到文件确实在走。</p>
+ */
+export function largeUploadConfig(onProgress?: (percent: number) => void): AxiosRequestConfig {
+  return {
+    timeout: 0,
+    onUploadProgress: onProgress
+      ? (event) => {
+          if (event.total) onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)))
+        }
+      : undefined,
+  }
+}
+
 export const qs = (values: Record<string, unknown>) => Object.fromEntries(
   Object.entries(values).filter(([, value]) => value !== undefined && value !== null && value !== ''),
 )

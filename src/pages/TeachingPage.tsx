@@ -9,12 +9,13 @@ import {
 import dayjs from 'dayjs'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { api, http, qs } from '../api'
+import { api, http, largeUploadConfig, qs } from '../api'
 import { useAuth } from '../auth'
 import { useLoad } from '../hooks'
 import { hasPermission } from '../permissions'
 import type { TeachingMaterial, TeachingMaterialFormat } from '../types'
 import { describeBytes, teachingFileTooLarge } from '../uploadLimits'
+import UploadProgress from '../UploadProgress'
 import { useUploadLimits } from '../useUploadLimits'
 
 interface AuthorOption {
@@ -161,6 +162,8 @@ export default function TeachingPage() {
   }, [keyword])
   const [reloadToken, setReloadToken] = useState(0)
   const [submitting, setSubmitting] = useState(false)
+  // 上传 / 换文件时的进度；null 表示当前没有文件在传。
+  const [uploadPercent, setUploadPercent] = useState<number | null>(null)
 
   const [uploadOpen, setUploadOpen] = useState(false)
   const [uploadFile, setUploadFile] = useState<File | null>(null)
@@ -220,6 +223,7 @@ export default function TeachingPage() {
       return
     }
     setSubmitting(true)
+    setUploadPercent(0)
     try {
       const form = new FormData()
       form.append('title', values.title)
@@ -228,7 +232,7 @@ export default function TeachingPage() {
       if (values.authorId != null) form.append('authorId', String(values.authorId))
       form.append('file', uploadFile)
       const created = await api<TeachingMaterial>({
-        method: 'post', url: '/teaching', data: form,
+        method: 'post', url: '/teaching', data: form, ...largeUploadConfig(setUploadPercent),
       })
       message.success('教学资料已发布')
       setUploadOpen(false)
@@ -240,6 +244,7 @@ export default function TeachingPage() {
       reportError(reason)
     } finally {
       setSubmitting(false)
+      setUploadPercent(null)
     }
   }
 
@@ -280,12 +285,14 @@ export default function TeachingPage() {
       return
     }
     setSubmitting(true)
+    setUploadPercent(0)
     try {
       const form = new FormData()
       form.append('file', replaceFile)
       form.append('version', String(replaceTarget.version))
       await api<TeachingMaterial>({
         method: 'put', url: `/teaching/${replaceTarget.id}/file`, data: form,
+        ...largeUploadConfig(setUploadPercent),
       })
       message.success('文件已替换')
       setReplaceTarget(null)
@@ -295,6 +302,7 @@ export default function TeachingPage() {
       reportError(reason)
     } finally {
       setSubmitting(false)
+      setUploadPercent(null)
     }
   }
 
@@ -434,13 +442,17 @@ export default function TeachingPage() {
       </div>
     </div>
 
+    {/* 传大文件可能要好几分钟：传的过程中不让关弹窗，否则进度条没了请求却还在跑。 */}
     <Modal open={uploadOpen} title="上传教学资料" okText="发布" confirmLoading={submitting}
+      closable={uploadPercent === null} maskClosable={uploadPercent === null} keyboard={uploadPercent === null}
+      cancelButtonProps={{ disabled: uploadPercent !== null }}
       onOk={() => void submitUpload()}
       onCancel={() => { setUploadOpen(false); setUploadFile(null); uploadForm.resetFields() }}>
       <Form form={uploadForm} layout="vertical">
         <MaterialFields categories={categories.data} authors={authors.data} />
         <Form.Item label="文件" required>{filePicker(uploadFile, setUploadFile)}</Form.Item>
       </Form>
+      <UploadProgress percent={uploadPercent} />
     </Modal>
 
     <Modal open={!!editTarget} title="编辑资料信息" okText="保存" confirmLoading={submitting}
@@ -451,12 +463,15 @@ export default function TeachingPage() {
     </Modal>
 
     <Modal open={!!replaceTarget} title="替换文件" okText="替换" confirmLoading={submitting}
+      closable={uploadPercent === null} maskClosable={uploadPercent === null} keyboard={uploadPercent === null}
+      cancelButtonProps={{ disabled: uploadPercent !== null }}
       onOk={() => void submitReplace()}
       onCancel={() => { setReplaceTarget(null); setReplaceFile(null) }}>
       <Typography.Paragraph type="secondary">
         替换后资料的 id 与链接不变，读者刷新即可看到新版本。
       </Typography.Paragraph>
       {filePicker(replaceFile, setReplaceFile)}
+      <UploadProgress percent={uploadPercent} />
     </Modal>
 
     <Modal open={renameOpen} title="重命名分类" okText="重命名" confirmLoading={submitting}
