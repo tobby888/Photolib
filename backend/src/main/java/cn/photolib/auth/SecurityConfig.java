@@ -61,6 +61,9 @@ public class SecurityConfig {
                                 "/api/v1/branding",
                                 "/api/v1/branding/scheduled-icons/*/icon",
                                 "/api/v1/branding/placeholder-images/*/image").permitAll()
+                        // 选题上传链接、公开招募的访客页面按管理员设的上传限额做提示和预检；
+                        // 只放行这一个只读端点，/upload-limits/settings 和 PUT 仍要管理员。
+                        .requestMatchers(HttpMethod.GET, "/api/v1/upload-limits").permitAll()
                         .requestMatchers(HttpMethod.GET,
                                 "/api/v1/public/recruitments",
                                 "/api/v1/public/recruitments/*/drafts/*/batches/*").permitAll()

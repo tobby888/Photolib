@@ -2,6 +2,8 @@ package cn.photolib.user;
 
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.storage.ObjectStorageService;
+import cn.photolib.uploadlimit.UploadLimit;
+import cn.photolib.uploadlimit.UploadLimitService;
 import cn.photolib.user.mapper.UserMapper;
 import cn.photolib.user.model.UserEntity;
 import org.junit.jupiter.api.Test;
@@ -38,7 +40,7 @@ class UserAvatarServiceTests {
         when(mapper.selectById(anyLong())).thenReturn(user);
         when(mapper.updateById(any(UserEntity.class))).thenReturn(0);
         UserAvatarService service = new UserAvatarService(
-                mapper, storage, new UserAvatarValidator());
+                mapper, storage, new UserAvatarValidator(), avatarLimit());
 
         TransactionSynchronizationManager.initSynchronization();
         try {
@@ -72,7 +74,7 @@ class UserAvatarServiceTests {
         doThrow(new IllegalStateException("simulated response timeout")).when(storage)
                 .put(any(), any(), anyLong(), any());
         UserAvatarService service = new UserAvatarService(
-                mapper, storage, new UserAvatarValidator());
+                mapper, storage, new UserAvatarValidator(), avatarLimit());
 
         assertThatThrownBy(() -> service.replace(73L, png()))
                 .isInstanceOf(IllegalStateException.class)
@@ -90,5 +92,11 @@ class UserAvatarServiceTests {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         ImageIO.write(image, "png", output);
         return new MockMultipartFile("file", "avatar.png", "image/png", output.toByteArray());
+    }
+
+    private static UploadLimitService avatarLimit() {
+        UploadLimitService limits = mock(UploadLimitService.class);
+        when(limits.value(UploadLimit.AVATAR_MAX_BYTES)).thenReturn(UploadLimit.AVATAR_MAX_BYTES.defaultValue());
+        return limits;
     }
 }

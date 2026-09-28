@@ -5,6 +5,8 @@ import cn.photolib.common.error.ErrorCode;
 import cn.photolib.common.util.PublicId;
 import cn.photolib.storage.ObjectStorageService;
 import cn.photolib.user.mapper.UserMapper;
+import cn.photolib.uploadlimit.UploadLimit;
+import cn.photolib.uploadlimit.UploadLimitService;
 import cn.photolib.user.model.UserEntity;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -29,10 +31,11 @@ public class UserAvatarService {
     private final UserMapper userMapper;
     private final ObjectStorageService storage;
     private final UserAvatarValidator validator;
+    private final UploadLimitService uploadLimits;
 
     @Transactional
     public String replace(Long userId, MultipartFile file) throws IOException {
-        UserAvatarValidator.ValidatedAvatar avatar = validator.validate(file);
+        UserAvatarValidator.ValidatedAvatar avatar = validator.validate(file, uploadLimits.value(UploadLimit.AVATAR_MAX_BYTES));
         UserEntity user = require(userId);
         String oldObjectKey = user.getAvatarObjectKey();
         String newObjectKey = OBJECT_PREFIX + userId + "/" + PublicId.next()

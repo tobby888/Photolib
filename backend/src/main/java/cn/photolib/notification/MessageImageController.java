@@ -7,6 +7,8 @@ import cn.photolib.common.error.ErrorCode;
 import cn.photolib.common.util.PublicId;
 import cn.photolib.permission.PermissionCode;
 import cn.photolib.storage.ObjectStorageService;
+import cn.photolib.uploadlimit.UploadLimit;
+import cn.photolib.uploadlimit.UploadLimitService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.CacheControl;
@@ -26,7 +28,6 @@ import java.util.Set;
 @RequestMapping("/notifications/images")
 @RequiredArgsConstructor
 public class MessageImageController {
-    private static final long MAX_SIZE = 5 * 1024 * 1024;
     /**
      * 没有 {@code MESSAGE_SEND} 的成员（只为在反馈里贴图）24 小时内最多传多少张。
      * 反馈本身每天最多 20 条，这个数给每条留几张图的余量，又不至于被当成免费图床。
@@ -38,6 +39,7 @@ public class MessageImageController {
     private final MessageImageMapper mapper;
     private final ObjectStorageService storage;
     private final MessageImageAuthorizationService authorization;
+    private final UploadLimitService uploadLimits;
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     // 上传对任何已登录成员开放：图片本体是谁的、谁能看，由 MessageImageAuthorizationService
@@ -49,8 +51,10 @@ public class MessageImageController {
                                      @AuthenticationPrincipal AuthenticatedUser user) throws IOException {
         if (file.isEmpty()) throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择图片");
         requireWithinUploadQuota(user);
-        if (file.getSize() > MAX_SIZE) {
-            throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "消息图片不能超过 5 MiB");
+        // 与需求描述、文档正文的插图共用一个上限（INLINE_IMAGE_MAX_BYTES），过滤器按同一个数早筛。
+        if (file.getSize() > uploadLimits.value(UploadLimit.INLINE_IMAGE_MAX_BYTES)) {
+            throw new BusinessException(ErrorCode.FILE_TOO_LARGE,
+                    "消息图片不能超过 " + uploadLimits.describe(UploadLimit.INLINE_IMAGE_MAX_BYTES));
         }
         if (!IMAGE_TYPES.contains(file.getContentType())) {
             throw new BusinessException(ErrorCode.UNSUPPORTED_FILE_TYPE, "仅支持 JPEG、PNG 或 WebP 图片");

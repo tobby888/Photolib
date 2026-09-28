@@ -21,9 +21,8 @@ import MarkdownEditor from '../MarkdownEditor'
 import type {
   DocDocumentDetail, DocManageNode, DocNodeType, DocTreeMutation, DocVisibility,
 } from '../types'
-
-/** PDF 上限，与后端 PdfUpload.MAX_BYTES 是同一个数，改一处必须改另一处。 */
-const PDF_MAX_BYTES = 50 * 1024 * 1024
+import { describeBytes } from '../uploadLimits'
+import { useUploadLimits } from '../useUploadLimits'
 
 /**
  * 文档中心的编写页（需要 DOC_MANAGE）。
@@ -66,6 +65,9 @@ export default function DocsManagePage({ onPreview }: {
   onPreview?: (publicId: string) => void
 } = {}) {
   const { message, modal } = App.useApp()
+  /** PDF 上限由管理员在「上传限额」里设（DOC_PDF_MAX_BYTES），后端按同一个数再判一次。 */
+  const pdfMaxBytes = useUploadLimits().DOC_PDF_MAX_BYTES
+  const pdfTooLarge = `PDF 不能超过 ${describeBytes(pdfMaxBytes)}`
   const navigate = useNavigate()
   const [tree, setTree] = useState<DocManageNode[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -170,8 +172,8 @@ export default function DocsManagePage({ onPreview }: {
    * 先弹一个填标题的框会让"把手头这份 PDF 放上去"多一步，而这一步本来可有可无。
    */
   const uploadPdf = async (file: File) => {
-    if (file.size > PDF_MAX_BYTES) {
-      message.error('PDF 不能超过 50 MiB')
+    if (file.size > pdfMaxBytes) {
+      message.error(pdfTooLarge)
       return
     }
     const parentId = parentForNew()
@@ -191,8 +193,8 @@ export default function DocsManagePage({ onPreview }: {
   /** 换掉已有 PDF 的文件。对象键跟着 publicId 走，读者手上的链接继续有效。 */
   const replacePdf = async (file: File) => {
     if (!selected) return
-    if (file.size > PDF_MAX_BYTES) {
-      message.error('PDF 不能超过 50 MiB')
+    if (file.size > pdfMaxBytes) {
+      message.error(pdfTooLarge)
       return
     }
     const form = new FormData()
@@ -373,7 +375,7 @@ export default function DocsManagePage({ onPreview }: {
               </Upload>
               <Typography.Text type="secondary">
                 {selected.contentSize ? `${(selected.contentSize / 1024 / 1024).toFixed(1)} MiB · ` : ''}
-                最多 50 MiB；替换后读者手上的链接继续有效。
+                最多 {describeBytes(pdfMaxBytes)}；替换后读者手上的链接继续有效。
               </Typography.Text>
             </Space>
             <DocPdfViewer key={pdfToken} path={`/docs/${selected.id}/file`}

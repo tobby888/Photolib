@@ -14,6 +14,8 @@ import { useAuth } from '../auth'
 import { useLoad } from '../hooks'
 import { hasPermission } from '../permissions'
 import type { TeachingMaterial, TeachingMaterialFormat } from '../types'
+import { describeBytes, teachingFileTooLarge } from '../uploadLimits'
+import { useUploadLimits } from '../useUploadLimits'
 
 interface AuthorOption {
   id: number
@@ -146,6 +148,7 @@ export default function TeachingPage() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const { message } = AntApp.useApp()
+  const uploadLimits = useUploadLimits()
   const canManage = hasPermission(user, 'TEACHING_MANAGE')
 
   const [category, setCategory] = useState<string>()
@@ -329,12 +332,26 @@ export default function TeachingPage() {
     }
   }
 
-  const filePicker = (file: File | null, setFile: (value: File | null) => void) =>
+  const filePicker = (file: File | null, setFile: (value: File | null) => void) => <>
     <Upload accept={FILE_ACCEPT} maxCount={1} fileList={fileListOf(file)}
-      beforeUpload={next => { setFile(next); return false }}
+      beforeUpload={next => {
+        const tooLarge = teachingFileTooLarge(next, uploadLimits)
+        if (tooLarge) {
+          message.error(tooLarge)
+          return Upload.LIST_IGNORE
+        }
+        setFile(next)
+        return false
+      }}
       onRemove={() => setFile(null)}>
       <Button icon={<UploadOutlined />}>选择文件（PDF / Word / PPT）</Button>
     </Upload>
+    <Typography.Text type="secondary" style={{ display: 'block', marginTop: 4 }}>
+      PDF 不超过 {describeBytes(uploadLimits.TEACHING_PDF_MAX_BYTES)}，
+      Word 不超过 {describeBytes(uploadLimits.TEACHING_WORD_MAX_BYTES)}，
+      PPT 不超过 {describeBytes(uploadLimits.TEACHING_PPT_MAX_BYTES)}
+    </Typography.Text>
+  </>
 
   return <div className="documents-page">
     <div className="documents-toolbar">

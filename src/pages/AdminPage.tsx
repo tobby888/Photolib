@@ -2,7 +2,7 @@ import {
   Alert, App, Button, Card, Divider, Form, Input, Modal, Select, Space, Switch, Tabs, Tag, Typography, Upload,
 } from 'antd'
 import {
-  AimOutlined, BgColorsOutlined, BulbOutlined, CameraOutlined, DatabaseOutlined, PictureOutlined,
+  AimOutlined, BgColorsOutlined, BulbOutlined, CameraOutlined, CloudUploadOutlined, DatabaseOutlined, PictureOutlined,
   ClockCircleOutlined, DeleteOutlined, EditOutlined, FileTextOutlined, LayoutOutlined, PlusOutlined,
   SafetyCertificateOutlined, StarOutlined, TeamOutlined, UploadOutlined,
 } from '@ant-design/icons'
@@ -20,6 +20,9 @@ import MfaSettingsPanel from '../MfaSettingsPanel'
 import TwoFactorVerify from '../TwoFactorVerify'
 import { loadMfaOverview, loadStepUpStatus, stepUpWithCode, stepUpWithSecurityKey } from '../mfa'
 import DatabaseBackupPanel from '../DatabaseBackupPanel'
+import UploadLimitsPanel from '../UploadLimitsPanel'
+import { describeBytes } from '../uploadLimits'
+import { useUploadLimits } from '../useUploadLimits'
 import PermissionGroupsPanel from '../PermissionGroupsPanel'
 import UserAvatar from '../UserAvatar'
 import { USER_ACTION_MIN_WIDTH } from '../tableActionWidths'
@@ -111,6 +114,9 @@ export default function AdminPage() {
 
 function AdminPanel() {
   const { message, modal } = App.useApp()
+  const uploadLimits = useUploadLimits()
+  const iconMaxBytes = uploadLimits.BRAND_ICON_MAX_BYTES
+  const placeholderMaxBytes = uploadLimits.PLACEHOLDER_IMAGE_MAX_BYTES
   const [userForm] = Form.useForm()
   const [accountForm] = Form.useForm<AccountFormValues>()
   const [campusForm] = Form.useForm()
@@ -188,8 +194,8 @@ function AdminPanel() {
       message.error('图标仅支持 PNG 或 JPEG')
       return
     }
-    if (file.size > 512 * 1024) {
-      message.error('图标不能超过 512 KiB')
+    if (file.size > iconMaxBytes) {
+      message.error(`图标不能超过 ${describeBytes(iconMaxBytes)}`)
       return
     }
     try {
@@ -218,8 +224,8 @@ function AdminPanel() {
       message.error('图标仅支持 PNG 或 JPEG')
       return
     }
-    if (file.size > 512 * 1024) {
-      message.error('图标不能超过 512 KiB')
+    if (file.size > iconMaxBytes) {
+      message.error(`图标不能超过 ${describeBytes(iconMaxBytes)}`)
       return
     }
     updateScheduledIcon(key, { file })
@@ -283,9 +289,9 @@ function AdminPanel() {
       message.error(`${invalid.name}：占位图仅支持 PNG 或 JPEG`)
       return
     }
-    const tooLarge = files.find(file => file.size > 3 * 1024 * 1024)
+    const tooLarge = files.find(file => file.size > placeholderMaxBytes)
     if (tooLarge) {
-      message.error(`${tooLarge.name}：占位图不能超过 3 MiB`)
+      message.error(`${tooLarge.name}：占位图不能超过 ${describeBytes(placeholderMaxBytes)}`)
       return
     }
     if (placeholderImages.length + files.length > 12) {
@@ -412,7 +418,8 @@ function AdminPanel() {
                     ...(branding.customIconUrl ? [{ value: 'custom', label: '已上传的自定义图片' }] : []),
                   ]} />
                 </Form.Item>
-                <Form.Item label="上传自定义图标" extra="支持 PNG、JPEG；文件不超过 512 KiB，尺寸不超过 1024 × 1024 像素。">
+                <Form.Item label="上传自定义图标"
+                  extra={`支持 PNG、JPEG；文件不超过 ${describeBytes(iconMaxBytes)}，尺寸不超过 1024 × 1024 像素。`}>
                   <Upload accept="image/png,image/jpeg" maxCount={1} showUploadList={false}
                     beforeUpload={file => { void uploadIcon(file); return false }}>
                     <Button icon={<UploadOutlined />}>选择图片并上传</Button>
@@ -557,7 +564,7 @@ function AdminPanel() {
                   <Typography.Title level={4}><PictureOutlined /> 缺图占位图</Typography.Title>
                   <Typography.Text type="secondary">
                     图片缺失、因存储故障加载不出来，或图片已被删除时，系统会从这些图片里任选一张顶上。
-                    一张都不传就沿用内置的灰底占位。最多 12 张，单张不超过 3 MiB。
+                    一张都不传就沿用内置的灰底占位。最多 12 张，单张不超过 {describeBytes(placeholderMaxBytes)}。
                   </Typography.Text>
                 </div></div>
                 <DataState loading={placeholderImagesLoading} error={placeholderImagesError}
@@ -649,6 +656,7 @@ function AdminPanel() {
         { key: 'audit-logs', label: <span><FileTextOutlined /> 操作日志</span>, children: <AuditLogsPanel /> },
         // 数据库备份/回滚只对系统管理员开放，刻意没有对应的权限项，因此不出现在权限面板里。
         { key: 'backups', label: <span><DatabaseOutlined /> 数据备份</span>, children: <DatabaseBackupPanel /> },
+        { key: 'upload-limits', label: <span><CloudUploadOutlined /> 上传限额</span>, children: <UploadLimitsPanel /> },
       ]} />
     </Card>
     <Modal title="创建成员账号" open={userOpen} onCancel={() => setUserOpen(false)} onOk={createUser} okText="创建账号">

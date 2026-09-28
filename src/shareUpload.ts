@@ -1,10 +1,11 @@
 import type { BatchUploadStatus, EntityId } from './types'
+import { DEFAULT_UPLOAD_LIMITS, describeBytes, type UploadLimits } from './uploadLimits.ts'
 
-/** 与后端 `StorageProperties.imageMaxBytes()` 的默认值一致（100 MiB）。 */
-export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024
-/** ZIP 的限额与站内需求批量上传同一份（后端 `ImageUploadPolicy`）。 */
-export const MAX_ARCHIVE_BYTES = 1_500_000_000
-export const MAX_IMAGES_PER_ARCHIVE = 100
+/**
+ * 访客上传用到的那几项限额：单张、ZIP 大小都与站内同一份（管理员在「上传限额」里设的
+ * `PHOTO_*`），页面从 `/upload-limits` 取到后传进来，没取到时用内置默认值。
+ */
+export type ShareUploadLimits = Pick<UploadLimits, 'PHOTO_IMAGE_MAX_BYTES' | 'PHOTO_ZIP_MAX_BYTES'>
 /** 一次最多往队列里放多少张。再多应该分几批，否则一个误点整目录会让页面卡住。 */
 export const MAX_QUEUE_SIZE = 300
 /** 同时进行的上传数。活动现场多是几十上百张，串行太慢；并发太高又会互相抢带宽。 */
@@ -28,13 +29,18 @@ export interface ShareUploadItem {
  * <p>这里拦下来只是为了不让访客白等一次上传——真正作数的仍然是服务端那一遍，
  * 以及压缩管线里的魔数校验。放宽这里不会放宽任何东西。</p>
  */
-export function rejectReason(file: { name: string; type: string; size: number }): string | null {
+export function rejectReason(
+  file: { name: string; type: string; size: number },
+  limits: ShareUploadLimits = DEFAULT_UPLOAD_LIMITS,
+): string | null {
   const name = file.name.toLowerCase()
   const jpeg = file.type === 'image/jpeg' && (name.endsWith('.jpg') || name.endsWith('.jpeg'))
   const png = file.type === 'image/png' && name.endsWith('.png')
   if (!jpeg && !png) return `${file.name}：只能传 JPG 或 PNG 图片`
   if (file.size <= 0) return `${file.name}：这个文件是空的`
-  if (file.size > MAX_UPLOAD_BYTES) return `${file.name}：单张不能超过 100 MiB`
+  if (file.size > limits.PHOTO_IMAGE_MAX_BYTES) {
+    return `${file.name}：单张不能超过 ${describeBytes(limits.PHOTO_IMAGE_MAX_BYTES)}`
+  }
   return null
 }
 
@@ -52,13 +58,17 @@ export interface QueueAdditions {
  * 确认"到底传上去没有"，而重复入队的结果是服务端按 SHA-256 判重，一整批红着
  * 报"已经上传过该图片"——看上去像失败，其实是传成功了。</p>
  */
-export function addToQueue(existing: ShareUploadItem[], files: File[]): QueueAdditions {
+export function addToQueue(
+  existing: ShareUploadItem[],
+  files: File[],
+  limits: ShareUploadLimits = DEFAULT_UPLOAD_LIMITS,
+): QueueAdditions {
   const seen = new Set(existing.map(item => signature(item.file)))
   const items: ShareUploadItem[] = []
   const errors: string[] = []
   let dropped = 0
   files.forEach((file, index) => {
-    const reason = rejectReason(file)
+    const reason = rejectReason(file, limits)
     if (reason) {
       errors.push(reason)
       return
@@ -99,10 +109,15 @@ export function summarize(items: ShareUploadItem[]): ShareUploadSummary {
 }
 
 /** ZIP 的前端校验，与后端 `ProjectShareUploadService.createZipTicket` 同一套规则。 */
-export function rejectArchiveReason(file: { name: string; size: number }): string | null {
+export function rejectArchiveReason(
+  file: { name: string; size: number },
+  limits: ShareUploadLimits = DEFAULT_UPLOAD_LIMITS,
+): string | null {
   if (!file.name.toLowerCase().endsWith('.zip')) return '只能上传 .zip 压缩包'
   if (file.size <= 0) return '这个压缩包是空的'
-  if (file.size > MAX_ARCHIVE_BYTES) return 'ZIP 压缩包不得超过 1.5 GB'
+  if (file.size > limits.PHOTO_ZIP_MAX_BYTES) {
+    return `ZIP 压缩包不得超过 ${describeBytes(limits.PHOTO_ZIP_MAX_BYTES)}`
+  }
   return null
 }
 

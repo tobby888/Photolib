@@ -12,6 +12,8 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { api, emptyPage } from '../api'
 import { readTakenAt } from '../exif'
 import { uploadToObjectStorage } from '../storageUpload'
+import { describeBytes } from '../uploadLimits'
+import { useUploadLimits } from '../useUploadLimits'
 import { useAuth } from '../auth'
 import { DataState, StatusTag, PhotoStatusTag } from '../components'
 import { useLoad, useRefreshOnResume } from '../hooks'
@@ -49,6 +51,7 @@ export default function RequestDeliveryPage() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const { message, modal } = App.useApp()
+  const uploadLimits = useUploadLimits()
   const placeholderImages = usePlaceholderImages()
   const [form] = Form.useForm<UploadValues>()
   const [photoStatus, setPhotoStatus] = useState('AVAILABLE')
@@ -405,6 +408,10 @@ export default function RequestDeliveryPage() {
               <Form.Item name="files" valuePropName="fileList" getValueFromEvent={event => event.fileList}
                 rules={[{ required: true, message: '请选择图片' }]}>
                 <Upload.Dragger multiple accept=".jpg,.jpeg,.png" beforeUpload={async (file, fileList) => {
+                  if (file.size > uploadLimits.PHOTO_IMAGE_MAX_BYTES) {
+                    message.error(`${file.name}：单张图片不得超过 ${describeBytes(uploadLimits.PHOTO_IMAGE_MAX_BYTES)}`)
+                    return Upload.LIST_IGNORE
+                  }
                   // 批量上传共用一个拍摄时间，自动读取取自第一张
                   if (fileList[0] === file) {
                     const takenAt = await readTakenAt(file)
@@ -419,7 +426,9 @@ export default function RequestDeliveryPage() {
                 }}>
                   <p className="ant-upload-drag-icon"><InboxOutlined /></p>
                   <p className="ant-upload-text">拖入或选择需求图片</p>
-                  <p className="ant-upload-hint">支持多张 JPG / PNG，单张不超过 100 MiB</p>
+                  <p className="ant-upload-hint">
+                    支持多张 JPG / PNG，单张不超过 {describeBytes(uploadLimits.PHOTO_IMAGE_MAX_BYTES)}
+                  </p>
                 </Upload.Dragger>
               </Form.Item>
               <Form.Item label="拍摄者" name="photographerContactId"

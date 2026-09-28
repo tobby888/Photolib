@@ -1,6 +1,7 @@
 package cn.photolib.photo.batch;
 
 import cn.photolib.common.upload.SafeImageZipExtractor;
+import cn.photolib.uploadlimit.UploadLimitService;
 import cn.photolib.common.upload.UploadFailureMessage;
 import cn.photolib.storage.ObjectStorageService;
 import cn.photolib.photo.PhotoProcessingWorkspace;
@@ -30,6 +31,7 @@ public class BatchProcessingService {
     private final PhotoProcessingWorkspace workspace;
     private final SafeImageZipExtractor zipExtractor;
     private final TransactionTemplate transactions;
+    private final UploadLimitService uploadLimits;
 
     @Async("batchProcessingExecutor")
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -44,8 +46,9 @@ public class BatchProcessingService {
         List<ExtractedItem> extracted = new ArrayList<>();
         String failureReason = null;
         try (InputStream source = storage.open(batch.getArchiveObjectKey())) {
-            var images = zipExtractor.extract(source,
-                    extension -> workspace.createBatchFile(batchId, extension));
+            var images = zipExtractor.extractKeepingNames(source,
+                    extension -> workspace.createBatchFile(batchId, extension),
+                    uploadLimits.galleryZipLimits());
             for (SafeImageZipExtractor.ExtractedImage image : images) {
                 String key = "temporary/batches/" + batchId + "/" + UUID.randomUUID()
                         + cn.photolib.common.upload.ImageUploadPolicy.extension(image.contentType());

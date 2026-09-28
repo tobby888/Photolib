@@ -11,16 +11,11 @@ import java.util.zip.ZipInputStream;
 /**
  * Word(.docx) / PPT(.pptx) 上传校验：只认 OOXML（本质是 ZIP 容器），不认旧版 .doc/.ppt。
  *
- * <p>不解析正文，只验三样：大小、ZIP 结构、必需条目（{@code [Content_Types].xml} 加
+ * <p>不解析正文，只验 ZIP 结构、必需条目（{@code [Content_Types].xml} 加
  * {@code word/} 或 {@code ppt/}）。声明的 Content-Type 不可信（浏览器常给
  * {@code application/octet-stream}），所以这里只看结构、按条目判定是 Word 还是 PPT。</p>
  */
 public final class OfficeUpload {
-    public static final long WORD_MAX_BYTES = 20L * 1024 * 1024;
-    public static final long PPT_MAX_BYTES = 100L * 1024 * 1024;
-    /** 上传入口的早筛上限：各格式上限的最大值（当前是 PPT 的 100 MiB）。 */
-    public static final long MAX_BYTES = PPT_MAX_BYTES;
-
     public enum Kind {
         WORD,
         PPT

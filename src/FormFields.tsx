@@ -6,12 +6,19 @@ import { formatBytes } from './components'
 import { describeBytes } from './recruitmentUpload'
 import { formAnswerText, FORM_FILE_LIMITS, type RecruitmentFormField } from './recruitmentForm'
 import { validateFormFileSelection, type FormFileLimits, type FormFileView } from './formFiles'
+import { useUploadLimits } from './useUploadLimits'
 
 /** 招募报名页和问卷填写页共用的一道题。name 固定在 ['answers', field.id] 下。 */
-export function FormAnswerField({ field, limits = FORM_FILE_LIMITS }: {
+export function FormAnswerField({ field, limits: givenLimits }: {
   field: RecruitmentFormField
+  /** 问卷接口会随问卷下发；招募页不传，就用管理员设的当前值（FORM_FILE_MAX_BYTES）。 */
   limits?: FormFileLimits
 }) {
+  const uploadLimits = useUploadLimits()
+  const limits = givenLimits ?? {
+    maxFileBytes: uploadLimits.FORM_FILE_MAX_BYTES,
+    maxFilesPerField: FORM_FILE_LIMITS.maxFilesPerField,
+  }
   const common = {
     name: ['answers', field.id],
     label: field.label,

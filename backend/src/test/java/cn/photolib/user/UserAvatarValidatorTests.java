@@ -2,6 +2,7 @@ package cn.photolib.user;
 
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
+import cn.photolib.uploadlimit.UploadLimit;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockMultipartFile;
 
@@ -16,19 +17,20 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class UserAvatarValidatorTests {
+    private static final long MAX_BYTES = UploadLimit.AVATAR_MAX_BYTES.defaultValue();
     private final UserAvatarValidator validator = new UserAvatarValidator();
 
     @Test
     void acceptsAndNormalizesJpeg() throws Exception {
         MockMultipartFile file = image("avatar.jpg", "image/jpeg", 320, 240, "jpeg");
 
-        UserAvatarValidator.ValidatedAvatar result = validator.validate(file);
+        UserAvatarValidator.ValidatedAvatar result = validator.validate(file, MAX_BYTES);
 
         assertThat(result.contentType()).isEqualTo("image/jpeg");
         assertThat(result.extension()).isEqualTo("jpg");
         assertThat(result.width()).isEqualTo(320);
         assertThat(result.height()).isEqualTo(240);
-        assertThat(result.bytes().length).isLessThanOrEqualTo((int) UserAvatarValidator.MAX_BYTES);
+        assertThat(result.bytes().length).isLessThanOrEqualTo((int) MAX_BYTES);
         assertThat(ImageIO.read(new ByteArrayInputStream(result.bytes()))).isNotNull();
     }
 
@@ -40,7 +42,7 @@ class UserAvatarValidatorTests {
         ImageIO.write(source, "png", output);
 
         UserAvatarValidator.ValidatedAvatar result = validator.validate(new MockMultipartFile(
-                "file", "avatar.png", "image/png", output.toByteArray()));
+                "file", "avatar.png", "image/png", output.toByteArray()), MAX_BYTES);
 
         BufferedImage decoded = ImageIO.read(new ByteArrayInputStream(result.bytes()));
         assertThat(result.contentType()).isEqualTo("image/png");
@@ -51,7 +53,7 @@ class UserAvatarValidatorTests {
     void rejectsImageWhoseDimensionsExceedLimit() throws Exception {
         MockMultipartFile file = image("wide.png", "image/png", 1025, 1, "png");
 
-        assertThatThrownBy(() -> validator.validate(file))
+        assertThatThrownBy(() -> validator.validate(file, MAX_BYTES))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getCode()).isEqualTo(ErrorCode.VALIDATION_ERROR);
                     assertThat(exception.getMessage()).contains("1024");
@@ -65,11 +67,11 @@ class UserAvatarValidatorTests {
         MockMultipartFile webp = new MockMultipartFile("file", "avatar.webp", "image/webp",
                 new byte[]{'R', 'I', 'F', 'F'});
 
-        assertThatThrownBy(() -> validator.validate(spoofed))
+        assertThatThrownBy(() -> validator.validate(spoofed, MAX_BYTES))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.getCode())
                                 .isEqualTo(ErrorCode.UNSUPPORTED_FILE_TYPE));
-        assertThatThrownBy(() -> validator.validate(webp))
+        assertThatThrownBy(() -> validator.validate(webp, MAX_BYTES))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.getCode())
                                 .isEqualTo(ErrorCode.UNSUPPORTED_FILE_TYPE));
@@ -78,9 +80,9 @@ class UserAvatarValidatorTests {
     @Test
     void rejectsFilesLargerThanOneMegabyte() {
         MockMultipartFile file = new MockMultipartFile("file", "large.jpg", "image/jpeg",
-                new byte[(int) UserAvatarValidator.MAX_BYTES + 1]);
+                new byte[(int) MAX_BYTES + 1]);
 
-        assertThatThrownBy(() -> validator.validate(file))
+        assertThatThrownBy(() -> validator.validate(file, MAX_BYTES))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.getCode()).isEqualTo(ErrorCode.FILE_TOO_LARGE));
     }

@@ -31,7 +31,10 @@ public class SafeImageZipExtractor {
     /** Legacy encoding of names in archives zipped by Chinese Windows, absent on a trimmed JDK. */
     private static final Charset LEGACY_CHINESE_CHARSET = legacyChineseCharset();
 
-    /** Extracts with the gallery quota, for signed-in bulk uploads. */
+    /**
+     * Extracts with the built-in gallery defaults. Production paths pass the
+     * administrator-managed quota from {@code UploadLimitService} instead.
+     */
     public List<ExtractedImage> extract(InputStream source, DestinationFactory destinations)
             throws IOException {
         return extract(source, destinations, Limits.gallery(), null);
@@ -54,6 +57,16 @@ public class SafeImageZipExtractor {
     public List<ExtractedImage> extract(InputStream source, DestinationFactory destinations,
                                         Limits limits) throws IOException {
         return extract(source, destinations, limits, limits.maxFileNameCodePoints());
+    }
+
+    /**
+     * Extracts under the administrator-managed gallery quota while keeping entry
+     * display names whole, which is how the gallery path has always behaved (its
+     * own persistence decides what an over-long name means).
+     */
+    public List<ExtractedImage> extractKeepingNames(InputStream source, DestinationFactory destinations,
+                                                    Limits limits) throws IOException {
+        return extract(source, destinations, limits, null);
     }
 
     private List<ExtractedImage> extract(InputStream source, DestinationFactory destinations,

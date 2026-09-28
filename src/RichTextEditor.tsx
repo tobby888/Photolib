@@ -4,6 +4,8 @@ import {
 } from '@ant-design/icons'
 import { useEffect, useRef } from 'react'
 import { api } from './api'
+import { describeBytes } from './uploadLimits'
+import { useUploadLimits } from './useUploadLimits'
 
 /**
  * 受控富文本编辑器。
@@ -21,6 +23,7 @@ export default function RichTextEditor({
   placeholder?: string
 }) {
   const { message } = App.useApp()
+  const inlineImageMaxBytes = useUploadLimits().INLINE_IMAGE_MAX_BYTES
   const editor = useRef<HTMLDivElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   useEffect(() => {
@@ -33,6 +36,11 @@ export default function RichTextEditor({
   }
   const uploadImage = async (file?: File) => {
     if (!file) return
+    if (file.size > inlineImageMaxBytes) {
+      message.error(`图片不能超过 ${describeBytes(inlineImageMaxBytes)}`)
+      if (fileInput.current) fileInput.current.value = ''
+      return
+    }
     try {
       const data = new FormData()
       data.append('file', file)

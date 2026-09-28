@@ -12,6 +12,8 @@ import cn.photolib.recruitment.model.RecruitmentFormSchema;
 import cn.photolib.survey.mapper.SurveyMapper;
 import cn.photolib.survey.model.SurveyEntity;
 import cn.photolib.survey.model.SurveyStatus;
+import cn.photolib.uploadlimit.UploadLimit;
+import cn.photolib.uploadlimit.UploadLimitService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
@@ -454,10 +456,15 @@ public class SurveyService {
                                   List<Option> campuses) {
     }
 
-    /** {@link FormFileService} 限制单个文件大小；这里只是把前端需要知道的数一并给出。 */
+    /**
+     * {@link FormFileService} 限制单个文件大小（管理员设的 {@code FORM_FILE_MAX_BYTES}）；
+     * 这里只是把前端需要知道的数一并给出。
+     */
     public record UploadLimits(long maxFileBytes, int maxFilesPerField) {
-        static final UploadLimits DEFAULT = new UploadLimits(FormFileService.MAX_FILE_BYTES,
-                RecruitmentFormSchemaValidator.MAX_FILES_PER_FIELD);
+        static UploadLimits current(UploadLimitService limits) {
+            return new UploadLimits(limits.value(UploadLimit.FORM_FILE_MAX_BYTES),
+                    RecruitmentFormSchemaValidator.MAX_FILES_PER_FIELD);
+        }
     }
 
     private record Validated(String title, String description, String introMarkdown, String formSchemaJson,

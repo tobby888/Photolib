@@ -11,13 +11,14 @@ import { useAuth } from '../auth'
 import { PageTitle } from '../components'
 import { useLoad } from '../hooks'
 import { uploadToObjectStorage } from '../storageUpload'
+import { describeBytes } from '../uploadLimits'
+import { useUploadLimits } from '../useUploadLimits'
 import type {
   BatchUploadStatus, BatchUploadView, CampusMember, DedupedMember, EntityId, PhotoRequest, TagOptions,
 } from '../types'
 import TagSelect from '../TagSelect'
 import { normalizeTags, tagRules } from '../photoTags'
 
-const ZIP_MAX_BYTES = 1_500_000_000
 const TERMINAL_STATUSES: BatchUploadStatus[] = ['SUCCEEDED', 'PARTIALLY_SUCCEEDED', 'FAILED']
 
 type FormValues = {
@@ -37,6 +38,8 @@ export default function BatchUploadPage() {
   const [searchParams] = useSearchParams()
   const { user } = useAuth()
   const { message } = App.useApp()
+  const uploadLimits = useUploadLimits()
+  const zipTooLarge = `ZIP 压缩包不得超过 ${describeBytes(uploadLimits.PHOTO_ZIP_MAX_BYTES)}`
   const [form] = Form.useForm<FormValues>()
   const [phase, setPhase] = useState<Phase>('ready')
   const [uploadPercent, setUploadPercent] = useState(0)
@@ -98,8 +101,8 @@ export default function BatchUploadPage() {
       message.error('请选择 ZIP 压缩包')
       return
     }
-    if (file.size > ZIP_MAX_BYTES) {
-      message.error('ZIP 压缩包不得超过 1.5 GB')
+    if (file.size > uploadLimits.PHOTO_ZIP_MAX_BYTES) {
+      message.error(zipTooLarge)
       return
     }
     setSubmitting(true)
@@ -198,12 +201,15 @@ export default function BatchUploadPage() {
           <Upload.Dragger accept=".zip,application/zip" maxCount={1} disabled={submitting}
             beforeUpload={(file) => {
               if (!file.name.toLowerCase().endsWith('.zip')) message.error('仅支持 ZIP 压缩包')
-              if (file.size > ZIP_MAX_BYTES) message.error('ZIP 压缩包不得超过 1.5 GB')
+              if (file.size > uploadLimits.PHOTO_ZIP_MAX_BYTES) message.error(zipTooLarge)
               return false
             }}>
             <p className="ant-upload-drag-icon"><InboxOutlined /></p>
             <p className="ant-upload-text">拖入 ZIP，或点击选择文件</p>
-            <p className="ant-upload-hint">最大 1.5 GB；包内最多 100 张 JPG / PNG；单张不超过 100 MiB</p>
+            <p className="ant-upload-hint">
+              最大 {describeBytes(uploadLimits.PHOTO_ZIP_MAX_BYTES)}；包内最多 {uploadLimits.PHOTO_ZIP_MAX_IMAGES} 张 JPG / PNG；
+              单张不超过 {describeBytes(uploadLimits.PHOTO_IMAGE_MAX_BYTES)}
+            </p>
           </Upload.Dragger>
         </Form.Item>
         <Form.Item label="拍摄者" name="photographerContactId"
