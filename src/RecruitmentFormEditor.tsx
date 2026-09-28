@@ -22,11 +22,8 @@ import {
   type RecruitmentFormField,
   type RecruitmentFormSchema,
 } from './recruitmentForm'
-import {
-  RECRUITMENT_FALLBACK_UPLOAD_LIMITS,
-  describeBytes,
-  type RecruitmentUploadLimits,
-} from './recruitmentUpload'
+import { describeBytes, type RecruitmentUploadLimits } from './recruitmentUpload'
+import { useUploadLimits } from './useUploadLimits'
 
 const fieldTypeOptions: { value: RecruitmentFieldType; label: string }[] = [
   { value: 'SHORT_TEXT', label: '单行文本' },
@@ -97,7 +94,7 @@ export function ChoiceOptionsEditor({ options, onChange, disabled = false }: {
 }
 
 export default function RecruitmentFormEditor({
-  value, onChange, disabled = false, limits = RECRUITMENT_FALLBACK_UPLOAD_LIMITS, variant = 'recruitment',
+  value, onChange, disabled = false, limits: givenLimits, variant = 'recruitment',
 }: {
   value?: RecruitmentFormSchema | string | null
   onChange?: (value: RecruitmentFormSchema) => void
@@ -106,11 +103,16 @@ export default function RecruitmentFormEditor({
   variant?: 'recruitment' | 'survey'
   /**
    * Quota shown to the person building the form. Pass the task's own limits when
-   * one exists; the fallback matches the shipped defaults and is only right for a
-   * deployment that has not overridden them.
+   * one exists; otherwise the administrator-managed values (系统管理 → 上传限额) are shown.
    */
   limits?: RecruitmentUploadLimits
 }) {
+  const uploadLimits = useUploadLimits()
+  const limits: RecruitmentUploadLimits = givenLimits ?? {
+    maxImageCount: uploadLimits.RECRUITMENT_MAX_IMAGES,
+    maxImageBytes: uploadLimits.RECRUITMENT_IMAGE_MAX_BYTES,
+    maxArchiveBytes: uploadLimits.RECRUITMENT_ZIP_MAX_BYTES,
+  }
   const schema = normalizeRecruitmentFormSchema(value, { keepDraftOptions: true })
   const recruitment = variant === 'recruitment'
 
@@ -202,7 +204,7 @@ export default function RecruitmentFormEditor({
       </div>}
       {field.type === 'FILE_UPLOAD' && <Typography.Paragraph type="secondary" style={{ margin: '12px 0 0' }}>
         {recruitment ? '同学' : '填写的人'}可以在这道题里传 1–{FORM_FILE_LIMITS.maxFilesPerField} 个文件，
-        任意格式，单个不超过 {describeBytes(FORM_FILE_LIMITS.maxFileBytes)}。文件原样保存，只有能看结果的人才能下载。
+        任意格式，单个不超过 {describeBytes(uploadLimits.FORM_FILE_MAX_BYTES)}。文件原样保存，只有能看结果的人才能下载。
       </Typography.Paragraph>}
       <Checkbox checked={field.required} disabled={disabled} style={{ marginTop: 14 }}
         onChange={event => updateField(index, { required: event.target.checked })}>这题必须填</Checkbox>

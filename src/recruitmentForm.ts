@@ -59,9 +59,9 @@ export function isChoiceField(type: RecruitmentFieldType) {
 }
 
 /**
- * 「上传文件」题的额度，和后端 FormFileService.MAX_FILE_BYTES /
- * RecruitmentFormSchemaValidator.MAX_FILES_PER_FIELD 是同一组数。问卷接口会把它们
- * 随问卷一起下发（uploadLimits）；招募页没有这个字段，就用这里的值。
+ * 「上传文件」题额度的兜底值。单个文件的上限由管理员在「上传限额」里设
+ * （FORM_FILE_MAX_BYTES，问卷接口随问卷下发、招募页从 /upload-limits 取），
+ * 每题文件数与后端 RecruitmentFormSchemaValidator.MAX_FILES_PER_FIELD 一致。
  */
 export const FORM_FILE_LIMITS = {
   maxFileBytes: 50 * 1024 * 1024,

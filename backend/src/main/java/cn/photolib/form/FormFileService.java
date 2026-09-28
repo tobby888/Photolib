@@ -3,6 +3,8 @@ package cn.photolib.form;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.common.upload.ImageUploadPolicy;
+import cn.photolib.uploadlimit.UploadLimit;
+import cn.photolib.uploadlimit.UploadLimitService;
 import cn.photolib.common.util.PublicId;
 import cn.photolib.recruitment.RecruitmentFormSchemaValidator;
 import cn.photolib.recruitment.RecruitmentTimeConfig;
@@ -46,8 +48,6 @@ import java.util.regex.Pattern;
 @Service
 @RequiredArgsConstructor
 public class FormFileService {
-    /** 单个文件的上限。本地存储的 PUT 上限是 image-max-bytes（默认 100 MiB），这里要比它小。 */
-    public static final long MAX_FILE_BYTES = 50L * 1024 * 1024;
     /** 一份没提交的答卷最多同时挂多少个待提交文件，防止匿名草稿被当成网盘。 */
     static final int MAX_PENDING_PER_OWNER = 60;
     private static final Pattern CONTENT_TYPE = Pattern.compile("[a-z0-9][a-z0-9!#$&^_.+-]{0,63}/[a-z0-9][a-z0-9!#$&^_.+-]{0,63}");
@@ -59,6 +59,7 @@ public class FormFileService {
     private final ObjectStorageService storage;
     private final StorageProperties storageProperties;
     private final Clock recruitmentClock;
+    private final UploadLimitService uploadLimits;
 
     /** 这份答卷是谁的：招募草稿（匿名），或者某个成员在某份问卷里的答卷。 */
     public record Owner(FormFileOwnerType type, String ref, Long userId) {
@@ -100,9 +101,11 @@ public class FormFileService {
         String fileName = cleanFileName(request.fileName());
         long size = request.size() == null ? 0 : request.size();
         if (size <= 0) throw validation("「" + fileName + "」是空文件");
-        if (size > MAX_FILE_BYTES) {
+        // 单个文件的上限由管理员在「上传限额」里设（FORM_FILE_MAX_BYTES）。
+        if (size > uploadLimits.value(UploadLimit.FORM_FILE_MAX_BYTES)) {
             throw new BusinessException(ErrorCode.FILE_TOO_LARGE,
-                    "「" + fileName + "」超过了 " + ImageUploadPolicy.describe(MAX_FILE_BYTES) + "，请压缩后再传");
+                    "「" + fileName + "」超过了 " + uploadLimits.describe(UploadLimit.FORM_FILE_MAX_BYTES)
+                            + "，请压缩后再传");
         }
         if (mapper.countPending(owner.type(), owner.ref()) >= MAX_PENDING_PER_OWNER) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,

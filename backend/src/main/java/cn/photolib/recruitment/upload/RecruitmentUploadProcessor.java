@@ -3,6 +3,7 @@ package cn.photolib.recruitment.upload;
 import cn.photolib.common.upload.ImageSignature;
 import cn.photolib.common.upload.ImageUploadPolicy;
 import cn.photolib.common.upload.SafeImageZipExtractor;
+import cn.photolib.uploadlimit.UploadLimitService;
 import cn.photolib.photo.ImageCompressor;
 import cn.photolib.photo.PhotoProcessingWorkspace;
 import cn.photolib.storage.ObjectStorageService;
@@ -41,7 +42,7 @@ public class RecruitmentUploadProcessor {
     private final ImageCompressor imageValidator;
     private final TransactionTemplate transactions;
     private final RecruitmentUploadDispatchQueue dispatchQueue;
-    private final RecruitmentUploadProperties uploadProperties;
+    private final UploadLimitService uploadLimits;
 
     public RecruitmentUploadProcessor(
             RecruitmentUploadBatchMapper batchMapper,
@@ -52,7 +53,7 @@ public class RecruitmentUploadProcessor {
             ImageCompressor imageValidator,
             TransactionTemplate transactions,
             RecruitmentUploadDispatchQueue dispatchQueue,
-            RecruitmentUploadProperties uploadProperties) {
+            UploadLimitService uploadLimits) {
         this.batchMapper = batchMapper;
         this.itemMapper = itemMapper;
         this.storage = storage;
@@ -61,7 +62,7 @@ public class RecruitmentUploadProcessor {
         this.imageValidator = imageValidator;
         this.transactions = transactions;
         this.dispatchQueue = dispatchQueue;
-        this.uploadProperties = uploadProperties;
+        this.uploadLimits = uploadLimits;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -140,7 +141,7 @@ public class RecruitmentUploadProcessor {
             try (InputStream archive = storage.open(batch.getArchiveObjectKey())) {
                 extracted = zipExtractor.extract(archive,
                         extension -> workspace.createBatchFile(batch.getId(), extension),
-                        uploadProperties.zipLimits());
+                        uploadLimits.recruitmentZipLimits());
             }
             List<RecruitmentUploadItemEntity> items = allItems(batch.getId());
             if (items.isEmpty()) items = persistExtracted(batch.getId(), extracted);

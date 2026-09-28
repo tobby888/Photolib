@@ -24,6 +24,8 @@ import cn.photolib.permission.PermissionCode;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import cn.photolib.uploadlimit.UploadLimit;
+import cn.photolib.uploadlimit.UploadLimitService;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -64,6 +66,7 @@ public class PhotoService {
     private final UserMapper userMapper;
     private final cn.photolib.directory.CampusMemberService campusMemberService;
     private final AbandonedUploadCleanupJob abandonedUploads;
+    private final UploadLimitService uploadLimits;
 
     @Transactional
     public UploadTicket createTicket(CreateTicket command, AuthenticatedUser user) {
@@ -139,8 +142,9 @@ public class PhotoService {
         List<String> tags = PhotoTags.normalize(command.tags());
         projectService.requireAllowedPhotoTags(photo.getProjectId(), tags);
         ObjectStorageService.ObjectInfo info = storage.stat(photo.getOriginalObjectKey());
-        if (info.size() <= 0 || info.size() > properties.imageMaxBytes()) {
-            throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "图片为空或超过 100 MiB");
+        if (info.size() <= 0 || info.size() > uploadLimits.value(UploadLimit.PHOTO_IMAGE_MAX_BYTES)) {
+            throw new BusinessException(ErrorCode.FILE_TOO_LARGE,
+                    "图片为空或超过 " + uploadLimits.describe(UploadLimit.PHOTO_IMAGE_MAX_BYTES));
         }
         photo.setTitle(command.title());
         photo.setDescription(command.description());
@@ -642,8 +646,9 @@ public class PhotoService {
      * 站外传进来的文件与站内走的是同一条流水线，允许的类型和大小上限就必须是同一份。
      */
     public void validateUploadFile(String fileName, String contentType, long size) {
-        if (size <= 0 || size > properties.imageMaxBytes()) {
-            throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "单张图片不得超过 100 MiB");
+        if (size <= 0 || size > uploadLimits.value(UploadLimit.PHOTO_IMAGE_MAX_BYTES)) {
+            throw new BusinessException(ErrorCode.FILE_TOO_LARGE,
+                    "单张图片不得超过 " + uploadLimits.describe(UploadLimit.PHOTO_IMAGE_MAX_BYTES));
         }
         boolean jpeg = contentType.equals("image/jpeg")
                 && (fileName.toLowerCase().endsWith(".jpg") || fileName.toLowerCase().endsWith(".jpeg"));

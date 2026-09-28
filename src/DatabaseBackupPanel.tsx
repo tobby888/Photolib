@@ -11,6 +11,8 @@ import { DataState } from './components'
 import { useLoad } from './hooks'
 import type { DatabaseBackup, DatabaseBackupDownload, DatabaseRestore, PageData } from './types'
 import { clientTablePagination } from './pagination'
+import { describeBytes } from './uploadLimits'
+import { useUploadLimits } from './useUploadLimits'
 
 const typeLabels: Record<DatabaseBackup['type'], string> = {
   SCHEDULED: '每日自动',
@@ -50,6 +52,7 @@ export default function DatabaseBackupPanel() {
   const [restoreTarget, setRestoreTarget] = useState<DatabaseBackup | null>(null)
   const [confirmation, setConfirmation] = useState('')
   const [restoring, setRestoring] = useState(false)
+  const backupMaxBytes = useUploadLimits().DATABASE_BACKUP_MAX_BYTES
 
   const { data: backups, loading, error, reload } = useLoad(
     () => api<PageData<DatabaseBackup>>({ url: '/database-backups', params: { page: 1, pageSize: 50 } }),
@@ -89,6 +92,10 @@ export default function DatabaseBackupPanel() {
   }
 
   const importBackup = async (file: File) => {
+    if (file.size > backupMaxBytes) {
+      message.error(`备份文件不能超过 ${describeBytes(backupMaxBytes)}`)
+      return
+    }
     setImporting(true)
     try {
       const data = new FormData()

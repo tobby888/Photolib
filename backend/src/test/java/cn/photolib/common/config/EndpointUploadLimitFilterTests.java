@@ -1,6 +1,7 @@
 package cn.photolib.common.config;
 
-import cn.photolib.common.upload.OfficeUpload;
+import cn.photolib.uploadlimit.TestUploadLimits;
+import cn.photolib.uploadlimit.UploadLimit;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -18,7 +19,7 @@ class EndpointUploadLimitFilterTests {
         request.setContent(new byte[600 * 1024]);
         MockHttpServletResponse response = new MockHttpServletResponse();
 
-        new EndpointUploadLimitFilter().doFilter(request, response, new MockFilterChain());
+        new EndpointUploadLimitFilter(TestUploadLimits.defaults()).doFilter(request, response, new MockFilterChain());
 
         assertThat(response.getStatus()).isEqualTo(413);
         assertThat(response.getContentAsString()).contains("FILE_TOO_LARGE");
@@ -32,7 +33,7 @@ class EndpointUploadLimitFilterTests {
         request.setContent(new byte[12 * 1024 * 1024]);
         MockHttpServletResponse response = new MockHttpServletResponse();
 
-        new EndpointUploadLimitFilter().doFilter(request, response, new MockFilterChain());
+        new EndpointUploadLimitFilter(TestUploadLimits.defaults()).doFilter(request, response, new MockFilterChain());
 
         assertThat(response.getStatus()).isEqualTo(413);
         assertThat(response.getContentAsString()).contains("FILE_TOO_LARGE");
@@ -46,7 +47,7 @@ class EndpointUploadLimitFilterTests {
         request.setContent(new byte[1200 * 1024]);
         MockHttpServletResponse response = new MockHttpServletResponse();
 
-        new EndpointUploadLimitFilter().doFilter(request, response, new MockFilterChain());
+        new EndpointUploadLimitFilter(TestUploadLimits.defaults()).doFilter(request, response, new MockFilterChain());
 
         assertThat(response.getStatus()).isEqualTo(413);
         assertThat(response.getContentAsString()).contains("FILE_TOO_LARGE");
@@ -70,7 +71,7 @@ class EndpointUploadLimitFilterTests {
         request.setContent(new byte[1200 * 1024]);
         MockHttpServletResponse response = new MockHttpServletResponse();
 
-        new EndpointUploadLimitFilter().doFilter(request, response, (incoming, outgoing) ->
+        new EndpointUploadLimitFilter(TestUploadLimits.defaults()).doFilter(request, response, (incoming, outgoing) ->
                 incoming.getInputStream().transferTo(OutputStream.nullOutputStream()));
 
         assertThat(response.getStatus()).isEqualTo(413);
@@ -78,7 +79,7 @@ class EndpointUploadLimitFilterTests {
     }
     @Test
     void rejectsOversizedTeachingMaterialUploadByDeclaredContentLength() throws Exception {
-        // 教学资料现在也收 Word/PPT，早筛上限取各格式最大值（OfficeUpload.MAX_BYTES）；
+        // 教学资料收 PDF/Word/PPT，早筛上限取三种格式上限的最大值（默认是 PPT/PDF 的 100 MiB）；
         // 用声明的 Content-Length 判断，避免测试真的分配 100 MiB 数组。
         for (String[] call : new String[][]{
                 {"POST", "/api/v1/teaching"},
@@ -86,13 +87,13 @@ class EndpointUploadLimitFilterTests {
             MockHttpServletRequest request = new MockHttpServletRequest(call[0], call[1]) {
                 @Override
                 public long getContentLengthLong() {
-                    return OfficeUpload.MAX_BYTES + 1024 * 1024;
+                    return UploadLimit.TEACHING_PPT_MAX_BYTES.defaultValue() + 1024 * 1024;
                 }
             };
             request.setRequestURI(call[1]);
             MockHttpServletResponse response = new MockHttpServletResponse();
 
-            new EndpointUploadLimitFilter().doFilter(request, response, new MockFilterChain());
+            new EndpointUploadLimitFilter(TestUploadLimits.defaults()).doFilter(request, response, new MockFilterChain());
 
             assertThat(response.getStatus()).isEqualTo(413);
             assertThat(response.getContentAsString()).contains("FILE_TOO_LARGE");
@@ -112,7 +113,7 @@ class EndpointUploadLimitFilterTests {
         request.setRequestURI("/api/v1/database-backups/upload");
         MockHttpServletResponse response = new MockHttpServletResponse();
 
-        new EndpointUploadLimitFilter().doFilter(request, response, new MockFilterChain());
+        new EndpointUploadLimitFilter(TestUploadLimits.defaults()).doFilter(request, response, new MockFilterChain());
 
         assertThat(response.getStatus()).isEqualTo(413);
         assertThat(response.getContentAsString()).contains("FILE_TOO_LARGE");
@@ -127,9 +128,36 @@ class EndpointUploadLimitFilterTests {
         MockHttpServletResponse response = new MockHttpServletResponse();
         MockFilterChain chain = new MockFilterChain();
 
-        new EndpointUploadLimitFilter().doFilter(request, response, chain);
+        new EndpointUploadLimitFilter(TestUploadLimits.defaults()).doFilter(request, response, chain);
 
         assertThat(response.getStatus()).isEqualTo(200);
         assertThat(chain.getRequest()).isNotNull();
+    }
+
+    @Test
+    void followsTheAdministratorManagedLimit() throws Exception {
+        // 管理员把头像上限调到 2 MiB 之后，1.2 MiB 的请求体不该再被早筛挡住。
+        MockHttpServletRequest raised = new MockHttpServletRequest("PUT", "/api/v1/users/me/avatar");
+        raised.setRequestURI("/api/v1/users/me/avatar");
+        raised.setContent(new byte[1200 * 1024]);
+        MockHttpServletResponse raisedResponse = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+
+        new EndpointUploadLimitFilter(TestUploadLimits.with(UploadLimit.AVATAR_MAX_BYTES, 2L * 1024 * 1024))
+                .doFilter(raised, raisedResponse, chain);
+
+        assertThat(raisedResponse.getStatus()).isEqualTo(200);
+        assertThat(chain.getRequest()).isNotNull();
+
+        // 反过来调低正文插图上限到 1 MiB，2 MiB 的插图在进 multipart 解析之前就被拒绝。
+        MockHttpServletRequest lowered = new MockHttpServletRequest("POST", "/api/v1/description-images");
+        lowered.setRequestURI("/api/v1/description-images");
+        lowered.setContent(new byte[2 * 1024 * 1024]);
+        MockHttpServletResponse loweredResponse = new MockHttpServletResponse();
+
+        new EndpointUploadLimitFilter(TestUploadLimits.with(UploadLimit.INLINE_IMAGE_MAX_BYTES, 1024L * 1024))
+                .doFilter(lowered, loweredResponse, new MockFilterChain());
+
+        assertThat(loweredResponse.getStatus()).isEqualTo(413);
     }
 }

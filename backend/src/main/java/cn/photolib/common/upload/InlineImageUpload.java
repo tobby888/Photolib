@@ -21,21 +21,24 @@ import java.util.Set;
  * 只信它就等于让人把任意字节存成 {@code image/png} 再由服务端原样回吐。</p>
  */
 public final class InlineImageUpload {
-    public static final long MAX_BYTES = 5L * 1024 * 1024;
     private static final Set<String> TYPES = Set.of(
             MediaType.IMAGE_JPEG_VALUE, MediaType.IMAGE_PNG_VALUE, "image/webp");
 
     private InlineImageUpload() {
     }
 
-    /** 校验并读出字节；任何不合规的输入都以 BusinessException 结束。 */
-    public static byte[] read(MultipartFile file) throws IOException {
+    /**
+     * 校验并读出字节；任何不合规的输入都以 BusinessException 结束。
+     *
+     * @param maxBytes 管理员设的正文插图上限（{@code INLINE_IMAGE_MAX_BYTES}）
+     */
+    public static byte[] read(MultipartFile file, long maxBytes) throws IOException {
         if (file == null || file.isEmpty()) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择图片");
         }
-        if (file.getSize() > MAX_BYTES) {
+        if (file.getSize() > maxBytes) {
             throw new BusinessException(ErrorCode.FILE_TOO_LARGE,
-                    "插图不能超过 " + ImageUploadPolicy.describe(MAX_BYTES));
+                    "插图不能超过 " + ImageUploadPolicy.describe(maxBytes));
         }
         String contentType = file.getContentType();
         if (!TYPES.contains(contentType)) {

@@ -16,12 +16,22 @@ export const RECRUITMENT_FALLBACK_UPLOAD_LIMITS: RecruitmentUploadLimits = {
   maxArchiveBytes: 200 * 1024 * 1024,
 }
 
-/** Formats a byte limit the way the backend states it (binary units). */
+/**
+ * Formats a byte limit the way the backend states it (`ImageUploadPolicy.describe`):
+ * exact binary multiples as GiB / MiB, a round decimal value such as 1 500 000 000
+ * as "1.5 GB", anything else from 1 MiB up with at most two decimals ("2.5 MiB"),
+ * smaller values as KiB.
+ */
 export function describeBytes(bytes: number) {
   const gib = 1024 ** 3
   const mib = 1024 ** 2
+  const decimal = (value: number) => String(Number(value.toFixed(2)))
   if (bytes >= gib && bytes % gib === 0) return `${bytes / gib} GiB`
   if (bytes >= mib && bytes % mib === 0) return `${bytes / mib} MiB`
+  if (bytes >= 1e9 && bytes % 1e8 === 0) return `${decimal(bytes / 1e9)} GB`
+  if (bytes >= 1e6 && bytes % 1e6 === 0) return `${bytes / 1e6} MB`
+  if (bytes >= gib) return `${decimal(bytes / gib)} GiB`
+  if (bytes >= mib) return `${decimal(bytes / mib)} MiB`
   if (bytes >= 1024 && bytes % 1024 === 0) return `${bytes / 1024} KiB`
   return `${bytes} 字节`
 }

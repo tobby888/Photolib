@@ -39,7 +39,8 @@ class PhotoServiceObjectCleanupTests {
                 mock(CampusService.class),
                 mock(cn.photolib.user.mapper.UserMapper.class),
                 mock(cn.photolib.directory.CampusMemberService.class),
-                mock(AbandonedUploadCleanupJob.class));
+                mock(AbandonedUploadCleanupJob.class),
+                mock(cn.photolib.uploadlimit.UploadLimitService.class));
         PhotoEntity photo = new PhotoEntity();
         photo.setId(42L);
         photo.setObjectKey("photos/main.jpg");

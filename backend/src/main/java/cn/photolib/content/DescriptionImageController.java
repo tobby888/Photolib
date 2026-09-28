@@ -3,6 +3,8 @@ package cn.photolib.content;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.upload.InlineImageUpload;
+import cn.photolib.uploadlimit.UploadLimit;
+import cn.photolib.uploadlimit.UploadLimitService;
 import cn.photolib.common.util.PublicId;
 import cn.photolib.storage.ObjectStorageService;
 import lombok.RequiredArgsConstructor;
@@ -27,12 +29,13 @@ public class DescriptionImageController {
     private final DescriptionImageMapper mapper;
     private final ObjectStorageService storage;
     private final DescriptionImageAuthorizationService authorization;
+    private final UploadLimitService uploadLimits;
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasAnyAuthority('PROJECT_CREATE','REQUEST_CREATE','FEATURED_MANAGE','SURVEY_CREATE')")
     ApiResponse<UploadResult> upload(@RequestPart("file") MultipartFile file,
                                      @AuthenticationPrincipal AuthenticatedUser user) throws IOException {
-        byte[] bytes = InlineImageUpload.read(file);
+        byte[] bytes = InlineImageUpload.read(file, uploadLimits.value(UploadLimit.INLINE_IMAGE_MAX_BYTES));
         String contentType = file.getContentType();
         String id = PublicId.next();
         String objectKey = "descriptions/" + id + "." + InlineImageUpload.extension(contentType);

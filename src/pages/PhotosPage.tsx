@@ -12,6 +12,8 @@ import dayjs from 'dayjs'
 import { api, emptyPage, qs } from '../api'
 import { readTakenAt } from '../exif'
 import { uploadToObjectStorage } from '../storageUpload'
+import { describeBytes } from '../uploadLimits'
+import { useUploadLimits } from '../useUploadLimits'
 import type {
   CampusMember, DedupedMember, EntityId, PageData, Photo, PhotoUploader, Project, TaggedPhoto,
 } from '../types'
@@ -49,6 +51,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
   const libraryRoot = favoritesOnly ? '/favorites' : '/photos'
   const [searchParams, setSearchParams] = useSearchParams()
   const { message, modal } = App.useApp()
+  const uploadLimits = useUploadLimits()
   const placeholderImages = usePlaceholderImages()
   const { user } = useAuth()
   const currentViewKey = `${favoritesOnly}:${location.search}`
@@ -531,6 +534,10 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
       <Form form={uploadForm} layout="vertical" requiredMark={false}>
         <Form.Item name="file" valuePropName="fileList" getValueFromEvent={e => e.fileList} rules={[{ required: true, message: '请选择图片' }]}>
           <Upload.Dragger accept=".jpg,.jpeg,.png" maxCount={1} beforeUpload={async file => {
+            if (file.size > uploadLimits.PHOTO_IMAGE_MAX_BYTES) {
+              message.error(`单张图片不得超过 ${describeBytes(uploadLimits.PHOTO_IMAGE_MAX_BYTES)}`)
+              return Upload.LIST_IGNORE
+            }
             uploadForm.setFieldValue('title', photoTitleFromFileName(file.name))
             const takenAt = await readTakenAt(file)
             if (takenAt) {
@@ -541,7 +548,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
             }
             return false
           }}>
-            <p className="ant-upload-drag-icon"><InboxOutlined /></p><p className="ant-upload-text">拖拽图片到这里，或点击选择</p><p className="ant-upload-hint">仅支持 JPG / PNG，单张不超过 100 MiB</p>
+            <p className="ant-upload-drag-icon"><InboxOutlined /></p><p className="ant-upload-text">拖拽图片到这里，或点击选择</p><p className="ant-upload-hint">仅支持 JPG / PNG，单张不超过 {describeBytes(uploadLimits.PHOTO_IMAGE_MAX_BYTES)}</p>
           </Upload.Dragger>
         </Form.Item>
         <Row gutter={16}><Col span={12}><Form.Item label="图片标题" name="title" rules={[{ required: true }]}><Input /></Form.Item></Col>

@@ -16,11 +16,13 @@ import {
 } from '../projectShare'
 import { sha256Hex } from '../recruitmentUpload'
 import {
-  MAX_IMAGES_PER_ARCHIVE, MAX_QUEUE_SIZE, addToQueue, describeBatchOutcome,
+  MAX_QUEUE_SIZE, addToQueue, describeBatchOutcome,
   isTerminalBatchStatus, rejectArchiveReason, runQueue, summarize,
 } from '../shareUpload'
 import type { ShareUploadItem } from '../shareUpload'
 import { uploadToObjectStorage } from '../storageUpload'
+import { describeBytes } from '../uploadLimits'
+import { useUploadLimits } from '../useUploadLimits'
 import type { ShareGuestAccess, ShareUploadBatch } from '../types'
 
 /** 处理结果的轮询上限。压缩一张相机原图通常几秒，超过这个就交给访客自己刷新。 */
@@ -55,6 +57,7 @@ export default function SharedUploadPage() {
   const { token = '' } = useParams()
   const { message } = App.useApp()
   const branding = useBranding()
+  const uploadLimits = useUploadLimits()
   const [gateForm] = Form.useForm<{ password: string; uploaderName: string; uploaderStudentId: string }>()
 
   const [session, setSession] = useState<string | null>(() => readStoredShareSession(token))
@@ -228,7 +231,7 @@ export default function SharedUploadPage() {
 
   const uploadArchive = async (file: File) => {
     if (!session || running) return
-    const reason = rejectArchiveReason(file)
+    const reason = rejectArchiveReason(file, uploadLimits)
     if (reason) {
       message.error(`${file.name}：${reason}`)
       return
@@ -277,7 +280,7 @@ export default function SharedUploadPage() {
 
   const enqueue = (files: File[]) => {
     setItems(current => {
-      const added = addToQueue(current, files)
+      const added = addToQueue(current, files, uploadLimits)
       added.errors.forEach(error => message.error(error))
       if (added.dropped) message.warning(`一次最多 ${MAX_QUEUE_SIZE} 张，多出的 ${added.dropped} 张请分批上传`)
       return [...current, ...added.items]
@@ -378,9 +381,11 @@ export default function SharedUploadPage() {
 
           <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
             {mode === 'files'
-              ? `支持 JPG 和 PNG，单张不超过 100 MiB，一次最多 ${MAX_QUEUE_SIZE} 张。`
-              : `一个压缩包最大 1.5 GB，里面最多 ${MAX_IMAGES_PER_ARCHIVE} 张 JPG / PNG，`
-                + '单张不超过 100 MiB；包里的其他文件会被自动跳过。'}
+              ? `支持 JPG 和 PNG，单张不超过 ${describeBytes(uploadLimits.PHOTO_IMAGE_MAX_BYTES)}，`
+                + `一次最多 ${MAX_QUEUE_SIZE} 张。`
+              : `一个压缩包最大 ${describeBytes(uploadLimits.PHOTO_ZIP_MAX_BYTES)}，`
+                + `里面最多 ${uploadLimits.PHOTO_ZIP_MAX_IMAGES} 张 JPG / PNG，`
+                + `单张不超过 ${describeBytes(uploadLimits.PHOTO_IMAGE_MAX_BYTES)}；包里的其他文件会被自动跳过。`}
             照片会直接进入这个选题的图库，由选题负责人和选片人后续处理；这里看不到别人传了什么。
           </Typography.Paragraph>
 

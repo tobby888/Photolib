@@ -6,9 +6,12 @@ import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.PageResponse;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
+import cn.photolib.common.upload.ImageUploadPolicy;
 import cn.photolib.common.util.PublicId;
 import cn.photolib.storage.ObjectStorageService;
 import cn.photolib.storage.StorageProperties;
+import cn.photolib.uploadlimit.UploadLimit;
+import cn.photolib.uploadlimit.UploadLimitService;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -78,6 +81,7 @@ public class DatabaseBackupService {
     private final AdminAlertMapper alerts;
     private final BackupProperties properties;
     private final ApplicationEventPublisher events;
+    private final UploadLimitService uploadLimits;
 
     private final ReentrantLock lock = new ReentrantLock();
 
@@ -215,10 +219,11 @@ public class DatabaseBackupService {
         if (file == null || file.isEmpty()) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择要导入的备份文件");
         }
-        long maxUpload = properties.maxUploadBytes().toBytes();
+        // 默认值来自 photolib.backup.max-upload-bytes，管理员可在「上传限额」里改。
+        long maxUpload = uploadLimits.value(UploadLimit.DATABASE_BACKUP_MAX_BYTES);
         if (file.getSize() > maxUpload) {
             throw new BusinessException(ErrorCode.FILE_TOO_LARGE,
-                    "备份文件不能超过 " + properties.maxUploadBytes().toMegabytes() + " MB");
+                    "备份文件不能超过 " + ImageUploadPolicy.describe(maxUpload));
         }
         String fileName = sanitizeFileName(file.getOriginalFilename());
         Path temp = null;
@@ -235,7 +240,7 @@ public class DatabaseBackupService {
             }
             if (size > maxUpload) {
                 throw new BusinessException(ErrorCode.FILE_TOO_LARGE,
-                        "备份文件不能超过 " + properties.maxUploadBytes().toMegabytes() + " MB");
+                        "备份文件不能超过 " + ImageUploadPolicy.describe(maxUpload));
             }
             requireGzip(temp);
 

@@ -10,6 +10,8 @@ import cn.photolib.storage.StorageProperties;
 import cn.photolib.teaching.mapper.TeachingMaterialMapper;
 import cn.photolib.teaching.model.TeachingMaterialEntity;
 import cn.photolib.teaching.model.TeachingMaterialFormat;
+import cn.photolib.uploadlimit.UploadLimit;
+import cn.photolib.uploadlimit.UploadLimitService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
@@ -73,6 +75,7 @@ public class TeachingService {
     private final NotificationService notifications;
     private final JdbcClient jdbc;
     private final StorageProperties storageProperties;
+    private final UploadLimitService uploadLimits;
 
     // ------------------------------------------------------------------
     // 读取（图库成员）
@@ -147,7 +150,7 @@ public class TeachingService {
     @Transactional
     public Material create(String title, String description, String category, Long authorId,
                            MultipartFile file, AuthenticatedUser user) throws IOException {
-        TeachingMaterialFormat format = TeachingFileUpload.detectAndValidate(file);
+        TeachingMaterialFormat format = TeachingFileUpload.detectAndValidate(file, fileLimits());
         if (mapper.countAll() >= MAX_MATERIALS) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
                     "教学资料数量已达上限（" + MAX_MATERIALS + "），请先清理不再需要的资料");
@@ -193,7 +196,7 @@ public class TeachingService {
         TeachingMaterialEntity material = requireMaterial(id);
         TeachingMaterialFormat format = material.getFormat() == null
                 ? TeachingMaterialFormat.PDF : material.getFormat();
-        TeachingMaterialFormat detected = TeachingFileUpload.detectAndValidate(file);
+        TeachingMaterialFormat detected = TeachingFileUpload.detectAndValidate(file, fileLimits());
         if (detected != format) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR,
                     "只能替换为相同格式的文件（当前是 " + format.extension() + "）");
@@ -356,5 +359,12 @@ public class TeachingService {
 
     /** 一次下载的签名地址。 */
     public record Download(String downloadUrl, Instant expiresAt, String fileName) {
+    }
+
+    private TeachingFileUpload.Limits fileLimits() {
+        return new TeachingFileUpload.Limits(
+                uploadLimits.value(UploadLimit.TEACHING_PDF_MAX_BYTES),
+                uploadLimits.value(UploadLimit.TEACHING_WORD_MAX_BYTES),
+                uploadLimits.value(UploadLimit.TEACHING_PPT_MAX_BYTES));
     }
 }

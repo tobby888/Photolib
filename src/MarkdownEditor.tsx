@@ -6,6 +6,8 @@ import { App, Button, Input, Segmented, Space, Tooltip } from 'antd'
 import { useRef, useState } from 'react'
 import { api } from './api'
 import MarkdownRenderer from './MarkdownRenderer'
+import { describeBytes } from './uploadLimits'
+import { useUploadLimits } from './useUploadLimits'
 
 // 禁用的 <button> 浏览器一律不派发鼠标事件，Tooltip 直接套在上面永远不会弹，
 // 预览态下这些按钮名就等于没写。加一层包裹元素让 hover 落得到。
@@ -28,6 +30,7 @@ export default function MarkdownEditor({
   maxLength?: number
 }) {
   const { message } = App.useApp()
+  const inlineImageMaxBytes = useUploadLimits().INLINE_IMAGE_MAX_BYTES
   const root = useRef<HTMLDivElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const [mode, setMode] = useState<'edit' | 'preview'>('edit')
@@ -50,6 +53,11 @@ export default function MarkdownEditor({
 
   const uploadImage = async (file?: File) => {
     if (!file) return
+    if (file.size > inlineImageMaxBytes) {
+      message.error(`插图不能超过 ${describeBytes(inlineImageMaxBytes)}`)
+      if (fileInput.current) fileInput.current.value = ''
+      return
+    }
     setUploading(true)
     try {
       const data = new FormData()
@@ -75,7 +83,7 @@ export default function MarkdownEditor({
         <Tooltip title="有序列表"><span style={tooltipWrap}><Button type="text" disabled={mode !== 'edit'} icon={<OrderedListOutlined />} onClick={() => insert('1. ', '', '列表项')} /></span></Tooltip>
         <Tooltip title="链接"><span style={tooltipWrap}><Button type="text" disabled={mode !== 'edit'} icon={<LinkOutlined />} onClick={() => insert('[', '](https://)', '链接文字')} /></span></Tooltip>
         {allowImageUpload && <>
-          <Tooltip title="上传图片（JPEG、PNG、WebP，最大 5 MiB）">
+          <Tooltip title={`上传图片（JPEG、PNG、WebP，最大 ${describeBytes(inlineImageMaxBytes)}）`}>
             <span style={tooltipWrap}>
               <Button type="text" disabled={mode !== 'edit'} loading={uploading} icon={<PictureOutlined />} onClick={() => fileInput.current?.click()} />
             </span>

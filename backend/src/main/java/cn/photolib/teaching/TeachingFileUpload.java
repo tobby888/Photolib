@@ -2,6 +2,7 @@ package cn.photolib.teaching;
 
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
+import cn.photolib.common.upload.ImageUploadPolicy;
 import cn.photolib.common.upload.OfficeUpload;
 import cn.photolib.teaching.model.TeachingMaterialFormat;
 import org.springframework.web.multipart.MultipartFile;
@@ -23,30 +24,44 @@ final class TeachingFileUpload {
     private TeachingFileUpload() {
     }
 
-    static TeachingMaterialFormat detectAndValidate(MultipartFile file) throws IOException {
+    /** 各格式的大小上限，由管理员在「上传限额」里设。 */
+    record Limits(long pdfMaxBytes, long wordMaxBytes, long pptMaxBytes) {
+        long largest() {
+            return Math.max(pdfMaxBytes, Math.max(wordMaxBytes, pptMaxBytes));
+        }
+    }
+
+    static TeachingMaterialFormat detectAndValidate(MultipartFile file, Limits limits) throws IOException {
         if (file == null || file.isEmpty()) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择文件");
         }
         // 早筛：超过任何格式的上限就直接拒，别去读整个流。
-        if (file.getSize() > OfficeUpload.MAX_BYTES) {
-            throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "文件不能超过 100 MiB");
+        if (file.getSize() > limits.largest()) {
+            throw tooLarge("文件", limits.largest());
         }
         byte[] head = head(file, 5);
-        // 不走 PdfUpload.validate：它要求声明的 Content-Type 是 application/pdf、上限 50 MiB，
-        // 而这里只认字节，PDF 的上限按 spec 就是上面的 100 MiB。
+        // 不走 PdfUpload.validate：它要求声明的 Content-Type 是 application/pdf、用的是文档中心的上限，
+        // 而这里只认字节，PDF 的上限是教学资料自己那一项。
         if (startsWith(head, PDF_SIGNATURE)) {
+            if (file.getSize() > limits.pdfMaxBytes()) throw tooLarge("PDF", limits.pdfMaxBytes());
             return TeachingMaterialFormat.PDF;
         }
         if (startsWith(head, ZIP_SIGNATURE) || startsWith(head, ZIP_EMPTY_SIGNATURE)) {
             OfficeUpload.Kind kind = OfficeUpload.detectKind(file);
-            if (kind == OfficeUpload.Kind.WORD && file.getSize() > OfficeUpload.WORD_MAX_BYTES) {
-                throw new BusinessException(ErrorCode.FILE_TOO_LARGE, "Word 不能超过 20 MiB");
+            if (kind == OfficeUpload.Kind.WORD) {
+                if (file.getSize() > limits.wordMaxBytes()) throw tooLarge("Word", limits.wordMaxBytes());
+                return TeachingMaterialFormat.WORD;
             }
-            return kind == OfficeUpload.Kind.WORD
-                    ? TeachingMaterialFormat.WORD : TeachingMaterialFormat.PPT;
+            if (file.getSize() > limits.pptMaxBytes()) throw tooLarge("PPT", limits.pptMaxBytes());
+            return TeachingMaterialFormat.PPT;
         }
         throw new BusinessException(ErrorCode.UNSUPPORTED_FILE_TYPE,
                 "仅支持 PDF、Word(.docx)、PPT(.pptx)");
+    }
+
+    private static BusinessException tooLarge(String label, long maxBytes) {
+        return new BusinessException(ErrorCode.FILE_TOO_LARGE,
+                label + "不能超过 " + ImageUploadPolicy.describe(maxBytes));
     }
 
     private static byte[] head(MultipartFile file, int length) throws IOException {

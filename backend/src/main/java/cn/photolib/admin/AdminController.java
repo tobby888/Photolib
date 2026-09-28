@@ -6,6 +6,8 @@ import cn.photolib.common.api.ApiResponse;
 import cn.photolib.photo.model.PhotoStatus;
 import cn.photolib.project.model.ProjectStatus;
 import cn.photolib.request.model.RequestStatus;
+import cn.photolib.uploadlimit.UploadLimit;
+import cn.photolib.uploadlimit.UploadLimitService;
 import cn.photolib.user.model.UserRole;
 import cn.photolib.worklog.model.WorklogStatus;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
@@ -22,6 +24,7 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class AdminController {
     private final AdminAlertMapper alertMapper;
+    private final UploadLimitService uploadLimits;
 
     @GetMapping("/metadata/options")
     @PreAuthorize("isAuthenticated()")
@@ -33,9 +36,9 @@ public class AdminController {
                 "photoStatuses", PhotoStatus.values(),
                 "worklogStatuses", WorklogStatus.values(),
                 "allowedImageTypes", List.of("image/jpeg", "image/png"),
-                "singleImageMaxBytes", 104857600,
-                "batchImageMaxCount", 100,
-                "zipMaxBytes", 1500000000L,
+                "singleImageMaxBytes", uploadLimits.value(UploadLimit.PHOTO_IMAGE_MAX_BYTES),
+                "batchImageMaxCount", uploadLimits.count(UploadLimit.PHOTO_ZIP_MAX_IMAGES),
+                "zipMaxBytes", uploadLimits.value(UploadLimit.PHOTO_ZIP_MAX_BYTES),
                 "batchDownloadMaxCount", 200
         ));
     }

@@ -14,6 +14,7 @@ import cn.photolib.survey.mapper.SurveyResponseMapper;
 import cn.photolib.survey.model.SurveyEntity;
 import cn.photolib.survey.model.SurveyResponseEntity;
 import cn.photolib.survey.model.SurveyStatus;
+import cn.photolib.uploadlimit.UploadLimitService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -49,6 +50,7 @@ public class SurveyResponseService {
     private final RecruitmentFormSchemaValidator schemaValidator;
     private final FormFileService formFiles;
     private final JdbcClient jdbc;
+    private final UploadLimitService uploadLimits;
 
     // ------------------------------------------------------------------
     // 填写人
@@ -82,7 +84,7 @@ public class SurveyResponseService {
         }
         return new FillView(survey.getId(), survey.getTitle(), survey.getDescription(), survey.getIntroMarkdown(),
                 surveys.schema(survey), survey.getEndsAt(), survey.getStatus(), surveys.isOpen(survey),
-                SurveyService.UploadLimits.DEFAULT, response);
+                SurveyService.UploadLimits.current(uploadLimits), response);
     }
 
     @Transactional

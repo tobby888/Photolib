@@ -2,11 +2,15 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import {
-  MAX_ARCHIVE_BYTES, MAX_IMAGES_PER_ARCHIVE, MAX_QUEUE_SIZE, MAX_UPLOAD_BYTES, addToQueue,
+  MAX_QUEUE_SIZE, addToQueue,
   describeBatchOutcome, isTerminalBatchStatus, rejectArchiveReason, rejectReason, runQueue,
   summarize,
 } from '../src/shareUpload.ts'
 import type { ShareUploadItem } from '../src/shareUpload.ts'
+import { DEFAULT_UPLOAD_LIMITS } from '../src/uploadLimits.ts'
+
+const MAX_UPLOAD_BYTES = DEFAULT_UPLOAD_LIMITS.PHOTO_IMAGE_MAX_BYTES
+const MAX_ARCHIVE_BYTES = DEFAULT_UPLOAD_LIMITS.PHOTO_ZIP_MAX_BYTES
 
 const read = (path: string) => readFile(new URL(`../src/${path}`, import.meta.url), 'utf8')
 const readBackend = (path: string) =>
@@ -27,6 +31,15 @@ test('前端的文件校验与后端 validateUploadFile 是同一套规则', () 
   assert.match(String(rejectReason(fakeFile('a.gif', 1024, 'image/gif'))), /只能传 JPG 或 PNG/)
   assert.match(String(rejectReason(fakeFile('a.jpg', 0))), /这个文件是空的/)
   assert.match(String(rejectReason(fakeFile('a.jpg', MAX_UPLOAD_BYTES + 1))), /100 MiB/)
+})
+
+test('单张上限跟着管理员设的值走，提示里写的也是那个数', () => {
+  const limits = { ...DEFAULT_UPLOAD_LIMITS, PHOTO_IMAGE_MAX_BYTES: 10 * 1024 * 1024 }
+  assert.equal(rejectReason(fakeFile('a.jpg', 10 * 1024 * 1024), limits), null)
+  assert.match(String(rejectReason(fakeFile('a.jpg', 10 * 1024 * 1024 + 1), limits)), /10 MiB/)
+  const added = addToQueue([], [fakeFile('big.jpg', 20 * 1024 * 1024), fakeFile('ok.jpg')], limits)
+  assert.deepEqual(added.items.map(entry => entry.file.name), ['ok.jpg'])
+  assert.match(added.errors[0], /big\.jpg：单张不能超过 10 MiB/)
 })
 
 test('同一批照片再拖一次不会重复入队', () => {
@@ -88,6 +101,9 @@ test('ZIP 的前端校验与后端同一套：只收 .zip，且不超过 1.5 GB'
   assert.match(String(rejectArchiveReason({ name: '活动.rar', size: 1024 })), /只能上传 \.zip/)
   assert.match(String(rejectArchiveReason({ name: '活动.zip', size: 0 })), /空的/)
   assert.match(String(rejectArchiveReason({ name: '活动.zip', size: MAX_ARCHIVE_BYTES + 1 })), /1\.5 GB/)
+  const raised = { ...DEFAULT_UPLOAD_LIMITS, PHOTO_ZIP_MAX_BYTES: 3 * 1024 ** 3 }
+  assert.equal(rejectArchiveReason({ name: '活动.zip', size: MAX_ARCHIVE_BYTES + 1 }, raised), null)
+  assert.match(String(rejectArchiveReason({ name: '活动.zip', size: 3 * 1024 ** 3 + 1 }, raised)), /3 GiB/)
 })
 
 test('批次终态的判定和站内那套状态一致', () => {
@@ -126,19 +142,19 @@ test('部分成功要把失败的张数说出来，不能只说"完成了"', () 
   }).tone, 'warning')
 })
 
-test('ZIP 限额的文案和后端常量对得上', async () => {
-  const [policy, page] = await Promise.all([
-    readFile(new URL('../backend/src/main/java/cn/photolib/common/upload/ImageUploadPolicy.java',
-      import.meta.url), 'utf8'),
+test('访客页的 ZIP 限额与站内同一份，而且是管理员设的那一份', async () => {
+  const [service, page] = await Promise.all([
+    readBackend('share/ProjectShareUploadService.java'),
     read('pages/SharedUploadPage.tsx'),
   ])
 
   // 站外不另开一套阈值：松的那一套就是被用来打进来的那一套。
-  assert.match(policy, /MAX_ARCHIVE_BYTES = 1_500_000_000L/)
-  assert.match(policy, /MAX_IMAGE_COUNT = 100/)
-  assert.equal(MAX_ARCHIVE_BYTES, 1_500_000_000)
-  assert.equal(MAX_IMAGES_PER_ARCHIVE, 100)
-  assert.match(page, /1\.5 GB/)
+  assert.match(service, /UploadLimit\.PHOTO_IMAGE_MAX_BYTES/)
+  assert.doesNotMatch(service, /imageMaxBytes\(\)/)
+  // 页面上的数字来自 /upload-limits，不能再写死。
+  assert.match(page, /useUploadLimits\(\)/)
+  assert.match(page, /uploadLimits\.PHOTO_ZIP_MAX_IMAGES/)
+  assert.doesNotMatch(page, /1\.5 GB|100 MiB/)
 })
 
 test('访客的 ZIP 走的是站内那条批次通道', async () => {
