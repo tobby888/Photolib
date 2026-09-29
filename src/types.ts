@@ -911,3 +911,116 @@ export interface RegistrationReviewResult {
   succeeded: EntityId[]
   failed: { id: EntityId; username?: string | null; message: string }[]
 }
+
+/* 管理员面板 · 数据面板（/admin-dashboard） */
+
+export interface TrafficWindow {
+  requests: number
+  successes: number
+  redirects: number
+  clientErrors: number
+  serverErrors: number
+  bytesIn: number
+  bytesOut: number
+  avgLatencyMs: number
+  maxLatencyMs: number
+}
+
+export interface TrafficPoint {
+  /** 这一格的起点（毫秒时间戳）。 */
+  time: number
+  requests: number
+  qps: number
+  clientErrors: number
+  serverErrors: number
+  bytesIn: number
+  bytesOut: number
+  avgLatencyMs: number
+}
+
+export type TrafficRange = '5m' | '1h' | '24h'
+
+export interface EndpointTraffic {
+  endpoint: string
+  requests: number
+  clientErrors: number
+  serverErrors: number
+  avgLatencyMs: number
+  maxLatencyMs: number
+}
+
+export interface DailyCount {
+  day: string
+  count: number
+}
+
+export interface DashboardMetrics {
+  generatedAt: number
+  business: {
+    updatedAt: number
+    users: { total: number; enabled: number; newLast7Days: number; newLast30Days: number;
+      pendingRegistrations: number; liveSessions: number }
+    content: { photos: number; photoBytes: number; photosToday: number; projects: number;
+      activeProjects: number; openRequests: number; unresolvedAlerts: number }
+    dailyUsers: DailyCount[]
+    dailyPhotos: DailyCount[]
+  } | null
+  businessError?: string | null
+  activeUsers: { last5Minutes: number; lastHour: number; last24Hours: number }
+  traffic: {
+    generatedAt: number
+    startedAt: number
+    qps: number
+    peakQpsLastHour: number
+    lastMinute: TrafficWindow
+    lastHour: TrafficWindow
+    last24Hours: TrafficWindow
+    sinceStart: TrafficWindow
+    series: Record<TrafficRange, TrafficPoint[]>
+    topEndpoints: EndpointTraffic[]
+  }
+  runtime: {
+    startedAt: number
+    uptimeMs: number
+    heapUsed: number
+    heapMax: number
+    processCpu?: number | null
+    systemCpu?: number | null
+    loadAverage?: number | null
+    processors: number
+    threads: number
+    memoryTotal?: number | null
+    memoryFree?: number | null
+    diskTotal: number
+    diskUsable: number
+    javaVersion: string
+  }
+}
+
+export type DashboardWidgetType = 'stat' | 'gauge' | 'trend' | 'endpoints' | 'status' | 'note' | 'shortcuts'
+export type DashboardWidgetSize = 'small' | 'medium' | 'large'
+
+export interface DashboardWidget {
+  id: string
+  type: DashboardWidgetType
+  title?: string
+  size: DashboardWidgetSize
+  metric?: string
+  range?: TrafficRange
+  warnAt?: number
+  criticalAt?: number
+  text?: string
+  links?: string[]
+  limit?: number
+}
+
+export interface DashboardLayout {
+  widgets: DashboardWidget[]
+  refreshSeconds: number
+}
+
+export interface DashboardLayoutView {
+  layout: DashboardLayout | null
+  version: number | null
+  updatedAt: string | null
+}
