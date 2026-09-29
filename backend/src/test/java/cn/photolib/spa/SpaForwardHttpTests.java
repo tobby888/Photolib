@@ -70,7 +70,9 @@ class SpaForwardHttpTests {
             "/documents/abc123",
             "/mcp/authorize",
             "/two-factor",
-            "/admin");
+            "/admin",
+            "/admin/users",
+            "/admin/registration-review");
 
     @BeforeEach
     void setUp() {
@@ -92,7 +94,8 @@ class SpaForwardHttpTests {
     void apiEndpointsUnderTheSamePrefixesStillRequireAuthentication() throws Exception {
         for (String api : List.of("/api/v1/photos", "/api/v1/photos/42", "/api/v1/projects",
                 "/api/v1/notifications", "/api/v1/statistics/summary", "/api/v1/manager-campuses",
-                "/api/v1/directory/members", "/api/v1/featured/collections")) {
+                "/api/v1/directory/members", "/api/v1/featured/collections",
+                "/api/v1/admin-dashboard/metrics", "/api/v1/admin-dashboard/layout")) {
             mvc.perform(get(api)).andExpect(status().isUnauthorized());
         }
     }

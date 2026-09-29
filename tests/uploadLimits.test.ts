@@ -85,7 +85,7 @@ test('上传入口不再写死限额，统一从 /upload-limits 取', async () =
   const pages = [
     'pages/PhotosPage.tsx', 'pages/RequestDeliveryPage.tsx', 'pages/BatchUploadPage.tsx',
     'pages/SharedUploadPage.tsx', 'pages/DocsManagePage.tsx', 'pages/TeachingPage.tsx',
-    'pages/AdminPage.tsx', 'MarkdownEditor.tsx', 'RichTextEditor.tsx', 'AvatarSettingsModal.tsx',
+    'pages/admin/BrandingSettingsPage.tsx', 'pages/admin/SiteContentPage.tsx', 'MarkdownEditor.tsx', 'RichTextEditor.tsx', 'AvatarSettingsModal.tsx',
     'DatabaseBackupPanel.tsx', 'FormFields.tsx', 'RecruitmentFormEditor.tsx',
   ]
   for (const page of pages) {

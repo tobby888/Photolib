@@ -2,8 +2,8 @@ import {
   Alert, App as AntApp, Badge, Button, Dropdown, Grid, Layout, Menu, Popover, Progress, Result, Space, Typography,
 } from 'antd'
 import {
-  BarChartOutlined, BellOutlined, BookOutlined, CameraOutlined, ContactsOutlined, FormOutlined,
-  DashboardOutlined, EnvironmentOutlined, FilePdfOutlined, FolderOutlined, KeyOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SettingOutlined,
+  BarChartOutlined, BellOutlined, BookOutlined, CameraOutlined, ContactsOutlined, ControlOutlined, FormOutlined,
+  DashboardOutlined, EnvironmentOutlined, FilePdfOutlined, FolderOutlined, KeyOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined,
   SafetyCertificateOutlined,
   MessageOutlined, ReadOutlined, StarOutlined, TeamOutlined, TrophyOutlined,
   UnorderedListOutlined, UserOutlined,
@@ -41,7 +41,6 @@ const WorklogsPage = lazy(() => import('./pages/WorklogsPage'))
 const DirectoryPage = lazy(() => import('./pages/DirectoryPage'))
 const StatisticsPage = lazy(() => import('./pages/StatisticsPage'))
 const ManagerCampusesPage = lazy(() => import('./pages/ManagerCampusesPage'))
-const AdminPage = lazy(() => import('./pages/AdminPage'))
 const NotificationsPage = lazy(() => import('./pages/NotificationsPage'))
 const NotificationDetailPage = lazy(() => import('./pages/NotificationDetailPage'))
 const FeedbackDetailPage = lazy(() => import('./pages/FeedbackDetailPage'))
@@ -61,6 +60,8 @@ const SurveyDetailPage = lazy(() => import('./pages/SurveyDetailPage'))
 const SurveyFillPage = lazy(() => import('./pages/SurveyFillPage'))
 const SurveyResponseDetailPage = lazy(() => import('./pages/SurveyResponseDetailPage'))
 const McpAuthorizePage = lazy(() => import('./pages/McpAuthorizePage'))
+// 管理员面板是独立的一套外壳（侧栏、顶栏都不同），挂在 /admin/* 上，不在图库外壳里。
+const AdminShell = lazy(() => import('./AdminShell'))
 const AvatarSettingsModal = lazy(() => import('./AvatarSettingsModal'))
 const PhotoCardShortcutsModal = lazy(() => import('./PhotoCardShortcutsModal'))
 const TwoFactorSettingsModal = lazy(() => import('./TwoFactorSettingsModal'))
@@ -228,6 +229,8 @@ function Shell() {
       navigate(item.actionUrl)
     }
   }
+  // 原「系统管理」已经搬进独立的管理员面板；图库这边只留入口（顶栏按钮 + 头像菜单）。
+  const isAdmin = user?.permissionGroupCode === 'ADMIN'
   const markAllRead = async () => {
     await api<void>({ method: 'post', url: '/notifications/read-all' })
     setNotifications((current) => current?.map((item) => ({ ...item, readAt: item.readAt || new Date().toISOString() })) ?? current)
@@ -266,9 +269,6 @@ function Shell() {
       { key: '/statistics', icon: <BarChartOutlined />, label: '数据统计' })
     if (hasPermission(user, 'MANAGER_CAMPUS_ASSIGN')) common.push(
       { key: '/manager-campuses', icon: <EnvironmentOutlined />, label: '负责人校区' })
-    if (user?.permissionGroupCode === 'ADMIN') common.push(
-      { key: '/admin', icon: <SettingOutlined />, label: '系统管理' },
-    )
     return common
   }, [user])
 
@@ -331,6 +331,10 @@ function Shell() {
           </div>
         </div>
         <div className="topbar-actions">
+          {isAdmin && <Button className="admin-entry-button" icon={<ControlOutlined />}
+            aria-label="进入管理员面板" onClick={() => navigate('/admin')}>
+            {!mobile && '管理员面板'}
+          </Button>}
           <Popover open={notificationOpen} onOpenChange={(open) => {
             setNotificationOpen(open)
             if (open) void loadNotifications()
@@ -353,6 +357,8 @@ function Shell() {
             { key: 'shortcuts', icon: <KeyOutlined />, label: '图片快捷键', onClick: () => setShortcutSettingsOpen(true) },
             ...(canManageTwoFactor(user) ? [{ key: 'two-factor', icon: <SafetyCertificateOutlined />,
               label: '两步验证', onClick: () => setTwoFactorOpen(true) }] : []),
+            ...(isAdmin ? [{ key: 'admin', icon: <ControlOutlined />, label: '管理员面板',
+              onClick: () => navigate('/admin') }] : []),
             { type: 'divider' },
             { key: 'logout', icon: <LogoutOutlined />, label: '退出登录', danger: true,
               onClick: async () => { await logout(); message.success('已安全退出'); navigate('/login') } },
@@ -421,7 +427,6 @@ function Shell() {
               借外壳那道登录守卫——批准必须由一个真实的登录会话做出。
             */}
             <Route path="/mcp/authorize" element={<McpAuthorizePage />} />
-            <Route path="/admin" element={user.permissionGroupCode === 'ADMIN' ? <AdminPage /> : <Navigate to="/" />} />
             <Route path="*" element={<NotFound />} />
           </Routes></Suspense></RouteErrorBoundary>
         </div>
@@ -487,6 +492,8 @@ export default function App() {
         user.mustChangePassword ? <InitialPasswordPage /> : <Navigate to="/" replace />} />
     {/* 两步验证的绑定 / 建议页。去向判定在页面里，见 TwoFactorPage。 */}
     <Route path="/two-factor" element={!user ? <Navigate to="/login" replace /> : <TwoFactorPage />} />
+    {/* 管理员面板：登录、两步验证、首次改密和「是不是系统管理员」的守卫都在 AdminShell 里。 */}
+    <Route path="/admin/*" element={<AdminShell />} />
     <Route path="/*" element={<Shell />} />
   </Routes></Suspense>
 }

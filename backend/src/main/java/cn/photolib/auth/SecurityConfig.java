@@ -35,7 +35,7 @@ public class SecurityConfig {
                                 "/login", "/register", "/initial-password", "/projects/**", "/requests/**",
                                 "/photos", "/photos/**", "/favorites", "/favorites/**",
                                 "/worklogs", "/directory", "/featured", "/featured/**",
-                                "/notifications/**", "/statistics", "/manager-campuses", "/admin",
+                                "/notifications/**", "/statistics", "/manager-campuses", "/admin", "/admin/*",
                                 "/recruitment", "/recruitments/**", "/recruitment-applications/**",
                                 "/docs", "/docs/**", "/documents", "/documents/**",
                                 "/teaching", "/teaching/**",

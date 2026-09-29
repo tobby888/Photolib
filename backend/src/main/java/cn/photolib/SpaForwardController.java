@@ -55,7 +55,9 @@ public class SpaForwardController {
             "/mcp/authorize",
             // 两步验证的绑定 / 建议页。登录后由前端跳过去，路径式深链同样要能落到应用。
             "/two-factor",
-            "/admin"
+            // 管理员面板：数据面板在 /admin，各项管理功能各占一页。
+            "/admin",
+            "/admin/{section}"
     })
     String forwardToApplication() {
         return "forward:/index.html";

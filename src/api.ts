@@ -73,6 +73,13 @@ type StepUpHandler = () => Promise<boolean>
 let stepUpHandler: StepUpHandler | null = null
 let steppingUp: Promise<boolean> | null = null
 
+/**
+ * 后台轮询用的请求配置：遇到 `STEP_UP_REQUIRED` 不弹验证框，直接把错误交回调用方。
+ * 管理员盯着数据面板时，验证过期不该由一次没人要求的自动刷新把验证框甩到脸上；
+ * 页面暂停轮询、提示一下，等管理员自己点了再验证。
+ */
+export const withoutStepUpPrompt: AxiosRequestConfig = { _stepUp: true } as AxiosRequestConfig
+
 export function setStepUpHandler(handler: StepUpHandler) {
   stepUpHandler = handler
   return () => {
