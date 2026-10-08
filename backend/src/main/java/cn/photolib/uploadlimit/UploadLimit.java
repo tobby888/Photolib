@@ -53,6 +53,35 @@ public enum UploadLimit {
             "教学资料里上传或替换的 PPT（.pptx）文件。",
             Sizes.MIB, 100 * Sizes.MIB, Sizes.GIB),
 
+    // 文件库（文档中心 → 文件）。上传、下载两头的全部限制都在这一组里，业务代码不另写常量。
+    FILE_MAX_BYTES(Group.FILE, Unit.BYTES, "单个文件",
+            "文件库里每个上传文件的大小。上限取自服务器接收请求体的上限（1536 MiB）。",
+            Sizes.MIB, 200 * Sizes.MIB, 1536 * Sizes.MIB),
+    FILE_USER_QUOTA_BYTES(Group.FILE, Unit.BYTES, "每人存储空间",
+            "每位成员在文件库里所有未删除文件的总大小，超出后要先删掉旧文件才能继续上传。",
+            10 * Sizes.MIB, 2 * Sizes.GIB, 1024 * Sizes.GIB),
+    FILE_USER_DAILY_UPLOADS(Group.FILE, Unit.FILES, "每人每天上传个数",
+            "按北京时间的自然日计。当天上传后又删掉的文件也算在内，避免反复上传、删除刷流量。",
+            1, 50, 1000),
+    FILE_UPLOAD_QPS(Group.FILE, Unit.PER_SECOND, "上传请求 QPS（全站）",
+            "文件库上传接口每秒最多受理多少个请求。超出的请求在读取文件内容之前就被拒绝，不占带宽和磁盘。"
+                    + "按单个后端实例计。",
+            1, 5, 200),
+    FILE_DOWNLOAD_QPS(Group.FILE, Unit.PER_SECOND, "下载请求 QPS（全站）",
+            "文件库下载接口每秒最多签发多少个下载链接，超出的请求直接拒绝。按单个后端实例计。",
+            1, 20, 1000),
+    FILE_DOWNLOADS_PER_HOUR(Group.FILE, Unit.TIMES, "每人每小时下载次数",
+            "登录成员按账号计，未登录访客按 IP 计（反向代理后面拿不到真实 IP 时按 IP 的这条不生效，"
+                    + "由下面的全站流量上限兜底）。",
+            1, 120, 10_000),
+    FILE_ANONYMOUS_DAILY_BYTES(Group.FILE, Unit.BYTES, "未登录访客每日下载流量（全站）",
+            "所有未登录访客当天（北京时间）下载文件的总大小，用完后当天只有登录成员能下载。"
+                    + "这是防盗刷流量的主要闸门：不看 IP，换代理、换地址都绕不过去。",
+            Sizes.MIB, 5 * Sizes.GIB, 10 * 1024 * Sizes.GIB),
+    FILE_DOWNLOAD_LINK_TTL_SECONDS(Group.FILE, Unit.SECONDS, "下载链接有效期",
+            "每次下载签发的直链多久后失效。越短，被转发出去的链接能被反复下载的时间越短。",
+            30, 300, 3600),
+
     AVATAR_MAX_BYTES(Group.SITE, Unit.BYTES, "个人头像",
             "成员上传的头像图片（裁切前的原图和裁切后的结果都受它约束）。",
             256 * Sizes.KIB, Sizes.MIB, 5 * Sizes.MIB),
@@ -117,9 +146,24 @@ public enum UploadLimit {
         return max;
     }
 
+    /** 单位。{@code label} 是管理页面和报错信息里跟在数字后面的字样，字节类由格式化函数决定。 */
     public enum Unit {
-        BYTES,
-        COUNT
+        BYTES(""),
+        COUNT("张"),
+        FILES("个"),
+        TIMES("次"),
+        PER_SECOND("次/秒"),
+        SECONDS("秒");
+
+        private final String label;
+
+        Unit(String label) {
+            this.label = label;
+        }
+
+        public String label() {
+            return label;
+        }
     }
 
     /** 管理页面上的分组，顺序即显示顺序。 */
@@ -128,6 +172,7 @@ public enum UploadLimit {
         RECRUITMENT("公开招募"),
         FORM("招募与问卷的附件"),
         CONTENT("正文与资料"),
+        FILE("文件库"),
         SITE("头像与站点外观"),
         SYSTEM("系统维护");
 

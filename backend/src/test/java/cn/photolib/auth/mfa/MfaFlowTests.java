@@ -418,7 +418,7 @@ class MfaFlowTests {
         assertThat(permissionGroups.definitions().stream().flatMap(category -> category.permissions().stream())
                 .filter(PermissionGroupService.PermissionDefinition::requiresMfa)
                 .map(PermissionGroupService.PermissionDefinition::code))
-                .containsExactlyInAnyOrder("PHOTO_DELETE", "REQUEST_PHOTO_MANAGE", "PROJECT_CREATE", "REQUEST_DELETE");
+                .containsExactlyInAnyOrder("PHOTO_DELETE", "REQUEST_PHOTO_MANAGE", "PROJECT_DELETE", "REQUEST_DELETE");
 
         var created = permissionGroups.create(new PermissionGroupService.CreateCommand("MFA_DELETER", "能删图的组", null,
                 DataScope.GLOBAL, PhotoVisibility.GLOBAL, Set.of(PermissionCode.PHOTO_VIEW, PermissionCode.PHOTO_DELETE),

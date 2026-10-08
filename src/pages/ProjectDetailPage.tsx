@@ -717,8 +717,8 @@ export default function ProjectDetailPage() {
   const canAdopt = hasPermission(user, 'PROJECT_ADOPT')
   const canBatchDownload = hasPermission(user, 'PROJECT_DOWNLOAD')
   const canShare = hasPermission(user, 'PROJECT_SHARE')
-  // 后端的删除是 PROJECT_CREATE + 本人创建或管理员，入口刻意只给管理员。
-  const canDelete = user?.permissionGroupCode === 'ADMIN'
+  // 后端的删除是 PROJECT_DELETE（V62 从 PROJECT_CREATE 拆出）+ 本人创建或管理员，入口刻意只给管理员。
+  const canDelete = user?.permissionGroupCode === 'ADMIN' && hasPermission(user, 'PROJECT_DELETE')
   // 详情页的计数对校区范围账号是裁剪过的，而删除入口只给全局范围的管理员，这里读到的是全量。
   const hasBusinessData = (project?.requestCount || 0) + (project?.photoCount || 0)
     + (project?.adoptionCount || 0) > 0

@@ -80,17 +80,17 @@ public class UploadLimitService {
         return current().values().get(limit);
     }
 
+    /** 非字节类限额（张数、个数、次数、QPS、秒数）的当前值。 */
     public int count(UploadLimit limit) {
-        if (limit.unit() != UploadLimit.Unit.COUNT) {
-            throw new IllegalArgumentException(limit + " 不是张数限额");
+        if (limit.unit() == UploadLimit.Unit.BYTES) {
+            throw new IllegalArgumentException(limit + " 是字节类限额");
         }
         return Math.toIntExact(value(limit));
     }
 
-    /** 「单张图片不得超过 100 MiB」这类提示里用的写法。 */
+    /** 「单张图片不得超过 100 MiB」「每天最多 50 个」这类提示里用的写法。 */
     public String describe(UploadLimit limit) {
-        return limit.unit() == UploadLimit.Unit.COUNT
-                ? value(limit) + " 张" : ImageUploadPolicy.describe(value(limit));
+        return format(limit, value(limit));
     }
 
     /** 站内（含选题上传链接）ZIP 解包的限额。 */
@@ -133,7 +133,7 @@ public class UploadLimitService {
             Range range = ranges.get(limit);
             long value = current.values().get(limit);
             views.add(new LimitView(limit.name(), limit.group().name(), limit.group().label(),
-                    limit.label(), limit.description(), limit.unit().name(), value,
+                    limit.label(), limit.description(), limit.unit().name(), limit.unit().label(), value,
                     range.defaultValue(), range.min(), range.max(), value != range.defaultValue()));
         }
         return views;
@@ -268,7 +268,8 @@ public class UploadLimitService {
     }
 
     private static String format(UploadLimit limit, long value) {
-        return limit.unit() == UploadLimit.Unit.COUNT ? value + " 张" : ImageUploadPolicy.describe(value);
+        return limit.unit() == UploadLimit.Unit.BYTES
+                ? ImageUploadPolicy.describe(value) : value + " " + limit.unit().label();
     }
 
     record Range(long min, long defaultValue, long max) {
@@ -287,8 +288,9 @@ public class UploadLimitService {
     private record Snapshot(Map<UploadLimit, Long> values, long loadedAt) {
     }
 
+    /** {@code unitLabel} 是非字节类限额跟在数字后面的字样（张、个、次、次/秒、秒），字节类为空。 */
     public record LimitView(String key, String group, String groupLabel, String label, String description,
-                            String unit, long value, long defaultValue, long min, long max,
+                            String unit, String unitLabel, long value, long defaultValue, long min, long max,
                             boolean customized) {
     }
 

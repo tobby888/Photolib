@@ -303,7 +303,8 @@ public class ProjectService {
 
     @Transactional
     public void delete(Long id, AuthenticatedUser user) {
-        requirePermission(user, PermissionCode.PROJECT_CREATE);
+        // 删除从 PROJECT_CREATE 里拆了出来（V62）：能建、能改选题的人不一定该能删。
+        requirePermission(user, PermissionCode.PROJECT_DELETE);
         ProjectEntity project = get(id);
         requireOwnerOrAdmin(project, user);
         long related = jdbc.sql("""

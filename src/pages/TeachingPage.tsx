@@ -142,7 +142,8 @@ function MaterialFields({ categories, authors }: { categories: string[]; authors
 
 /**
  * 教学资料页。图库成员（持有 `PHOTO_VIEW`）在这里浏览、筛选、预览、下载；
- * 持有 `TEACHING_MANAGE` 的人多出上传、编辑、换文件、删除、重命名分类。
+ * 持有 `TEACHING_MANAGE` 的人多出上传、编辑、换文件、重命名分类；删除另要 `TEACHING_DELETE`
+ *（V62 从前者拆出，存量权限组已回填）。
  */
 export default function TeachingPage() {
   const { publicId } = useParams<{ publicId?: string }>()
@@ -151,6 +152,7 @@ export default function TeachingPage() {
   const { message } = AntApp.useApp()
   const uploadLimits = useUploadLimits()
   const canManage = hasPermission(user, 'TEACHING_MANAGE')
+  const canDelete = hasPermission(user, 'TEACHING_DELETE')
 
   const [category, setCategory] = useState<string>()
   const [keyword, setKeyword] = useState('')
@@ -396,16 +398,20 @@ export default function TeachingPage() {
               className={material.publicId === selectedId
                 ? 'teaching-item teaching-item-active' : 'teaching-item'}
               onClick={() => navigate(`/teaching/${material.publicId}`)}
-              actions={canManage ? [
-                <Button key="edit" size="small" type="text" aria-label="编辑信息" icon={<EditOutlined />}
-                  onClick={event => { event.stopPropagation(); openEdit(material) }} />,
-                <Button key="replace" size="small" type="text" aria-label="替换文件" icon={<SwapOutlined />}
-                  onClick={event => { event.stopPropagation(); setReplaceTarget(material) }} />,
-                <Popconfirm key="delete" title="删除这份教学资料？" okText="删除" cancelText="取消"
-                  onConfirm={() => void remove(material)}>
-                  <Button size="small" type="text" danger aria-label="删除资料" icon={<DeleteOutlined />}
-                    onClick={event => event.stopPropagation()} />
-                </Popconfirm>,
+              actions={canManage || canDelete ? [
+                ...(canManage ? [
+                  <Button key="edit" size="small" type="text" aria-label="编辑信息" icon={<EditOutlined />}
+                    onClick={event => { event.stopPropagation(); openEdit(material) }} />,
+                  <Button key="replace" size="small" type="text" aria-label="替换文件" icon={<SwapOutlined />}
+                    onClick={event => { event.stopPropagation(); setReplaceTarget(material) }} />,
+                ] : []),
+                ...(canDelete ? [
+                  <Popconfirm key="delete" title="删除这份教学资料？" okText="删除" cancelText="取消"
+                    onConfirm={() => void remove(material)}>
+                    <Button size="small" type="text" danger aria-label="删除资料" icon={<DeleteOutlined />}
+                      onClick={event => event.stopPropagation()} />
+                  </Popconfirm>,
+                ] : []),
               ] : undefined}>
               <List.Item.Meta
                 avatar={formatIcon(material.format)}

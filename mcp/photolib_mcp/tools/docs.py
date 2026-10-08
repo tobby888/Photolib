@@ -8,7 +8,7 @@ from ..toolkit import ToolRegistry, compact
 from ..transfers import save_bytes
 
 NodeType = Literal["FOLDER", "DOCUMENT", "PDF"]
-Visibility = Literal["MEMBERS", "PUBLIC"]
+Visibility = Literal["MEMBERS", "PUBLIC", "RESTRICTED"]
 
 
 def register(registry: ToolRegistry) -> None:
@@ -53,14 +53,18 @@ def register(registry: ToolRegistry) -> None:
                                      json_body={"published": published, "version": version})
 
     @registry.tool("docs_set_visibility", write=True, tags=("docs",))
-    async def docs_set_visibility(node_id: int, visibility: Visibility,
-                                  version: int) -> dict[str, Any]:
-        """改可见范围：MEMBERS 需要登录才能看，PUBLIC 任何人都能看。
+    async def docs_set_visibility(node_id: int, visibility: Visibility, version: int,
+                                  group_ids: list[int] | None = None,
+                                  user_ids: list[int] | None = None) -> dict[str, Any]:
+        """改读者范围（需要 DOC_PUBLISH）：PUBLIC 任何人都能看，MEMBERS 需要登录，
+        RESTRICTED 只有 `group_ids` 里的权限组成员和 `user_ids` 里的成员能看（至少给一个）。
 
-        改可见范围不会顺带改发布状态，两件事互不影响。
+        改读者范围不会顺带改发布状态，两件事互不影响。PUBLIC / MEMBERS 会清空已有名单。
         """
-        return await session.request("POST", f"/docs/{node_id}/visibility",
-                                     json_body={"visibility": visibility, "version": version})
+        return await session.request("POST", f"/docs/{node_id}/visibility", json_body=compact({
+            "visibility": visibility, "version": version,
+            "groupIds": group_ids, "userIds": user_ids,
+        }))
 
     @registry.tool("docs_move", write=True, tags=("docs",))
     async def docs_move(node_id: int, index: int, version: int,

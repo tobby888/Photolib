@@ -500,7 +500,8 @@ public class PhotoService {
     @Transactional
     public PhotoView changeArchive(Long id, boolean archive, AuthenticatedUser user) {
         PhotoEntity photo = require(id);
-        if (!user.hasPermission(PermissionCode.PHOTO_DELETE)) {
+        // 归档 / 恢复从 PHOTO_DELETE 里拆了出来（V62）：可撤销的归档不必和不可撤销的删除绑在一起。
+        if (!user.hasPermission(PermissionCode.PHOTO_ARCHIVE)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权归档或恢复图片");
         }
         requireVisible(photo, user);

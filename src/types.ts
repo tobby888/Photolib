@@ -4,14 +4,15 @@ export type DataScope = 'NONE' | 'CAMPUS' | 'GLOBAL'
 // 权限组的图库可见范围，与数据范围正交：SELF 仅本人上传、CAMPUS 授权校区内全部、GLOBAL 全站全部。
 export type PhotoVisibility = 'SELF' | 'CAMPUS' | 'GLOBAL'
 export type PermissionCode =
-  | 'PROJECT_VIEW' | 'PROJECT_VIEW_ALL' | 'PROJECT_ADOPT' | 'PROJECT_CREATE' | 'PROJECT_COMPLETE'
+  | 'PROJECT_VIEW' | 'PROJECT_VIEW_ALL' | 'PROJECT_ADOPT' | 'PROJECT_CREATE' | 'PROJECT_DELETE' | 'PROJECT_COMPLETE'
   | 'PROJECT_DOWNLOAD' | 'PROJECT_SHARE'
   | 'REQUEST_VIEW' | 'REQUEST_CREATE' | 'REQUEST_DELETE' | 'REQUEST_CLOSE' | 'REQUEST_CONFIRM' | 'REQUEST_PHOTO_MANAGE'
-  | 'PHOTO_VIEW' | 'PHOTO_DELETE' | 'PHOTO_UPLOAD' | 'PHOTO_DOWNLOAD'
+  | 'PHOTO_VIEW' | 'PHOTO_DELETE' | 'PHOTO_ARCHIVE' | 'PHOTO_UPLOAD' | 'PHOTO_DOWNLOAD'
   | 'WORKLOG_SUBMIT' | 'WORKLOG_SUBMIT_ANY' | 'WORKLOG_CONFIRM' | 'WORKLOG_EXPORT'
   | 'DIRECTORY_VIEW' | 'DIRECTORY_MANAGE' | 'MESSAGE_SEND'
   | 'RECRUITMENT_VIEW' | 'RECRUITMENT_PUBLISH' | 'SURVEY_CREATE' | 'SURVEY_ACCESS' | 'SURVEY_RESULT_VIEW'
-  | 'FEATURED_MANAGE' | 'DOC_MANAGE' | 'TEACHING_MANAGE'
+  | 'FEATURED_MANAGE' | 'DOC_MANAGE' | 'DOC_PUBLISH' | 'FILE_UPLOAD' | 'FILE_MANAGE'
+  | 'TEACHING_MANAGE' | 'TEACHING_DELETE'
   | 'STATISTICS_DOWNLOAD' | 'MANAGER_CAMPUS_ASSIGN'
 
 export interface User {
@@ -85,6 +86,8 @@ export interface PermissionDefinition {
   label: string
   /** 能打开要求再验证的操作（删除图片 / 选题 / 需求等）：勾了它的权限组固定强制两步验证。 */
   requiresMfa?: boolean
+  /** 从哪条旧权限拆出来的（V62）。存量权限组持有旧权限的都已补上这一条。 */
+  splitFrom?: PermissionCode | null
 }
 
 export interface PermissionCategoryDefinition {
@@ -703,8 +706,11 @@ export interface FeaturedDocumentDownload {
 
 /** FOLDER 是容器；DOCUMENT 的正文是 Markdown，PDF 的正文就是上传的那份文件。 */
 export type DocNodeType = 'FOLDER' | 'DOCUMENT' | 'PDF'
-/** PUBLIC：未登录也能看；MEMBERS：必须登录。与 published 正交，两个条件都要满足。 */
-export type DocVisibility = 'PUBLIC' | 'MEMBERS'
+/**
+ * PUBLIC：未登录也能看；MEMBERS：必须登录；RESTRICTED：必须登录且属于指定的权限组或成员。
+ * 与 published 正交，两个条件都要满足。文件库的下载范围用的是同一套三档。
+ */
+export type DocVisibility = 'PUBLIC' | 'MEMBERS' | 'RESTRICTED'
 
 /** 编辑视角的节点，包含草稿和仅限成员的文档。只有 DOC_MANAGE 拿得到。 */
 export interface DocManageNode {
@@ -716,6 +722,9 @@ export interface DocManageNode {
   sortOrder: number
   published: boolean
   visibility: DocVisibility
+  /** 只在 RESTRICTED 时有内容：能读这篇文档的权限组与成员。 */
+  readerGroupIds?: EntityId[]
+  readerUserIds?: EntityId[]
   /** 是否已经写过正文。没有正文的文档不允许发布。 */
   hasContent: boolean
   contentSize?: number | null
@@ -748,6 +757,8 @@ export interface DocReaderNode {
   title: string
   summary?: string | null
   requiresLogin: boolean
+  /** 只对指定的权限组 / 成员开放。名单本身不下发给读者。 */
+  restricted?: boolean
   updatedAt?: string | null
   children: DocReaderNode[]
 }
@@ -765,9 +776,60 @@ export interface DocReaderDocument {
   fileUrl?: string | null
   fileSize?: number | null
   requiresLogin: boolean
+  restricted?: boolean
   updatedAt?: string | null
   updaterDisplayName?: string | null
   breadcrumb: string[]
+}
+
+/** 挑选"指定成员"名单的候选（`GET /doc-audience`）。 */
+export interface DocAudienceOptions {
+  groups: { id: EntityId; name: string; memberCount: number }[]
+  users: {
+    id: EntityId
+    displayName: string
+    username: string
+    permissionGroupId?: EntityId | null
+    permissionGroupName?: string | null
+  }[]
+}
+
+/** 文件库里的一个文件。读者名单只对能管理它的人（上传者 / FILE_MANAGE）下发。 */
+export interface DocFile {
+  id: EntityId
+  publicId: string
+  title: string
+  fileName: string
+  contentType: string
+  size: number
+  description?: string | null
+  visibility: DocVisibility
+  readerGroupIds?: EntityId[]
+  readerUserIds?: EntityId[]
+  downloadCount: number
+  uploaderId?: EntityId | null
+  uploaderDisplayName?: string | null
+  createdAt?: string | null
+  updatedAt?: string | null
+  version: number
+  canManage: boolean
+}
+
+/** 一次下载签出来的短命直链：浏览器直接去存储取，不经过 axios（没有超时问题）。 */
+export interface DocFileDownload {
+  downloadUrl: string
+  expiresAt: string
+  fileName: string
+  size: number
+}
+
+/** 上传者自己的用量和管理员定的上限。 */
+export interface DocFileUsage {
+  usedBytes: number
+  quotaBytes: number
+  uploadedToday: number
+  dailyUploads: number
+  maxFileBytes: number
 }
 
 /**

@@ -57,14 +57,23 @@ class TeachingControllerSecurityTests {
 
     @Test
     @WithMockUser(authorities = "TEACHING_MANAGE")
-    void teachingManageOpensTheWholeManagementSurface() {
+    void teachingManageOpensTheManagementSurfaceExceptDeleting() {
         manageController.authors();
-        manageController.delete(7L, 3, principal);
         manageController.renameCategory(new TeachingManageController.CategoryRenameRequest("旧", "新"));
 
         verify(service).authorOptions();
-        verify(service).delete(7L, 3, principal);
         verify(service).renameCategory("旧", "新");
+        // 删除从 TEACHING_MANAGE 里拆了出去（V62）。
+        assertThatThrownBy(() -> manageController.delete(7L, 3, principal))
+                .isInstanceOf(AccessDeniedException.class);
+    }
+
+    @Test
+    @WithMockUser(authorities = "TEACHING_DELETE")
+    void teachingDeleteIsItsOwnPermission() {
+        manageController.delete(7L, 3, principal);
+        verify(service).delete(7L, 3, principal);
+        assertThatThrownBy(() -> manageController.authors()).isInstanceOf(AccessDeniedException.class);
     }
 
     @Test

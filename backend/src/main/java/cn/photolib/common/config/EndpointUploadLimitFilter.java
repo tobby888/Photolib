@@ -93,6 +93,10 @@ public class EndpointUploadLimitFilter extends OncePerRequestFilter {
                     Math.max(limit(UploadLimit.TEACHING_WORD_MAX_BYTES),
                             limit(UploadLimit.TEACHING_PPT_MAX_BYTES))) + MULTIPART_OVERHEAD;
         }
+        // 文件库上传：POST /api/v1/doc-files。只认集合路径本身，/public/doc-files/** 是下载。
+        if ("POST".equals(request.getMethod()) && path.endsWith("/api/v1/doc-files")) {
+            return limit(UploadLimit.FILE_MAX_BYTES) + MULTIPART_OVERHEAD;
+        }
         if ("POST".equals(request.getMethod()) && path.endsWith("/database-backups/upload")) {
             return limit(UploadLimit.DATABASE_BACKUP_MAX_BYTES) + MULTIPART_OVERHEAD;
         }

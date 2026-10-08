@@ -1,7 +1,7 @@
 import { DownloadOutlined, ReloadOutlined } from '@ant-design/icons'
 import { Alert, Button, Skeleton, Space, Typography } from 'antd'
 import { useEffect, useState } from 'react'
-import { http } from './api'
+import { http, largeDownloadConfig } from './api'
 
 /**
  * 内嵌的 PDF 阅读器，读者页和编辑器共用。
@@ -29,7 +29,8 @@ export default function DocPdfViewer({ path, title, height = '70vh' }: {
     let currentUrl: string | undefined
     setObjectUrl(undefined)
     setError(undefined)
-    void http.get<Blob>(path, { responseType: 'blob' })
+    // 不用全局 20 秒超时：几十 MiB 的 PDF 在一般校园网上 20 秒取不完，限额放得下却报失败。
+    void http.get<Blob>(path, { responseType: 'blob', ...largeDownloadConfig() })
       .then(response => {
         if (!active) return
         currentUrl = URL.createObjectURL(response.data)

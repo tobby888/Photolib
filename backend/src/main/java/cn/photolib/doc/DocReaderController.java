@@ -24,7 +24,8 @@ import java.util.List;
  *
  * <p>路径里的 {@code public} 指的是"这些接口不需要登录就能调用"，
  * <b>不是</b>"返回的内容都是公开的"。同一个接口对两类读者返回不同的结果：
- * 未登录只能拿到 {@code PUBLIC} 文档，登录后连同 {@code MEMBERS} 文档一起返回。
+ * 未登录只能拿到 {@code PUBLIC} 文档，登录后连同 {@code MEMBERS} 文档、以及把自己列为读者的
+ * {@code RESTRICTED} 文档一起返回。
  * 判定在 {@link DocService} 里完成，这里只负责把"当前调用方是否已登录"传下去。</p>
  *
  * <p>之所以不拆成"匿名接口 + 登录接口"两套：拆开就有两处判定，
@@ -45,7 +46,7 @@ public class DocReaderController {
     ApiResponse<List<DocService.ReaderNode>> tree(@AuthenticationPrincipal AuthenticatedUser user,
                                                   HttpServletRequest request) {
         limit(DocRateLimiter.Action.PUBLIC_TREE, user, request);
-        return ApiResponse.ok(service.readerTree(user != null));
+        return ApiResponse.ok(service.readerTree(DocReader.of(user)));
     }
 
     @GetMapping("/assets/{assetId}")
@@ -53,7 +54,7 @@ public class DocReaderController {
                                               @AuthenticationPrincipal AuthenticatedUser user,
                                               HttpServletRequest request) {
         limit(DocRateLimiter.Action.PUBLIC_ASSET, user, request);
-        DocAssetEntity asset = service.readerAsset(assetId, user != null);
+        DocAssetEntity asset = service.readerAsset(assetId, DocReader.of(user));
         // 缓存必须是 private：同一个 URL 对匿名访客可能是 403、对成员是图片，
         // 共享缓存会把成员拿到的响应发给下一个匿名访客。
         return ResponseEntity.ok()
@@ -73,7 +74,7 @@ public class DocReaderController {
                                              @AuthenticationPrincipal AuthenticatedUser user,
                                              HttpServletRequest request) {
         limit(DocRateLimiter.Action.PUBLIC_FILE, user, request);
-        DocNodeEntity node = service.readerPdf(publicId, user != null);
+        DocNodeEntity node = service.readerPdf(publicId, DocReader.of(user));
         return DocPdfResponse.of(node, service.openNode(node));
     }
 
@@ -82,7 +83,7 @@ public class DocReaderController {
                                                     @AuthenticationPrincipal AuthenticatedUser user,
                                                     HttpServletRequest request) {
         limit(DocRateLimiter.Action.PUBLIC_DOCUMENT, user, request);
-        return ApiResponse.ok(service.readerDocument(publicId, user != null));
+        return ApiResponse.ok(service.readerDocument(publicId, DocReader.of(user)));
     }
 
     /**

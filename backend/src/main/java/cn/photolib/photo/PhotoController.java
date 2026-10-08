@@ -138,14 +138,14 @@ public class PhotoController {
     }
 
     @PostMapping("/{id}/archive")
-    @PreAuthorize("hasAuthority('PHOTO_DELETE')")
+    @PreAuthorize("hasAuthority('PHOTO_ARCHIVE')")
     ApiResponse<PhotoService.PhotoView> archive(@PathVariable Long id,
                                                 @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.changeArchive(id, true, user));
     }
 
     @PostMapping("/{id}/restore")
-    @PreAuthorize("hasAuthority('PHOTO_DELETE')")
+    @PreAuthorize("hasAuthority('PHOTO_ARCHIVE')")
     ApiResponse<PhotoService.PhotoView> restore(@PathVariable Long id,
                                                 @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.changeArchive(id, false, user));

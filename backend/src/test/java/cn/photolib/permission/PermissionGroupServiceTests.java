@@ -60,7 +60,12 @@ class PermissionGroupServiceTests {
                 // 问卷由管理员和部长发起和查看结果，V57 把三个问卷权限都发给了部长。
                 PermissionCode.SURVEY_CREATE, PermissionCode.SURVEY_ACCESS,
                 PermissionCode.SURVEY_RESULT_VIEW,
-                PermissionCode.STATISTICS_DOWNLOAD, PermissionCode.MANAGER_CAMPUS_ASSIGN);
+                PermissionCode.STATISTICS_DOWNLOAD, PermissionCode.MANAGER_CAMPUS_ASSIGN,
+                // V62 把四条粗权限各拆出一条，并按"持有旧码就补新码"回填，部长能做的事不变。
+                PermissionCode.PROJECT_DELETE, PermissionCode.PHOTO_ARCHIVE,
+                PermissionCode.DOC_PUBLISH, PermissionCode.TEACHING_DELETE,
+                // 文件库的两条新权限默认给管理员和部长，和文档中心的编写权限一致（V62）。
+                PermissionCode.FILE_UPLOAD, PermissionCode.FILE_MANAGE);
         assertThat(manager.dataScope()).isEqualTo(DataScope.CAMPUS);
         // 校区负责人刻意不补 PROJECT_VIEW_ALL：它改动前就只看得到自己接到需求的选题。
         assertThat(manager.permissions()).containsExactlyInAnyOrder(
