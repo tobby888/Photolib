@@ -11,6 +11,7 @@ public enum PermissionCategory {
     SURVEY("问卷"),
     FEATURED("好图精选"),
     DOC("文档中心"),
+    FILE("文件库"),
     TEACHING("教学资料"),
     STATISTICS("数据统计"),
     MANAGER_CAMPUS("负责人校区编辑");

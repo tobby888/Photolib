@@ -21,6 +21,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -36,6 +37,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Transactional
 class DocServiceTests {
     private static final long MINISTER_ID = 9_901L;
+    private static final long READER_ID = 9_902L;
+    private static final long OUTSIDER_ID = 9_903L;
+    /** 一位登录了、但没有任何文档权限、也不在任何名单上的成员。 */
+    private static final DocReader MEMBER = new DocReader(OUTSIDER_ID, null, Set.of());
+    private static final DocReader ANONYMOUS = DocReader.ANONYMOUS;
     private static final byte[] PDF_BYTES = "%PDF-1.4 假装这是一份手册".getBytes(StandardCharsets.UTF_8);
 
     @Autowired private DocService service;
@@ -169,22 +175,22 @@ class DocServiceTests {
         long open = publishedDocument(null, "公开说明", "# 公开\n谁都能看", DocVisibility.PUBLIC);
         long members = publishedDocument(null, "内部说明", "# 内部\n登录才能看", DocVisibility.MEMBERS);
 
-        assertThat(service.readerTree(false)).extracting(DocService.ReaderNode::title)
+        assertThat(service.readerTree(ANONYMOUS)).extracting(DocService.ReaderNode::title)
                 .containsExactly("公开说明");
-        assertThat(service.readerTree(true)).extracting(DocService.ReaderNode::title)
+        assertThat(service.readerTree(MEMBER)).extracting(DocService.ReaderNode::title)
                 .containsExactlyInAnyOrder("公开说明", "内部说明");
 
         String openPublicId = nodeMapper.selectById(open).getPublicId();
         String membersPublicId = nodeMapper.selectById(members).getPublicId();
 
-        assertThat(service.readerDocument(openPublicId, false).content()).contains("谁都能看");
+        assertThat(service.readerDocument(openPublicId, ANONYMOUS).content()).contains("谁都能看");
         // 直链打开仅成员文档：明确回"要登录"，而不是含糊的 404——
         // 成员把链接发给同学时，这个区别决定了对方知不知道该做什么。
-        assertThatThrownBy(() -> service.readerDocument(membersPublicId, false))
+        assertThatThrownBy(() -> service.readerDocument(membersPublicId, ANONYMOUS))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code").isEqualTo(ErrorCode.FORBIDDEN);
-        assertThat(service.readerDocument(membersPublicId, true).content()).contains("登录才能看");
-        assertThat(service.readerDocument(membersPublicId, true).requiresLogin()).isTrue();
+        assertThat(service.readerDocument(membersPublicId, MEMBER).content()).contains("登录才能看");
+        assertThat(service.readerDocument(membersPublicId, MEMBER).requiresLogin()).isTrue();
     }
 
     @Test
@@ -193,9 +199,9 @@ class DocServiceTests {
         service.saveContent(draft, "写了一半", version(draft), minister);
         String publicId = nodeMapper.selectById(draft).getPublicId();
 
-        assertThat(service.readerTree(true)).isEmpty();
+        assertThat(service.readerTree(MEMBER)).isEmpty();
         // 未发布对所有读者都是 404：草稿不该因为"你已经登录了"就漏出去。
-        assertThatThrownBy(() -> service.readerDocument(publicId, true))
+        assertThatThrownBy(() -> service.readerDocument(publicId, MEMBER))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code").isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
     }
@@ -207,8 +213,8 @@ class DocServiceTests {
 
         // 未登录：文件夹里没有它能看的东西，整个文件夹都不该出现，
         // 否则点开一个空文件夹会让人以为系统坏了。
-        assertThat(service.readerTree(false)).isEmpty();
-        assertThat(service.readerTree(true)).singleElement()
+        assertThat(service.readerTree(ANONYMOUS)).isEmpty();
+        assertThat(service.readerTree(MEMBER)).singleElement()
                 .satisfies(node -> assertThat(node.children()).hasSize(1));
     }
 
@@ -219,6 +225,100 @@ class DocServiceTests {
 
         assertThat(nodeMapper.selectById(id).getPublished()).isTrue();
         assertThat(nodeMapper.selectById(id).getVisibility()).isEqualTo(DocVisibility.MEMBERS);
+    }
+
+    // ------------------------------------------------------------------
+    // 指定读者（V62）
+    // ------------------------------------------------------------------
+
+    @Test
+    void restrictedDocumentsReachOnlyTheListedGroupsAndMembers() {
+        insertUser(READER_ID, "doc-reader");
+        insertUser(OUTSIDER_ID, "doc-outsider");
+        long groupId = groupId("CAMPUS_MANAGER");
+        long id = publishedDocument(null, "预算说明", "只给负责人看", DocVisibility.MEMBERS);
+        service.setVisibility(id, DocVisibility.RESTRICTED, Set.of(groupId), Set.of(READER_ID), version(id), minister);
+        String publicId = nodeMapper.selectById(id).getPublicId();
+
+        DocReader viaGroup = new DocReader(OUTSIDER_ID + 100, groupId, Set.of());
+        DocReader viaUser = new DocReader(READER_ID, null, Set.of());
+
+        // 名单上的人（按组或按人）都能在目录里看到它，并且知道它是"指定成员"的。
+        assertThat(service.readerTree(viaGroup)).singleElement()
+                .satisfies(node -> assertThat(node.restricted()).isTrue());
+        assertThat(service.readerDocument(publicId, viaUser).content()).contains("只给负责人看");
+        assertThat(service.readerDocument(publicId, viaGroup).restricted()).isTrue();
+
+        // 名单外的成员：目录里整条不出现（标题也是内部信息），直链 403 且不叫他去登录。
+        assertThat(service.readerTree(MEMBER)).isEmpty();
+        assertThatThrownBy(() -> service.readerDocument(publicId, MEMBER))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("指定的成员")
+                .extracting("code").isEqualTo(ErrorCode.FORBIDDEN);
+        // 匿名：同样看不到，直链提示先登录。
+        assertThat(service.readerTree(ANONYMOUS)).isEmpty();
+        assertThatThrownBy(() -> service.readerDocument(publicId, ANONYMOUS))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("登录");
+
+        // 能发布文档的人在读者视角也看得到，否则"查看读者视角"按钮打不开。
+        DocReader publisher = new DocReader(OUTSIDER_ID, null,
+                Set.of(cn.photolib.permission.PermissionCode.DOC_PUBLISH));
+        assertThat(service.readerTree(publisher)).hasSize(1);
+    }
+
+    @Test
+    void assetsAndPdfsOfRestrictedDocumentsFollowTheSameList() throws IOException {
+        insertUser(READER_ID, "doc-reader");
+        long id = document(null, "带图的指定文档");
+        service.saveContent(id, "正文", version(id), minister);
+        DocService.AssetUploaded asset = service.uploadAsset(id, pngUpload(), minister);
+        service.setPublished(id, true, version(id), minister);
+        service.setVisibility(id, DocVisibility.RESTRICTED, Set.of(), Set.of(READER_ID), version(id), minister);
+
+        DocReader listed = new DocReader(READER_ID, null, Set.of());
+        assertThat(service.readerAsset(asset.id(), listed).getNodeId()).isEqualTo(id);
+        // 插图直链绝不能成为绕过名单的旁路：登录了但不在名单上，照样拿不到。
+        assertThatThrownBy(() -> service.readerAsset(asset.id(), MEMBER))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
+
+        long pdf = service.createPdf(null, "指定的 PDF", pdfUpload(), minister).focusId();
+        service.setPublished(pdf, true, version(pdf), minister);
+        service.setVisibility(pdf, DocVisibility.RESTRICTED, Set.of(), Set.of(READER_ID), version(pdf), minister);
+        String pdfId = nodeMapper.selectById(pdf).getPublicId();
+        assertThat(service.readerPdf(pdfId, listed).getId()).isEqualTo(pdf);
+        assertThatThrownBy(() -> service.readerPdf(pdfId, MEMBER))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo(ErrorCode.FORBIDDEN);
+    }
+
+    @Test
+    void aRestrictedListMustNameSomeoneAndIsDroppedWhenTheScopeWidens() {
+        insertUser(READER_ID, "doc-reader");
+        long id = publishedDocument(null, "名单规则", "正文", DocVisibility.MEMBERS);
+
+        // 空名单的"指定成员"谁也读不到，几乎一定是忘了选。
+        assertThatThrownBy(() -> service.setVisibility(id, DocVisibility.RESTRICTED, Set.of(), Set.of(),
+                version(id), minister))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo(ErrorCode.VALIDATION_ERROR);
+        // 不存在的组 / 人整批拒绝，不会只存一半。
+        assertThatThrownBy(() -> service.setVisibility(id, DocVisibility.RESTRICTED, Set.of(987_654L), Set.of(),
+                version(id), minister))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo(ErrorCode.VALIDATION_ERROR);
+
+        service.setVisibility(id, DocVisibility.RESTRICTED, Set.of(), Set.of(READER_ID), version(id), minister);
+        assertThat(service.tree()).singleElement()
+                .satisfies(node -> assertThat(node.readerUserIds()).containsExactly(READER_ID));
+
+        // 改回"登录后"：名单清空，免得之后再切回 RESTRICTED 时旧名单悄悄复活。
+        service.setVisibility(id, DocVisibility.MEMBERS, version(id), minister);
+        assertThat(service.tree()).singleElement()
+                .satisfies(node -> assertThat(node.readerUserIds()).isEmpty());
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM resource_access_grant WHERE resource_type='DOC' AND resource_id=:id")
+                .param("id", id).query(Long.class).single()).isZero();
     }
 
     // ------------------------------------------------------------------
@@ -245,7 +345,7 @@ class DocServiceTests {
         storage.delete(nodeMapper.selectById(id).getObjectKey());
 
         String publicId = nodeMapper.selectById(id).getPublicId();
-        assertThat(service.readerDocument(publicId, false).content()).isEmpty();
+        assertThat(service.readerDocument(publicId, ANONYMOUS).content()).isEmpty();
     }
 
     @Test
@@ -256,18 +356,18 @@ class DocServiceTests {
         assertThat(asset.url()).isEqualTo(DocService.ASSET_URL_PREFIX + asset.id());
 
         // 未发布：谁都读不到，包括已登录的读者。
-        assertThatThrownBy(() -> service.readerAsset(asset.id(), true))
+        assertThatThrownBy(() -> service.readerAsset(asset.id(), MEMBER))
                 .isInstanceOf(BusinessException.class);
 
         service.setPublished(id, true, version(id), minister);
         // 已发布但仅限成员：匿名直链必须被拒，否则把图片地址发出去就绕过了登录要求。
-        assertThatThrownBy(() -> service.readerAsset(asset.id(), false))
+        assertThatThrownBy(() -> service.readerAsset(asset.id(), ANONYMOUS))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code").isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
-        assertThat(service.readerAsset(asset.id(), true).getNodeId()).isEqualTo(id);
+        assertThat(service.readerAsset(asset.id(), MEMBER).getNodeId()).isEqualTo(id);
 
         service.setVisibility(id, DocVisibility.PUBLIC, version(id), minister);
-        assertThat(service.readerAsset(asset.id(), false).getNodeId()).isEqualTo(id);
+        assertThat(service.readerAsset(asset.id(), ANONYMOUS).getNodeId()).isEqualTo(id);
     }
 
     // ------------------------------------------------------------------
@@ -313,8 +413,8 @@ class DocServiceTests {
         String publicId = nodeMapper.selectById(id).getPublicId();
 
         // 草稿：所有读者都看不到，包括已登录的。
-        assertThat(service.readerTree(true)).isEmpty();
-        assertThatThrownBy(() -> service.readerPdf(publicId, true))
+        assertThat(service.readerTree(MEMBER)).isEmpty();
+        assertThatThrownBy(() -> service.readerPdf(publicId, MEMBER))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code").isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
 
@@ -322,16 +422,16 @@ class DocServiceTests {
 
         // 已发布但仅限成员：目录里对匿名访客整条隐藏，文件直链同样被拒——
         // PDF 的直链就是它的正文，判松一格等于把内部文件放上公网。
-        assertThat(service.readerTree(false)).isEmpty();
-        assertThatThrownBy(() -> service.readerPdf(publicId, false))
+        assertThat(service.readerTree(ANONYMOUS)).isEmpty();
+        assertThatThrownBy(() -> service.readerPdf(publicId, ANONYMOUS))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code").isEqualTo(ErrorCode.FORBIDDEN);
-        assertThat(service.readerTree(true)).extracting(DocService.ReaderNode::nodeType)
+        assertThat(service.readerTree(MEMBER)).extracting(DocService.ReaderNode::nodeType)
                 .containsExactly(DocNodeType.PDF);
-        assertThat(service.readerPdf(publicId, true).getId()).isEqualTo(id);
+        assertThat(service.readerPdf(publicId, MEMBER).getId()).isEqualTo(id);
 
         service.setVisibility(id, DocVisibility.PUBLIC, version(id), minister);
-        assertThat(service.readerPdf(publicId, false).getId()).isEqualTo(id);
+        assertThat(service.readerPdf(publicId, ANONYMOUS).getId()).isEqualTo(id);
     }
 
     @Test
@@ -340,7 +440,7 @@ class DocServiceTests {
         service.setPublished(id, true, version(id), minister);
         String publicId = nodeMapper.selectById(id).getPublicId();
 
-        DocService.ReaderDocument opened = service.readerDocument(publicId, true);
+        DocService.ReaderDocument opened = service.readerDocument(publicId, MEMBER);
 
         assertThat(opened.nodeType()).isEqualTo(DocNodeType.PDF);
         // 正文必须是空串而不是把 PDF 字节按 UTF-8 读出来的一堆乱码。
@@ -417,6 +517,19 @@ class DocServiceTests {
 
     private int version(long id) {
         return nodeMapper.selectById(id).getVersion();
+    }
+
+    private void insertUser(long id, String username) {
+        jdbc.sql("""
+                INSERT INTO app_user
+                    (id, username, password_hash, display_name, role, enabled, must_change_password)
+                VALUES (:id, :username, 'hash', :username, 'CAMPUS_MANAGER', TRUE, FALSE)
+                """).param("id", id).param("username", username).update();
+    }
+
+    private long groupId(String code) {
+        return jdbc.sql("SELECT id FROM permission_group WHERE code=:code")
+                .param("code", code).query(Long.class).single();
     }
 
     private String read(String objectKey) {

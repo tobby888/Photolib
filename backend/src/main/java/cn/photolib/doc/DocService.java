@@ -12,6 +12,7 @@ import cn.photolib.doc.model.DocAssetEntity;
 import cn.photolib.doc.model.DocNodeEntity;
 import cn.photolib.doc.model.DocNodeType;
 import cn.photolib.doc.model.DocVisibility;
+import cn.photolib.permission.PermissionCode;
 import cn.photolib.storage.ObjectStorageService;
 import cn.photolib.uploadlimit.UploadLimit;
 import cn.photolib.uploadlimit.UploadLimitService;
@@ -29,12 +30,14 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * 文档中心。
@@ -48,10 +51,10 @@ import java.util.Objects;
  * </ul>
  *
  * <p><b>可见性是两个正交的开关，判定时必须同时满足</b>（{@link #visibleTo}）：
- * {@code published} 决定"是不是草稿"，{@code visibility} 决定"要不要登录"。
- * 部长可以把某篇文档设为 {@code MEMBERS}，未登录的人就读不到它——
- * 目录里不列出，直链打开返回一个"请先登录"的 403，插图直链同样拒绝
- * （见 {@code DocAssetMapper.findReadable}）。三处判定必须同时成立才算真正挡住，
+ * {@code published} 决定"是不是草稿"，{@code visibility} 决定"谁能读"——
+ * 所有人 / 登录后 / 指定权限组与成员（V62，名单见 {@link DocAudience}）。
+ * 不在范围里的读者：目录里不列出，直链打开返回 403（未登录时提示"请先登录"），
+ * 插图和 PDF 直链同样拒绝。目录、正文、插图、PDF 四处判定必须同时成立才算真正挡住，
  * 少一处就等于把内容从另一个门放了出去。</p>
  *
  * <p><b>叶子有两种，规则完全一样。</b>{@code DOCUMENT} 的正文是 Markdown，
@@ -98,6 +101,7 @@ public class DocService {
     private final DocAssetMapper assetMapper;
     private final ObjectStorageService storage;
     private final UploadLimitService uploadLimits;
+    private final DocAudience audience;
 
     // ------------------------------------------------------------------
     // 读取
@@ -105,23 +109,26 @@ public class DocService {
 
     /** 编辑视角的整棵树：草稿和已发布的都在。 */
     public List<ManageNode> tree() {
-        return buildManage(byParent(nodeMapper.findAll()), null, 1);
+        return buildManage(byParent(nodeMapper.findAll()), audience.loadAll(DocAudience.ResourceType.DOC),
+                null, 1);
     }
 
     public DocumentDetail get(long id) {
         DocNodeEntity node = requireNode(id);
-        return new DocumentDetail(toManage(node, List.of()), readContent(node), breadcrumb(node));
+        return new DocumentDetail(toManage(node, grantsOf(node), List.of()), readContent(node), breadcrumb(node));
     }
 
     /**
-     * 读者视角的目录。未登录时只列出 PUBLIC 文档，登录后 MEMBERS 文档也一并列出。
+     * 读者视角的目录。未登录时只列出 PUBLIC 文档，登录后 MEMBERS 文档也一并列出，
+     * RESTRICTED 文档只列给名单里的人（以及能编辑文档的人）。
      *
-     * <p>未登录时 MEMBERS 文档是<b>整条隐藏</b>的，连标题都不给：标题本身也可能是
+     * <p>读不到的文档是<b>整条隐藏</b>的，连标题都不给：标题本身也可能是
      * 内部信息（"某某活动预算说明"），把它列出来再标个锁，等于把一份内部目录
      * 挂在了公网上。</p>
      */
-    public List<ReaderNode> readerTree(boolean authenticated) {
-        return buildReader(byParent(nodeMapper.findAll()), null, 1, authenticated);
+    public List<ReaderNode> readerTree(DocReader reader) {
+        return buildReader(byParent(nodeMapper.findAll()), audience.loadAll(DocAudience.ResourceType.DOC),
+                null, 1, reader);
     }
 
     /**
@@ -136,20 +143,18 @@ public class DocService {
      * {@code api.ts} 的响应拦截器见到 401 会先去 {@code /auth/refresh} 重试一次，
      * 匿名访客身上这一次重试注定失败，还会顺带触发一次"会话过期"广播。</p>
      */
-    public ReaderDocument readerDocument(String publicId, boolean authenticated) {
+    public ReaderDocument readerDocument(String publicId, DocReader reader) {
         DocNodeEntity node = publicId == null ? null : nodeMapper.findByPublicId(publicId.trim());
         if (node == null || node.getNodeType().isFolder()
                 || !Boolean.TRUE.equals(node.getPublished())) {
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "文档不存在或尚未发布");
         }
-        if (!visibleTo(node, authenticated)) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "该文档需要登录后查看，请先登录");
-        }
+        requireVisible(node, reader);
         boolean pdf = node.getNodeType() == DocNodeType.PDF;
         return new ReaderDocument(node.getPublicId(), node.getNodeType(), node.getTitle(),
                 pdf ? "" : readContent(node), pdf ? fileUrl(node) : null,
                 pdf ? node.getContentSize() : null,
-                requiresLogin(node), node.getUpdatedAt(), node.getUpdaterDisplayName(),
+                requiresLogin(node), restricted(node), node.getUpdatedAt(), node.getUpdaterDisplayName(),
                 breadcrumb(node));
     }
 
@@ -158,16 +163,14 @@ public class DocService {
      * 完全一样，而且必须一样：PDF 的直链就是它的正文，判松一格等于把仅限成员的
      * 文件放到了公网上。
      */
-    public DocNodeEntity readerPdf(String publicId, boolean authenticated) {
+    public DocNodeEntity readerPdf(String publicId, DocReader reader) {
         DocNodeEntity node = publicId == null ? null : nodeMapper.findByPublicId(publicId.trim());
         if (node == null || node.getNodeType() != DocNodeType.PDF
                 || !Boolean.TRUE.equals(node.getPublished())
                 || !StringUtils.hasText(node.getObjectKey())) {
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "文档不存在或尚未发布");
         }
-        if (!visibleTo(node, authenticated)) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "该文档需要登录后查看，请先登录");
-        }
+        requireVisible(node, reader);
         return node;
     }
 
@@ -185,13 +188,17 @@ public class DocService {
     }
 
     /**
-     * 插图。可见性完全跟随所属文档：未发布、或者需要登录而调用方未登录，都查不到。
-     * 这一条是安全边界——插图直链绝不能成为绕过登录要求的旁路。
+     * 插图。可见性完全跟随所属文档：未发布、或者调用方不在这篇文档的读者范围里，都查不到。
+     * 这一条是安全边界——插图直链绝不能成为绕过读者范围的旁路。判定复用 {@link #visibleTo}，
+     * 不在 SQL 里另写一份（指定读者的名单不是一个能顺手 join 的条件）。
      */
-    public DocAssetEntity readerAsset(String assetId, boolean authenticated) {
-        DocAssetEntity asset = assetId == null ? null
-                : assetMapper.findReadable(assetId.trim(), authenticated);
-        if (asset == null) throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "图片不存在或不可访问");
+    public DocAssetEntity readerAsset(String assetId, DocReader reader) {
+        DocAssetEntity asset = assetId == null ? null : assetMapper.findPublished(assetId.trim());
+        DocNodeEntity node = asset == null ? null : nodeMapper.selectById(asset.getNodeId());
+        if (node == null || !Boolean.TRUE.equals(node.getPublished())
+                || !visibleTo(node, grantsOf(node), reader)) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "图片不存在或不可访问");
+        }
         return asset;
     }
 
@@ -282,7 +289,7 @@ public class DocService {
                 DocMarkdown.summary(text, SUMMARY_CHARS), user.id(), version, LocalDateTime.now()));
         storage.put(objectKey, new ByteArrayInputStream(bytes), bytes.length, CONTENT_TYPE);
         DocNodeEntity saved = requireNode(id);
-        return new DocumentDetail(toManage(saved, List.of()), text, breadcrumb(saved));
+        return new DocumentDetail(toManage(saved, grantsOf(saved), List.of()), text, breadcrumb(saved));
     }
 
     @Transactional
@@ -301,17 +308,24 @@ public class DocService {
         return new TreeMutation(tree(), id);
     }
 
-    /**
-     * 指定这篇文档要不要登录才能看。
-     *
-     * <p>和发布是两个独立开关，所以是独立的接口：把一篇已发布的文档改成
-     * {@code MEMBERS} 不应该顺带把它退回草稿，反过来也一样。改动立刻生效，
-     * 包括正文、目录里的条目和文档里的插图——三处都在读取时按同一个
-     * {@link #visibleTo} 判定，没有缓存需要失效。</p>
-     */
+    /** 不带名单的版本：只用于"所有人 / 登录后"两档（MCP 工具、旧版前端走的就是它）。 */
     @Transactional
     public TreeMutation setVisibility(long id, DocVisibility visibility, int version,
                                       AuthenticatedUser user) {
+        return setVisibility(id, visibility, List.of(), List.of(), version, user);
+    }
+
+    /**
+     * 指定这篇文档谁能读：所有人、登录后、或者指定的权限组与成员。
+     *
+     * <p>和发布是两个独立开关，所以是独立的接口：改读者范围不应该顺带把文档退回草稿，
+     * 反过来也一样。改动立刻生效，包括正文、目录里的条目、插图和 PDF 直链——
+     * 四处都在读取时按同一个 {@link #visibleTo} 判定，没有缓存需要失效。名单和
+     * 可见范围在同一个事务里写，乐观锁挡住的是整组修改。</p>
+     */
+    @Transactional
+    public TreeMutation setVisibility(long id, DocVisibility visibility, Collection<Long> groupIds,
+                                      Collection<Long> userIds, int version, AuthenticatedUser user) {
         DocNodeEntity node = requireNode(id);
         if (node.getNodeType().isFolder()) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR,
@@ -320,8 +334,10 @@ public class DocService {
         if (visibility == null) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择可见范围");
         }
+        DocAudience.Grants grants = audience.normalize(visibility, groupIds, userIds);
         requireUpdated(nodeMapper.updateVisibility(id, visibility.name(), user.id(), version,
                 LocalDateTime.now()));
+        audience.replace(DocAudience.ResourceType.DOC, id, grants);
         return new TreeMutation(tree(), id);
     }
 
@@ -562,13 +578,15 @@ public class DocService {
         return grouped;
     }
 
-    private List<ManageNode> buildManage(Map<Long, List<DocNodeEntity>> children, Long parentId, int depth) {
+    private List<ManageNode> buildManage(Map<Long, List<DocNodeEntity>> children,
+                                         Map<Long, DocAudience.Grants> grants, Long parentId, int depth) {
         // 深度兜底。移动接口已经挡住了环，但树遍历是渲染路径上唯一会因脏数据
         // 无限递归的地方，多一道保险比事后查栈溢出便宜。
         if (depth > MAX_DEPTH) return List.of();
         List<ManageNode> result = new ArrayList<>();
         for (DocNodeEntity node : children.getOrDefault(parentId, List.of())) {
-            result.add(toManage(node, buildManage(children, node.getId(), depth + 1)));
+            result.add(toManage(node, grants.getOrDefault(node.getId(), DocAudience.Grants.NONE),
+                    buildManage(children, grants, node.getId(), depth + 1)));
         }
         return result;
     }
@@ -578,34 +596,68 @@ public class DocService {
      * 至少一篇这位读者能看的文档时才出现，否则未登录的人会看到一排点开
      * 全是空的文件夹。
      */
-    private List<ReaderNode> buildReader(Map<Long, List<DocNodeEntity>> children, Long parentId,
-                                         int depth, boolean authenticated) {
+    private List<ReaderNode> buildReader(Map<Long, List<DocNodeEntity>> children,
+                                         Map<Long, DocAudience.Grants> grants, Long parentId,
+                                         int depth, DocReader reader) {
         if (depth > MAX_DEPTH) return List.of();
         List<ReaderNode> result = new ArrayList<>();
         for (DocNodeEntity node : children.getOrDefault(parentId, List.of())) {
             if (!node.getNodeType().isFolder()) {
-                if (Boolean.TRUE.equals(node.getPublished()) && visibleTo(node, authenticated)) {
+                if (Boolean.TRUE.equals(node.getPublished())
+                        && visibleTo(node, grants.getOrDefault(node.getId(), DocAudience.Grants.NONE), reader)) {
                     result.add(toReader(node, List.of()));
                 }
                 continue;
             }
-            List<ReaderNode> nested = buildReader(children, node.getId(), depth + 1, authenticated);
+            List<ReaderNode> nested = buildReader(children, grants, node.getId(), depth + 1, reader);
             if (!nested.isEmpty()) result.add(toReader(node, nested));
         }
         return result;
     }
 
     /**
-     * 可见性判定的唯一实现。目录、正文、插图三条读取路径都必须过这一关，
+     * 可见性判定的唯一入口。目录、正文、插图、PDF 四条读取路径都必须过这一关，
      * 谁绕过去，谁就成了那道被漏掉的门。
+     *
+     * <p>能编辑文档的人（DOC_MANAGE / DOC_PUBLISH）在读者视角也看得到"指定成员"的文档：
+     * 他们本来就能在编辑器里读到全部内容，在这里挡住只会让"查看读者视角"按钮打不开。
+     * 这条豁免只在已登录时成立，匿名读者不会带着任何权限码。</p>
      */
-    private boolean visibleTo(DocNodeEntity node, boolean authenticated) {
-        return authenticated || !requiresLogin(node);
+    private boolean visibleTo(DocNodeEntity node, DocAudience.Grants grants, DocReader reader) {
+        if (reader != null && (reader.has(PermissionCode.DOC_MANAGE) || reader.has(PermissionCode.DOC_PUBLISH))) {
+            return true;
+        }
+        return DocAudience.allows(effectiveVisibility(node), grants, reader);
+    }
+
+    /**
+     * 不在读者范围里时的两种 403：未登录的人得到"请先登录"（前端据此给出登录按钮），
+     * 已登录却不在名单上的人得到另一句话——让他去登录毫无意义。
+     */
+    private void requireVisible(DocNodeEntity node, DocReader reader) {
+        if (visibleTo(node, grantsOf(node), reader)) return;
+        if (reader == null || !reader.authenticated()) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "该文档需要登录后查看，请先登录");
+        }
+        throw new BusinessException(ErrorCode.FORBIDDEN, "这篇文档只对指定的成员开放");
+    }
+
+    private DocAudience.Grants grantsOf(DocNodeEntity node) {
+        return node.getVisibility() == DocVisibility.RESTRICTED
+                ? audience.load(DocAudience.ResourceType.DOC, node.getId()) : DocAudience.Grants.NONE;
     }
 
     /** 缺省按需要登录处理：可见性列缺失只可能是脏数据，此时宁可少给人看。 */
+    private static DocVisibility effectiveVisibility(DocNodeEntity node) {
+        return node.getVisibility() == null ? DocVisibility.MEMBERS : node.getVisibility();
+    }
+
     private boolean requiresLogin(DocNodeEntity node) {
-        return node.getVisibility() != DocVisibility.PUBLIC;
+        return effectiveVisibility(node) != DocVisibility.PUBLIC;
+    }
+
+    private boolean restricted(DocNodeEntity node) {
+        return effectiveVisibility(node) == DocVisibility.RESTRICTED;
     }
 
     private boolean isDescendant(Map<Long, List<DocNodeEntity>> children, long ancestorId, long candidateId) {
@@ -684,20 +736,24 @@ public class DocService {
         }
     }
 
-    private ManageNode toManage(DocNodeEntity node, List<ManageNode> children) {
+    private ManageNode toManage(DocNodeEntity node, DocAudience.Grants grants, List<ManageNode> children) {
+        DocVisibility visibility = effectiveVisibility(node);
+        DocAudience.Grants shown = visibility == DocVisibility.RESTRICTED ? grants : DocAudience.Grants.NONE;
         return new ManageNode(node.getId(), node.getPublicId(), node.getParentId(),
                 node.getNodeType(), node.getTitle(),
                 node.getSortOrder() == null ? 0 : node.getSortOrder(),
-                Boolean.TRUE.equals(node.getPublished()),
-                node.getVisibility() == null ? DocVisibility.MEMBERS : node.getVisibility(),
+                Boolean.TRUE.equals(node.getPublished()), visibility,
+                shown.groupIds(), shown.userIds(),
                 StringUtils.hasText(node.getObjectKey()), node.getContentSize(), node.getSummary(),
                 node.getUpdaterDisplayName(), node.getUpdatedAt(),
                 node.getVersion() == null ? 1 : node.getVersion(), children);
     }
 
     private ReaderNode toReader(DocNodeEntity node, List<ReaderNode> children) {
+        boolean folder = node.getNodeType().isFolder();
         return new ReaderNode(node.getPublicId(), node.getNodeType(), node.getTitle(),
-                node.getSummary(), requiresLogin(node), node.getUpdatedAt(), children);
+                node.getSummary(), !folder && requiresLogin(node), !folder && restricted(node),
+                node.getUpdatedAt(), children);
     }
 
     private String fileUrl(DocNodeEntity node) {
@@ -708,9 +764,11 @@ public class DocService {
     // 视图
     // ------------------------------------------------------------------
 
+    /** {@code readerGroupIds} / {@code readerUserIds} 只在 RESTRICTED 时有内容。 */
     public record ManageNode(long id, String publicId, Long parentId, DocNodeType nodeType,
                              String title, int sortOrder, boolean published,
-                             DocVisibility visibility, boolean hasContent,
+                             DocVisibility visibility, Set<Long> readerGroupIds, Set<Long> readerUserIds,
+                             boolean hasContent,
                              Long contentSize, String summary, String updaterDisplayName,
                              LocalDateTime updatedAt, int version, List<ManageNode> children) {
     }
@@ -723,11 +781,12 @@ public class DocService {
     }
 
     /**
-     * 读者目录里的一个节点。{@code requiresLogin} 只对已登录的读者有意义——
-     * 未登录时需要登录的文档根本不会出现在树里，所以这个字段永远是 false。
+     * 读者目录里的一个节点。{@code requiresLogin} / {@code restricted} 只对已登录的读者有意义——
+     * 未登录时需要登录的文档根本不会出现在树里，所以这两个字段永远是 false。
+     * 名单本身不下发给读者：谁在名单上也算内部信息。
      */
     public record ReaderNode(String publicId, DocNodeType nodeType, String title, String summary,
-                             boolean requiresLogin, LocalDateTime updatedAt,
+                             boolean requiresLogin, boolean restricted, LocalDateTime updatedAt,
                              List<ReaderNode> children) {
     }
 
@@ -738,7 +797,7 @@ public class DocService {
      */
     public record ReaderDocument(String publicId, DocNodeType nodeType, String title,
                                  String content, String fileUrl, Long fileSize,
-                                 boolean requiresLogin, LocalDateTime updatedAt,
+                                 boolean requiresLogin, boolean restricted, LocalDateTime updatedAt,
                                  String updaterDisplayName, List<String> breadcrumb) {
     }
 

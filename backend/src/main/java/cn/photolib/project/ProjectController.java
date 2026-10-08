@@ -83,7 +83,7 @@ public class ProjectController {
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAuthority('PROJECT_CREATE')")
+    @PreAuthorize("hasAuthority('PROJECT_DELETE')")
     @RequiresStepUp
     ApiResponse<Void> delete(@PathVariable Long id, @AuthenticationPrincipal AuthenticatedUser user) {
         service.delete(id, user);

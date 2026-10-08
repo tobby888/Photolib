@@ -418,6 +418,7 @@ function Shell() {
             <Route path="/surveys/:surveyId/fill" element={hasPermission(user, 'SURVEY_ACCESS') ? <SurveyFillPage /> : <Navigate to="/" />} />
             <Route path="/survey-responses/:responseId" element={hasPermission(user, 'SURVEY_RESULT_VIEW') ? <SurveyResponseDetailPage /> : <Navigate to="/" />} />
             <Route path="/documents" element={<DocumentsPage />} />
+            <Route path="/documents/files" element={<DocumentsPage section="files" />} />
             <Route path="/documents/:publicId" element={<DocumentsPage />} />
             <Route path="/teaching" element={hasPermission(user, 'PHOTO_VIEW') ? <TeachingPage /> : <Navigate to="/" />} />
             <Route path="/teaching/:publicId" element={hasPermission(user, 'PHOTO_VIEW') ? <TeachingPage /> : <Navigate to="/" />} />
@@ -474,6 +475,7 @@ export default function App() {
       而且登录之后能多看到"仅成员可见"的那部分，把登录用户挡在外面反而没道理。
     */}
     <Route path="/docs" element={<DocsPage />} />
+    <Route path="/docs/files" element={<DocsPage section="files" />} />
     <Route path="/docs/:publicId" element={<DocsPage />} />
     {/*
       选题分享页同样不把登录用户弹回工作台：链接常常是部员自己转发出去的，

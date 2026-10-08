@@ -30,13 +30,16 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 文档中心的编辑接口。
  *
- * <p>整个控制器只有一条授权规则：{@code DOC_MANAGE}。读接口也要它——
- * 这里的树包含未发布的草稿和仅限成员的文档，读者要走的是
- * {@link DocReaderController}。</p>
+ * <p>两条权限（V62 起）：类上的 {@code DOC_MANAGE} 管"写"——新建、改名、写正文、上传 PDF
+ * 和插图、拖拽、删除；{@code DOC_PUBLISH} 管"给谁看"——发布 / 撤回、设置读者范围。
+ * 方法上的 {@code @PreAuthorize} 覆盖类上的那一条，所以只需要发布权限的接口单独标注。
+ * 读接口（树、详情、PDF 预览）两条任意一条都行：只能发布的人也得看得到自己要发布的是什么。
+ * 这里的树包含未发布的草稿和限定读者的文档，读者要走的是 {@link DocReaderController}。</p>
  */
 @RestController
 @RequestMapping("/docs")
@@ -46,11 +49,13 @@ public class DocController {
     private final DocService service;
 
     @GetMapping("/tree")
+    @PreAuthorize("hasAnyAuthority('DOC_MANAGE','DOC_PUBLISH')")
     ApiResponse<List<DocService.ManageNode>> tree() {
         return ApiResponse.ok(service.tree());
     }
 
     @GetMapping("/{id}")
+    @PreAuthorize("hasAnyAuthority('DOC_MANAGE','DOC_PUBLISH')")
     ApiResponse<DocService.DocumentDetail> get(@PathVariable long id) {
         return ApiResponse.ok(service.get(id));
     }
@@ -77,6 +82,7 @@ public class DocController {
     }
 
     @PostMapping("/{id}/publication")
+    @PreAuthorize("hasAuthority('DOC_PUBLISH')")
     ApiResponse<DocService.TreeMutation> setPublished(@PathVariable long id,
                                                       @Valid @RequestBody PublicationRequest request,
                                                       @AuthenticationPrincipal AuthenticatedUser user) {
@@ -84,10 +90,12 @@ public class DocController {
     }
 
     @PostMapping("/{id}/visibility")
+    @PreAuthorize("hasAuthority('DOC_PUBLISH')")
     ApiResponse<DocService.TreeMutation> setVisibility(@PathVariable long id,
                                                        @Valid @RequestBody VisibilityRequest request,
                                                        @AuthenticationPrincipal AuthenticatedUser user) {
-        return ApiResponse.ok(service.setVisibility(id, request.visibility(), request.version(), user));
+        return ApiResponse.ok(service.setVisibility(id, request.visibility(), request.groupIds(),
+                request.userIds(), request.version(), user));
     }
 
     @PostMapping("/{id}/move")
@@ -135,6 +143,7 @@ public class DocController {
      * 而作者必须能在发布之前看一眼自己传上去的是不是那份文件。
      */
     @GetMapping("/{id}/file")
+    @PreAuthorize("hasAnyAuthority('DOC_MANAGE','DOC_PUBLISH')")
     ResponseEntity<InputStreamResource> file(@PathVariable long id) {
         DocNodeEntity node = service.managedPdf(id);
         return DocPdfResponse.of(node, service.openNode(node));
@@ -167,8 +176,15 @@ public class DocController {
     record PublicationRequest(boolean published, @Min(1) int version) {
     }
 
-    /** PUBLIC = 未登录也能看，MEMBERS = 必须登录。与发布状态互不影响。 */
-    record VisibilityRequest(@NotNull DocVisibility visibility, @Min(1) int version) {
+    /**
+     * PUBLIC = 未登录也能看，MEMBERS = 必须登录，RESTRICTED = 只有名单上的权限组和成员。
+     * 与发布状态互不影响。名单只在 RESTRICTED 时有意义，其余两档传了也会被清空；
+     * 不认识这两个字段的旧调用方（MCP 工具）照旧只传 visibility。
+     */
+    record VisibilityRequest(@NotNull DocVisibility visibility,
+                             @Size(max = DocAudience.MAX_GROUPS) Set<Long> groupIds,
+                             @Size(max = DocAudience.MAX_USERS) Set<Long> userIds,
+                             @Min(1) int version) {
     }
 
     /** {@code parentId} 为 null 表示移到根目录；{@code index} 是目标父节点下的位置。 */

@@ -1,6 +1,6 @@
 import {
   FilePdfOutlined, FileTextOutlined, FolderOpenOutlined, FolderOutlined, LockOutlined,
-  LoginOutlined,
+  LoginOutlined, TeamOutlined,
 } from '@ant-design/icons'
 import { Alert, Button, Empty, Result, Skeleton, Tag, Tree, Typography } from 'antd'
 import type { DataNode } from 'antd/es/tree'
@@ -32,7 +32,9 @@ function toTreeData(nodes: DocReaderNode[]): DataNode[] {
     key: node.publicId,
     title: <span className="docs-tree-label">
       <span className="docs-tree-title">{node.title}</span>
-      {node.requiresLogin && <LockOutlined className="docs-tree-lock" title="需要登录后查看" />}
+      {node.restricted
+        ? <TeamOutlined className="docs-tree-lock" title="只对指定的成员开放" />
+        : node.requiresLogin && <LockOutlined className="docs-tree-lock" title="需要登录后查看" />}
     </span>,
     icon: node.nodeType === 'FOLDER'
       ? (({ expanded }: { expanded?: boolean }) => expanded ? <FolderOpenOutlined /> : <FolderOutlined />)
@@ -56,7 +58,11 @@ export default function DocsReader({ basePath, publicId, reloadToken = 0 }: {
   const { user } = useAuth()
   const [expandedKeys, setExpandedKeys] = useState<string[]>([])
   const [document, setDocument] = useState<DocReaderDocument | null>(null)
-  const [documentError, setDocumentError] = useState<{ message: string; needsLogin: boolean } | null>(null)
+  const [documentError, setDocumentError] = useState<{
+    message: string
+    needsLogin: boolean
+    forbidden: boolean
+  } | null>(null)
   const [documentLoading, setDocumentLoading] = useState(false)
 
   // 登录状态变化要重新拉目录：登录之后仅限成员的文档才会出现。
@@ -99,9 +105,10 @@ export default function DocsReader({ basePath, publicId, reloadToken = 0 }: {
         if (!active) return
         setDocument(null)
         // 服务端对"已发布但需要登录"回 403 并说明原因，正是为了在这里
-        // 给出"去登录"而不是"文档不存在"。
+        // 给出"去登录"而不是"文档不存在"；已登录却不在指定名单上的人也是 403，
+        // 但叫他去登录毫无意义，所以单独一屏。
         const forbidden = reason instanceof ApiError && reason.code === 'FORBIDDEN'
-        setDocumentError({ message: (reason as Error).message, needsLogin: forbidden && !user })
+        setDocumentError({ message: (reason as Error).message, needsLogin: forbidden && !user, forbidden })
       })
       .finally(() => { if (active) setDocumentLoading(false) })
     return () => { active = false }
@@ -143,15 +150,21 @@ export default function DocsReader({ basePath, publicId, reloadToken = 0 }: {
           subTitle="它只对摄影部成员开放。用你的账号登录后就能继续阅读。"
           extra={<Button type="primary" icon={<LoginOutlined />}
             onClick={() => navigate('/login')}>去登录</Button>} />
-        : <Result status="404" title="没找到这篇文档" subTitle={documentError.message}
-          extra={<Button onClick={() => navigate(basePath)}>回到目录</Button>} />)}
+        : documentError.forbidden
+          ? <Result status="403" icon={<TeamOutlined />} title="这篇文档只对指定的成员开放"
+            subTitle="如果你需要阅读它，请联系文档的维护者把你或你所在的权限组加进读者名单。"
+            extra={<Button onClick={() => navigate(basePath)}>回到目录</Button>} />
+          : <Result status="404" title="没找到这篇文档" subTitle={documentError.message}
+            extra={<Button onClick={() => navigate(basePath)}>回到目录</Button>} />)}
       {!documentLoading && !documentError && document && <article>
         {document.breadcrumb.length > 1 && <Typography.Text type="secondary" className="docs-breadcrumb">
           {document.breadcrumb.slice(0, -1).join(' / ')}
         </Typography.Text>}
         <Typography.Title level={2} className="docs-title">
           {document.title}
-          {document.requiresLogin && <Tag icon={<LockOutlined />} color="gold">仅成员可见</Tag>}
+          {document.restricted
+            ? <Tag icon={<TeamOutlined />} color="purple">指定成员可见</Tag>
+            : document.requiresLogin && <Tag icon={<LockOutlined />} color="gold">仅成员可见</Tag>}
         </Typography.Title>
         <Typography.Text type="secondary" className="docs-meta">
           {document.updaterDisplayName && <>{document.updaterDisplayName} · </>}

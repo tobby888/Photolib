@@ -177,6 +177,21 @@ export function largeUploadConfig(onProgress?: (percent: number) => void): Axios
   }
 }
 
+/**
+ * 经后端回吐的大文件下载（文档中心 PDF 的 Blob）用的请求配置，理由同 {@link largeUploadConfig}：
+ * 全局 20s 超时覆盖不了几十 MiB 的响应体。文件库的下载不走这里——那是签名直链，浏览器自己去取。
+ */
+export function largeDownloadConfig(onProgress?: (percent: number) => void): AxiosRequestConfig {
+  return {
+    timeout: 0,
+    onDownloadProgress: onProgress
+      ? (event) => {
+          if (event.total) onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)))
+        }
+      : undefined,
+  }
+}
+
 export const qs = (values: Record<string, unknown>) => Object.fromEntries(
   Object.entries(values).filter(([, value]) => value !== undefined && value !== null && value !== ''),
 )

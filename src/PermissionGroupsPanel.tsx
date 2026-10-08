@@ -360,7 +360,11 @@ export default function PermissionGroupsPanel() {
         <Form.Item label="说明" name="description" rules={[{ max: 500 }]}><Input.TextArea rows={2} disabled={editing?.builtIn} /></Form.Item>
         <Typography.Title level={5}>权限明细</Typography.Title>
         <Row gutter={[12, 12]}>
-          {definitionsState.data.map(category => {
+          {definitionsState.data.map((category, _index, all) => {
+            // 从旧权限拆出来的新权限（V62）标一下来历：升级时持有旧权限的组都已经补上了它，
+            // 管理员看到"多了一条"时知道这不是凭空多出来的能力。
+            const labelOf = (code: string) => all.flatMap(item => item.permissions)
+              .find(item => item.code === code)?.label
             const codes = category.permissions.map(item => item.code)
             const selectedCount = codes.filter(code => permissions.includes(code)).length
             return <Col xs={24} lg={12} key={category.code}>
@@ -375,6 +379,10 @@ export default function PermissionGroupsPanel() {
                         : current.filter(code => code !== permission.code))}>
                       {permission.label}
                       {permission.requiresMfa && <Tag className="permission-mfa-tag" color="red">需两步验证</Tag>}
+                      {permission.splitFrom && <Tag className="permission-mfa-tag"
+                        title={`升级前包含在「${labelOf(permission.splitFrom) ?? permission.splitFrom}」里，原来持有它的权限组已自动补上`}>
+                        拆分自「{labelOf(permission.splitFrom) ?? permission.splitFrom}」
+                      </Tag>}
                     </Checkbox>)}
                 </Space>
               </Card>

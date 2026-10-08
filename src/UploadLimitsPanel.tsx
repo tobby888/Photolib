@@ -82,7 +82,7 @@ export default function UploadLimitsPanel() {
       <div>
         <Typography.Title level={4}><CloudUploadOutlined /> 上传限额</Typography.Title>
         <Typography.Text type="secondary">
-          全站所有上传的文件大小上限，以及 ZIP 压缩包里的图片张数上限，都在这里统一管理。保存后立即生效。
+          全站所有上传的文件大小上限、ZIP 压缩包里的图片张数上限，以及文件库的空间、个数、QPS 与下载流量限制，都在这里统一管理。保存后立即生效。
         </Typography.Text>
       </div>
       <Space wrap>

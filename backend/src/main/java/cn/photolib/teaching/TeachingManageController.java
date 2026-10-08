@@ -26,7 +26,8 @@ import java.io.IOException;
 import java.util.List;
 
 /**
- * 教学资料的管理接口，整条面只认 {@code TEACHING_MANAGE}（默认管理员 + 部长）。
+ * 教学资料的管理接口，整条面认 {@code TEACHING_MANAGE}（默认管理员 + 部长）；
+ * 删除单独要 {@code TEACHING_DELETE}（V62 从前者拆出，存量权限组已回填）。
  *
  * <p>管理端点直接挂在 {@code /api/v1/teaching} 下（物品级操作是
  * {@code /api/v1/teaching/{id}}），读端点则在 {@link TeachingReaderController} 的
@@ -79,7 +80,9 @@ public class TeachingManageController {
                 request.category(), request.authorId(), request.version(), user));
     }
 
+    /** 删除从 TEACHING_MANAGE 里拆了出来（V62）；方法上的注解覆盖类上的那一条。 */
     @DeleteMapping("/{id}")
+    @PreAuthorize("hasAuthority('TEACHING_DELETE')")
     ApiResponse<Void> delete(@PathVariable long id, @RequestParam @Min(1) int version,
                              @AuthenticationPrincipal AuthenticatedUser user) {
         service.delete(id, version, user);

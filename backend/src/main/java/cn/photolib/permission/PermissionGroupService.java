@@ -46,7 +46,8 @@ public class PermissionGroupService {
                         Arrays.stream(PermissionCode.values())
                                 .filter(permission -> permission.category() == category)
                                 .map(permission -> new PermissionDefinition(permission.name(), permission.label(),
-                                        permission.unlocksStepUpOperation()))
+                                        permission.unlocksStepUpOperation(),
+                                        permission.splitFrom() == null ? null : permission.splitFrom().name()))
                                 .toList()))
                 .toList();
     }
@@ -182,6 +183,10 @@ public class PermissionGroupService {
             throw new BusinessException(ErrorCode.FORBIDDEN, "系统内置权限组不能删除");
         }
         PermissionGroupEntity lowest = requireByCode("NO_ACCESS");
+        // 文档 / 文件的读者授权里指向这个组的那几行一并删掉（授权表没有外键，见 V62）。
+        // 方向是"少给人看"：组没了，按组授予的读者范围随之收窄，而不是悄悄落到别的组上。
+        jdbc.sql("DELETE FROM resource_access_grant WHERE grantee_type='GROUP' AND grantee_id=:groupId")
+                .param("groupId", id).update();
         jdbc.sql("""
                 DELETE FROM user_campus_permission
                 WHERE user_id IN (SELECT id FROM app_user WHERE permission_group_id = :groupId)
@@ -358,8 +363,11 @@ public class PermissionGroupService {
         return requested == null ? MfaPolicy.OFF : requested;
     }
 
-    /** @param requiresMfa 授予这个权限的权限组会被强制两步验证 */
-    public record PermissionDefinition(String code, String label, boolean requiresMfa) {}
+    /**
+     * @param requiresMfa 授予这个权限的权限组会被强制两步验证
+     * @param splitFrom   这条权限是从哪条旧权限拆出来的（V62），没有则为 null
+     */
+    public record PermissionDefinition(String code, String label, boolean requiresMfa, String splitFrom) {}
     public record CategoryDefinition(String code, String label, List<PermissionDefinition> permissions) {}
     public record GroupView(Long id, String code, String name, String description, DataScope dataScope,
                             PhotoVisibility photoVisibility, boolean builtIn, boolean lowest,

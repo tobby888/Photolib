@@ -1,10 +1,10 @@
 import {
   DeleteOutlined, EyeOutlined, FileAddOutlined, FilePdfOutlined, FileTextOutlined,
   FolderAddOutlined, FolderOpenOutlined, FolderOutlined, GlobalOutlined, LockOutlined,
-  ReloadOutlined, SaveOutlined, SwapOutlined, UploadOutlined,
+  ReloadOutlined, SaveOutlined, SwapOutlined, TeamOutlined, UploadOutlined,
 } from '@ant-design/icons'
 import {
-  Alert, App, Button, Card, Empty, Input, Popconfirm, Segmented, Skeleton, Space, Switch,
+  Alert, App, Button, Card, Empty, Input, Popconfirm, Skeleton, Space, Switch,
   Tag, Tree, Typography, Upload,
 } from 'antd'
 import type { DataNode } from 'antd/es/tree'
@@ -12,29 +12,39 @@ import dayjs from 'dayjs'
 import { useEffect, useMemo, useState, type Key } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, largeUploadConfig } from '../api'
+import { useAuth } from '../auth'
+import DocAudiencePicker from '../DocAudiencePicker'
+import {
+  audienceError, audienceOf, audiencePayload, sameAudience, type AudienceValue,
+} from '../docAudience'
 import DocPdfViewer from '../DocPdfViewer'
 import {
   ancestorKeysOf, findManageNode, manageNodesToTree, relativeDropPosition, resolveDrop,
 } from '../docsTree'
 import { useLoad } from '../hooks'
 import MarkdownEditor from '../MarkdownEditor'
+import { hasPermission } from '../permissions'
 import type {
-  DocDocumentDetail, DocManageNode, DocNodeType, DocTreeMutation, DocVisibility,
+  DocDocumentDetail, DocManageNode, DocNodeType, DocTreeMutation,
 } from '../types'
 import { describeBytes } from '../uploadLimits'
 import UploadProgress from '../UploadProgress'
 import { useUploadLimits } from '../useUploadLimits'
 
 /**
- * 文档中心的编写页（需要 DOC_MANAGE）。
+ * 文档中心的编写页（需要 DOC_MANAGE 或 DOC_PUBLISH）。
  *
- * <p>页面上有两个互相独立的开关，UI 上也刻意分开摆，不做成一个三档选择器：</p>
+ * <p>两条权限管两件事（V62 起）：`DOC_MANAGE` 写内容——新建、改名、正文、PDF、拖拽、删除；
+ * `DOC_PUBLISH` 决定给谁看——发布开关和读者范围。只有其中一条的人看得到整棵树，
+ * 另一半的控件是灰的；真正的拦截在后端。</p>
+ *
+ * <p>页面上有两个互相独立的开关，UI 上也刻意分开摆，不做成一个选择器：</p>
  * <ul>
  *   <li><b>发布</b>：草稿只有编辑看得到；</li>
- *   <li><b>可见范围</b>：公开（未登录也能看）还是仅成员（必须登录）。</li>
+ *   <li><b>读者范围</b>：所有人 / 登录后 / 指定权限组与成员。</li>
  * </ul>
  * <p>合成一个选择器看起来更简洁，但会让"我只想临时下架一篇公开文档"
- * 变成一次会丢掉可见范围设置的操作。</p>
+ * 变成一次会丢掉读者范围设置的操作。</p>
  */
 function toTreeData(nodes: DocManageNode[]): DataNode[] {
   return nodes.map(node => {
@@ -51,6 +61,8 @@ function toTreeData(nodes: DocManageNode[]): DataNode[] {
           <Tag color="green" icon={<GlobalOutlined />}>公开</Tag>}
         {leaf && node.published && node.visibility === 'MEMBERS' &&
           <Tag color="gold" icon={<LockOutlined />}>需登录</Tag>}
+        {leaf && node.published && node.visibility === 'RESTRICTED' &&
+          <Tag color="purple" icon={<TeamOutlined />}>指定成员</Tag>}
       </span>,
       icon: node.nodeType === 'FOLDER'
         ? (({ expanded }: { expanded?: boolean }) => expanded ? <FolderOpenOutlined /> : <FolderOutlined />)
@@ -66,6 +78,9 @@ export default function DocsManagePage({ onPreview }: {
   onPreview?: (publicId: string) => void
 } = {}) {
   const { message, modal } = App.useApp()
+  const { user } = useAuth()
+  const canWrite = hasPermission(user, 'DOC_MANAGE')
+  const canPublish = hasPermission(user, 'DOC_PUBLISH')
   /** PDF 上限由管理员在「上传限额」里设（DOC_PDF_MAX_BYTES），后端按同一个数再判一次。 */
   const pdfMaxBytes = useUploadLimits().DOC_PDF_MAX_BYTES
   const pdfTooLarge = `PDF 不能超过 ${describeBytes(pdfMaxBytes)}`
@@ -93,6 +108,14 @@ export default function DocsManagePage({ onPreview }: {
 
   const selectedTitle = selected?.title || ''
   useEffect(() => { setRenaming(selectedTitle) }, [selectedId, selectedTitle])
+
+  // 读者范围的草稿：所有人 / 登录后点一下就生效（和以前一样），指定成员要挑完名单再点保存。
+  // 按节点和版本重置——别人改过、或者自己刚保存过，草稿都跟着服务端的值走。
+  const savedAudience = useMemo<AudienceValue | null>(() => (selected && selected.nodeType !== 'FOLDER'
+    ? audienceOf(selected) : null), [selected])
+  const [audienceDraft, setAudienceDraft] = useState<AudienceValue | null>(null)
+  useEffect(() => { setAudienceDraft(savedAudience) }, [savedAudience])
+  const audienceDirty = !!audienceDraft && !!savedAudience && !sameAudience(audienceDraft, savedAudience)
 
   /**
    * 只有"选中的文档换了一篇"才重新拉正文。
@@ -267,12 +290,24 @@ export default function DocsManagePage({ onPreview }: {
     }), published ? '文档已发布' : '文档已退回草稿')
   }
 
-  const setVisibility = (visibility: DocVisibility) => {
+  const saveAudience = (value: AudienceValue) => {
     if (!selected) return
+    const problem = audienceError(value)
+    if (problem) {
+      message.error(problem)
+      return
+    }
     void mutate(() => api<DocTreeMutation>({
       method: 'POST', url: `/docs/${selected.id}/visibility`,
-      data: { visibility, version: selected.version },
-    }), visibility === 'PUBLIC' ? '已设为所有人可见' : '已设为登录后可见')
+      data: { ...audiencePayload(value), version: selected.version },
+    }), value.visibility === 'PUBLIC' ? '已设为所有人可见'
+      : value.visibility === 'MEMBERS' ? '已设为登录后可见' : '已设为只给指定成员看')
+  }
+
+  const changeAudience = (value: AudienceValue) => {
+    setAudienceDraft(value)
+    // 两个"不用挑名单"的档位点了就存；指定成员等挑完再点保存。
+    if (value.visibility !== 'RESTRICTED') saveAudience(value)
   }
 
   const rename = () => {
@@ -294,16 +329,19 @@ export default function DocsManagePage({ onPreview }: {
     <Card className="docs-manage-tree" styles={{ body: { padding: 12 } }}
       title="文档目录"
       extra={<Space size={4}>
-        <Button size="small" icon={<FolderAddOutlined />} onClick={() => create('FOLDER')}>文件夹</Button>
-        <Button size="small" type="primary" icon={<FileAddOutlined />} onClick={() => create('DOCUMENT')}>文档</Button>
-        <Upload accept="application/pdf,.pdf" showUploadList={false} disabled={busy}
+        <Button size="small" icon={<FolderAddOutlined />} disabled={!canWrite}
+          onClick={() => create('FOLDER')}>文件夹</Button>
+        <Button size="small" type="primary" icon={<FileAddOutlined />} disabled={!canWrite}
+          onClick={() => create('DOCUMENT')}>文档</Button>
+        <Upload accept="application/pdf,.pdf" showUploadList={false} disabled={busy || !canWrite}
           beforeUpload={file => { void uploadPdf(file); return false }}>
-          <Button size="small" icon={<UploadOutlined />} disabled={busy}>PDF</Button>
+          <Button size="small" icon={<UploadOutlined />} disabled={busy || !canWrite}>PDF</Button>
         </Upload>
         <Button size="small" icon={<ReloadOutlined />} onClick={() => void loaded.reload()} />
       </Space>}>
       <Alert type="info" showIcon className="docs-manage-hint"
-        message="拖动条目可以调整顺序，或把它拖进文件夹。" />
+        message={canWrite ? '拖动条目可以调整顺序，或把它拖进文件夹。'
+          : '你可以发布文档、设置读者范围；新建、编辑和整理目录需要「编写文档」权限。'} />
       {pdfUpload?.kind === 'new' && <UploadProgress percent={pdfUpload.percent} />}
       {loaded.loading && <Skeleton active paragraph={{ rows: 8 }} />}
       {!loaded.loading && loaded.error && <Alert type="warning" showIcon message="目录没能加载出来"
@@ -313,7 +351,7 @@ export default function DocsManagePage({ onPreview }: {
       {!loaded.loading && !!tree.length && <Tree
         showIcon
         blockNode
-        draggable
+        draggable={canWrite}
         disabled={busy}
         treeData={treeData}
         selectedKeys={selectedId ? [selectedId] : []}
@@ -331,15 +369,16 @@ export default function DocsManagePage({ onPreview }: {
       {!selected && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="从左边选一个文件夹或文档" />}
       {selected && <Space orientation="vertical" size={16} style={{ width: '100%' }}>
         <Space wrap>
-          <Input value={renaming} maxLength={200} style={{ width: 320 }}
+          <Input value={renaming} maxLength={200} style={{ width: 320 }} disabled={!canWrite}
             onChange={event => setRenaming(event.target.value)} onPressEnter={rename} />
-          <Button onClick={rename} disabled={busy || !renaming.trim() || renaming.trim() === selected.title}>
+          <Button onClick={rename}
+            disabled={busy || !canWrite || !renaming.trim() || renaming.trim() === selected.title}>
             重命名
           </Button>
           <Popconfirm title={selected.nodeType === 'FOLDER' ? '连同里面的内容一起删除？' : '删除这篇文档？'}
             description="删除后读者立刻看不到，正文仍保留在对象存储里以备恢复。"
             okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={remove}>
-            <Button danger icon={<DeleteOutlined />} disabled={busy}>删除</Button>
+            <Button danger icon={<DeleteOutlined />} disabled={busy || !canWrite}>删除</Button>
           </Popconfirm>
         </Space>
 
@@ -351,25 +390,33 @@ export default function DocsManagePage({ onPreview }: {
           <Space wrap size={24}>
             <Space>
               <Typography.Text strong>发布</Typography.Text>
-              <Switch checked={selected.published} disabled={busy || !selected.hasContent}
+              <Switch checked={selected.published} disabled={busy || !canPublish || !selected.hasContent}
                 onChange={setPublished} checkedChildren="已发布" unCheckedChildren="草稿" />
               {!selected.hasContent &&
                 <Typography.Text type="secondary">写完正文才能发布</Typography.Text>}
-            </Space>
-            <Space>
-              <Typography.Text strong>可见范围</Typography.Text>
-              <Segmented value={selected.visibility} disabled={busy}
-                onChange={value => setVisibility(value as DocVisibility)}
-                options={[
-                  { value: 'PUBLIC', label: <Space size={4}><GlobalOutlined />所有人</Space> },
-                  { value: 'MEMBERS', label: <Space size={4}><LockOutlined />登录后</Space> },
-                ]} />
             </Space>
             {selected.published && <Button icon={<EyeOutlined />}
               onClick={() => onPreview
                 ? onPreview(selected.publicId)
                 : navigate(`/docs/${selected.publicId}`)}>查看读者视角</Button>}
           </Space>
+
+          {audienceDraft && <div>
+            <Typography.Text strong>读者范围</Typography.Text>
+            {!canPublish && <Typography.Text type="secondary">（需要「发布文档」权限才能修改）</Typography.Text>}
+            <div style={{ marginTop: 8, maxWidth: 640 }}>
+              <DocAudiencePicker value={audienceDraft} onChange={changeAudience} disabled={busy || !canPublish} />
+            </div>
+            {audienceDraft.visibility === 'RESTRICTED' && audienceDirty && <Space style={{ marginTop: 8 }}>
+              <Button type="primary" icon={<TeamOutlined />} disabled={busy || !!audienceError(audienceDraft)}
+                onClick={() => saveAudience(audienceDraft)}>保存读者名单</Button>
+              <Button disabled={busy} onClick={() => setAudienceDraft(savedAudience)}>撤销</Button>
+            </Space>}
+          </div>}
+
+          {selected.visibility === 'RESTRICTED' && selected.published && <Alert type="warning" showIcon
+            message="这篇文档只对指定的成员开放"
+            description="名单外的人（包括未登录访客）在目录里看不到它，直接打开链接会被拒绝，插图和 PDF 直链同样拒绝。" />}
 
           {selected.visibility === 'MEMBERS' && selected.published && <Alert type="warning" showIcon
             message="这篇文档需要登录才能查看"
@@ -379,9 +426,9 @@ export default function DocsManagePage({ onPreview }: {
 
           {selected.nodeType === 'PDF' && <>
             <Space wrap>
-              <Upload accept="application/pdf,.pdf" showUploadList={false} disabled={busy}
+              <Upload accept="application/pdf,.pdf" showUploadList={false} disabled={busy || !canWrite}
                 beforeUpload={file => { void replacePdf(file); return false }}>
-                <Button icon={<SwapOutlined />} disabled={busy}>替换 PDF 文件</Button>
+                <Button icon={<SwapOutlined />} disabled={busy || !canWrite}>替换 PDF 文件</Button>
               </Upload>
               <Typography.Text type="secondary">
                 {selected.contentSize ? `${(selected.contentSize / 1024 / 1024).toFixed(1)} MiB · ` : ''}
@@ -401,7 +448,7 @@ export default function DocsManagePage({ onPreview }: {
               placeholder="使用 Markdown 编写文档；可以直接上传插图" />
             <Space>
               <Button type="primary" icon={<SaveOutlined />} loading={busy}
-                disabled={!dirty} onClick={() => void saveContent()}>保存正文</Button>
+                disabled={!dirty || !canWrite} onClick={() => void saveContent()}>保存正文</Button>
               {dirty && <Typography.Text type="warning">有未保存的修改</Typography.Text>}
               {!dirty && detail.node.updatedAt && <Typography.Text type="secondary">
                 最后更新 {dayjs(detail.node.updatedAt).format('YYYY-MM-DD HH:mm')}

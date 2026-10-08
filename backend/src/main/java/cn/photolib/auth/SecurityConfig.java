@@ -75,7 +75,13 @@ public class SecurityConfig {
                                 "/api/v1/public/docs",
                                 "/api/v1/public/docs/*",
                                 "/api/v1/public/docs/assets/*",
-                                "/api/v1/public/docs/*/file").permitAll()
+                                "/api/v1/public/docs/*/file",
+                                // 文件库列表。同样只是"不带令牌也能调"，能看到哪些文件由
+                                // DocFileService 按读者身份判定。
+                                "/api/v1/public/doc-files").permitAll()
+                        // 文件库下载：签一个短命直链。谁能下载、每天匿名流量多少，都在
+                        // DocFileService / DocFileTraffic 里判，这里只放行"不带令牌也能调"。
+                        .requestMatchers(HttpMethod.POST, "/api/v1/public/doc-files/*/download").permitAll()
                         // 选题分享链接的访客通道。permitAll 同样只表示"不带令牌也能调用"：
                         // 每个方法都要一个通过密码换来的分享会话，能力由链接上的开关决定，
                         // 判定在 ProjectShareService，见那里的类注释。

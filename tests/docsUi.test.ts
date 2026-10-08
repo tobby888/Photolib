@@ -38,8 +38,9 @@ test('工作台里的文档中心默认是阅读模式，编辑器按权限收�
 
   // 默认阅读：部长打开文档中心多数时候是来查东西的。
   assert.match(source, /useState\(false\)/)
-  assert.match(source, /const canManage = hasPermission\(user, 'DOC_MANAGE'\)/)
-  assert.match(source, /\{canManage && <Space>/)
+  // V62 起"写内容"和"决定给谁看"是两条权限，任一条都能进编辑器（另一半控件是灰的）。
+  assert.match(source, /const canManage = hasAnyPermission\(user, 'DOC_MANAGE', 'DOC_PUBLISH'\)/)
+  assert.match(source, /\{canManage && !files && \(editing/)
   assert.match(source, />编辑文档</)
   assert.match(source, />返回阅读</)
   // 编辑器只有部长和管理员用得到，其余人不该下载这段代码。
@@ -93,7 +94,8 @@ test('PDF 一律走 axios 取 Blob，不把接口地址直接塞给 iframe', asy
 
   // iframe 不会带上 localStorage 里的令牌：直接用地址会让仅成员的 PDF
   // 变成一个 403 的白框，编辑器里预览草稿更是必须带令牌。
-  assert.match(viewer, /http\.get<Blob>\(path, \{ responseType: 'blob' \}\)/)
+  // 不设超时：几十 MiB 的 PDF 撞上全局 20 秒超时会报"加载失败"。
+  assert.match(viewer, /http\.get<Blob>\(path, \{ responseType: 'blob', \.\.\.largeDownloadConfig\(\) \}\)/)
   assert.match(viewer, /URL\.createObjectURL/)
   // 几十 MiB 的 PDF 必须回收，否则点几篇就能把标签页撑爆。
   assert.match(viewer, /URL\.revokeObjectURL\(currentUrl\)/)

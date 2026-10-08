@@ -54,7 +54,12 @@ public class DocRateLimiter {
         /** 图片。一篇图多的文档就可能有几十张，所以额度必须比正文宽得多。 */
         PUBLIC_ASSET(600, Duration.ofMinutes(10)),
         /** PDF 文件。单个响应可能有几十 MiB，所以额度比正文还紧。 */
-        PUBLIC_FILE(60, Duration.ofMinutes(10));
+        PUBLIC_FILE(60, Duration.ofMinutes(10)),
+        /**
+         * 文件库列表。只是元数据，额度和目录树同级；真正花流量的下载另有一套由管理员
+         * 在上传限额里定的闸（{@code DocFileTraffic}），不在这里。
+         */
+        PUBLIC_FILE_LIST(120, Duration.ofMinutes(10));
 
         private final int limit;
         private final Duration window;

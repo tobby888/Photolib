@@ -161,11 +161,18 @@ public class AccessTokenFilter extends OncePerRequestFilter {
     }
 
     /**
-     * 文档中心的阅读接口，未登录也能调。只认 GET：写接口在 {@code /docs/**} 下，
-     * 要 {@code DOC_MANAGE}，绝不能因为这条降级而被受限会话摸到。
+     * 文档中心的阅读接口，未登录也能调：文档目录 / 正文 / 插图 / PDF（只认 GET），
+     * 以及文件库的列表（GET）和下载（POST {@code /public/doc-files/{publicId}/download}，
+     * 下载要计数、扣流量所以是 POST）。写接口在 {@code /docs/**}、{@code /doc-files/**} 下，
+     * 要权限码，绝不能因为这条降级而被受限会话摸到。
      */
     private boolean isAnonymousReadableDocs(HttpServletRequest request) {
-        return "GET".equals(request.getMethod())
-                && request.getServletPath().startsWith("/api/v1/public/docs");
+        String path = applicationPath(request);
+        String method = request.getMethod();
+        if ("GET".equals(method)) {
+            return path.startsWith("/api/v1/public/docs") || path.equals("/api/v1/public/doc-files");
+        }
+        return "POST".equals(method) && path.startsWith("/api/v1/public/doc-files/")
+                && path.endsWith("/download");
     }
 }

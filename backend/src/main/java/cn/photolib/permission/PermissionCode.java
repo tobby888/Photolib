@@ -7,7 +7,8 @@ public enum PermissionCode {
     PROJECT_VIEW(PermissionCategory.PROJECT, "查看接到需求的选题"),
     PROJECT_VIEW_ALL(PermissionCategory.PROJECT, "无条件查看全部选题"),
     PROJECT_ADOPT(PermissionCategory.PROJECT, "标记或取消图片被引"),
-    PROJECT_CREATE(PermissionCategory.PROJECT, "新建、编辑、发布和删除选题"),
+    PROJECT_CREATE(PermissionCategory.PROJECT, "新建、编辑和发布选题"),
+    PROJECT_DELETE(PermissionCategory.PROJECT, "删除选题"),
     PROJECT_COMPLETE(PermissionCategory.PROJECT, "标记选题完成"),
     PROJECT_DOWNLOAD(PermissionCategory.PROJECT, "下载选题图片"),
     PROJECT_SHARE(PermissionCategory.PROJECT, "生成和管理选题对外分享链接"),
@@ -20,7 +21,8 @@ public enum PermissionCode {
     REQUEST_PHOTO_MANAGE(PermissionCategory.REQUEST, "管理需求图片（上传、下载、删除）"),
 
     PHOTO_VIEW(PermissionCategory.PHOTO, "图库访问"),
-    PHOTO_DELETE(PermissionCategory.PHOTO, "删除、归档和恢复图库图片"),
+    PHOTO_DELETE(PermissionCategory.PHOTO, "删除图库图片"),
+    PHOTO_ARCHIVE(PermissionCategory.PHOTO, "归档和恢复图库图片"),
     PHOTO_UPLOAD(PermissionCategory.PHOTO, "图库上传（含批量上传）"),
     PHOTO_DOWNLOAD(PermissionCategory.PHOTO, "图库下载（含批量下载）"),
 
@@ -38,8 +40,12 @@ public enum PermissionCode {
     SURVEY_ACCESS(PermissionCategory.SURVEY, "访问和填写发给自己的问卷"),
     SURVEY_RESULT_VIEW(PermissionCategory.SURVEY, "查看和导出问卷结果"),
     FEATURED_MANAGE(PermissionCategory.FEATURED, "发布、删除和手动截止好图精选"),
-    DOC_MANAGE(PermissionCategory.DOC, "编写文档、拖拽整理目录、发布并指定是否需要登录查看"),
-    TEACHING_MANAGE(PermissionCategory.TEACHING, "上传、替换、编辑和删除教学资料"),
+    DOC_MANAGE(PermissionCategory.DOC, "编写文档、上传 PDF、拖拽整理目录和删除"),
+    DOC_PUBLISH(PermissionCategory.DOC, "发布或撤回文档，指定读者范围（所有人 / 登录后 / 指定权限组与成员）"),
+    FILE_UPLOAD(PermissionCategory.FILE, "上传文件，并管理自己上传的文件（改下载范围、删除）"),
+    FILE_MANAGE(PermissionCategory.FILE, "管理所有人上传的文件（改下载范围、删除）"),
+    TEACHING_MANAGE(PermissionCategory.TEACHING, "上传、替换和编辑教学资料"),
+    TEACHING_DELETE(PermissionCategory.TEACHING, "删除教学资料"),
     STATISTICS_DOWNLOAD(PermissionCategory.STATISTICS, "统计数据查看和下载"),
     MANAGER_CAMPUS_ASSIGN(PermissionCategory.MANAGER_CAMPUS, "负责人校区重新指定");
 
@@ -72,5 +78,20 @@ public enum PermissionCode {
     }
 
     private static final Set<PermissionCode> STEP_UP_OPERATIONS = EnumSet.of(
-            PHOTO_DELETE, REQUEST_PHOTO_MANAGE, PROJECT_CREATE, REQUEST_DELETE);
+            PHOTO_DELETE, REQUEST_PHOTO_MANAGE, PROJECT_DELETE, REQUEST_DELETE);
+
+    /**
+     * 这条权限是从哪条旧权限里拆出来的（Flyway V62）。拆分时旧码保留名字、含义收窄，
+     * 被拆出去的那部分成了新码；存量权限组按"持有旧码就补上新码"回填，升级前后行为一致。
+     * 权限组面板据此提示"这是原来 X 的一部分"。
+     */
+    public PermissionCode splitFrom() {
+        return switch (this) {
+            case PROJECT_DELETE -> PROJECT_CREATE;
+            case PHOTO_ARCHIVE -> PHOTO_DELETE;
+            case DOC_PUBLISH -> DOC_MANAGE;
+            case TEACHING_DELETE -> TEACHING_MANAGE;
+            default -> null;
+        };
+    }
 }
