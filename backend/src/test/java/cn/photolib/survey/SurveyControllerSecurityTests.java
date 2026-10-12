@@ -45,9 +45,11 @@ class SurveyControllerSecurityTests {
         controller.assigned(principal);
         controller.fill(7L, principal);
         controller.submit(7L, new SurveyController.SubmitRequest(Map.of()), principal);
+        controller.revise(7L, new SurveyController.SubmitRequest(Map.of()), principal);
         verify(responses).assigned(principal);
         verify(responses).fillView(7L, principal);
         verify(responses).submit(7L, Map.of(), principal);
+        verify(responses).revise(7L, Map.of(), principal);
     }
 
     @Test
@@ -57,6 +59,8 @@ class SurveyControllerSecurityTests {
                 .isInstanceOf(AccessDeniedException.class);
         assertThatThrownBy(() -> controller.summary(7L, principal)).isInstanceOf(AccessDeniedException.class);
         assertThatThrownBy(() -> controller.fill(7L, principal)).isInstanceOf(AccessDeniedException.class);
+        assertThatThrownBy(() -> controller.revise(7L, new SurveyController.SubmitRequest(Map.of()), principal))
+                .isInstanceOf(AccessDeniedException.class);
         verifyNoInteractions(responses);
 
         controller.audience(principal);
@@ -72,6 +76,9 @@ class SurveyControllerSecurityTests {
                 .isInstanceOf(AccessDeniedException.class);
         assertThatThrownBy(() -> controller.delete(7L, 1, principal)).isInstanceOf(AccessDeniedException.class);
         assertThatThrownBy(() -> controller.assigned(principal)).isInstanceOf(AccessDeniedException.class);
+        // 能看结果不等于能改别人的（或自己的）答卷。
+        assertThatThrownBy(() -> controller.revise(7L, new SurveyController.SubmitRequest(Map.of()), principal))
+                .isInstanceOf(AccessDeniedException.class);
         verifyNoInteractions(surveys);
 
         controller.list(1, 20, null, null, principal);

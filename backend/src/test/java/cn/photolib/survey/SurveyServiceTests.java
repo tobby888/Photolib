@@ -17,6 +17,7 @@ import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mybatis.spring.SqlSessionTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -49,6 +50,7 @@ class SurveyServiceTests {
     @Autowired private ObjectStorageService storage;
     @Autowired private JdbcClient jdbc;
     @Autowired private Clock clock;
+    @Autowired private SqlSessionTemplate sqlSession;
 
     private AuthenticatedUser admin;
     private AuthenticatedUser eastMember;
@@ -228,13 +230,15 @@ class SurveyServiceTests {
         assertThat(export.fileName()).startsWith("摄影部满意度调查-问卷结果-").endsWith(".xlsx");
         try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(export.content()))) {
             List<List<String>> answers = rows(workbook.getSheet("答卷"));
-            assertThat(answers.getFirst()).containsExactly("姓名", "账号", "权限组", "提交时间",
+            assertThat(answers.getFirst()).containsExactly("姓名", "账号", "权限组", "提交时间", "修改时间",
                     "整体满意度", "想学的内容", "其他建议", "附件");
             assertThat(answers.get(1)).startsWith("东区成员", "survey-east", "校区负责人");
-            assertThat(answers.get(1).get(4)).isEqualTo("满意");
-            assertThat(answers.get(1).get(5)).isEqualTo("器材，后期");
+            // 交了之后没改过：修改时间留空。
+            assertThat(answers.get(1).get(4)).isEmpty();
+            assertThat(answers.get(1).get(5)).isEqualTo("满意");
+            assertThat(answers.get(1).get(6)).isEqualTo("器材，后期");
             // 公式注入：以 = 开头的答案不能被 Excel 当成公式执行。
-            assertThat(answers.get(1).get(6)).isEqualTo("'=1+1");
+            assertThat(answers.get(1).get(7)).isEqualTo("'=1+1");
 
             assertThat(rows(workbook.getSheet("未提交"))).hasSize(2)
                     .last().satisfies(row -> assertThat(row).startsWith("西区成员", "survey-west"));
@@ -278,6 +282,123 @@ class SurveyServiceTests {
     }
 
     @Test
+    void aSubmittedResponseCanBeRevisedWhileTheSurveyIsOpenAndKeepsItsSubmissionTime() throws Exception {
+        var survey = publish(List.of(EAST_MEMBER_ID, WEST_MEMBER_ID));
+
+        // 没交过的人没有答卷可改；改答卷也不能绕开发放名单。
+        assertNotFound(() -> responses.revise(survey.id(), validAnswers(), eastMember));
+        assertNotFound(() -> responses.revise(survey.id(), validAnswers(), admin));
+
+        var receipt = responses.submit(survey.id(), validAnswers(), eastMember);
+        assertThat(receipt.modifiedAt()).isNull();
+        var submitted = responses.fillView(survey.id(), eastMember).myResponse();
+        assertThat(submitted.modifiedAt()).isNull();
+
+        // 修改和第一次提交走同一套校验。
+        assertThatThrownBy(() -> responses.revise(survey.id(), Map.of("topics", List.of("器材")), eastMember))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("必填");
+        assertThatThrownBy(() -> responses.revise(survey.id(), Map.of("rating", "非常满意"), eastMember))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("不是有效选项");
+
+        var revised = responses.revise(survey.id(),
+                Map.of("rating", "不满意", "topics", List.of("后期"), "note", "改主意了"), eastMember);
+        assertThat(revised.responseId()).isEqualTo(receipt.responseId());
+        assertThat(revised.modifiedAt()).isNotNull();
+
+        var mine = responses.fillView(survey.id(), eastMember).myResponse();
+        assertThat(mine.id()).isEqualTo(receipt.responseId());
+        assertThat(mine.answers()).containsEntry("rating", "不满意").containsEntry("note", "改主意了");
+        // 提交时间是「什么时候交的」，改答卷不动它。和库里改之前的值比，而不是和回执比：
+        // 回执带着 JVM 的纳秒，落库只到微秒。
+        assertThat(mine.submittedAt()).isEqualTo(submitted.submittedAt());
+        assertThat(mine.modifiedAt()).isNotNull();
+
+        // 还是同一份答卷：结果里不会多出一份，统计按改后的答案算。
+        var listed = responses.list(survey.id(), 1, 20, null, admin);
+        assertThat(listed.total()).isOne();
+        assertThat(listed.items().getFirst().modifiedAt()).isNotNull();
+        assertThat(responses.get(receipt.responseId(), admin).answers()).containsEntry("rating", "不满意");
+        var rating = responses.summary(survey.id(), admin).fields().stream()
+                .filter(field -> field.fieldId().equals("rating")).findFirst().orElseThrow();
+        assertThat(rating.options()).extracting(SurveyResponseService.OptionCount::count).containsExactly(0L, 0L, 1L);
+        try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(
+                responses.export(survey.id(), admin).content()))) {
+            List<String> row = rows(workbook.getSheet("答卷")).get(1);
+            assertThat(row.get(4)).isNotEmpty();
+            assertThat(row.get(5)).isEqualTo("不满意");
+        }
+
+        // 交过之后再走一次「提交」仍然是重复提交，不会悄悄覆盖。
+        assertThatThrownBy(() -> responses.submit(survey.id(), validAnswers(), eastMember))
+                .isInstanceOf(BusinessException.class)
+                .extracting(error -> ((BusinessException) error).getCode())
+                .isEqualTo(ErrorCode.DUPLICATE_RESOURCE);
+    }
+
+    @Test
+    void responsesAreFrozenOnceTheDeadlinePassesOrTheSurveyIsClosed() {
+        var timed = publish(List.of(EAST_MEMBER_ID));
+        responses.submit(timed.id(), validAnswers(), eastMember);
+        responses.revise(timed.id(), Map.of("rating", "一般"), eastMember);
+
+        // 过了截止时间：问卷状态还是 PUBLISHED，但答卷已经不能再改，文件也不能再传。
+        passDeadline(timed.id());
+        assertThatThrownBy(() -> responses.revise(timed.id(), Map.of("rating", "不满意"), eastMember))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("不能再修改");
+        assertThatThrownBy(() -> responses.createFileTicket(timed.id(),
+                new FormFileService.TicketRequest("attachment", "晚了.pdf", "application/pdf", 5L), eastMember))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("已经结束");
+        var afterDeadline = responses.fillView(timed.id(), eastMember);
+        assertThat(afterDeadline.open()).isFalse();
+        assertThat(afterDeadline.myResponse().answers()).containsEntry("rating", "一般");
+
+        // 不设截止时间的问卷一直可以改，直到发起人手动结束。
+        var draft = surveys.create(new SurveyService.SurveyCommand("不限时问卷", null, null, schema(), null,
+                List.of(EAST_MEMBER_ID)), admin);
+        var open = surveys.publish(draft.id(), draft.version(), admin);
+        responses.submit(open.id(), validAnswers(), eastMember);
+        responses.revise(open.id(), Map.of("rating", "一般"), eastMember);
+        surveys.close(open.id(), open.version(), admin);
+        assertThatThrownBy(() -> responses.revise(open.id(), Map.of("rating", "不满意"), eastMember))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("不能再修改");
+        assertThat(responses.fillView(open.id(), eastMember).myResponse().answers())
+                .containsEntry("rating", "一般");
+    }
+
+    @Test
+    void revisingKeepsUntouchedFilesAttachesNewOnesAndReleasesRemovedOnes() {
+        var survey = publish(List.of(EAST_MEMBER_ID, WEST_MEMBER_ID));
+        String first = uploadedFile(survey.id(), "第一版.pdf", eastMember);
+        responses.submit(survey.id(), withFiles(first), eastMember);
+
+        // 交过之后还能再传文件，否则改答卷时没法换附件。
+        String second = uploadedFile(survey.id(), "补充.pdf", eastMember);
+        responses.revise(survey.id(), withFiles(first, second), eastMember);
+        assertThat(responses.fillView(survey.id(), eastMember).myResponse().files())
+                .extracting(FormFileService.FileView::fileName).containsExactly("第一版.pdf", "补充.pdf");
+        assertThat(fileStatus(first)).isEqualTo("ATTACHED");
+        assertThat(fileStatus(second)).isEqualTo("ATTACHED");
+
+        // 拿掉第一个：它退回 PENDING 等清理任务收走，答卷里和下载地址里都不再有它。
+        responses.revise(survey.id(), withFiles(second), eastMember);
+        assertThat(responses.fillView(survey.id(), eastMember).myResponse().files())
+                .extracting(FormFileService.FileView::fileName).containsExactly("补充.pdf");
+        assertThat(fileStatus(first)).isEqualTo("PENDING");
+        assertThat(fileStatus(second)).isEqualTo("ATTACHED");
+
+        // 别人答卷里的文件不能借改答卷的机会挂到自己名下。
+        responses.submit(survey.id(), validAnswers(), westMember);
+        assertThatThrownBy(() -> responses.revise(survey.id(), withFiles(second), westMember))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("找不到");
+        assertThat(fileStatus(second)).isEqualTo("ATTACHED");
+
+        // 全部拿掉也可以（这道题不是必填）。
+        responses.revise(survey.id(), validAnswers(), eastMember);
+        assertThat(responses.fillView(survey.id(), eastMember).myResponse().files()).isEmpty();
+        assertThat(fileStatus(second)).isEqualTo("PENDING");
+    }
+
+    @Test
     void onlyDraftsCanBeDeletedAndPublishingNeedsTargets() {
         var empty = surveys.create(command(List.of()), admin);
         assertThatThrownBy(() -> surveys.publish(empty.id(), empty.version(), admin))
@@ -317,6 +438,35 @@ class SurveyServiceTests {
 
     private static Map<String, Object> validAnswers() {
         return Map.of("rating", "满意", "topics", List.of("器材"));
+    }
+
+    /** 申请一张票据并把文件真的传上去，返回文件 id。 */
+    private String uploadedFile(long surveyId, String fileName, AuthenticatedUser user) {
+        var ticket = responses.createFileTicket(surveyId,
+                new FormFileService.TicketRequest("attachment", fileName, "application/pdf", 5L), user);
+        putObject(ticket.fileId(), "hello");
+        return ticket.fileId();
+    }
+
+    private static Map<String, Object> withFiles(String... fileIds) {
+        Map<String, Object> answers = new java.util.HashMap<>(validAnswers());
+        answers.put("attachment", List.of(fileIds));
+        return answers;
+    }
+
+    private String fileStatus(String fileId) {
+        return jdbc.sql("SELECT status FROM form_file_upload WHERE id=:id")
+                .param("id", fileId).query(String.class).single();
+    }
+
+    /**
+     * 把截止时间拨到过去。直接改库绕过了 MyBatis，同一个事务里它的一级缓存还留着改之前的问卷行，
+     * 得清掉，否则服务读到的仍是没过期的那一份。
+     */
+    private void passDeadline(long surveyId) {
+        jdbc.sql("UPDATE survey SET ends_at=:endsAt WHERE id=:id")
+                .param("endsAt", LocalDateTime.now(clock).minusMinutes(1)).param("id", surveyId).update();
+        sqlSession.clearCache();
     }
 
     private void putObject(String fileId, String content) {

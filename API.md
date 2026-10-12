@@ -2433,7 +2433,7 @@ interface SharePhoto {
 | 权限 | 能做什么 |
 | --- | --- |
 | `SURVEY_CREATE` | 新建、编辑、发布、结束问卷；删除草稿；选择发放对象 |
-| `SURVEY_ACCESS` | 作为发放对象查看和填写问卷，每人每份只能交一次 |
+| `SURVEY_ACCESS` | 作为发放对象查看和填写问卷；每人每份一份答卷，问卷结束前可以修改 |
 | `SURVEY_RESULT_VIEW` | 查看答卷、选择题统计，导出 Excel |
 
 默认 A/M 三个都有，C 只有 `SURVEY_ACCESS`。校区范围（`dataScope=CAMPUS`）的发起人只能选与自己有共同授权校区的人；校区范围的结果查看人只看得到授权校区成员的答卷（列表、详情、统计、导出同一口径）。
@@ -2446,7 +2446,7 @@ interface SharePhoto {
 | POST | `/surveys` | 新建草稿 |
 | PUT | `/surveys/{id}` | 编辑，请求体多一个 `version`；发布后 `formSchema` 不能再变，改名单时新增的人会收到站内通知 |
 | POST | `/surveys/{id}/publish` | `{ version }`，至少一道题、至少一个发放对象；给名单上每个人发站内通知（跳转 `/surveys/{id}/fill`） |
-| POST | `/surveys/{id}/close` | `{ version }` |
+| POST | `/surveys/{id}/close` | `{ version }`；结束后不能再提交，也不能再修改答卷 |
 | DELETE | `/surveys/{id}?version=` | 只能删草稿 |
 
 新建 / 编辑请求体：
@@ -2471,10 +2471,10 @@ interface SharePhoto {
 | GET | `/surveys?page&pageSize&keyword&status` | CREATE 或 RESULT_VIEW | 分页；只有 RESULT_VIEW 时看不到草稿 |
 | GET | `/surveys/{id}` | CREATE 或 RESULT_VIEW | 带 `targetUserIds`、`targetCount`、`responseCount`、`open` |
 | GET | `/surveys/{id}/targets` | CREATE 或 RESULT_VIEW | 发放名单和每人的提交情况 |
-| GET | `/surveys/{id}/responses?page&pageSize&keyword` | RESULT_VIEW | 答卷列表，`keyword` 匹配姓名或账号 |
-| GET | `/surveys/responses/{responseId}` | RESULT_VIEW | 单份答卷：冻结的 `formSchema`、`answers`、`files`（带临时下载地址） |
+| GET | `/surveys/{id}/responses?page&pageSize&keyword` | RESULT_VIEW | 答卷列表，`keyword` 匹配姓名或账号；每项带 `submittedAt` 和 `modifiedAt` |
+| GET | `/surveys/responses/{responseId}` | RESULT_VIEW | 单份答卷：冻结的 `formSchema`、`answers`、`files`（带临时下载地址）、`submittedAt`、`modifiedAt` |
 | GET | `/surveys/{id}/summary` | RESULT_VIEW | 单选 / 多选题按选项计数 |
-| GET | `/surveys/{id}/responses/export` | RESULT_VIEW | XLSX 二进制：「答卷」「未提交」「选择题统计」三个工作表 |
+| GET | `/surveys/{id}/responses/export` | RESULT_VIEW | XLSX 二进制：「答卷」「未提交」「选择题统计」三个工作表；「答卷」里有「提交时间」「修改时间」两列 |
 
 ### 22.3 填写人（`SURVEY_ACCESS`）
 
@@ -2483,9 +2483,14 @@ interface SharePhoto {
 | GET | `/surveys/assigned` | 发给我的、已发布过的问卷，带 `submittedAt` |
 | GET | `/surveys/{id}/fill` | 问卷内容、`uploadLimits`；交过的话带 `myResponse` |
 | POST | `/surveys/{id}/files` | 「上传文件」题的直传票据，见 22.4 |
-| POST | `/surveys/{id}/responses` | `{ answers }`，重复提交返回 `DUPLICATE_RESOURCE` |
+| POST | `/surveys/{id}/responses` | `{ answers }`，重复提交返回 `DUPLICATE_RESOURCE`（要改请用下面的 PUT） |
+| PUT | `/surveys/{id}/responses/mine` | `{ answers }`，修改自己已经交过的答卷；没交过返回 `404` |
 
 草稿、以及没发给自己的问卷一律返回 `404`。
+
+**修改答卷只在问卷还开着的时候可以**，条件和第一次提交完全相同：问卷是 `PUBLISHED` 且没过 `endsAt`（响应里的 `open=true`）。过了截止时间或者被手动结束之后，`PUT` 和申请文件票据都返回 `RESOURCE_STATE_CONFLICT`，答卷就此定下来。没设 `endsAt` 的问卷可以一直改到发起人结束它。
+
+修改是整份替换：请求体和提交时一样带全部题目的答案，走同一套校验。`submittedAt` 保持第一次提交的时间，最后一次修改的时间记在 `modifiedAt`（没改过为 `null`）。「上传文件」题带回原来的 `fileId` 表示留用，带新申请的 `fileId` 表示新增，没带回来的旧文件会从答卷里拿掉并由后台清理。
 
 ### 22.4 「上传文件」题（招募和问卷通用）
 

@@ -143,6 +143,19 @@ public class FormFileService {
     @Transactional
     public Map<String, Object> attachAnswers(Owner owner, RecruitmentFormSchema schema,
                                              Map<String, Object> answers) {
+        return replaceAnswers(owner, schema, answers, List.of());
+    }
+
+    /**
+     * 修改已经提交的答卷时用，和 {@link #attachAnswers} 的区别只在怎么对待 {@code previousIds}
+     * （上一版答卷引用的文件）：新答案里还带着的原样留用，被拿掉的退回 PENDING，交给清理任务删。
+     * 新传的文件照常核对后改成 ATTACHED。同样必须和保存答卷在同一个事务里。
+     */
+    @Transactional
+    public Map<String, Object> replaceAnswers(Owner owner, RecruitmentFormSchema schema,
+                                              Map<String, Object> answers, Collection<String> previousIds) {
+        Set<String> previous = new LinkedHashSet<>(previousIds);
+        Set<String> kept = new LinkedHashSet<>();
         Map<String, Object> result = new LinkedHashMap<>(answers);
         LocalDateTime now = now();
         for (RecruitmentFormSchema.Field field : schema.fields()) {
@@ -158,6 +171,11 @@ public class FormFileService {
                         || !field.id().equals(upload.getFieldId())) {
                     throw validation("“" + field.label() + "”里有文件找不到了，请重新上传");
                 }
+                if (upload.getStatus() == FormFileStatus.ATTACHED && previous.contains(upload.getId())) {
+                    kept.add(upload.getId());
+                    files.add(describe(upload));
+                    continue;
+                }
                 if (upload.getStatus() != FormFileStatus.PENDING) {
                     throw conflict("“" + field.label() + "”里的「" + upload.getFileName() + "」已经提交过了");
                 }
@@ -171,6 +189,9 @@ public class FormFileService {
                 files.add(describe(upload));
             }
             result.put(field.id(), List.copyOf(files));
+        }
+        for (String id : previous) {
+            if (!kept.contains(id)) mapper.release(id);
         }
         return result;
     }
