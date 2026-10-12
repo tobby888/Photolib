@@ -18,7 +18,6 @@ import cn.photolib.photo.model.PhotoStatus;
 import cn.photolib.project.ProjectService;
 import cn.photolib.project.model.ProjectEntity;
 import cn.photolib.project.model.ProjectStatus;
-import cn.photolib.project.model.ProjectType;
 import cn.photolib.recruitment.RecruitmentStudentId;
 import cn.photolib.share.mapper.ProjectShareLinkMapper;
 import cn.photolib.share.mapper.ProjectShareSessionMapper;
@@ -294,6 +293,7 @@ public class ProjectShareService {
                 Boolean.TRUE.equals(link.getAllowDownload()),
                 Boolean.TRUE.equals(link.getAllowAdoption()),
                 purpose == ShareLinkPurpose.UPLOAD && canAcceptUploads(project),
+                purpose == ShareLinkPurpose.UPLOAD && canAcceptWorklogs(project),
                 context.session() == null ? null : context.session().getUploaderName(),
                 link.getExpiresAt());
     }
@@ -548,26 +548,37 @@ public class ProjectShareService {
     }
 
     /**
-     * 能发上传链接的项目：进行中的活动选题。
+     * 能发上传链接的项目：进行中的选题，创作选题和活动选题都可以。
      *
-     * <p>限活动选题是因为整条工作流程只在那里说得通——图片先整批进库，再由选片人
-     * 逐张打标签、把用不上的清理掉（§2.23）。创作选题的图片要挂在具体需求下、要有
-     * 接单人和校区，这些站外的人一样都给不出来。限进行中则与站内上传同一条规则
-     * （{@code PhotoService.requireProjectUploadAccess}）：选题结束后不再收图。</p>
+     * <p>最初只对活动选题开放，理由是创作选题的图片要挂在具体需求下、要有接单人和校区，
+     * 站外的人给不出来。但站内本来就有一条不挂需求的路——持有 {@code PROJECT_ADOPT} 的人
+     * 直接把图片传进选题相册（{@code PhotoService.requireProjectUploadAccess}），两类选题
+     * 都能用。上传链接走的正是这条路：图片只进 {@code photo_project}，不挂需求、校区留空，
+     * 不替任何人接单，也不碰需求的状态。所以它对创作选题同样说得通，区别只在后续——
+     * 活动选题由选片人逐张打标签（§2.23），创作选题由选题负责人在相册里处理。</p>
+     *
+     * <p>限进行中与站内那条路同一条规则：选题结束后不再收图。</p>
      */
     private void requireUploadableProject(ProjectEntity project) {
-        if (projectService.typeOf(project) != ProjectType.EVENT) {
-            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "只有活动选题可以生成上传链接");
-        }
         if (project.getStatus() != ProjectStatus.ACTIVE) {
-            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "只有进行中的活动选题可以生成上传链接");
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "只有进行中的选题可以生成上传链接");
         }
     }
 
     /** 选题还收不收图。链接本身没过期不代表选题还开着，所以每次上传都要现判。 */
     boolean canAcceptUploads(ProjectEntity project) {
-        return projectService.typeOf(project) == ProjectType.EVENT
-                && project.getStatus() == ProjectStatus.ACTIVE;
+        return project.getStatus() == ProjectStatus.ACTIVE;
+    }
+
+    /**
+     * 选题还收不收通过链接申报的工时。
+     *
+     * <p>与站内填报同一条线（{@code WorklogService.requireProjectOpen}）：选题完成或取消之后
+     * 不再计发工时。这里只是把它提前告诉访客页，真正的判定仍在申报那一刻由工时服务做。</p>
+     */
+    boolean canAcceptWorklogs(ProjectEntity project) {
+        return project.getStatus() != ProjectStatus.COMPLETED
+                && project.getStatus() != ProjectStatus.CANCELLED;
     }
 
     /**
@@ -662,7 +673,8 @@ public class ProjectShareService {
 
     public record GuestAccess(String projectTitle, ProjectStatus projectStatus, String linkName,
                               ShareLinkPurpose purpose, boolean allowDownload, boolean allowAdoption,
-                              boolean allowUpload, String uploaderName, LocalDateTime expiresAt) {}
+                              boolean allowUpload, boolean allowWorklog, String uploaderName,
+                              LocalDateTime expiresAt) {}
 
     /** 一次访客请求解析出来的上下文：当前这一刻的链接行，加上发起请求的那个会话。 */
     public record GuestContext(ProjectShareLinkEntity link, ProjectShareSessionEntity session) {}

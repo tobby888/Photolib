@@ -31,13 +31,13 @@ const linkUrl = (link: Pick<ProjectShareLink, 'token' | 'purpose'>) =>
  * <p>用途建立后不可改，两种能力互斥：上传链接看不到相册，分享链接传不了图。所以
  * 这里只在创建时让人选一次，表格里把它作为一列如实标出来——同一个列表里混着两种
  * 完全不同的东西，不写清楚就会有人把上传链接当相册发出去。上传链接只有进行中的
- * 活动选题能开（{@code uploadLinksAvailable}），与服务端同一条规则。</p>
+ * 选题能开（{@code uploadLinksAvailable}，创作选题和活动选题都可以），与服务端同一条规则。</p>
  */
 export default function ProjectShareLinksModal({ projectId, open, onClose, uploadLinksAvailable }: {
   projectId: string
   open: boolean
   onClose: () => void
-  /** 进行中的活动选题才有上传链接这一说；其余选题只显示分享链接的入口。 */
+  /** 进行中的选题才能开上传链接；其余状态只显示分享链接的入口。 */
   uploadLinksAvailable?: boolean
 }) {
   const { message } = App.useApp()
@@ -145,7 +145,8 @@ export default function ProjectShareLinksModal({ projectId, open, onClose, uploa
       <Typography.Paragraph type="secondary">
         分享链接让没有账号的人凭“链接 + 密码”查看这个项目里的图片。是否允许下载、是否允许标记被引，
         由每条链接单独决定，随时可改。链接看到的图片和被引状态与项目内完全同步。
-        {uploadLinksAvailable && '上传链接则相反：拿到的人只能把照片传进这个选题，看不到里面已有的任何图片。'}
+        {uploadLinksAvailable && '上传链接则相反：拿到的人只能把照片传进这个选题，看不到里面已有的任何图片；'
+          + '传完之后可以在同一页申报工时，申报直接进入工时审核面板。'}
       </Typography.Paragraph>
 
       {secret && <Alert type="success" showIcon
@@ -234,10 +235,11 @@ export default function ProjectShareLinksModal({ projectId, open, onClose, uploa
         initialValues={{ allowDownload: true, allowAdoption: false }}>
         {createPurpose === 'UPLOAD' && <Typography.Paragraph type="secondary">
           拿到链接和密码的人可以直接把照片传进这个选题的图库。他们进门时要填写本人姓名和学号，
-          作为所传照片的拍摄者；这条链接看不到选题里已有的任何图片。
+          作为所传照片的拍摄者；这条链接看不到选题里已有的任何图片。传完之后他们可以用同一份姓名学号
+          申报工时，申报直接进入「工时记录」等部长或管理员确认，退回通知会发给你。
         </Typography.Paragraph>}
         <Form.Item label="备注" name="name"
-          extra={createPurpose === 'UPLOAD' ? '只给自己看，例如“活动当天的摄影组”' : '只给自己看，例如“校报编辑部”'}
+          extra={createPurpose === 'UPLOAD' ? '只给自己看，例如“活动当天的摄影组”；工时审核面板里也会显示它' : '只给自己看，例如“校报编辑部”'}
           rules={[{ max: 100 }]}>
           <Input placeholder="选填" />
         </Form.Item>
@@ -248,7 +250,7 @@ export default function ProjectShareLinksModal({ projectId, open, onClose, uploa
         </Form.Item>
         <Form.Item label="失效时间" name="expiresAt"
           extra={createPurpose === 'UPLOAD'
-            ? '建议设成活动结束后几天。留空表示长期有效，可随时删除链接'
+            ? '建议设成拍摄结束后几天。留空表示长期有效，可随时删除链接'
             : '留空表示长期有效，可随时删除链接'}>
           <DatePicker showTime format="YYYY-MM-DD HH:mm" style={{ width: '100%' }}
             disabledDate={date => date.isBefore(dayjs(), 'day')} />

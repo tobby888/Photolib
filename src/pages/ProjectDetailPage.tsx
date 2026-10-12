@@ -1024,7 +1024,7 @@ export default function ProjectDetailPage() {
         presets={presetTags} onClose={() => setTagMode(null)} onDone={applyTaggedPhotos} />
       {shareOpen && <Suspense fallback={null}>
         <ProjectShareLinksModal projectId={projectId} open onClose={() => setShareOpen(false)}
-          uploadLinksAvailable={isEvent && project.status === 'ACTIVE'} />
+          uploadLinksAvailable={project.status === 'ACTIVE'} />
       </Suspense>}
       {cleanupMode && <Suspense fallback={null}>
         <SelectionCleanupModal key={cleanupMode} open mode={cleanupMode} project={project} photos={data.photos}

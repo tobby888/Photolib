@@ -389,6 +389,8 @@ export interface ShareGuestAccess {
   allowAdoption: boolean
   /** 上传链接：选题当下还收不收图（选题结束后立刻变 false）。 */
   allowUpload: boolean
+  /** 上传链接：选题当下还收不收通过链接申报的工时（选题完成或取消后变 false）。 */
+  allowWorklog: boolean
   /** 上传链接：访客进门时自报的姓名，回显用。 */
   uploaderName?: string | null
   expiresAt?: string | null
@@ -461,9 +463,32 @@ export interface ShareUploadedPhoto {
   failureReason?: string | null
 }
 
+/**
+ * 访客通过上传链接申报的一条工时。比 {@link Worklog} 少：没有填报账号、确认人，
+ * 姓名学号也不回——它们就是这次会话进门时填的那一份。
+ */
+export interface ShareGuestWorklog {
+  id: EntityId
+  workDate: string
+  shootingMinutes: number
+  retouchingMinutes: number
+  remark?: string | null
+  status: Worklog['status']
+  rejectReason?: string | null
+  createdAt?: string | null
+}
+
 export interface Worklog extends BaseEntity {
-  requestId: EntityId
-  requestTitle?: string
+  /** 站内填报的工时挂在需求下；通过上传链接申报的没有需求，见 {@link shareLinkId}。 */
+  requestId?: EntityId | null
+  requestTitle?: string | null
+  /** 通过哪条上传链接申报的；站内填报的为空。 */
+  shareLinkId?: EntityId | null
+  /** 仅链接申报的工时由列表接口补充：所属选题和那条链接的备注名。 */
+  projectId?: EntityId | null
+  projectTitle?: string | null
+  shareLinkName?: string | null
+  /** 填报账号；链接申报的工时记的是开链接的成员，不是干活的人。 */
   userId: EntityId
   userDisplayName?: string
   memberName: string
@@ -510,8 +535,10 @@ export interface MemberStats {
 export interface MemberWorklogDetail {
   worklogId: EntityId
   workDate: string
-  requestId: EntityId
-  requestTitle: string
+  /** 通过上传链接申报的工时没有需求，这两项为空，{@link viaShareLink} 为 true。 */
+  requestId?: EntityId | null
+  requestTitle?: string | null
+  viaShareLink: boolean
   projectId: EntityId
   projectTitle: string
   campus: string

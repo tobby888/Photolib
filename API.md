@@ -518,6 +518,12 @@ function parseTags(value?: string | null): string[] {
 
 `requestTitle`、`userDisplayName` 由工时列表接口补充；创建或状态操作的响应中可能为 `null`。
 
+**通过上传链接申报的工时**（§19.2，Flyway V63）没有需求：`requestId`、`requestTitle` 为 `null`，
+`shareLinkId` 是那条上传链接，`userId` 是**开链接的成员**（不是申报人），`memberName` /
+`memberStudentId` 是申报人进门时自报的身份。列表接口为这类工时另外补充 `projectId`、
+`projectTitle`（所属选题，由链接现读）和 `shareLinkName`（链接备注名）。站内填报的工时
+`shareLinkId` 为 `null`，这三个补充字段也为 `null`。
+
 ## 5. 认证接口
 
 ### 5.1 登录
@@ -1418,6 +1424,7 @@ UPLOADING -> PROCESSING -> WAITING_METADATA -> PROCESSING
 - 编辑仅允许 `DRAFT`/`REJECTED`，并固定重置为 `DRAFT`、清空退回原因。版本号是 query 参数，不在请求体中。
 - 提交仅允许 `DRAFT`/`REJECTED`。
 - 确认/退回仅允许 `SUBMITTED`，并记录审核人和时间。
+- 通过上传链接申报的工时（`shareLinkId` 非空）不能走 `PUT /worklogs/{id}` 和 `/submit`，返回 `409 RESOURCE_STATE_CONFLICT`：被退回的由申报人在上传页重新申报一条。确认、退回、删除照常。它们不属于任何校区，校区范围账号在列表里看不到，凭 id 操作返回 `403`。退回/确认通知发给开链接的成员。
 - C 只能编辑/提交自己的填报记录。M 是审核人，不能编辑他人记录。
 - A/M 可删除任意状态；普通填报人只能删除自己的 `DRAFT`/`REJECTED`。
 
@@ -1459,6 +1466,7 @@ C 的 `userId` 会被强制为本人。日期按 `workDate >= from AND workDate 
 
 - 先选出状态为 `COMPLETED` 且 `completedAt` 落在 `[from, to + 1 day)` 的项目。
 - 工时只统计这些项目需求中的 `CONFIRMED` 记录；这里不是按 `workDate` 直接筛选。
+- 通过上传链接申报的工时（§19.2）没有需求，所属项目按那条链接所在的选题算，与站内填报的按同一个学号归并成一行；它们没有校区，传了 `campusId` 或由校区范围账号查看时不计入。工时导出同理。
 - 采用按摄影师学号关联，统计这些已完成项目中的 `COUNT(DISTINCT photo_id)`。
 - `campusId` 同时限制需求校区和照片校区；`userId` 限制工时填报账号。
 - `from`/`to` 可空；空值相当于极宽时间范围。
@@ -2216,7 +2224,7 @@ interface ProjectShareLink {
 }
 ```
 
-创建时 `purpose` 省略等同 `BROWSE`（与 V48 之前的请求体兼容）。**`UPLOAD` 只能开在进行中的活动选题上**（`type=EVENT` 且 `status=ACTIVE`），否则 `409 RESOURCE_STATE_CONFLICT`；请求里带的 `allowDownload` / `allowAdoption` 对它一律按 `false` 落库。用途不提供修改接口——把上传链接改成浏览链接，等于把整个相册交给一批只被授权上传的人。
+创建时 `purpose` 省略等同 `BROWSE`（与 V48 之前的请求体兼容）。**`UPLOAD` 只能开在进行中的选题上**（`status=ACTIVE`，创作选题和活动选题都可以），否则 `409 RESOURCE_STATE_CONFLICT`；请求里带的 `allowDownload` / `allowAdoption` 对它一律按 `false` 落库。用途不提供修改接口——把上传链接改成浏览链接，等于把整个相册交给一批只被授权上传的人。
 
 **明文密码只在创建和重置密码的响应里出现一次**（`{ link, password }`），数据库里只有 BCrypt 哈希；此后没有任何接口能读回明文，想换只能重置。**重置密码会作废该链接已经发出的全部会话**。删除是软删，等同"撤销"：已经发出的会话下一次请求即被拒。
 
@@ -2246,6 +2254,8 @@ interface ProjectShareLink {
 | POST | `/public/shares/{token}/upload-batches/{batchId}/complete` | 压缩包已传完，交给后台解包 |
 | GET | `/public/shares/{token}/upload-batches/{batchId}` | `{ batchId, status, totalCount, successCount, failureCount, failureReason }` |
 | POST | `/public/shares/{token}/upload-batches/{batchId}/finish` | 解包完成后把这一批落成照片，`{ takenAt? }` |
+| POST | `/public/shares/{token}/worklogs` | 仅 `UPLOAD`：`{ workDate, shootingMinutes, retouchingMinutes, remark? }` → `ShareGuestWorklog`，直接落成 `SUBMITTED` |
+| GET | `/public/shares/{token}/worklogs` | 仅 `UPLOAD`：本人（这条链接 + 会话上的学号）申报过的 `ShareGuestWorklog[]`，新的在前 |
 
 **用途互斥**：上传链接调浏览侧的任何接口（含 `/photos`）一律 `403`，浏览链接调上传侧同样 `403`。客户端拿到 `purpose` 后应把访客领到对应的页面，而不是先发一次注定被拒的请求——那会被当成会话失效。
 
@@ -2254,6 +2264,29 @@ interface ProjectShareLink {
 - 拍摄者取自**会话**上的 `uploaderName` / `uploaderStudentId`（进门时填一次，整场会话共用），而不是通讯录——拿着链接的人按定义在通讯录之外，把通讯录摆给站外的人挑也会泄露姓名和学号。
 - 照片的 `uploadedBy` 记链接创建者（站内唯一可追责的成员），`shareLinkId` 记是哪条链接放进来的；`complete` 的归属判定只认后者。
 - 每次请求都重判选题是否仍在收图：选题一旦完成，已经拿着会话的人立刻传不进来（`access.allowUpload` 同步变 `false`）。
+- 创作选题和活动选题走的是同一条路：图片只进选题相册（`photo_project`），`requestId` 和 `campusId` 为空，不挂需求、不替任何人接单——与站内持 `PROJECT_ADOPT` 直接传进选题相册是同一种形态。
+
+**申报工时**（传完图之后的最后一步）：
+
+```ts
+interface ShareGuestWorklog {
+  id: EntityId
+  workDate: string            // YYYY-MM-DD
+  shootingMinutes: number
+  retouchingMinutes: number
+  remark?: string | null
+  status: 'SUBMITTED' | 'CONFIRMED' | 'REJECTED'   // 没有草稿，交上来就是待确认
+  rejectReason?: string | null
+  createdAt: string
+}
+```
+
+- 字段约束与站内 `WorklogRequest` 一致：`workDate` 不能晚于今天，两类分钟各 `0..1440` 且不能同时为 0，`remark` 最多 1000；不满足返回 `400`。
+- **姓名学号不在请求体里**，取会话上进门时那一份——与这场会话上传的照片上的拍摄者是同一个人。
+- 必须先通过这条链接交过图（这条链接 + 这个学号至少有一张不再是 `UPLOADING` 的照片），否则 `409`。按学号现查而不是按会话，所以隔天换设备重新进门的人照样能报。
+- 同一条链接上同一个学号同一天只能有一条 `SUBMITTED` / `CONFIRMED` 的申报，重复返回 `409`；被退回的不算，退回后重新申报一条。
+- 选题完成或取消后不再收（`409`，`access.allowWorklog` 同步变 `false`），与站内填报同一条规则；已经交上来的照常审核。
+- 申报直接出现在 `GET /worklogs`（部长和管理员的工时面板）里，形态见 §4.6。退回原因经 `GET .../worklogs` 回到申报人手上——通知发给的是开链接的成员，申报人没有账号。
 - 传了一半就走留下的临时对象由 `AbandonedUploadCleanupJob` 回收（站内同一套）：直传地址过期一小时后才删，处理失败的照片不碰，解包后 24 小时没人整理的条目连本地文件一起收。启动、定时、以及每次签发上传票据时各触发一次（后者节流 5 分钟且异步）。
 
 ZIP 批量走的是**站内需求批量上传的同一条通道**（`photo_upload_batch` / `photo_upload_item` +
@@ -2284,6 +2317,7 @@ X-Share-Session: {sessionToken}
 interface ShareGuestAccess {
   purpose: 'BROWSE' | 'UPLOAD'
   allowUpload: boolean           // UPLOAD 且选题仍在收图
+  allowWorklog: boolean          // UPLOAD 且选题仍在收工时申报（完成或取消后为 false）
   uploaderName?: string | null   // 上传链接：访客进门时自报的姓名，回显用
   projectTitle: string
   projectStatus: ProjectStatus

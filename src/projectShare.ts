@@ -2,7 +2,7 @@ import { api, qs } from './api'
 import type { ProjectPhotoFilters } from './photoTags'
 import type {
   EntityId, PageData, ShareGuestAccess, ShareGuestSession, SharePhoto, ShareLinkPurpose,
-  ShareArchiveTicket, ShareUploadBatch, ShareUploadTicket, ShareUploadedPhoto,
+  ShareArchiveTicket, ShareGuestWorklog, ShareUploadBatch, ShareUploadTicket, ShareUploadedPhoto,
 } from './types'
 
 /** 访客图片列表的查询条件：分页、关键字，加上与选题详情页同一组筛选。 */
@@ -169,6 +169,20 @@ export const shareUploadApi = {
       method: 'POST', url: `/public/shares/${token}/upload-batches/${batchId}/finish`,
       data: { takenAt: takenAt ?? null }, ...guest(session),
     }),
+
+  // 传完图之后申报这次的工时：直接落成「待确认」，进部长和管理员的审核面板。
+  // 姓名学号不在这里发——服务端取会话上的那一份，和照片上的拍摄者是同一个人。
+  declareWorklog: (token: string, session: string, declaration: {
+    workDate: string; shootingMinutes: number; retouchingMinutes: number; remark?: string | null
+  }) =>
+    api<ShareGuestWorklog>({
+      method: 'POST', url: `/public/shares/${token}/worklogs`, data: declaration, ...guest(session),
+    }),
+
+  // 自己在这条链接上申报过的工时和审核结果。退回原因只有从这里才到得了申报人手上：
+  // 通知发给的是开链接的成员，申报人没有账号。
+  worklogs: (token: string, session: string) =>
+    api<ShareGuestWorklog[]>({ url: `/public/shares/${token}/worklogs`, ...guest(session) }),
 }
 
 interface ShareExportJobView {

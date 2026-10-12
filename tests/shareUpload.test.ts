@@ -253,13 +253,19 @@ test('上传页只上传，不显示选题里已有的任何图片', async () =>
   assert.match(page, /reason\.status === 403 \|\| reason\.status === 404/)
 })
 
-test('生成上传链接的入口只对进行中的活动选题出现', async () => {
-  const [detail, modal] = await Promise.all([
+test('生成上传链接的入口对进行中的选题出现，创作选题和活动选题都可以', async () => {
+  const [detail, modal, service] = await Promise.all([
     read('pages/ProjectDetailPage.tsx'),
     read('ProjectShareLinksModal.tsx'),
+    readFile(new URL('../backend/src/main/java/cn/photolib/share/ProjectShareService.java', import.meta.url), 'utf8'),
   ])
 
-  assert.match(detail, /uploadLinksAvailable=\{isEvent && project\.status === 'ACTIVE'\}/)
+  // 只看状态、不看类型——与服务端 requireUploadableProject 同一条规则。
+  assert.match(detail, /uploadLinksAvailable=\{project\.status === 'ACTIVE'\}/)
+  const rule = service.slice(service.indexOf('private void requireUploadableProject'),
+    service.indexOf('boolean canAcceptUploads'))
+  assert.match(rule, /project\.getStatus\(\) != ProjectStatus\.ACTIVE/)
+  assert.doesNotMatch(rule, /ProjectType/)
   assert.match(modal, /uploadLinksAvailable && <Button icon=\{<CloudUploadOutlined \/>\}/)
   // 上传链接没有下载/标记被引这两项能力，界面上也就不该摆出点不动的勾选框。
   assert.match(modal, /link\.purpose === 'UPLOAD'\s*\n\s*\? <Typography\.Text type="secondary">仅上传/)

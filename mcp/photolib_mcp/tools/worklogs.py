@@ -17,7 +17,12 @@ def register(registry: ToolRegistry) -> None:
                             user_id: int | None = None, status: WorklogStatus | None = None,
                             date_from: str | None = None,
                             date_to: str | None = None) -> dict[str, Any]:
-        """分页查询工时。`date_from` / `date_to` 是 `YYYY-MM-DD`，两端都包含。"""
+        """分页查询工时。`date_from` / `date_to` 是 `YYYY-MM-DD`，两端都包含。
+
+        结果里 `shareLinkId` 非空的是外部的人通过上传链接申报的：没有需求（`requestId` 为空），
+        所属选题看 `projectTitle`，`userId` 是开链接的成员而不是申报人。这类工时只能确认、
+        退回或删除，不能用 worklogs_update / worklogs_submit 改。
+        """
         return await session.request("GET", "/worklogs", params=page_params(
             page, page_size, requestId=request_id, userId=user_id, status=status,
             **{"from": date_from, "to": date_to}))

@@ -1,9 +1,9 @@
 import {
-  Alert, App, Button, Card, Empty, Form, Input, List, Progress, Result, Segmented, Skeleton, Space,
-  Tag, Typography, Upload,
+  Alert, App, Button, Card, DatePicker, Empty, Form, Input, InputNumber, List, Progress, Result, Segmented,
+  Skeleton, Space, Tag, Typography, Upload,
 } from 'antd'
 import {
-  CloudUploadOutlined, FileZipOutlined, InboxOutlined, LockOutlined,
+  ClockCircleOutlined, CloudUploadOutlined, FileZipOutlined, InboxOutlined, LockOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useCallback, useEffect, useState } from 'react'
@@ -20,10 +20,13 @@ import {
   isTerminalBatchStatus, rejectArchiveReason, runQueue, summarize,
 } from '../shareUpload'
 import type { ShareUploadItem } from '../shareUpload'
+import {
+  MAX_WORKLOG_MINUTES, alreadyDeclaredOn, describeMinutes, describeWorklogStatus, rejectWorklogReason,
+} from '../shareWorklog'
 import { uploadToObjectStorage } from '../storageUpload'
 import { describeBytes } from '../uploadLimits'
 import { useUploadLimits } from '../useUploadLimits'
-import type { ShareGuestAccess, ShareUploadBatch } from '../types'
+import type { ShareGuestAccess, ShareGuestWorklog, ShareUploadBatch } from '../types'
 
 /** 处理结果的轮询上限。压缩一张相机原图通常几秒，超过这个就交给访客自己刷新。 */
 const PROCESSING_TIMEOUT_MS = 90_000
@@ -52,6 +55,11 @@ const ARCHIVE_PHASE_TEXT: Record<ArchivePhase, string> = {
  * <p>身份（姓名 + 学号）和密码一起构成这次会话，之后这场会话传的每一张都用同一份
  * 拍摄者快照。站内的拍摄者强制来自通讯录，而拿着链接的人按定义在通讯录之外，把
  * 通讯录摆出来让站外的人挑更是直接泄露姓名和学号。</p>
+ *
+ * <p>页面的最后一步是申报工时：传完图的人用同一份身份报这次拍了多久、修了多久，
+ * 申报直接落成「待确认」进入部长和管理员的工时审核面板。姓名学号不再填一遍——
+ * 服务端取的就是会话上那一份，和照片上的拍摄者是同一个人。申报人没有账号、收不到
+ * 通知，所以审核结果（尤其是退回原因）就显示在这张卡片里。</p>
  */
 export default function SharedUploadPage() {
   const { token = '' } = useParams()
@@ -59,6 +67,9 @@ export default function SharedUploadPage() {
   const branding = useBranding()
   const uploadLimits = useUploadLimits()
   const [gateForm] = Form.useForm<{ password: string; uploaderName: string; uploaderStudentId: string }>()
+  const [worklogForm] = Form.useForm<{
+    workDate: dayjs.Dayjs; shootingMinutes: number; retouchingMinutes: number; remark?: string
+  }>()
 
   const [session, setSession] = useState<string | null>(() => readStoredShareSession(token))
   const [access, setAccess] = useState<ShareGuestAccess | null>(null)
@@ -70,11 +81,15 @@ export default function SharedUploadPage() {
   const [archivePhase, setArchivePhase] = useState<ArchivePhase | null>(null)
   const [archivePercent, setArchivePercent] = useState(0)
   const [archiveBatch, setArchiveBatch] = useState<ShareUploadBatch | null>(null)
+  const [worklogs, setWorklogs] = useState<ShareGuestWorklog[]>([])
+  const [declaring, setDeclaring] = useState(false)
+  const worklogDate = Form.useWatch('workDate', worklogForm)
 
   const dropSession = useCallback((notice?: string) => {
     clearShareSession(token)
     setSession(null)
     setAccess(null)
+    setWorklogs([])
     if (notice) message.warning(notice)
   }, [message, token])
 
@@ -118,6 +133,54 @@ export default function SharedUploadPage() {
     void load()
     return () => { cancelled = true }
   }, [handleGuestError, session, token])
+
+  // 申报记录要等确认了这是一条上传链接再取：浏览链接调这个接口一律 403，而这一页对
+  // 403 的处理是清会话退回密码页——拿着相册会话误开到这里的人，会话会在跳走之前被清掉。
+  useEffect(() => {
+    if (!session || access?.purpose !== 'UPLOAD') return
+    let cancelled = false
+    const load = async () => {
+      try {
+        const declared = await shareUploadApi.worklogs(token, session)
+        if (!cancelled) setWorklogs(declared)
+      } catch (reason) {
+        if (!cancelled) handleGuestError(reason)
+      }
+    }
+    void load()
+    return () => { cancelled = true }
+  }, [access?.purpose, handleGuestError, session, token])
+
+  const declareWorklog = async () => {
+    if (!session) return
+    const values = await worklogForm.validateFields()
+    const draft = {
+      workDate: values.workDate.format('YYYY-MM-DD'),
+      shootingMinutes: values.shootingMinutes ?? 0,
+      retouchingMinutes: values.retouchingMinutes ?? 0,
+    }
+    const reason = rejectWorklogReason(draft, dayjs().format('YYYY-MM-DD'))
+      || (alreadyDeclaredOn(worklogs, draft.workDate)
+        ? '这一天的工时已经申报过了。如果填错了，请联系发给你链接的同学退回后重新申报' : null)
+    if (reason) {
+      message.error(reason)
+      return
+    }
+    setDeclaring(true)
+    try {
+      const declared = await shareUploadApi.declareWorklog(token, session, {
+        ...draft, remark: values.remark?.trim() || null,
+      })
+      setWorklogs(current => [declared, ...current.filter(item => item.id !== declared.id)])
+      worklogForm.resetFields()
+      message.success('工时已提交，等待部长或管理员确认')
+    } catch (reasonThrown) {
+      // 这里的 403/404 才是会话失效；409（还没交图、当天报过了、选题已结束）要原样说给人听。
+      handleGuestError(reasonThrown)
+    } finally {
+      setDeclaring(false)
+    }
+  }
 
   const unlock = async () => {
     const values = await gateForm.validateFields()
@@ -326,7 +389,8 @@ export default function SharedUploadPage() {
       <Card className="share-gate">
         <Typography.Title level={5}><LockOutlined /> 输入上传密码</Typography.Title>
         <Typography.Paragraph type="secondary">
-          密码由发给你链接的同学提供。姓名和学号会作为你这次上传的每一张照片的拍摄者，请填写本人的。
+          密码由发给你链接的同学提供。姓名和学号会作为你这次上传的每一张照片的拍摄者，
+          传完之后申报工时用的也是这一份，请填写本人的。
         </Typography.Paragraph>
         <Form form={gateForm} layout="vertical" requiredMark={false} onFinish={() => void unlock()}>
           <Form.Item label="上传密码" name="password" rules={[{ required: true, message: '请输入上传密码' }]}>
@@ -337,7 +401,7 @@ export default function SharedUploadPage() {
             <Input placeholder="例如：张三" maxLength={50} />
           </Form.Item>
           <Form.Item label="你的学号" name="uploaderStudentId"
-            extra="用于统计照片归属，请填写本人学号"
+            extra="用于统计照片归属和工时，请填写本人学号"
             rules={[{ required: true, message: '请填写学号' },
               { pattern: /^[A-Za-z0-9_-]{2,64}$/, message: '学号只能是字母、数字、下划线或连字符' }]}>
             <Input placeholder="例如：20230001" maxLength={64} />
@@ -349,8 +413,14 @@ export default function SharedUploadPage() {
     <SiteFooter />
   </main>
 
+  // 这一页上有没有真的交上去过图：只用来决定那句「别忘了申报工时」的提醒出不出现，
+  // 能不能申报由服务端按「这条链接 + 这个学号」现查，换设备、隔天再来的人照样能报。
+  const handedInHere = summary.done > 0 || (archiveBatch?.successCount ?? 0) > 0
+  const duplicateDay = !!worklogDate && alreadyDeclaredOn(worklogs, worklogDate.format('YYYY-MM-DD'))
+
   return <main className="share-page">{header}
     <div className="share-body">
+      <Space direction="vertical" size="large" style={{ width: '100%' }}>
       <Card title={mode === 'files'
         ? `上传照片${summary.total ? `（${summary.done} / ${summary.total}）` : ''}`
         : '打包上传'}
@@ -369,7 +439,7 @@ export default function SharedUploadPage() {
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
           {access && !access.allowUpload && <Alert type="warning" showIcon
             message="这个选题已经不再接收上传"
-            description="活动已经收工了。如果还需要补交照片，请联系发给你链接的同学。" />}
+            description="选题已经结束了。如果还需要补交照片，请联系发给你链接的同学。" />}
 
           {/* 几十上百张时打包传一次比逐张省事得多，所以两种方式都给，默认逐张。 */}
           <Segmented value={mode} disabled={running}
@@ -386,7 +456,7 @@ export default function SharedUploadPage() {
               : `一个压缩包最大 ${describeBytes(uploadLimits.PHOTO_ZIP_MAX_BYTES)}，`
                 + `里面最多 ${uploadLimits.PHOTO_ZIP_MAX_IMAGES} 张 JPG / PNG，`
                 + `单张不超过 ${describeBytes(uploadLimits.PHOTO_IMAGE_MAX_BYTES)}；包里的其他文件会被自动跳过。`}
-            照片会直接进入这个选题的图库，由选题负责人和选片人后续处理；这里看不到别人传了什么。
+            照片会直接进入这个选题的图库，由选题负责人后续处理；这里看不到别人传了什么。
           </Typography.Paragraph>
 
           {mode === 'files' ? <>
@@ -464,6 +534,72 @@ export default function SharedUploadPage() {
           </>}
         </Space>
       </Card>
+
+      {/* 最后一步：传完图申报这次的工时。排在上传之后，是因为它本来就是上传之后的事——
+          服务端也要求先通过这条链接交过图。 */}
+      <Card title="申报工时" extra={<Tag icon={<ClockCircleOutlined />}>传完照片后填写</Tag>}>
+        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+            照片传完之后，在这里申报这次拍摄和修图花的时间。提交后直接进入部长和管理员的工时审核，
+            确认或退回的结果会显示在下面。申报人就是进门时填写的
+            {access?.uploaderName ? `「${access.uploaderName}」` : '那位同学'}，需要先通过这条链接传成功至少一张照片。
+          </Typography.Paragraph>
+
+          {access && !access.allowWorklog && <Alert type="warning" showIcon
+            message="这个选题已经结束，不再接收工时申报"
+            description="已经提交的申报不受影响，照常审核。如果还有工时没报，请联系发给你链接的同学。" />}
+          {handedInHere && access?.allowWorklog && !worklogs.length && <Alert type="info" showIcon
+            message="照片已经交上去了，别忘了申报这次的工时" />}
+
+          <Form form={worklogForm} layout="vertical" requiredMark={false}
+            disabled={!access?.allowWorklog || declaring}
+            initialValues={{ workDate: dayjs(), shootingMinutes: 0, retouchingMinutes: 0 }}
+            onFinish={() => void declareWorklog()}>
+            <Form.Item label="工作日期" name="workDate"
+              rules={[{ required: true, message: '请选择工作日期' }]}
+              validateStatus={duplicateDay ? 'warning' : undefined}
+              help={duplicateDay ? '这一天已经申报过了；如果填错了，请联系发给你链接的同学退回后再报' : undefined}>
+              <DatePicker maxDate={dayjs()} allowClear={false} style={{ width: '100%' }} />
+            </Form.Item>
+            <Space size={16} align="start" wrap>
+              <Form.Item label="拍摄时长" name="shootingMinutes">
+                <InputNumber min={0} max={MAX_WORKLOG_MINUTES} precision={0} suffix="分钟" />
+              </Form.Item>
+              <Form.Item label="修图时长" name="retouchingMinutes">
+                <InputNumber min={0} max={MAX_WORKLOG_MINUTES} precision={0} suffix="分钟" />
+              </Form.Item>
+            </Space>
+            <Form.Item label="工作说明" name="remark" rules={[{ max: 1000 }]}>
+              <Input.TextArea rows={3} maxLength={1000} placeholder="简要说明完成的工作，例如：开幕式全程跟拍，精修 20 张" />
+            </Form.Item>
+            <Button type="primary" htmlType="submit" loading={declaring}
+              disabled={!access?.allowWorklog || duplicateDay}>提交工时</Button>
+          </Form>
+
+          {!!worklogs.length && <List size="small" header="我在这条链接上申报过的工时"
+            dataSource={worklogs} rowKey="id"
+            renderItem={worklog => {
+              const status = describeWorklogStatus(worklog)
+              return <List.Item>
+                <List.Item.Meta
+                  title={<Space wrap>
+                    <span>{worklog.workDate}</span>
+                    <Tag color={status.color}>{status.text}</Tag>
+                    <Typography.Text type="secondary">
+                      拍摄 {describeMinutes(worklog.shootingMinutes)} · 修图 {describeMinutes(worklog.retouchingMinutes)}
+                    </Typography.Text>
+                  </Space>}
+                  description={<>
+                    {worklog.remark && <div>{worklog.remark}</div>}
+                    <Typography.Text type={worklog.status === 'REJECTED' ? 'danger' : 'secondary'}>
+                      {status.hint}
+                    </Typography.Text>
+                  </>} />
+              </List.Item>
+            }} />}
+        </Space>
+      </Card>
+      </Space>
     </div>
     <SiteFooter />
   </main>

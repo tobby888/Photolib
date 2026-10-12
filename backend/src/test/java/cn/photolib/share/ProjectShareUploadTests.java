@@ -345,17 +345,17 @@ class ProjectShareUploadTests {
     // ------------------------------------------------------------------ 选题状态
 
     @Test
-    void onlyAnActiveEventProjectCanIssueAnUploadLink() {
+    void onlyAnActiveProjectCanIssueAnUploadLink() {
+        // 创作选题现在也能开上传链接（图片直接进选题相册，见 ProjectShareWorklogTests），
+        // 留下的只有「进行中」这一条，两类选题一视同仁。
         ProjectEntity creation = projectService.create("创作选题", "说明", ProjectStatus.ACTIVE, minister);
-        assertThatThrownBy(() -> uploadLink(creation.getId()))
-                .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("只有活动选题");
+        assertThat(uploadLink(creation.getId()).link().purpose()).isEqualTo(ShareLinkPurpose.UPLOAD);
 
         ProjectEntity draft = projectService.create("未开始的活动", "说明", ProjectStatus.DRAFT,
                 List.of(), ProjectType.EVENT, minister);
         assertThatThrownBy(() -> uploadLink(draft.getId()))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("只有进行中的活动选题");
+                .hasMessageContaining("只有进行中的选题");
     }
 
     @Test

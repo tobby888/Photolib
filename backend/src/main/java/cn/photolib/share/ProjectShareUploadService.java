@@ -17,6 +17,9 @@ import cn.photolib.project.ProjectService;
 import cn.photolib.project.model.ProjectEntity;
 import cn.photolib.storage.ObjectStorageService;
 import cn.photolib.storage.StorageProperties;
+import cn.photolib.worklog.WorklogService;
+import cn.photolib.worklog.model.WorklogEntity;
+import cn.photolib.worklog.model.WorklogStatus;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
@@ -26,15 +29,17 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.Clock;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 
 /**
- * 上传链接的访客通道：拿到"链接 + 密码"的人把图片传进活动选题的相册。
+ * 上传链接的访客通道：拿到"链接 + 密码"的人把图片传进选题的相册（创作选题和活动选题
+ * 都可以，见 {@code ProjectShareService.requireUploadableProject}），传完之后在同一页申报工时。
  *
- * <p>四条不变量，改这个类之前先读一遍：</p>
+ * <p>几条不变量，改这个类之前先读一遍：</p>
  * <ol>
  *   <li><b>图片走的是站内那条完全一样的流水线。</b> 预签名 PUT 到 {@code temporary/photos/}，
  *       完成时置 PROCESSING 并发 {@link PhotoProcessingService.PhotoProcessRequested}，
@@ -56,6 +61,11 @@ import java.util.UUID;
  *       {@link UploadLimitService} 里设的站内那一套：ZIP 大小、包内张数、单张大小），这里只是在前面
  *       加一层"这条链接能不能开批次、这个批次是不是它开的"。给站外单独开一套阈值的结果，
  *       是两套数字各改各的，而松的那一套就是被用来打进来的那一套。</li>
+ *   <li><b>申报工时用的是同一份会话身份，工时规则用的是站内那一份。</b> 姓名学号取会话上的
+ *       快照——和这场会话传的每一张照片上的拍摄者是同一个人，申报时不再让人填一遍，
+ *       否则「传图的是张三、报工时的是李四」这种事就成了可能。日期、时长和「选题结束后
+ *       不再收」的校验在 {@link WorklogService#createForShareLink}，与站内填报是同一段代码。
+ *       申报落成「待确认」，由部长和管理员在工时面板里确认或退回。</li>
  * </ol>
  */
 @Service
@@ -77,6 +87,7 @@ public class ProjectShareUploadService {
     private final JdbcClient jdbc;
     private final Clock clock;
     private final UploadLimitService uploadLimits;
+    private final WorklogService worklogService;
 
     /**
      * 签一张上传票据，并在库里占好这一行（状态 UPLOADING）。
@@ -137,8 +148,8 @@ public class ProjectShareUploadService {
     /**
      * 访客把字节 PUT 上去之后调这里：确认对象真的在、置 PROCESSING、交给压缩管线。
      *
-     * <p>标题和说明是选填的，标签一律为空——活动选题的标签由选片人按预设打
-     * （§2.23），把预设标签摆给站外的人挑既没有意义也会把预设泄露出去。</p>
+     * <p>标题和说明是选填的，标签一律为空——活动选题的标签由选片人按预设打（§2.23），
+     * 创作选题的由选题负责人在相册里补；把预设标签摆给站外的人挑既没有意义也会把预设泄露出去。</p>
      */
     @Transactional
     public UploadedPhoto complete(ProjectShareService.GuestContext context, Long photoId,
@@ -259,6 +270,74 @@ public class ProjectShareUploadService {
         return guestView(view.batch());
     }
 
+    // ------------------------------------------------------------------ 申报工时
+
+    /**
+     * 传完图之后申报这次的工时，直接落成「待确认」，进入部长和管理员的工时审核面板。
+     *
+     * <p>入口在上传页的最后一步，所以<b>先得真的通过这条链接交过图</b>：这是个匿名写入口，
+     * 没有这一条，任何拿到链接和密码的人——哪怕一张没拍——都能给自己记上工时，审核的人
+     * 面对的就是一串对不上任何照片的申报。判定按「这条链接 + 会话上的学号」现查，
+     * 所以换了设备、会话过期后重新进门的人照样能申报，只要学号填的是同一个。</p>
+     *
+     * <p>工时记在哪：{@code share_link_id} 是这条链接，{@code user_id} 是开链接的成员
+     * （站内唯一可追责的人，退回通知也发给他），校区如实没有。不挂需求——通过链接
+     * 传进来的图本来就不挂需求，活动选题甚至可以一条需求都没有（Flyway V63）。</p>
+     */
+    @Transactional
+    public GuestWorklog declareWorklog(ProjectShareService.GuestContext context,
+                                       WorklogDeclaration declaration) {
+        ProjectShareLinkEntity link = shareService.requireUploadLink(context.link());
+        Uploader uploader = requireUploader(context);
+        requireHandedInPhotos(link, uploader);
+        return guestView(worklogService.createForShareLink(new WorklogService.ShareLinkWorklog(
+                link.getId(), link.getProjectId(), link.getCreatedBy(),
+                uploader.name(), uploader.studentId(), declaration.workDate(),
+                declaration.shootingMinutes(), declaration.retouchingMinutes(),
+                declaration.remark())));
+    }
+
+    /**
+     * 访客回看自己在这条链接上申报过的工时和审核结果。
+     *
+     * <p>退回通知发给的是开链接的成员，申报人没有账号、收不到；没有这个接口的话，
+     * 一条被退回的申报对申报人来说就是石沉大海，而退回之后重新申报恰恰要由他来做。
+     * 只按「这条链接 + 会话上的学号」取，看不到这条链接上其他人的申报。</p>
+     */
+    public List<GuestWorklog> worklogs(ProjectShareService.GuestContext context) {
+        ProjectShareLinkEntity link = shareService.requireUploadLink(context.link());
+        Uploader uploader = requireUploader(context);
+        return worklogService.listForShareLink(link.getId(), uploader.studentId())
+                .stream().map(this::guestView).toList();
+    }
+
+    /**
+     * 这个人是否通过这条链接交过图：至少有一张已经交给压缩管线（不再是 UPLOADING）。
+     *
+     * <p>只签了票据没传完的、处理失败被打回 UPLOADING 的都不算——那些图从没进过相册。
+     * 不看 {@code deleted}：图片事后被清理掉（比如活动选题选片后的清理）不该让已经干完的
+     * 活报不了工时。</p>
+     */
+    private void requireHandedInPhotos(ProjectShareLinkEntity link, Uploader uploader) {
+        long handedIn = jdbc.sql("""
+                        SELECT COUNT(*) FROM photo
+                        WHERE share_link_id = :link AND photographer_student_id = :studentId
+                          AND status <> 'UPLOADING'
+                        """).param("link", link.getId()).param("studentId", uploader.studentId())
+                .query(Long.class).single();
+        if (handedIn == 0) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
+                    "请先通过这条链接上传照片，传完之后再申报工时");
+        }
+    }
+
+    /** 访客看到的工时比 {@code WorklogEntity} 少：没有填报账号、确认人和所属链接的 id。 */
+    private GuestWorklog guestView(WorklogEntity worklog) {
+        return new GuestWorklog(worklog.getId(), worklog.getWorkDate(),
+                worklog.getShootingMinutes(), worklog.getRetouchingMinutes(), worklog.getRemark(),
+                worklog.getStatus(), worklog.getRejectReason(), worklog.getCreatedAt());
+    }
+
     /**
      * 批次必须是这条链接自己开的。批次的 {@code created_by} 记的是链接创建者，
      * 对访客不是凭据——只认 {@code share_link_id}，否则拿到一个批次 id 就能看别人的。
@@ -360,4 +439,12 @@ public class ProjectShareUploadService {
                                java.time.Instant expiresAt) {}
 
     public record UploadedPhoto(Long photoId, String title, PhotoStatus status, String failureReason) {}
+
+    /** 访客申报的一条工时：没有姓名学号（取会话身份），没有草稿（交上来就是提交）。 */
+    public record WorklogDeclaration(LocalDate workDate, int shootingMinutes, int retouchingMinutes,
+                                     String remark) {}
+
+    public record GuestWorklog(Long id, LocalDate workDate, int shootingMinutes, int retouchingMinutes,
+                               String remark, WorklogStatus status, String rejectReason,
+                               LocalDateTime createdAt) {}
 }

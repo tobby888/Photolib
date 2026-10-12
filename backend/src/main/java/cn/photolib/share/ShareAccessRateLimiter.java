@@ -79,7 +79,12 @@ public class ShareAccessRateLimiter {
          */
         UPLOAD(3_000, 600, Duration.ofMinutes(10)),
         /** 查自己刚传那张的处理结果。纯读且会被轮询，额度给得比写宽。 */
-        UPLOAD_STATUS(6_000, 1_200, Duration.ofMinutes(10));
+        UPLOAD_STATUS(6_000, 1_200, Duration.ofMinutes(10)),
+        /**
+         * 申报工时。一个人一场活动报一两条，所以额度比上传紧得多：每一条都要部长或
+         * 管理员逐条看过，这个入口被刷的代价是人的时间，不是存储。
+         */
+        WORKLOG(300, 20, Duration.ofMinutes(10));
 
         private final int linkLimit;
         private final int addressLimit;
