@@ -189,6 +189,15 @@ public class SurveyController {
         return ApiResponse.ok(responses.submit(id, request.answers(), user));
     }
 
+    /** 修改自己已经交过的答卷；只在问卷还开着的时候可以，见 SurveyResponseService.revise。 */
+    @PutMapping("/{id}/responses/mine")
+    @PreAuthorize("hasAuthority('SURVEY_ACCESS')")
+    ApiResponse<SurveyResponseService.Receipt> revise(@PathVariable long id,
+                                                      @Valid @RequestBody SubmitRequest request,
+                                                      @AuthenticationPrincipal AuthenticatedUser user) {
+        return ApiResponse.ok(responses.revise(id, request.answers(), user));
+    }
+
     record SurveyRequest(@NotBlank @Size(max = 200) String title,
                          @Size(max = 1_000) String description,
                          @Size(max = 20_000) String introMarkdown,

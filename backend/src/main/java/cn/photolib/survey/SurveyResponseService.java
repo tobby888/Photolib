@@ -37,6 +37,9 @@ import java.util.Set;
  * <p>能填写 = 在发放名单上 + 持有 SURVEY_ACCESS + 问卷进行中且没过截止时间。名单和权限两个
  * 条件都要：被移出名单的人、或者权限组后来被收回了问卷权限的人，都不能再交。
  *
+ * <p>每人每份问卷只有一份答卷，交了之后在同样的条件下还可以改（{@link #revise}）；问卷一结束
+ * ——手动结束或者过了截止时间——答卷就定下来了。
+ *
  * <p>校区范围的结果查看人只看得到授权校区成员的答卷——列表、详情、统计和导出同一套口径。
  */
 @Service
@@ -79,7 +82,7 @@ public class SurveyResponseService {
         if (mine != null) {
             RecruitmentFormSchema frozen = schemaValidator.readSchema(mine.getFormSchemaJson());
             Map<String, Object> answers = schemaValidator.readAnswers(mine.getAnswersJson());
-            response = new MyResponse(mine.getId(), mine.getSubmittedAt(), frozen, answers,
+            response = new MyResponse(mine.getId(), mine.getSubmittedAt(), mine.getModifiedAt(), frozen, answers,
                     formFiles.views(owner(surveyId, user.id()), FormFileService.fileIds(frozen, answers)));
         }
         return new FillView(survey.getId(), survey.getTitle(), survey.getDescription(), survey.getIntroMarkdown(),
@@ -90,7 +93,8 @@ public class SurveyResponseService {
     @Transactional
     public FormFileService.UploadTicket createFileTicket(long surveyId, FormFileService.TicketRequest request,
                                                          AuthenticatedUser user) {
-        SurveyEntity survey = requireOpenForSubmission(surveyId, user);
+        // 交过的人也能要票据：修改答卷时可以换文件。没人引用的文件由清理任务收走。
+        SurveyEntity survey = requireOpen(surveyId, user, "问卷已经结束，不能再上传");
         return formFiles.createTicket(owner(surveyId, user.id()), surveys.schema(survey), request,
                 survey.getEndsAt());
     }
@@ -99,7 +103,8 @@ public class SurveyResponseService {
     public Receipt submit(long surveyId, Map<String, Object> answers, AuthenticatedUser user) {
         // 锁住问卷行：和「结束问卷」「改截止时间」排成一个先后，结束之后不会再有答卷落进来。
         surveys.requireForUpdate(surveyId);
-        SurveyEntity survey = requireOpenForSubmission(surveyId, user);
+        SurveyEntity survey = requireOpen(surveyId, user, "问卷已经结束，不能再提交");
+        if (mapper.findByUser(surveyId, user.id()) != null) throw alreadySubmitted();
         RecruitmentFormSchema schema = surveys.schema(survey);
         Map<String, Object> checked = formFiles.attachAnswers(owner(surveyId, user.id()), schema,
                 schemaValidator.validateAnswers(schema, answers));
@@ -116,7 +121,38 @@ public class SurveyResponseService {
         } catch (DuplicateKeyException exception) {
             throw alreadySubmitted();
         }
-        return new Receipt(response.getId(), now);
+        return new Receipt(response.getId(), now, null);
+    }
+
+    /**
+     * 修改自己已经交过的答卷。条件和第一次提交完全一样（在名单上、有权限、问卷还开着），所以
+     * 问卷一结束答卷就定下来了：发起人在截止之后导出的结果不会再变。
+     *
+     * <p>提交时间不动——它是「什么时候交的」，报名、抢名额一类的问卷靠它排先后，不能因为改了
+     * 一个错别字就把人挪到队尾。最后一次修改的时间另记在 {@code modified_at}。
+     */
+    @Transactional
+    public Receipt revise(long surveyId, Map<String, Object> answers, AuthenticatedUser user) {
+        // 和 submit 一样先锁问卷行：既和「结束问卷」「改截止时间」排先后，也让同一个人的两次并发
+        // 修改串行，文件的留用 / 退回不会互相踩。
+        surveys.requireForUpdate(surveyId);
+        SurveyEntity survey = requireOpen(surveyId, user, "问卷已经结束，不能再修改答卷");
+        SurveyResponseEntity mine = mapper.findByUser(surveyId, user.id());
+        if (mine == null) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "你还没有提交过这份问卷，请先提交");
+        }
+        RecruitmentFormSchema schema = surveys.schema(survey);
+        List<String> previousFiles = FormFileService.fileIds(
+                schemaValidator.readSchema(mine.getFormSchemaJson()),
+                schemaValidator.readAnswers(mine.getAnswersJson()));
+        Map<String, Object> checked = formFiles.replaceAnswers(owner(surveyId, user.id()), schema,
+                schemaValidator.validateAnswers(schema, answers), previousFiles);
+        LocalDateTime now = surveys.now();
+        mine.setAnswersJson(schemaValidator.answersJson(checked));
+        mine.setFormSchemaJson(schemaValidator.schemaJson(schema));
+        mine.setModifiedAt(now);
+        mapper.updateById(mine);
+        return new Receipt(mine.getId(), mine.getSubmittedAt(), now);
     }
 
     // ------------------------------------------------------------------
@@ -136,7 +172,7 @@ public class SurveyResponseService {
                         (long) (safePage - 1) * safePageSize).stream()
                 .map(response -> new ResponseSummary(response.getId(), response.getUserId(),
                         response.getDisplayName(), response.getUsername(), response.getPermissionGroupName(),
-                        response.getSubmittedAt()))
+                        response.getSubmittedAt(), response.getModifiedAt()))
                 .toList();
         return new PageResponse<>(items, safePage, safePageSize, total,
                 total == 0 ? 0 : (total + safePageSize - 1) / safePageSize);
@@ -165,7 +201,7 @@ public class SurveyResponseService {
         Map<String, Object> answers = schemaValidator.readAnswers(response.getAnswersJson());
         return new ResponseDetail(response.getId(), survey.getId(), survey.getTitle(), response.getUserId(),
                 response.getDisplayName(), response.getUsername(), response.getPermissionGroupName(),
-                response.getSubmittedAt(), schema, answers,
+                response.getSubmittedAt(), response.getModifiedAt(), schema, answers,
                 formFiles.views(owner(survey.getId(), response.getUserId()), FormFileService.fileIds(schema, answers)));
     }
 
@@ -185,7 +221,7 @@ public class SurveyResponseService {
         RecruitmentFormSchema schema = surveys.schema(survey);
         List<SurveyResponseExport.Entry> entries = responses.stream()
                 .map(response -> new SurveyResponseExport.Entry(response.getDisplayName(), response.getUsername(),
-                        response.getPermissionGroupName(), response.getSubmittedAt(),
+                        response.getPermissionGroupName(), response.getSubmittedAt(), response.getModifiedAt(),
                         schemaValidator.readSchema(response.getFormSchemaJson()),
                         schemaValidator.readAnswers(response.getAnswersJson())))
                 .toList();
@@ -291,10 +327,10 @@ public class SurveyResponseService {
         return survey;
     }
 
-    private SurveyEntity requireOpenForSubmission(long surveyId, AuthenticatedUser user) {
+    /** 提交、修改、传文件共用的门槛：发给了我，并且问卷还开着（进行中、没过截止时间）。 */
+    private SurveyEntity requireOpen(long surveyId, AuthenticatedUser user, String closedMessage) {
         SurveyEntity survey = requireRespondable(surveyId, user);
-        if (!surveys.isOpen(survey)) throw SurveyService.conflict("问卷已经结束，不能再提交");
-        if (mapper.findByUser(surveyId, user.id()) != null) throw alreadySubmitted();
+        if (!surveys.isOpen(survey)) throw SurveyService.conflict(closedMessage);
         return survey;
     }
 
@@ -319,7 +355,7 @@ public class SurveyResponseService {
     }
 
     private static BusinessException alreadySubmitted() {
-        return new BusinessException(ErrorCode.DUPLICATE_RESOURCE, "你已经提交过这份问卷了，每人只能交一次");
+        return new BusinessException(ErrorCode.DUPLICATE_RESOURCE, "你已经提交过这份问卷了，要改的话请用「修改答卷」");
     }
 
     public record AssignedSurvey(Long id, String title, String description, LocalDateTime endsAt,
@@ -327,8 +363,10 @@ public class SurveyResponseService {
                                  String creatorDisplayName, LocalDateTime submittedAt) {
     }
 
-    public record MyResponse(Long id, LocalDateTime submittedAt, RecruitmentFormSchema formSchema,
-                             Map<String, Object> answers, List<FormFileService.FileView> files) {
+    /** {@code modifiedAt} 是最后一次修改答卷的时间，没改过为 null；下面几个记录里同名字段都是这个意思。 */
+    public record MyResponse(Long id, LocalDateTime submittedAt, LocalDateTime modifiedAt,
+                             RecruitmentFormSchema formSchema, Map<String, Object> answers,
+                             List<FormFileService.FileView> files) {
     }
 
     public record FillView(Long id, String title, String description, String introMarkdown,
@@ -336,11 +374,12 @@ public class SurveyResponseService {
                            boolean open, SurveyService.UploadLimits uploadLimits, MyResponse myResponse) {
     }
 
-    public record Receipt(Long responseId, LocalDateTime submittedAt) {
+    public record Receipt(Long responseId, LocalDateTime submittedAt, LocalDateTime modifiedAt) {
     }
 
     public record ResponseSummary(Long id, Long userId, String displayName, String username,
-                                  String permissionGroupName, LocalDateTime submittedAt) {
+                                  String permissionGroupName, LocalDateTime submittedAt,
+                                  LocalDateTime modifiedAt) {
     }
 
     public record TargetStatus(Long userId, String displayName, String username, String permissionGroupName,
@@ -350,6 +389,7 @@ public class SurveyResponseService {
 
     public record ResponseDetail(Long id, Long surveyId, String surveyTitle, Long userId, String displayName,
                                  String username, String permissionGroupName, LocalDateTime submittedAt,
+                                 LocalDateTime modifiedAt,
                                  RecruitmentFormSchema formSchema, Map<String, Object> answers,
                                  List<FormFileService.FileView> files) {
     }

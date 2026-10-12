@@ -31,6 +31,9 @@ export default function SurveyResponseDetailPage() {
           <Typography.Text><UserOutlined /> <strong>{detail.displayName}</strong>（{detail.username}）</Typography.Text>
           {detail.permissionGroupName && <Tag>{detail.permissionGroupName}</Tag>}
           <Typography.Text type="secondary">提交时间：{dayjs(detail.submittedAt).format('YYYY-MM-DD HH:mm:ss')}</Typography.Text>
+          {detail.modifiedAt && <Typography.Text type="secondary">
+            最后修改：{dayjs(detail.modifiedAt).format('YYYY-MM-DD HH:mm:ss')}
+          </Typography.Text>}
         </Space>
       </section>
       <Card title="答卷内容">

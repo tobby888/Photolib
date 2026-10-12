@@ -15,7 +15,16 @@ import {
   EMPTY_RECRUITMENT_FORM,
   type RecruitmentFormField,
 } from '../src/recruitmentForm.ts'
-import { normalizeFormFileLimits, normalizeFormFileViews, validateFormFileSelection } from '../src/formFiles.ts'
+import {
+  answersForEditing,
+  normalizeFormFileLimits,
+  normalizeFormFileViews,
+  selectedFormFiles,
+  storedFileId,
+  storedUploadFile,
+  uploadFileAnswers,
+  validateFormFileSelection,
+} from '../src/formFiles.ts'
 import {
   addToSelection,
   filterAudience,
@@ -86,6 +95,72 @@ test('file selection is checked against count and size limits before upload', ()
   assert.deepEqual(normalizeFormFileViews([{ id: 'F', fieldId: 'resume', fileName: 'x.pdf', size: 2 }, { nope: 1 }]).map(file => file.id), ['F'])
 })
 
+test('a submitted response turns back into editable form values, keeping its files by id', async () => {
+  const fields: RecruitmentFormField[] = [
+    { id: 'rating', type: 'SINGLE_CHOICE', label: '满意度', required: true, options: ['满意', '一般'] },
+    { id: 'topics', type: 'MULTIPLE_CHOICE', label: '想学的', required: false, options: ['器材', '后期'] },
+    { id: 'note', type: 'LONG_TEXT', label: '建议', required: false },
+    fileField,
+  ]
+  const editable = answersForEditing(fields, {
+    rating: '满意',
+    topics: ['器材'],
+    note: null,
+    resume: [{ id: 'A', fileName: '简历.pdf', contentType: 'application/pdf', size: 3 }, { nope: 1 }, 'B'],
+    removed_question: '问卷里已经没有的题',
+  })
+
+  assert.equal(editable.rating, '满意')
+  assert.deepEqual(editable.topics, ['器材'])
+  // 没填的题不带初始值，表单才会把它当成空的而不是 null。
+  assert.equal('note' in editable, false)
+  assert.equal('removed_question' in editable, false)
+  const files = editable.resume as { uid: string; name: string; status: string }[]
+  assert.deepEqual(files.map(file => [file.name, file.status, storedFileId(file)]), [['简历.pdf', 'done', 'A']])
+
+  // 留着的文件算已作答，但不是「还没上传的文件」：保存时不重传，原样带回 id。
+  assert.deepEqual(validateFormAnswers([fileField], { resume: files }), [])
+  assert.deepEqual(selectedFormFiles(files), [])
+  let tickets = 0
+  const uploaded = await uploadFileAnswers(fields, editable, async () => {
+    tickets += 1
+    throw new Error('留用的文件不该再申请上传票据')
+  })
+  assert.equal(tickets, 0)
+  assert.deepEqual(uploaded.resume, ['A'])
+  assert.deepEqual(normalizeRecruitmentAnswers({ ...EMPTY_RECRUITMENT_FORM, fields }, uploaded), {
+    rating: '满意', topics: ['器材'], note: '', resume: ['A'],
+  })
+  // 把文件全删掉之后，这道必填题又变回没答。
+  assert.match(validateFormAnswers([fileField], { ...editable, resume: [] })[0]?.message || '', /还没传文件/)
+})
+
+test('stored files are told apart from newly picked ones and only take up a slot', () => {
+  assert.equal(storedFileId(storedUploadFile({ id: 'A', fileName: 'a.pdf' })), 'A')
+  // antd 给新选的文件发的 uid 是 rc-upload-…；带着 File 的一定是新选的。
+  assert.equal(storedFileId({ uid: 'rc-upload-1-2', name: 'new.pdf' }), undefined)
+  assert.equal(storedFileId({ uid: 'stored:A', name: 'new.pdf', originFileObj: {} }), undefined)
+  assert.equal(storedFileId({ uid: 'stored:' }), undefined)
+  assert.equal(storedFileId('stored:A'), undefined)
+
+  const limits = normalizeFormFileLimits({ maxFileBytes: 10, maxFilesPerField: 2 })
+  assert.equal(validateFormFileSelection([{ name: 'new', size: 1 }], limits, 1), undefined)
+  assert.match(validateFormFileSelection([{ name: 'new', size: 1 }], limits, 2) || '', /最多传 2 个/)
+  // 留用的文件不再查大小（限额后来调小也不该把人卡住），所以只传新选的进来。
+  assert.equal(validateFormFileSelection([], limits, 2), undefined)
+})
+
+test('the fill page lets a respondent revise a submitted response only while the survey is open', async () => {
+  const page = await readFile(new URL('../src/pages/SurveyFillPage.tsx', import.meta.url), 'utf8')
+  assert.match(page, /method: revising \? 'PUT' : 'POST'/)
+  assert.match(page, /`\/surveys\/\$\{survey\.id\}\/responses\/mine`/)
+  // 「修改答卷」入口和进入修改状态都要看问卷还开不开着。
+  assert.match(page, /extra=\{survey\.open && <Button icon=\{<EditOutlined \/>\} onClick=\{\(\) => setEditing\(true\)\}>修改答卷<\/Button>\}/)
+  assert.match(page, /const revising = !!survey && !!mine && survey\.open && editing/)
+  assert.match(page, /answersForEditing\(survey\.formSchema\.fields, survey\.myResponse\.answers\)/)
+  assert.doesNotMatch(page, /提交后不能修改/)
+})
+
 const people: AudienceCandidate[] = [
   { id: '1', displayName: '张三', username: 'zhangsan', permissionGroupId: 'g1', permissionGroupName: '部长', campusIds: ['c1'] },
   { id: '2', displayName: '李四', username: 'lisi', permissionGroupId: 'g2', permissionGroupName: '负责人', campusIds: ['c1', 'c2'] },
@@ -117,6 +192,9 @@ test('survey payloads normalize ids as strings and derive a readable status', ()
   assert.deepEqual(surveyStatusDisplay({ status: 'PUBLISHED', open: true }).label, '进行中')
   const fill = normalizeSurveyFill({ id: 1, myResponse: { id: 7, answers: { q: 'x' }, files: [] } })
   assert.equal(fill.myResponse?.id, '7')
+  assert.equal(fill.myResponse?.modifiedAt, null)
+  const revised = normalizeSurveyFill({ id: 1, myResponse: { id: 7, modifiedAt: '2026-10-12T09:00:00', answers: {}, files: [] } })
+  assert.equal(revised.myResponse?.modifiedAt, '2026-10-12T09:00:00')
 })
 
 test('the choice editor builds options with add and drag instead of the tag input', async () => {

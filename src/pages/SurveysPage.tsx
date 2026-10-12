@@ -76,7 +76,7 @@ function MySurveys() {
               </Typography.Text>}
             </Space>
             <Button block type={!survey.submittedAt && survey.open ? 'primary' : 'default'}>
-              {!survey.submittedAt && survey.open ? '去填写' : '查看'} <ArrowRightOutlined />
+              {!survey.submittedAt && survey.open ? '去填写' : survey.open ? '查看或修改' : '查看'} <ArrowRightOutlined />
             </Button>
           </Card>
         </Col>

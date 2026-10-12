@@ -21,7 +21,10 @@ public class SurveyResponseEntity {
     private String answersJson;
     @JsonIgnore
     private String formSchemaJson;
+    /** 第一次提交的时间，修改答卷不会动它。 */
     private LocalDateTime submittedAt;
+    /** 最后一次修改答卷的时间；没改过为 null。 */
+    private LocalDateTime modifiedAt;
     private LocalDateTime createdAt;
 
     @TableField(exist = false)

@@ -48,6 +48,8 @@ export interface SurveyFill {
   myResponse: {
     id: string
     submittedAt: string
+    /** 最后一次修改答卷的时间；交了之后没改过为 null。 */
+    modifiedAt: string | null
     formSchema: RecruitmentFormSchema
     answers: Record<string, unknown>
     files: FormFileView[]
@@ -76,6 +78,8 @@ export interface SurveyResponseSummary {
   username: string
   permissionGroupName: string | null
   submittedAt: string
+  /** 最后一次修改答卷的时间；交了之后没改过为 null。 */
+  modifiedAt: string | null
 }
 
 export interface SurveyTargetStatus {
@@ -184,6 +188,7 @@ export function normalizeSurveyFill(value: unknown): SurveyFill {
     myResponse: mine ? {
       id: id(mine.id),
       submittedAt: text(mine.submittedAt),
+      modifiedAt: nullableText(mine.modifiedAt),
       formSchema: normalizeRecruitmentFormSchema(mine.formSchema),
       answers: object(mine.answers),
       files: normalizeFormFileViews(mine.files),
@@ -222,6 +227,7 @@ export function normalizeResponseSummary(value: unknown): SurveyResponseSummary 
     username: text(raw.username),
     permissionGroupName: nullableText(raw.permissionGroupName),
     submittedAt: text(raw.submittedAt),
+    modifiedAt: nullableText(raw.modifiedAt),
   }
 }
 

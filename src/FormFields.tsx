@@ -5,7 +5,7 @@ import { http } from './api'
 import { formatBytes } from './components'
 import { describeBytes } from './recruitmentUpload'
 import { formAnswerText, FORM_FILE_LIMITS, type RecruitmentFormField } from './recruitmentForm'
-import { validateFormFileSelection, type FormFileLimits, type FormFileView } from './formFiles'
+import { storedFileId, validateFormFileSelection, type FormFileLimits, type FormFileView } from './formFiles'
 import { useUploadLimits } from './useUploadLimits'
 
 /** 招募报名页和问卷填写页共用的一道题。name 固定在 ['answers', field.id] 下。 */
@@ -49,11 +49,13 @@ export function FormAnswerField({ field, limits: givenLimits }: {
         ...(field.required ? [{ required: true, type: 'array' as const, min: 1, message: `请给“${field.label}”传一个文件` }] : []),
         {
           validator: async (_: unknown, value: unknown) => {
-            const files = Array.isArray(value)
-              ? value.map(item => item as { name: string; size?: number; originFileObj?: File })
-                .map(item => ({ name: item.name, size: item.originFileObj?.size ?? item.size ?? 0 }))
-              : []
-            const issue = validateFormFileSelection(files, limits)
+            const items = Array.isArray(value) ? value : []
+            // 修改答卷时上一版留下来的文件只占名额：它们早就传过了，限额后来调小也不该把人卡住。
+            const stored = items.filter(item => storedFileId(item)).length
+            const files = items.filter(item => !storedFileId(item))
+              .map(item => item as { name: string; size?: number; originFileObj?: File })
+              .map(item => ({ name: item.name, size: item.originFileObj?.size ?? item.size ?? 0 }))
+            const issue = validateFormFileSelection(files, limits, stored)
             if (issue) throw new Error(issue)
           },
         },

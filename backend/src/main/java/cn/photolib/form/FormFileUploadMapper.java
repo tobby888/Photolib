@@ -31,6 +31,16 @@ public interface FormFileUploadMapper extends BaseMapper<FormFileUploadEntity> {
             """)
     int attach(@Param("id") String id, @Param("now") LocalDateTime now);
 
+    /**
+     * 修改答卷时被拿掉的文件退回 PENDING：之后和从没提交过的文件一样，等上传签名过期后由清理任务
+     * 连对象带行一起删。这里不直接删——签名可能还没过期，行先没了的话重放的 PUT 会留下没人认领的对象。
+     */
+    @Update("""
+            UPDATE form_file_upload SET status='PENDING', attached_at=NULL
+            WHERE id=#{id} AND status='ATTACHED'
+            """)
+    int release(@Param("id") String id);
+
     /** 预签名 PUT 已经过期、却始终没被提交引用的文件。 */
     @Select("""
             SELECT * FROM form_file_upload

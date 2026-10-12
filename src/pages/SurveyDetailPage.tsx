@@ -96,7 +96,12 @@ function ResponsesTab({ survey }: { survey: Survey }) {
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>{row.username}</Typography.Text>
               </Space> },
               { title: '权限组', dataIndex: 'permissionGroupName', render: (value: string | null) => value || '—' },
-              { title: '提交时间', dataIndex: 'submittedAt', render: (value: string) => dayjs(value).format('YYYY-MM-DD HH:mm:ss') },
+              { title: '提交时间', dataIndex: 'submittedAt', render: (value: string, row) => <Space orientation="vertical" size={0}>
+                <span>{dayjs(value).format('YYYY-MM-DD HH:mm:ss')}</span>
+                {row.modifiedAt && <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  {dayjs(row.modifiedAt).format('YYYY-MM-DD HH:mm:ss')} 修改
+                </Typography.Text>}
+              </Space> },
               { title: '', key: 'action', width: 110, render: (_, row) => <Button type="link" icon={<EyeOutlined />}
                 onClick={() => navigate(`/survey-responses/${row.id}`)}>查看</Button> },
             ]} />
@@ -189,7 +194,7 @@ export default function SurveyDetailPage() {
     if (!survey) return
     const copy = {
       publish: { title: '现在发布这份问卷吗？', content: `会给名单上的 ${survey.targetCount} 人发站内通知，发布后题目不能再改。`, ok: '发布' },
-      close: { title: '结束这份问卷吗？', content: '结束后不能再提交，已经收到的答卷不受影响。', ok: '结束问卷' },
+      close: { title: '结束这份问卷吗？', content: '结束后不能再提交，交过的人也不能再修改；已经收到的答卷不受影响。', ok: '结束问卷' },
       delete: { title: '删除这份草稿吗？', content: '删除后无法恢复。', ok: '删除' },
     }[action]
     modal.confirm({

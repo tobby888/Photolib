@@ -36,7 +36,7 @@ final class SurveyResponseExport {
     static final String CONTENT_TYPE =
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
     static final String MULTI_VALUE_SEPARATOR = "，";
-    private static final List<String> FIXED_HEADERS = List.of("姓名", "账号", "权限组", "提交时间");
+    private static final List<String> FIXED_HEADERS = List.of("姓名", "账号", "权限组", "提交时间", "修改时间");
     private static final DateTimeFormatter SUBMITTED_AT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final String UNSAFE_FILE_NAME_CHARS = "[\\\\/:*?\"<>|\\p{Cntrl}]";
     private static final int MAX_TITLE_LENGTH = 80;
@@ -45,8 +45,9 @@ final class SurveyResponseExport {
     private SurveyResponseExport() {
     }
 
+    /** {@code modifiedAt} 为 null 表示交了之后没改过，对应的单元格留空。 */
     record Entry(String displayName, String username, String permissionGroupName, LocalDateTime submittedAt,
-                 RecruitmentFormSchema schema, Map<String, Object> answers) {
+                 LocalDateTime modifiedAt, RecruitmentFormSchema schema, Map<String, Object> answers) {
         Entry {
             // Map.copyOf 不接受 null 值，而答卷 JSON 里 null 是合法的「没填」。
             answers = answers == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(answers));
@@ -76,6 +77,7 @@ final class SurveyResponseExport {
                 text(row, 1, entry.username());
                 text(row, 2, entry.permissionGroupName());
                 text(row, 3, entry.submittedAt() == null ? "" : SUBMITTED_AT.format(entry.submittedAt()));
+                text(row, 4, entry.modifiedAt() == null ? "" : SUBMITTED_AT.format(entry.modifiedAt()));
                 int answerColumn = FIXED_HEADERS.size();
                 for (String fieldId : questionColumns.keySet()) {
                     text(row, answerColumn++, FormAnswerText.of(entry.answers().get(fieldId), MULTI_VALUE_SEPARATOR));
