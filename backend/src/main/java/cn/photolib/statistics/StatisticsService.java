@@ -34,6 +34,12 @@ public class StatisticsService {
      * 成员维度只按**学号**归并：同一个人在几个校区的通讯录里各有一行，姓名快照由各校区
      * 分别录入，多打一个空格就会让同一个学号裂成两行工时。校区列因此聚合出全部校区名，
      * 而不是取其中一个——取一个会让跨校区的人看起来只在一个校区干过活。
+     *
+     * <p>工时有两种来源（Flyway V63）：站内填报的挂在需求下，通过上传链接申报的挂在链接下、
+     * 没有需求。所属选题因此是 {@code COALESCE(需求的选题, 链接的选题)}，两种在这里按同一个
+     * 学号归并成一行。链接申报的工时没有校区：按校区筛选或校区范围账号查看时它们不出现
+     * （{@code r.campus_id} 为 NULL，两个校区条件都不成立），与这类工时在审核面板里对校区
+     * 范围账号不可见是同一条边界。本方法下面三处查询都是这个写法，要改一起改。</p>
      */
     public List<MemberStatistics> members(LocalDate from, LocalDate to, Long projectId,
                                           Long campusId, Long userId, Set<Long> allowedCampusIds) {
@@ -63,8 +69,9 @@ public class StatisticsService {
                        COALESCE(SUM(w.retouching_minutes),0),
                        COALESCE(MAX(a.adopted_count),0)
                 FROM worklog w
-                JOIN photo_request r ON r.id=w.request_id
-                JOIN eligible_projects ep ON ep.id=r.project_id
+                LEFT JOIN photo_request r ON r.id=w.request_id
+                LEFT JOIN project_share_link l ON l.id=w.share_link_id
+                JOIN eligible_projects ep ON ep.id=COALESCE(r.project_id, l.project_id)
                 LEFT JOIN campus c ON c.id=r.campus_id
                 LEFT JOIN adoption_totals a ON a.photographer_student_id=w.member_student_id
                 WHERE w.deleted=0 AND w.status='CONFIRMED'
@@ -102,6 +109,9 @@ public class StatisticsService {
      *
      * <p>筛选条件必须和 {@link #members} 完全一致（同样按项目 `completed_at` 落区间的已完成
      * 项目取，同样不看 `photo_request.deleted`），否则明细各行加起来对不上表里那一行的合计。</p>
+     *
+     * <p>通过上传链接申报的工时没有需求：{@code requestId}/{@code requestTitle} 为 {@code null}，
+     * {@code viaShareLink} 为 {@code true}，校区为空。</p>
      */
     public List<MemberWorklogDetail> memberWorklogs(String studentId, LocalDate from, LocalDate to,
                                                     Long projectId, Long campusId,
@@ -112,8 +122,9 @@ public class StatisticsService {
                 SELECT w.id, w.work_date, r.id, r.title, p.id, p.title, c.name,
                        w.shooting_minutes, w.retouching_minutes
                 FROM worklog w
-                JOIN photo_request r ON r.id=w.request_id
-                JOIN project p ON p.id=r.project_id
+                LEFT JOIN photo_request r ON r.id=w.request_id
+                LEFT JOIN project_share_link l ON l.id=w.share_link_id
+                JOIN project p ON p.id=COALESCE(r.project_id, l.project_id)
                 LEFT JOIN campus c ON c.id=r.campus_id
                 WHERE w.deleted=0 AND w.status='CONFIRMED'
                   AND w.member_student_id=:studentId
@@ -133,9 +144,12 @@ public class StatisticsService {
                 .query((rs, n) -> {
                     int shooting = rs.getInt(8);
                     int retouching = rs.getInt(9);
+                    // getLong 会把 NULL 读成 0：链接申报的工时没有需求，要如实回 null。
+                    Long requestId = rs.getObject(3, Long.class);
                     return new MemberWorklogDetail(rs.getLong(1), rs.getObject(2, LocalDate.class),
-                            rs.getLong(3), rs.getString(4), rs.getLong(5), rs.getString(6),
-                            rs.getString(7), shooting, retouching, shooting + retouching);
+                            requestId, rs.getString(4), rs.getLong(5), rs.getString(6),
+                            rs.getString(7), shooting, retouching, shooting + retouching,
+                            requestId == null);
                 }).list();
     }
 
@@ -160,6 +174,11 @@ public class StatisticsService {
         return worklogs(from, to, Set.of());
     }
 
+    /**
+     * 工时导出。两处关联需求的地方都是 LEFT JOIN：通过上传链接申报的工时没有需求
+     * （Flyway V63），用内连接会把它们整条丢掉，导出的时长就比审核面板里确认过的少。
+     * 这类工时没有校区，校区范围的导出里不出现。
+     */
     public List<WorklogExportRow> worklogs(LocalDate from, LocalDate to,
                                            Set<Long> allowedCampusIds) {
         Set<Long> scopedIds = normalizedCampusIds(allowedCampusIds);
@@ -170,7 +189,7 @@ public class StatisticsService {
                            SUM(w.shooting_minutes) AS shooting_minutes,
                            SUM(w.retouching_minutes) AS retouching_minutes
                     FROM worklog w
-                    JOIN photo_request r ON r.id=w.request_id
+                    LEFT JOIN photo_request r ON r.id=w.request_id
                     LEFT JOIN campus c ON c.id=r.campus_id
                     WHERE w.deleted=0
                       AND w.status='CONFIRMED'
@@ -185,7 +204,7 @@ public class StatisticsService {
                            MAX(CASE WHEN w.status='REJECTED' THEN 1 ELSE 0 END) AS has_rejected,
                            MAX(CASE WHEN w.status='DRAFT' THEN 1 ELSE 0 END) AS has_draft
                     FROM worklog w
-                    JOIN photo_request status_r ON status_r.id=w.request_id
+                    LEFT JOIN photo_request status_r ON status_r.id=w.request_id
                     WHERE w.deleted=0
                       AND w.work_date BETWEEN :fromDate AND :toDate
                       AND (:campusScoped=FALSE OR status_r.campus_id IN (:campusIds))
@@ -348,10 +367,11 @@ public class StatisticsService {
     public record MemberStatistics(Long userId, String studentId, String displayName, String campus,
                                    int shootingMinutes, int retouchingMinutes, int totalMinutes,
                                    long adoptedCount) {}
+    /** {@code viaShareLink}：这条工时是通过上传链接申报的，没有需求也没有校区。 */
     public record MemberWorklogDetail(Long worklogId, LocalDate workDate, Long requestId,
                                       String requestTitle, Long projectId, String projectTitle,
                                       String campus, int shootingMinutes, int retouchingMinutes,
-                                      int totalMinutes) {}
+                                      int totalMinutes, boolean viaShareLink) {}
     public record AdoptionStatistics(String photographerStudentId, String photographerName,
                                      long adoptedCount) {}
     public record WorklogExportRow(String memberName, String studentId, String campus,

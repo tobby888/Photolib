@@ -24,13 +24,17 @@ import cn.photolib.worklog.model.WorklogStatus;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -45,6 +49,7 @@ public class WorklogService {
     private final ProjectService projectService;
     private final CampusMemberService campusMemberService;
     private final NotificationService notifications;
+    private final JdbcClient jdbc;
 
     @Transactional
     public WorklogEntity create(Long requestId, WorklogCommand command, AuthenticatedUser user) {
@@ -66,6 +71,61 @@ public class WorklogService {
         return worklog;
     }
 
+    /**
+     * 通过上传链接申报一条工时，直接落成「待确认」。
+     *
+     * <p><b>这个方法不做授权</b>，与 {@code BatchUploadService} 上那几个中立接口同一个约定：
+     * 调用方（{@code ProjectShareUploadService}）已经用「链接 + 密码」换来的会话确认过
+     * 「这个人能不能在这条链接上申报」。这里只管工时自己的规则，而且和站内填报是同一份：
+     * 日期不能晚于今天、两项时长不能同时为 0，所属选题结束后不再收
+     * （{@link #requireProjectOpen(Long)}）。</p>
+     *
+     * <p>和站内填报不同的三处，都是因为申报人没有账号：</p>
+     * <ul>
+     *   <li>没有草稿——访客没有「回来接着改」的地方，交上来就是提交；</li>
+     *   <li>姓名学号是会话上的身份快照，不走通讯录（理由见 Flyway V48）；</li>
+     *   <li>同一条链接上同一个学号同一天只能有一条在审或已确认的工时。站内靠
+     *       「草稿 → 提交」这一步让人自己看见重复，这里没有那一步，而访客页一刷新
+     *       表单就回到初始状态，不拦的话手一抖就是两条一样的。被退回的不算，
+     *       退回之后重新申报正是它该走的路。</li>
+     * </ul>
+     */
+    @Transactional
+    public WorklogEntity createForShareLink(ShareLinkWorklog command) {
+        validate(command.workDate(), command.shootingMinutes(), command.retouchingMinutes());
+        requireProjectOpen(command.projectId());
+        long duplicates = mapper.selectCount(Wrappers.<WorklogEntity>lambdaQuery()
+                .eq(WorklogEntity::getShareLinkId, command.shareLinkId())
+                .eq(WorklogEntity::getMemberStudentId, command.memberStudentId())
+                .eq(WorklogEntity::getWorkDate, command.workDate())
+                .in(WorklogEntity::getStatus, WorklogStatus.SUBMITTED, WorklogStatus.CONFIRMED));
+        if (duplicates > 0) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
+                    "这一天的工时已经申报过了。如果填错了，请联系发给你链接的同学退回后重新申报");
+        }
+        WorklogEntity worklog = new WorklogEntity();
+        worklog.setShareLinkId(command.shareLinkId());
+        worklog.setUserId(command.responsibleUserId());
+        worklog.setMemberName(command.memberName());
+        worklog.setMemberStudentId(command.memberStudentId());
+        worklog.setWorkDate(command.workDate());
+        worklog.setShootingMinutes(command.shootingMinutes());
+        worklog.setRetouchingMinutes(command.retouchingMinutes());
+        worklog.setRemark(StringUtils.hasText(command.remark()) ? command.remark().trim() : null);
+        worklog.setStatus(WorklogStatus.SUBMITTED);
+        mapper.insert(worklog);
+        return worklog;
+    }
+
+    /** 某个学号在某条上传链接上申报过的工时，新的在前。同样不做授权，见 {@link #createForShareLink}。 */
+    public List<WorklogEntity> listForShareLink(Long shareLinkId, String memberStudentId) {
+        return mapper.selectList(Wrappers.<WorklogEntity>lambdaQuery()
+                .eq(WorklogEntity::getShareLinkId, shareLinkId)
+                .eq(WorklogEntity::getMemberStudentId, memberStudentId)
+                .orderByDesc(WorklogEntity::getWorkDate)
+                .orderByDesc(WorklogEntity::getId));
+    }
+
     public PageResponse<WorklogEntity> list(int page, int pageSize, Long requestId, Long userId,
                                             WorklogStatus status, LocalDate from, LocalDate to,
                                             AuthenticatedUser principal) {
@@ -75,6 +135,8 @@ public class WorklogService {
         Page<WorklogEntity> result = mapper.selectPage(Page.of(page, pageSize),
                 Wrappers.<WorklogEntity>lambdaQuery()
                         .eq(requestId != null, WorklogEntity::getRequestId, requestId)
+                        // 链接申报的工时没有需求（request_id 为 NULL），于是校区范围账号在这里
+                        // 天然筛不到它们——这类工时不属于任何校区，见 requireVisible。
                         .inSql(principal.isCampusScoped(), WorklogEntity::getRequestId,
                                 "SELECT id FROM photo_request WHERE deleted=0 AND campus_id IN ("
                                         + campusIdList(principal) + ")")
@@ -91,6 +153,7 @@ public class WorklogService {
     public WorklogEntity update(Long id, WorklogCommand command, int version, AuthenticatedUser user) {
         requirePermission(user, PermissionCode.WORKLOG_SUBMIT);
         WorklogEntity worklog = requireOwned(id, user);
+        requireInAppWorklog(worklog);
         if (worklog.getStatus() != WorklogStatus.DRAFT && worklog.getStatus() != WorklogStatus.REJECTED) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "当前工时不可编辑");
         }
@@ -112,6 +175,7 @@ public class WorklogService {
     public WorklogEntity submit(Long id, int version, AuthenticatedUser user) {
         requirePermission(user, PermissionCode.WORKLOG_SUBMIT);
         WorklogEntity worklog = requireOwned(id, user);
+        requireInAppWorklog(worklog);
         if (worklog.getStatus() != WorklogStatus.DRAFT && worklog.getStatus() != WorklogStatus.REJECTED) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "当前工时不可提交");
         }
@@ -137,7 +201,8 @@ public class WorklogService {
         worklog.setVersion(version);
         updateChecked(worklog);
         notifications.notifyUser(worklog.getUserId(), "WORKLOG_CONFIRMED",
-                "工时已确认", NotificationService.paragraphs("工时记录 #" + worklog.getId() + " 已确认"));
+                "工时已确认", NotificationService.paragraphs(
+                        "工时记录 #" + worklog.getId() + declaredBy(worklog) + " 已确认"));
         return mapper.selectById(id);
     }
 
@@ -155,8 +220,14 @@ public class WorklogService {
         worklog.setConfirmedAt(LocalDateTime.now());
         worklog.setVersion(version);
         updateChecked(worklog);
+        // 链接申报的工时，通知到的是开链接的成员而不是申报人本人（他没有账号）：
+        // 所以要写明是谁报的，开链接的人才知道该去转告谁。申报人自己在上传页也看得到退回原因。
         notifications.notifyUser(worklog.getUserId(), "WORKLOG_REJECTED",
-                "工时被退回", NotificationService.paragraphs("退回原因：" + reason));
+                "工时被退回", worklog.getShareLinkId() == null
+                        ? NotificationService.paragraphs("退回原因：" + reason)
+                        : NotificationService.paragraphs(
+                                "工时记录 #" + worklog.getId() + declaredBy(worklog) + " 被退回",
+                                "退回原因：" + reason));
         return mapper.selectById(id);
     }
 
@@ -176,25 +247,71 @@ public class WorklogService {
 
     private void populateDisplayNames(List<WorklogEntity> worklogs) {
         if (worklogs.isEmpty()) return;
-        Map<Long, PhotoRequestEntity> requests = requestMapper.selectBatchIds(
-                        worklogs.stream().map(WorklogEntity::getRequestId).distinct().toList())
+        // 链接申报的工时没有需求；空集合交给 selectBatchIds 会拼出一句 IN ()。
+        List<Long> requestIds = worklogs.stream().map(WorklogEntity::getRequestId)
+                .filter(Objects::nonNull).distinct().toList();
+        Map<Long, PhotoRequestEntity> requests = requestIds.isEmpty() ? Map.of()
+                : requestMapper.selectBatchIds(requestIds)
                 .stream().collect(Collectors.toMap(PhotoRequestEntity::getId, Function.identity()));
+        Map<Long, ShareLinkOrigin> origins = shareLinkOrigins(worklogs);
         Map<Long, UserEntity> users = userMapper.selectBatchIds(
                         worklogs.stream().map(WorklogEntity::getUserId).distinct().toList())
                 .stream().collect(Collectors.toMap(UserEntity::getId, Function.identity()));
         worklogs.forEach(worklog -> {
-            PhotoRequestEntity request = requests.get(worklog.getRequestId());
             UserEntity member = users.get(worklog.getUserId());
-            worklog.setRequestTitle(request == null ? "已删除的需求" : request.getTitle());
             worklog.setUserDisplayName(member == null ? "已删除的成员" : member.getDisplayName());
+            if (worklog.getRequestId() == null) {
+                // requestTitle 如实留空：这条工时没有需求，前端按 shareLinkId 显示成「上传链接」。
+                ShareLinkOrigin origin = origins.get(worklog.getShareLinkId());
+                if (origin != null) {
+                    worklog.setProjectId(origin.projectId());
+                    worklog.setProjectTitle(origin.projectTitle());
+                    worklog.setShareLinkName(origin.linkName());
+                }
+                return;
+            }
+            PhotoRequestEntity request = requests.get(worklog.getRequestId());
+            worklog.setRequestTitle(request == null ? "已删除的需求" : request.getTitle());
         });
     }
 
+    /**
+     * 链接申报的工时来自哪个选题、哪条链接。
+     *
+     * <p>用原生 SQL 而不是 mapper：链接是软删的，撤销之后 mapper 就查不到它了，
+     * 而审核面板恰恰要在链接撤销之后还说得出「这条工时是哪个选题的」。</p>
+     */
+    private Map<Long, ShareLinkOrigin> shareLinkOrigins(List<WorklogEntity> worklogs) {
+        List<Long> linkIds = worklogs.stream().map(WorklogEntity::getShareLinkId)
+                .filter(Objects::nonNull).distinct().toList();
+        if (linkIds.isEmpty()) return Map.of();
+        Map<Long, ShareLinkOrigin> origins = new HashMap<>();
+        jdbc.sql("""
+                        SELECT l.id, l.name, p.id, p.title
+                        FROM project_share_link l JOIN project p ON p.id = l.project_id
+                        WHERE l.id IN (:ids)
+                        """).param("ids", linkIds)
+                .query((rs, row) -> Map.entry(rs.getLong(1),
+                        new ShareLinkOrigin(rs.getString(2), rs.getLong(3), rs.getString(4))))
+                .list().forEach(entry -> origins.put(entry.getKey(), entry.getValue()));
+        return origins;
+    }
+
+    /** 通知正文里的申报人：链接申报的工时通知到的是开链接的成员，得写明是替谁收的。 */
+    private String declaredBy(WorklogEntity worklog) {
+        return worklog.getShareLinkId() == null ? ""
+                : "（" + worklog.getMemberName() + " 通过上传链接申报）";
+    }
+
     private void validate(WorklogCommand command) {
-        if (command.workDate().isAfter(LocalDate.now())) {
+        validate(command.workDate(), command.shootingMinutes(), command.retouchingMinutes());
+    }
+
+    private void validate(LocalDate workDate, int shootingMinutes, int retouchingMinutes) {
+        if (workDate.isAfter(LocalDate.now())) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "工时日期不能晚于今天");
         }
-        if (command.shootingMinutes() + command.retouchingMinutes() <= 0) {
+        if (shootingMinutes + retouchingMinutes <= 0) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "拍摄和修图工时不能同时为0");
         }
     }
@@ -215,9 +332,28 @@ public class WorklogService {
     // 但校区约束不放开：调用方仍要先过 requireCampusAccess，工作人员也只能取需求所属校区的通讯录。
     private void requireProjectOpen(PhotoRequestEntity request, AuthenticatedUser user) {
         if (user.hasPermission(PermissionCode.WORKLOG_SUBMIT_ANY)) return;
-        ProjectEntity project = projectService.get(request.getProjectId());
+        requireProjectOpen(request.getProjectId());
+    }
+
+    /** 「项目结束后不再计发工时」这条规则本身，站内填报和链接申报共用。 */
+    private void requireProjectOpen(Long projectId) {
+        ProjectEntity project = projectService.get(projectId);
         if (project.getStatus() == ProjectStatus.COMPLETED || project.getStatus() == ProjectStatus.CANCELLED) {
-            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "所属项目已结束，不能填报该需求的工时");
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "所属项目已结束，不能再填报工时");
+        }
+    }
+
+    /**
+     * 链接申报的工时不能在站内编辑或重新提交。
+     *
+     * <p>这两个入口都要一条需求（查项目状态、按需求校区取通讯录成员），而这类工时没有；
+     * 更要紧的是，记在名下的账号是开链接的成员，他不是干活的人，替别人改时长不是他该做的事。
+     * 被退回的由申报人在上传页重新申报一条。</p>
+     */
+    private void requireInAppWorklog(WorklogEntity worklog) {
+        if (worklog.getRequestId() == null) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
+                    "通过上传链接申报的工时不能在站内修改，请让申报人在上传页重新申报");
         }
     }
 
@@ -252,6 +388,15 @@ public class WorklogService {
     }
 
     private void requireVisible(WorklogEntity worklog, AuthenticatedUser user) {
+        if (worklog.getRequestId() == null) {
+            // 链接申报的工时不属于任何校区（选题没有校区，访客也报不出）。校区范围账号
+            // 只管自己校区的需求，这类工时不在它的范围里——与它不能创建分享链接是同一条边界，
+            // 也和上面 list 里按需求校区筛的结果一致，不会出现「列表里没有、却能凭 id 操作」。
+            if (user.isCampusScoped()) {
+                throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该校区的工时");
+            }
+            return;
+        }
         PhotoRequestEntity request = requestMapper.selectById(worklog.getRequestId());
         if (request == null) {
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "工时所属需求不存在");
@@ -279,5 +424,21 @@ public class WorklogService {
     public record WorklogCommand(LocalDate workDate, Long memberContactId,
                                  int shootingMinutes, int retouchingMinutes,
                                  String remark, WorklogStatus status) {
+    }
+
+    /**
+     * 一条通过上传链接申报的工时。
+     *
+     * @param responsibleUserId 开这条链接的成员，记进 {@code worklog.user_id}——与链接传进来的
+     *                          照片记 {@code uploaded_by} 同一个道理，他是站内唯一可追责的人
+     * @param memberName        申报人进门时自报的姓名（会话上的身份快照）
+     * @param memberStudentId   申报人自报的学号，已规范化；统计按它归并
+     */
+    public record ShareLinkWorklog(Long shareLinkId, Long projectId, Long responsibleUserId,
+                                   String memberName, String memberStudentId, LocalDate workDate,
+                                   int shootingMinutes, int retouchingMinutes, String remark) {
+    }
+
+    private record ShareLinkOrigin(String linkName, Long projectId, String projectTitle) {
     }
 }

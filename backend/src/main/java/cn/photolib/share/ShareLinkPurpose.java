@@ -10,6 +10,6 @@ package cn.photolib.share;
 public enum ShareLinkPurpose {
     /** 浏览项目相册（V41 起就有的那一种）。 */
     BROWSE,
-    /** 向活动选题的相册上传图片。 */
+    /** 向选题的相册上传图片，传完可以申报工时。 */
     UPLOAD
 }

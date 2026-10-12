@@ -14,6 +14,7 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.PastOrPresent;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
@@ -250,6 +251,42 @@ public class ProjectSharePublicController {
         return ApiResponse.ok(uploadService.finishZip(
                 service.resolveGuestContext(token, session), batchId, request.takenAt()));
     }
+
+    // ------------------------------------------------------------------ 申报工时
+
+    /**
+     * 传完图之后申报这次的工时，直接进入部长和管理员的工时审核面板。
+     * 姓名学号取会话身份，不在这里再报一次，见 {@link ProjectShareUploadService#declareWorklog}。
+     */
+    @PostMapping("/worklogs")
+    ApiResponse<ProjectShareUploadService.GuestWorklog> declareWorklog(
+            @PathVariable String token,
+            @RequestHeader(value = SESSION_HEADER, required = false) String session,
+            @Valid @RequestBody WorklogDeclarationRequest request, HttpServletRequest servletRequest) {
+        rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.WORKLOG, token,
+                servletRequest.getRemoteAddr());
+        return ApiResponse.ok(uploadService.declareWorklog(
+                service.resolveGuestContext(token, session),
+                new ProjectShareUploadService.WorklogDeclaration(request.workDate(),
+                        request.shootingMinutes(), request.retouchingMinutes(), request.remark())));
+    }
+
+    /** 回看自己在这条链接上申报过的工时：退回原因只有从这里才到得了申报人手上。 */
+    @GetMapping("/worklogs")
+    ApiResponse<List<ProjectShareUploadService.GuestWorklog>> worklogs(
+            @PathVariable String token,
+            @RequestHeader(value = SESSION_HEADER, required = false) String session,
+            HttpServletRequest servletRequest) {
+        rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.UPLOAD_STATUS, token,
+                servletRequest.getRemoteAddr());
+        return ApiResponse.ok(uploadService.worklogs(service.resolveGuestContext(token, session)));
+    }
+
+    /** 字段约束与站内 {@code WorklogController.WorklogRequest} 一致，只是没有成员和草稿这两项。 */
+    record WorklogDeclarationRequest(@NotNull @PastOrPresent LocalDate workDate,
+                                     @Min(0) @Max(1440) int shootingMinutes,
+                                     @Min(0) @Max(1440) int retouchingMinutes,
+                                     @Size(max = 1000) String remark) {}
 
     record UploadBatchRequest(@NotBlank @Size(max = 255) String archiveFileName,
                               @NotNull @Min(1) Long archiveSize) {}

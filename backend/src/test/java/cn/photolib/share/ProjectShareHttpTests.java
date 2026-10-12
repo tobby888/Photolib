@@ -262,6 +262,81 @@ class ProjectShareHttpTests {
                 .andExpect(status().isForbidden());
     }
 
+    /**
+     * 申报工时走的也是不带令牌的访客通道：创作选题的上传链接、permitAll、会话头、
+     * 字段校验，以及「先交图再申报」这条线，都在完整过滤器链上过一遍。
+     */
+    @Test
+    void anAnonymousVisitorDeclaresAWorklogAfterUploadingToACreationProject() throws Exception {
+        AuthenticatedUser minister = new AuthenticatedUser(MINISTER_ID, "share-http-minister",
+                "分享部长", UserRole.MINISTER, null, false);
+        ProjectEntity creation = projectService.create("HTTP 创作选题", "说明",
+                ProjectStatus.ACTIVE, minister);
+        ProjectShareService.ShareLinkView link = shareService.create(creation.getId(),
+                new ProjectShareService.CreateCommand(ShareLinkPurpose.UPLOAD, "外援",
+                        "share-pass", false, false, null), minister).link();
+        String base = "/api/v1/public/shares/" + link.token();
+
+        String body = mvc.perform(anonymous(post(base + "/sessions"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"password\":\"share-pass\",\"uploaderName\":\"李外援\","
+                                + "\"uploaderStudentId\":\"20230002\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.access.allowUpload").value(true))
+                .andExpect(jsonPath("$.data.access.allowWorklog").value(true))
+                .andReturn().getResponse().getContentAsString();
+        String session = json.readTree(body).path("data").path("sessionToken").asText();
+        String declaration = "{\"workDate\":\"" + java.time.LocalDate.now()
+                + "\",\"shootingMinutes\":90,\"retouchingMinutes\":30,\"remark\":\"跟拍\"}";
+
+        // 没带会话头：和其余访客接口一样回 403，而不是缺参的 400。
+        mvc.perform(anonymous(post(base + "/worklogs"))
+                        .contentType(MediaType.APPLICATION_JSON).content(declaration))
+                .andExpect(status().isForbidden());
+        // 一张图都还没交。
+        mvc.perform(anonymous(post(base + "/worklogs"))
+                        .header(ProjectSharePublicController.SESSION_HEADER, session)
+                        .contentType(MediaType.APPLICATION_JSON).content(declaration))
+                .andExpect(status().isConflict());
+
+        // 照 complete 之后的形态直接落一张：这里验的是过滤器链，不是上传流水线。
+        jdbc.sql("""
+                INSERT INTO photo (id, project_id, photographer_student_id, photographer_name, uploaded_by,
+                    share_link_id, taken_at, size, content_type, object_key, sha256, status)
+                VALUES (:id, :project, '20230002', '李外援', :user, :link, CURRENT_TIMESTAMP, 2048,
+                    'image/jpeg', 'photos/2026/http-worklog.jpg', :sha, 'PROCESSING')
+                """).param("id", PHOTO_ID + 1).param("project", creation.getId())
+                .param("user", MINISTER_ID).param("link", link.id()).param("sha", "e".repeat(64)).update();
+
+        // 字段约束与站内一致：单项时长不超过一天。
+        mvc.perform(anonymous(post(base + "/worklogs"))
+                        .header(ProjectSharePublicController.SESSION_HEADER, session)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(declaration.replace("\"shootingMinutes\":90", "\"shootingMinutes\":1441")))
+                .andExpect(status().isBadRequest());
+
+        mvc.perform(anonymous(post(base + "/worklogs"))
+                        .header(ProjectSharePublicController.SESSION_HEADER, session)
+                        .contentType(MediaType.APPLICATION_JSON).content(declaration))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("SUBMITTED"))
+                .andExpect(jsonPath("$.data.shootingMinutes").value(90));
+        mvc.perform(anonymous(get(base + "/worklogs"))
+                        .header(ProjectSharePublicController.SESSION_HEADER, session))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                // 访客视图里没有填报账号和链接 id。
+                .andExpect(jsonPath("$.data[0].userId").doesNotExist())
+                .andExpect(jsonPath("$.data[0].shareLinkId").doesNotExist());
+
+        assertThat(jdbc.sql("""
+                        SELECT COUNT(*) FROM worklog
+                        WHERE share_link_id = :link AND status = 'SUBMITTED' AND request_id IS NULL
+                          AND member_student_id = '20230002' AND user_id = :user
+                        """).param("link", link.id()).param("user", MINISTER_ID)
+                .query(Long.class).single()).isEqualTo(1);
+    }
+
     private String openSession(String password) throws Exception {
         String body = mvc.perform(anonymous(post("/api/v1/public/shares/" + token + "/sessions"))
                         .contentType(MediaType.APPLICATION_JSON)

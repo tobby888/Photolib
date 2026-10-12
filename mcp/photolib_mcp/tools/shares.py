@@ -33,7 +33,8 @@ def register(registry: ToolRegistry) -> None:
                             expires_at: str | None = None) -> dict[str, Any]:
         """建立一条分享链接。
 
-        - `purpose`：BROWSE 是看相册，UPLOAD 是让外部的人往活动选题里传图。
+        - `purpose`：BROWSE 是看相册，UPLOAD 是让外部的人往选题里传图（进行中的创作选题和活动选题都可以），
+          传完的人可以在同一页申报工时，申报直接进工时审核面板。
         - `password` 留空则由后端生成一个，返回里会给出明文——**只会给这一次**。
         - `expires_at` 是 ISO 本地时间，留空表示不过期。
 

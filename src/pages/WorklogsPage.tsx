@@ -1,5 +1,5 @@
 import {
-  App, Button, Card, DatePicker, Form, Input, InputNumber, Modal, Select, Space,
+  App, Button, Card, DatePicker, Form, Input, InputNumber, Modal, Select, Space, Tag,
 } from 'antd'
 import {
   CheckOutlined, ClockCircleOutlined, DeleteOutlined, DownloadOutlined, PlusOutlined, StopOutlined,
@@ -169,7 +169,9 @@ export default function WorklogsPage() {
             method: 'POST', url: `/worklogs/${item.id}/reject`,
             data: { reason: reason.trim(), version: item.version },
           })
-          message.success('工时已退回，填报人会收到通知')
+          message.success(item.shareLinkId
+            ? '工时已退回，申报人在上传页能看到原因，开链接的成员也会收到通知'
+            : '工时已退回，填报人会收到通知')
           await reload()
         } catch (e) {
           message.error((e as Error).message)
@@ -304,7 +306,7 @@ export default function WorklogsPage() {
         emptyHint={filters.status
           ? '清掉状态筛选就能看到全部。'
           : reviewer
-            ? '成员提交工时后会出现在这里，等你确认或退回。'
+            ? '成员提交工时、或有人通过上传链接申报工时后，会出现在这里等你确认或退回。'
             : '拍完、修完就来填一笔，导出统计时用的就是这些记录。'}>
         <ContentFitTable
           rowKey="id"
@@ -320,7 +322,13 @@ export default function WorklogsPage() {
           } : undefined}
           columns={[
             { title: '日期', dataIndex: 'workDate', render: value => dayjs(value).format('YYYY-MM-DD') },
-            { title: '需求', dataIndex: 'requestTitle', render: value => value || '—' },
+            // 通过上传链接申报的工时没有需求：标出来源和所属选题，审核的人才知道该对着哪批照片看。
+            { title: '需求', dataIndex: 'requestTitle', render: (value, item: Worklog) => item.shareLinkId
+              ? <Space size={4} wrap>
+                <Tag color="purple">上传链接</Tag>
+                <span>{item.projectTitle || '已删除的选题'}{item.shareLinkName ? ` · ${item.shareLinkName}` : ''}</span>
+              </Space>
+              : value || '—' },
             { title: '姓名', dataIndex: 'memberName', render: value => value || '—' },
             { title: '学号', dataIndex: 'memberStudentId', render: value => value || '—' },
             { title: '拍摄', dataIndex: 'shootingMinutes', render: formatMinutes },
@@ -330,7 +338,8 @@ export default function WorklogsPage() {
             { title: '状态', dataIndex: 'status', render: value => <StatusTag value={value} /> },
             { title: '操作', fixed: 'right' as const, minWidth: reviewer ? WORKLOG_REVIEW_ACTION_MIN_WIDTH : WORKLOG_OWNER_ACTION_MIN_WIDTH,
               className: 'table-action-cell', render: (_, item: Worklog) => <Space>
-              {canSubmit && item.userId === user?.id && ['DRAFT', 'REJECTED'].includes(item.status) && (
+              {/* 链接申报的工时记在开链接的成员名下，但他不是干活的人：被退回的由申报人在上传页重新申报。 */}
+              {canSubmit && !item.shareLinkId && item.userId === user?.id && ['DRAFT', 'REJECTED'].includes(item.status) && (
                 <Button onClick={() => void runAction(item, 'submit')}>提交</Button>
               )}
               {reviewer && item.status === 'SUBMITTED' && <>

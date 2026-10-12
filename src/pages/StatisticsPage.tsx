@@ -1,4 +1,4 @@
-import { App, Button, Card, Col, DatePicker, Descriptions, Modal, Progress, Row, Space, Statistic, Typography } from 'antd'
+import { App, Button, Card, Col, DatePicker, Descriptions, Modal, Progress, Row, Space, Statistic, Tag, Typography } from 'antd'
 import { CameraOutlined, ClockCircleOutlined, DownloadOutlined, FolderOutlined, TrophyOutlined } from '@ant-design/icons'
 import { useState } from 'react'
 import dayjs from 'dayjs'
@@ -117,9 +117,12 @@ export default function StatisticsPage() {
         <ContentFitTable rowKey={detail => detail.worklogId} dataSource={details}
           pagination={clientTablePagination(details.length, { size: 'small' })} columns={[
           { title: '工作日期', dataIndex: 'workDate' },
-          { title: '需求', dataIndex: 'requestTitle', render: value => <TableEllipsisText value={value} maxWidth={220} /> },
+          // 通过上传链接申报的工时没有需求（也没有校区），如实标出来源，不留一个空格子让人猜。
+          { title: '需求', dataIndex: 'requestTitle', render: (value, detail) => detail.viaShareLink
+            ? <Tag color="purple">上传链接申报</Tag>
+            : <TableEllipsisText value={value} maxWidth={220} /> },
           { title: '所属选题', dataIndex: 'projectTitle', render: value => <TableEllipsisText value={value} maxWidth={220} /> },
-          { title: '校区', dataIndex: 'campus' },
+          { title: '校区', dataIndex: 'campus', render: value => value || '—' },
           { title: '拍摄（小时）', dataIndex: 'shootingMinutes', render: formatHours },
           { title: '修图（小时）', dataIndex: 'retouchingMinutes', render: formatHours },
           { title: '合计（小时）', dataIndex: 'totalMinutes', render: value => <strong>{formatHours(value)}</strong> },

@@ -13,7 +13,14 @@ import java.time.LocalDateTime;
 @Setter
 @TableName("worklog")
 public class WorklogEntity extends BaseEntity {
+    /** 站内填报的工时挂在需求下；通过上传链接申报的为 {@code null}（见 {@link #shareLinkId}）。 */
     private Long requestId;
+    /**
+     * 通过哪条上传链接申报的（Flyway V63）。站内填报的为 {@code null}。
+     * 这类工时的所属选题由链接现读，校区如实没有。
+     */
+    private Long shareLinkId;
+    /** 填报账号；链接申报的工时记的是开这条链接的成员——站内唯一可追责的人。 */
     private Long userId;
     private String memberName;
     private String memberStudentId;
@@ -29,4 +36,11 @@ public class WorklogEntity extends BaseEntity {
     private String requestTitle;
     @TableField(exist = false)
     private String userDisplayName;
+    /** 仅链接申报的工时由列表接口补充：所属选题，以及那条链接的备注名。 */
+    @TableField(exist = false)
+    private Long projectId;
+    @TableField(exist = false)
+    private String projectTitle;
+    @TableField(exist = false)
+    private String shareLinkName;
 }
