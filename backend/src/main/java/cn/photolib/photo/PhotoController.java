@@ -58,19 +58,20 @@ public class PhotoController {
             @RequestParam(defaultValue = "false") boolean favoritesOnly,
             @RequestParam(defaultValue = "false") boolean selectableOnly,
             @RequestParam(required = false) List<String> tags,
+            @RequestParam(required = false) @Size(max = 200) List<String> photographers,
             @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.list(page, pageSize, keyword, projectId, requestId,
                 photographerStudentId, photographerName, uploadedBy, campusId, status,
-                includeAllStatuses, favoritesOnly, selectableOnly, tags, user));
+                includeAllStatuses, favoritesOnly, selectableOnly, tags, photographers, user));
     }
 
-    /** 图库「按上传者筛选」的候选人。范围与 {@code GET /photos} 完全一致，见 PhotoService.uploaders。 */
-    @GetMapping("/uploaders")
+    /** 图库「按拍摄者筛选」的候选。范围与 {@code GET /photos} 完全一致，见 PhotoService.photographers。 */
+    @GetMapping("/photographers")
     @PreAuthorize("hasAuthority('PHOTO_VIEW')")
-    ApiResponse<List<PhotoService.UploaderView>> uploaders(
+    ApiResponse<List<String>> photographers(
             @RequestParam(defaultValue = "false") boolean favoritesOnly,
             @AuthenticationPrincipal AuthenticatedUser user) {
-        return ApiResponse.ok(service.uploaders(favoritesOnly, user));
+        return ApiResponse.ok(service.photographers(favoritesOnly, user));
     }
 
     @GetMapping("/{id}")

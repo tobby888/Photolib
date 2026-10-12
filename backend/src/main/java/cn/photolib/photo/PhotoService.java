@@ -18,8 +18,6 @@ import cn.photolib.project.ProjectService;
 import cn.photolib.project.model.ProjectStatus;
 import cn.photolib.storage.ObjectStorageService;
 import cn.photolib.storage.StorageProperties;
-import cn.photolib.user.mapper.UserMapper;
-import cn.photolib.user.model.UserEntity;
 import cn.photolib.permission.PermissionCode;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
@@ -38,7 +36,6 @@ import org.springframework.util.StringUtils;
 import java.text.Collator;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -47,7 +44,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -63,7 +59,6 @@ public class PhotoService {
     private final ApplicationEventPublisher events;
     private final JdbcClient jdbc;
     private final CampusService campusService;
-    private final UserMapper userMapper;
     private final cn.photolib.directory.CampusMemberService campusMemberService;
     private final AbandonedUploadCleanupJob abandonedUploads;
     private final UploadLimitService uploadLimits;
@@ -178,15 +173,30 @@ public class PhotoService {
                                         boolean includeAllStatuses, boolean favoritesOnly,
                                         boolean selectableOnly, List<String> tags,
                                         AuthenticatedUser user) {
+        return list(page, pageSize, keyword, projectId, requestId, studentId, photographerName, uploadedBy,
+                campusId, status, includeAllStatuses, favoritesOnly, selectableOnly, tags, List.of(), user);
+    }
+
+    /**
+     * @param photographerName 拍摄者姓名的模糊匹配（包含即可）
+     * @param photographers    拍摄者姓名的精确匹配，任意其一；图库「按拍摄者筛选」用的是这个，
+     *                         候选来自 {@link #photographers}
+     */
+    public PageResponse<PhotoView> list(int page, int pageSize, String keyword, Long projectId,
+                                        Long requestId, String studentId, String photographerName,
+                                        Long uploadedBy, Long campusId, PhotoStatus status,
+                                        boolean includeAllStatuses, boolean favoritesOnly,
+                                        boolean selectableOnly, List<String> tags, List<String> photographers,
+                                        AuthenticatedUser user) {
         requireListPermission(projectId, requestId, favoritesOnly, selectableOnly, user);
         if (requestId != null && user.isCampusScoped()) requestService.requireParticipantAccess(requestId, user);
         if (projectId != null) projectService.getVisible(projectId, user);
         List<String> normalizedTags = PhotoTags.normalize(tags);
-        var query = buildListQuery(keyword, projectId, requestId, studentId, photographerName,
+        var query = buildListQuery(keyword, projectId, requestId, studentId, photographerName, photographers,
                 uploadedBy, campusId, status, includeAllStatuses, favoritesOnly, selectableOnly, user);
         if (!normalizedTags.isEmpty()) {
             Set<Long> tagMatches = photoIdsWithAllTags(buildListQuery(
-                    keyword, projectId, requestId, studentId, photographerName, uploadedBy,
+                    keyword, projectId, requestId, studentId, photographerName, photographers, uploadedBy,
                     campusId, status, includeAllStatuses, favoritesOnly, selectableOnly, user),
                     normalizedTags);
             if (tagMatches.isEmpty()) {
@@ -210,30 +220,28 @@ public class PhotoService {
     }
 
     /**
-     * 图库「按上传者筛选」下拉框的候选人：在调用者可见的图片里出现过的上传者，按姓名排序。
+     * 图库「按拍摄者筛选」下拉框的候选：在调用者可见的图片里出现过的拍摄者姓名，按姓名排序。
+     *
+     * <p>取的是图片上的拍摄者快照（{@code photographer_name}），不是上传账号：上传的人不一定是
+     * 拍的人——负责人替同学传、上传链接进来的图片记在链接创建者名下，都是这样。和选题相册、
+     * 分享页的拍摄者筛选是同一个口径（按姓名）。</p>
      *
      * <p>候选集合刻意与 {@link #list} 共用 {@link #buildListScope}，所以它天然遵守同一套
-     * 可见范围：只看本人上传的账号只会看到自己，校区范围账号看不到别校区的上传者，非参与人
-     * 也不会从这里知道某个需求有谁传过图。下拉框里绝不能出现选了以后必然是空列表的人。</p>
+     * 可见范围：只看本人上传的账号只会看到自己传的图片上的拍摄者，校区范围账号看不到别校区的，
+     * 非参与人也不会从这里知道某个需求有谁拍过图。下拉框里绝不能出现选了以后必然是空列表的人。</p>
      *
      * <p>候选不跟随状态筛选（{@code includeAllStatuses}）：状态是另一个维度的筛选条件，
      * 让下拉框随状态增减选项会让「切个状态人就没了」显得像 bug。</p>
      */
-    public List<UploaderView> uploaders(boolean favoritesOnly, AuthenticatedUser user) {
+    public List<String> photographers(boolean favoritesOnly, AuthenticatedUser user) {
         requireListPermission(null, null, favoritesOnly, false, user);
-        List<Long> uploaderIds = mapper.selectList(buildListScope(null, null, null, null, null,
+        return mapper.selectList(buildListScope(null, null, null, null, null, List.of(),
                         null, null, null, true, favoritesOnly, false, user)
-                        .select(PhotoEntity::getUploadedBy)
-                        .groupBy(PhotoEntity::getUploadedBy))
-                .stream().map(PhotoEntity::getUploadedBy).filter(Objects::nonNull).distinct().toList();
-        if (uploaderIds.isEmpty()) return List.of();
-        // 账号被删掉之后图片还在，此时不能把这个上传者从下拉框里抹掉——否则那批图片没有任何
-        // 办法按上传者筛出来。用占位名留着它。
-        Map<Long, String> names = userMapper.selectBatchIds(uploaderIds).stream()
-                .collect(Collectors.toMap(UserEntity::getId, UserEntity::getDisplayName));
-        return uploaderIds.stream()
-                .map(id -> new UploaderView(id, names.getOrDefault(id, "已注销的账号")))
-                .sorted(Comparator.comparing(UploaderView::displayName, Collator.getInstance(Locale.CHINA)))
+                        .select(PhotoEntity::getPhotographerName)
+                        .groupBy(PhotoEntity::getPhotographerName))
+                .stream().filter(Objects::nonNull).map(PhotoEntity::getPhotographerName)
+                .filter(StringUtils::hasText).distinct()
+                .sorted(Collator.getInstance(Locale.CHINA))
                 .toList();
     }
 
@@ -243,10 +251,10 @@ public class PhotoService {
      */
     private LambdaQueryWrapper<PhotoEntity> buildListQuery(
             String keyword, Long projectId, Long requestId, String studentId,
-            String photographerName, Long uploadedBy, Long campusId, PhotoStatus status,
-            boolean includeAllStatuses, boolean favoritesOnly, boolean selectableOnly,
+            String photographerName, List<String> photographers, Long uploadedBy, Long campusId,
+            PhotoStatus status, boolean includeAllStatuses, boolean favoritesOnly, boolean selectableOnly,
             AuthenticatedUser user) {
-        return buildListScope(keyword, projectId, requestId, studentId, photographerName,
+        return buildListScope(keyword, projectId, requestId, studentId, photographerName, photographers,
                 uploadedBy, campusId, status, includeAllStatuses, favoritesOnly, selectableOnly, user)
                 // 批量上传常有同一秒入库的图片，只按 created_at 排时分页边界上的顺序不稳定，
                 // 翻页会重复或漏图，详情页「上一张 / 下一张」也会跳号；用 id 兜底成全序。
@@ -255,13 +263,13 @@ public class PhotoService {
     }
 
     /**
-     * 可见范围本身，不带排序。{@link #uploaders} 要在这个范围上按 uploaded_by 分组，
+     * 可见范围本身，不带排序。{@link #photographers} 要在这个范围上按 photographer_name 分组，
      * 而 MySQL 的 ONLY_FULL_GROUP_BY 不允许按分组之外的列排序，所以排序留给 buildListQuery 加。
      */
     private LambdaQueryWrapper<PhotoEntity> buildListScope(
             String keyword, Long projectId, Long requestId, String studentId,
-            String photographerName, Long uploadedBy, Long campusId, PhotoStatus status,
-            boolean includeAllStatuses, boolean favoritesOnly, boolean selectableOnly,
+            String photographerName, List<String> photographers, Long uploadedBy, Long campusId,
+            PhotoStatus status, boolean includeAllStatuses, boolean favoritesOnly, boolean selectableOnly,
             AuthenticatedUser user) {
         // selectableOnly 是好图精选选图弹窗用的：它要的是"这个账号能选用的图片"，而选图范围
         // 固定为授权校区（见 requireGallerySelectable），与权限组的图库可见范围无关。因此它
@@ -284,6 +292,9 @@ public class PhotoService {
                 : includeAllStatuses ? null : PhotoStatus.AVAILABLE;
         String likeKeyword = LikeFilter.escape(keyword);
         String likePhotographer = LikeFilter.escape(photographerName);
+        // 不 strip：候选是库里的原值，原样传回来才对得上。
+        List<String> exactPhotographers = photographers == null ? List.of()
+                : photographers.stream().filter(StringUtils::hasText).distinct().toList();
         return Wrappers.<PhotoEntity>lambdaQuery()
                 .and(StringUtils.hasText(keyword), q -> q
                         .apply(LikeFilter.contains("title"), likeKeyword)
@@ -295,6 +306,7 @@ public class PhotoService {
                 .eq(StringUtils.hasText(studentId), PhotoEntity::getPhotographerStudentId, studentId)
                 .apply(StringUtils.hasText(photographerName),
                         LikeFilter.contains("photographer_name"), likePhotographer)
+                .in(!exactPhotographers.isEmpty(), PhotoEntity::getPhotographerName, exactPhotographers)
                 .eq(effectiveUploader != null, PhotoEntity::getUploadedBy, effectiveUploader)
                 .eq(!campusFiltered && campusId != null, PhotoEntity::getCampusId, campusId)
                 .in(campusFiltered, PhotoEntity::getCampusId,
@@ -949,5 +961,4 @@ public class PhotoService {
                             List<Long> relatedProjectIds, List<ProjectLink> relatedProjects) {}
     public record ProjectLink(Long id, String title) {}
     /** 图库上传者筛选的候选项。 */
-    public record UploaderView(Long id, String displayName) {}
 }

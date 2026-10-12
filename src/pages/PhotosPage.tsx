@@ -15,7 +15,7 @@ import { uploadToObjectStorage } from '../storageUpload'
 import { describeBytes } from '../uploadLimits'
 import { useUploadLimits } from '../useUploadLimits'
 import type {
-  CampusMember, DedupedMember, EntityId, PageData, Photo, PhotoUploader, Project, TaggedPhoto,
+  CampusMember, DedupedMember, EntityId, PageData, Photo, Project, TaggedPhoto,
 } from '../types'
 import { DataState, PageTitle, PhotoStatusTag } from '../components'
 import { ContentFitTable } from '../ContentFitTable'
@@ -28,8 +28,8 @@ import PreviewPhoto from '../PreviewPhoto'
 import { refreshPhotoPreviewUrl } from '../previewRefresh'
 import { PhotoPlaceholder, pickPlaceholderImage, usePlaceholderImages } from '../photoPlaceholder'
 import {
-  PHOTO_LIBRARY_PAGE_SIZES, isTagTooLong, photoLibraryRequestParams, readPhotoLibraryFilters,
-  writePhotoLibraryFilters, withPhotoLibrarySearch,
+  PHOTO_LIBRARY_PAGE_SIZES, isTagTooLong, normalizePhotographerFilter, photoLibraryRequestParams,
+  readPhotoLibraryFilters, writePhotoLibraryFilters, withPhotoLibrarySearch,
 } from '../photoLibrarySearch'
 import type { PhotoLibraryFilters, PhotoLibraryStatus } from '../photoLibrarySearch'
 import ListPagination from '../ListPagination'
@@ -84,6 +84,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
   // 清空历史后让下拉框的候选（同一份历史）也跟着刷新。
   const [, rerenderTagHistory] = useReducer((count: number) => count + 1, 0)
   const tagSearchKey = JSON.stringify(filters.tags)
+  const photographerSearchKey = JSON.stringify(filters.photographers)
   const recentTags = readRecentTags(tagHistoryScope)
   const [searchText, setSearchText] = useState(filters.keyword)
   const setFilters = (nextFilters: PhotoLibraryFilters) => {
@@ -105,7 +106,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
   const { data, setData, loading, error, reload, refresh } = useLoad(
     () => api<PageData<Photo>>({ url: '/photos', params: photoLibraryRequestParams(filters, { favoritesOnly }) }),
     emptyPage<Photo>(),
-    [filters.page, filters.pageSize, filters.keyword, filters.status, filters.uploadedBy, tagSearchKey, favoritesOnly],
+    [filters.page, filters.pageSize, filters.keyword, filters.status, photographerSearchKey, tagSearchKey, favoritesOnly],
   )
   useRefreshOnResume(refresh)
   useEffect(() => {
@@ -116,27 +117,23 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
     window.addEventListener('preview-generation-succeeded', onPreviewRegenerated)
     return () => window.removeEventListener('preview-generation-succeeded', onPreviewRegenerated)
   }, [reload])
-  // 候选人由后端按可见范围算（GET /photos/uploaders），不能拿通讯录或用户列表凑：
-  // 后者会把选了必然是空列表的人摆进下拉框，也会泄露本账号看不到的成员。
-  const { data: uploaders, loading: uploadersLoading } = useLoad(
-    () => api<PhotoUploader[]>({ url: '/photos/uploaders', params: qs({ favoritesOnly: favoritesOnly || undefined }) }),
-    [] as PhotoUploader[], [favoritesOnly],
+  // 按拍摄者筛，不按上传账号：上传的人不一定是拍的人（负责人替同学传、上传链接进来的图片
+  // 都记在别人名下）。候选由后端按可见范围算（GET /photos/photographers），不能拿通讯录凑：
+  // 通讯录里有没拍过图的人，也没有上传链接进来的站外拍摄者，还会泄露本账号看不到的成员。
+  const { data: photographerNames, loading: photographerNamesLoading } = useLoad(
+    () => api<string[]>({ url: '/photos/photographers', params: qs({ favoritesOnly: favoritesOnly || undefined }) }),
+    [] as string[], [favoritesOnly],
   )
-  // 已经选中的上传者可能不在候选里（他传的图全被删了，或者 URL 是别人分享的）。
+  // 已经选中的拍摄者可能不在候选里（他的图全被删了，或者 URL 是别人分享的）。
   // 这时仍然要把它摆在框里，否则列表明明被筛过了，筛选条件却看不见、也清不掉。
-  const uploaderOptions = [
-    ...uploaders.map(uploader => ({ value: uploader.id, label: uploader.displayName })),
-    ...(filters.uploadedBy && !uploaders.some(uploader => uploader.id === filters.uploadedBy)
-      ? [{ value: filters.uploadedBy, label: `上传者 #${filters.uploadedBy}` }] : []),
-  ]
-  // 只看得到自己上传的账号（权限组 photoVisibility=SELF）只会拿到一个候选人，摆个只能选自己的
-  // 下拉框只是噪音；但已经筛上了就得留着，否则条件清不掉。
-  const showUploaderFilter = uploaderOptions.length > 1 || !!filters.uploadedBy
-  const uploaderLabel = uploaderOptions.find(option => option.value === filters.uploadedBy)?.label ?? ''
+  const photographerOptions = [...new Set([...photographerNames, ...filters.photographers])]
+    .map(name => ({ value: name, label: name }))
+  // 只有一位拍摄者时摆个下拉框只是噪音；但已经筛上了就得留着，否则条件清不掉。
+  const showPhotographerFilter = photographerOptions.length > 1 || filters.photographers.length > 0
   const searchLabel = [
     filters.keyword ? `关键词“${filters.keyword}”` : '',
     filters.tags.length ? `标签 ${filters.tags.map(tag => `“${tag}”`).join('、')}` : '',
-    uploaderLabel ? `上传者“${uploaderLabel}”` : '',
+    filters.photographers.length ? `拍摄者 ${filters.photographers.map(name => `“${name}”`).join('、')}` : '',
   ].filter(Boolean).join(' 与 ')
   const { data: photographers, loading: photographersLoading } = useLoad(
     async () => !canUpload ? [] : user?.dataScope === 'CAMPUS'
@@ -413,10 +410,12 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
         <TagSelect presets={recentTags} value={filters.tags}
           onChange={selectTags}
           placeholder="按标签筛选（回车添加，同时包含）" style={{ width: 280 }} />
-        {showUploaderFilter && <Select allowClear showSearch optionFilterProp="label" style={{ width: 220 }}
-          placeholder="按上传者筛选" loading={uploadersLoading} options={uploaderOptions}
-          value={filters.uploadedBy || undefined}
-          onChange={(uploadedBy?: EntityId) => setFilters({ ...filters, page: 1, uploadedBy: uploadedBy ?? '' })} />}
+        {showPhotographerFilter && <Select mode="multiple" allowClear maxTagCount="responsive" optionFilterProp="label"
+          style={{ width: 240 }} placeholder="按拍摄者筛选" loading={photographerNamesLoading}
+          options={photographerOptions} value={filters.photographers}
+          onChange={(photographers: string[]) => setFilters({
+            ...filters, page: 1, photographers: normalizePhotographerFilter(photographers),
+          })} />}
       </Space>
       <RecentTagChips scope={tagHistoryScope} selected={filters.tags} onChange={setTagFilters}
         onClear={rerenderTagHistory} />
@@ -432,7 +431,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
           ? '图片必须同时包含所选标签，换个标签或清空筛选再看看。'
           : filters.keyword
             ? '标题、描述和标签都会被搜索，换个词或清空搜索框再看看。'
-            : '这位上传者在当前状态下没有图片，换个人或清空筛选再看看。'
+            : '所选拍摄者在当前状态下没有图片，换个人或清空筛选再看看。'
         : favoritesOnly ? '在图片上点收藏，之后就能在这里集中查看。'
           : filters.status === 'AVAILABLE' ? '上传的图片处理完成后会出现在这里。' : '换一个状态筛选试试。'}>
       <Row gutter={[16, 20]} className="photo-grid">

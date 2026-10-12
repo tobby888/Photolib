@@ -37,7 +37,6 @@ class PhotoServiceObjectCleanupTests {
                 mock(ApplicationEventPublisher.class),
                 mock(JdbcClient.class),
                 mock(CampusService.class),
-                mock(cn.photolib.user.mapper.UserMapper.class),
                 mock(cn.photolib.directory.CampusMemberService.class),
                 mock(AbandonedUploadCleanupJob.class),
                 mock(cn.photolib.uploadlimit.UploadLimitService.class));
