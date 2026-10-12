@@ -992,6 +992,7 @@ GET /photos?page=1&pageSize=30
   &requestId=...
   &photographerStudentId=20260001
   &photographerName=王
+  &photographers=王小明&photographers=李雷
   &uploadedBy=...
   &campusId=...
   &status=AVAILABLE
@@ -1001,6 +1002,20 @@ GET /photos?page=1&pageSize=30
 ```
 
 实际支持的查询参数只有上表这些；当前不支持 `tag`、`takenFrom`、`takenTo`、`adopted` 或 `sort`。`keyword` 模糊匹配标题、说明和 `tagsJson`。
+
+按人筛选有三个参数，含义不同：
+
+- `photographers`（可重复，最多 200 个）：拍摄者姓名**精确匹配、任意其一**。图库页的「按拍摄者筛选」用它，候选来自 `GET /photos/photographers`。
+- `photographerName`：拍摄者姓名模糊匹配（包含即可）；`photographerStudentId`：拍摄者学号精确匹配。
+- `uploadedBy`：上传账号的用户 id。**上传的人不一定是拍的人**（负责人替同学上传、上传链接进来的图片记在链接创建者名下），找某个人拍的图片不要用它。
+
+拍摄者候选：
+
+```text
+GET /photos/photographers?favoritesOnly=false
+```
+
+需要 `PHOTO_VIEW`。返回调用方可见的图片里出现过的拍摄者姓名（`string[]`，按姓名排序），可见范围与 `GET /photos` 完全一致，不随 `status` 变化。
 
 可见范围：
 

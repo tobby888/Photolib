@@ -4,6 +4,8 @@ import test from 'node:test'
 import {
   DEFAULT_PHOTO_LIBRARY_FILTERS,
   isTagTooLong,
+  MAX_PHOTOGRAPHER_FILTERS,
+  normalizePhotographerFilter,
   photoLibraryRequestParams,
   readPhotoLibraryFilters,
   withPhotoLibrarySearch,
@@ -22,7 +24,7 @@ test('photo library filters use safe defaults for empty or invalid query paramet
     status: 'AVAILABLE',
     keyword: '校庆',
     tags: [],
-    uploadedBy: '',
+    photographers: [],
   })
 })
 
@@ -43,30 +45,36 @@ test('the page size travels in the URL and is clamped to the offered options', (
   assert.equal(photoLibraryRequestParams(filters, { page: 3 }).get('pageSize'), '48')
 })
 
-test('library filters keep only numeric uploader ids from the URL', () => {
-  const read = (uploadedBy: string) =>
-    readPhotoLibraryFilters(new URLSearchParams({ uploadedBy })).uploadedBy
+test('photographer filters read from the URL drop blank, duplicate, over-long and excess names', () => {
+  const searchParams = new URLSearchParams()
+  for (const name of ['张三', '', '  ', '张三', '李四', '长'.repeat(101)]) searchParams.append('photographers', name)
+  assert.deepEqual(readPhotoLibraryFilters(searchParams).photographers, ['张三', '李四'])
 
-  assert.equal(read('42'), '42')
-  // 后端的 uploadedBy 是 Long，非数字的值会 400 让整页变成加载出错。
-  assert.equal(read('or 1=1'), '')
-  assert.equal(read('-1'), '')
-  assert.equal(read('1.5'), '')
-  assert.equal(read(''), '')
+  // 不 trim：候选是库里的原值，原样传回去才对得上。
+  assert.deepEqual(normalizePhotographerFilter([' 张三', '张三']), [' 张三', '张三'])
+  const many = Array.from({ length: MAX_PHOTOGRAPHER_FILTERS + 5 }, (_, index) => `同学${index}`)
+  assert.equal(normalizePhotographerFilter(many).length, MAX_PHOTOGRAPHER_FILTERS)
+
+  // 以前这里筛的是上传账号。旧链接里的 uploadedBy 不再生效，也不能被当成拍摄者。
+  const legacy = readPhotoLibraryFilters(new URLSearchParams({ uploadedBy: '7' }))
+  assert.deepEqual(legacy, DEFAULT_PHOTO_LIBRARY_FILTERS)
+  assert.equal(photoLibraryRequestParams(legacy).has('uploadedBy'), false)
 })
 
-test('uploader filter travels through the URL and the list request', () => {
+test('photographer filter travels through the URL and the list request', () => {
   const filters = {
     ...DEFAULT_PHOTO_LIBRARY_FILTERS,
-    uploadedBy: '7',
+    photographers: ['张三', '李 四&王五'],
   }
 
-  assert.equal(writePhotoLibraryFilters(filters).toString(), 'uploadedBy=7')
+  assert.equal(writePhotoLibraryFilters(filters).toString(),
+    'photographers=%E5%BC%A0%E4%B8%89&photographers=%E6%9D%8E+%E5%9B%9B%26%E7%8E%8B%E4%BA%94')
   assert.deepEqual(readPhotoLibraryFilters(writePhotoLibraryFilters(filters)), filters)
-  assert.equal(photoLibraryRequestParams(filters).get('uploadedBy'), '7')
-  // 详情页的「上一张 / 下一张」必须带上同一个上传者，否则定位会错位。
-  assert.equal(photoLibraryRequestParams(filters, { page: 2 }).get('uploadedBy'), '7')
-  assert.equal(photoLibraryRequestParams(DEFAULT_PHOTO_LIBRARY_FILTERS).has('uploadedBy'), false)
+  // Spring 的 List 参数只认重复的 photographers=，和标签一样。
+  assert.deepEqual(photoLibraryRequestParams(filters).getAll('photographers'), filters.photographers)
+  // 详情页的「上一张 / 下一张」必须带上同一组拍摄者，否则定位会错位。
+  assert.deepEqual(photoLibraryRequestParams(filters, { page: 2 }).getAll('photographers'), filters.photographers)
+  assert.equal(photoLibraryRequestParams(DEFAULT_PHOTO_LIBRARY_FILTERS).has('photographers'), false)
 })
 
 test('photo library filters round-trip Unicode and reserved characters', () => {
@@ -76,7 +84,7 @@ test('photo library filters round-trip Unicode and reserved characters', () => {
     status: 'ARCHIVED' as const,
     keyword: '毕业典礼 A&B / 夜景',
     tags: ['合影', '颁奖/闭幕'],
-    uploadedBy: '12',
+    photographers: ['张三', '李四'],
   }
   const searchParams = writePhotoLibraryFilters(filters)
 
@@ -104,7 +112,7 @@ test('photo detail and list paths preserve the complete library query', () => {
     status: 'PROCESSING',
     keyword: '新闻 图',
     tags: [],
-    uploadedBy: '',
+    photographers: [],
   })}`
 
   assert.equal(
@@ -134,9 +142,11 @@ test('photo and favorites pages wire the controlled search field and preserved r
   ])
 
   assert.match(librarySource, /value=\{searchText\} onChange=\{event => setSearchText\(event\.target\.value\)\}/)
-  // 候选人只能来自按可见范围算过的专用接口，不能拿通讯录或用户列表凑。
-  assert.match(librarySource, /url: '\/photos\/uploaders'/)
-  assert.match(librarySource, /filters\.page, filters\.pageSize, filters\.keyword, filters\.status, filters\.uploadedBy/)
+  // 候选只能来自按可见范围算过的专用接口，不能拿通讯录或用户列表凑；筛的是拍摄者而不是上传账号。
+  assert.match(librarySource, /url: '\/photos\/photographers'/)
+  assert.doesNotMatch(librarySource, /\/photos\/uploaders|uploadedBy|按上传者筛选/)
+  assert.match(librarySource, /placeholder="按拍摄者筛选"/)
+  assert.match(librarySource, /filters\.page, filters\.pageSize, filters\.keyword, filters\.status, photographerSearchKey/)
   assert.match(librarySource, /const libraryRoot = favoritesOnly \? '\/favorites' : '\/photos'/)
   assert.match(librarySource, /`\$\{libraryRoot\}\/\$\{photo\.id\}`/)
   assert.match(librarySource, /const operationViewKey = currentViewKeyRef\.current/)
@@ -155,7 +165,7 @@ test('library request params repeat tags and match between the list and detail p
     status: 'AVAILABLE' as const,
     keyword: '',
     tags: ['合影', '颁奖/闭幕'],
-    uploadedBy: '',
+    photographers: [],
   }
 
   assert.equal(
