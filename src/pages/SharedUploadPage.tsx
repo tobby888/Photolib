@@ -6,7 +6,7 @@ import {
   ClockCircleOutlined, CloudUploadOutlined, FileZipOutlined, InboxOutlined, LockOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Navigate, useParams } from 'react-router-dom'
 import { ApiError } from '../api'
 import { BrandGlyph, useBranding } from '../branding'
@@ -16,8 +16,8 @@ import {
 } from '../projectShare'
 import { sha256Hex } from '../recruitmentUpload'
 import {
-  MAX_QUEUE_SIZE, addToQueue, describeBatchOutcome,
-  isTerminalBatchStatus, rejectArchiveReason, runQueue, summarize,
+  MAX_QUEUE_SIZE, addToQueue, createUploadPump, describeBatchOutcome,
+  isTerminalBatchStatus, markFailedForRetry, rejectArchiveReason, summarize,
 } from '../shareUpload'
 import type { ShareUploadItem } from '../shareUpload'
 import {
@@ -76,6 +76,12 @@ export default function SharedUploadPage() {
   const [linkState, setLinkState] = useState<'checking' | 'usable' | 'broken' | 'browse'>('checking')
   const [unlocking, setUnlocking] = useState(false)
   const [items, setItems] = useState<ShareUploadItem[]>([])
+  // 队列的真相放在 ref 里同步改：入队要按刚改完的列表判重，而连着两次拖拽之间
+  // 等不到 React 把 state 提交回来。state 只是它的一份快照，用来渲染。
+  const itemsRef = useRef<ShareUploadItem[]>([])
+  const sessionRef = useRef(session)
+  const [queueRunning, setQueueRunning] = useState(false)
+  /** 只管 ZIP 那一条；逐张上传的忙闲看 {@link queueRunning}。 */
   const [running, setRunning] = useState(false)
   const [mode, setMode] = useState<UploadMode>('files')
   const [archivePhase, setArchivePhase] = useState<ArchivePhase | null>(null)
@@ -92,6 +98,8 @@ export default function SharedUploadPage() {
     setWorklogs([])
     if (notice) message.warning(notice)
   }, [message, token])
+
+  useEffect(() => { sessionRef.current = session }, [session])
 
   // 与相册访客页同一条出口：403/404 只有一个意思——这把会话钥匙不作数了。
   const handleGuestError = useCallback((reason: unknown) => {
@@ -201,8 +209,13 @@ export default function SharedUploadPage() {
     }
   }
 
+  const updateItems = (change: (current: ShareUploadItem[]) => ShareUploadItem[]) => {
+    itemsRef.current = change(itemsRef.current)
+    setItems(itemsRef.current)
+  }
+
   const patch = (key: string, changes: Partial<ShareUploadItem>) =>
-    setItems(current => current.map(item => item.key === key ? { ...item, ...changes } : item))
+    updateItems(current => current.map(item => item.key === key ? { ...item, ...changes } : item))
 
   /** 等后台把这一张压完。失败时照片会被打回 UPLOADING 并带上原因，要如实说出来。 */
   const waitForProcessing = async (guestSession: string, item: ShareUploadItem, photoId: string) => {
@@ -253,29 +266,48 @@ export default function SharedUploadPage() {
     }
   }
 
-  const startUpload = async () => {
-    if (!session) return
-    const pending = items.filter(item => item.stage === 'waiting' || item.stage === 'failed')
-    if (!pending.length) return
-    setRunning(true)
-    // 会话失效要停下整条队列，但不能靠让 worker 抛出来做这件事：几个并发的
-    // worker 会同时抛，Promise.all 只认第一个，剩下的就成了没人接的 rejection。
-    // 记一个旗子，后面排队的直接标成失败，跑完再统一退回密码页。
-    let expired: unknown = null
-    await runQueue(pending, async item => {
-      if (expired) {
-        patch(item.key, { stage: 'failed', error: '上传链接已失效，请重新输入密码后再传这几张' })
-        return
-      }
-      try {
-        await uploadOne(session, item)
-      } catch (reason) {
-        expired = reason
-        patch(item.key, { stage: 'failed', error: '上传链接已失效，请重新输入密码后再传这几张' })
-      }
-    })
-    setRunning(false)
+  // 会话失效要停下整条队列，但不能靠让 worker 抛出来做这件事：几个并发的 worker
+  // 会同时抛。记一个旗子，后面排队的直接标成失败，队列空了再统一退回密码页。
+  const expiredRef = useRef<unknown>(null)
+  // 队列常驻整个页面：拖进来的每一批都接到同一条队列上，并发位是共用的。
+  // 它只创建一次，所以经由 ref 取最新的那份 worker 和收尾——闭包里的会话会过期。
+  const runItemRef = useRef<(item: ShareUploadItem) => Promise<void>>(async () => {})
+  const settleRef = useRef<() => void>(() => {})
+  const [pump] = useState(() => createUploadPump<ShareUploadItem>(
+    item => runItemRef.current(item),
+    () => settleRef.current(),
+  ))
+
+  runItemRef.current = async item => {
+    const guestSession = sessionRef.current
+    if (expiredRef.current || !guestSession) {
+      patch(item.key, { stage: 'failed', error: '上传链接已失效，请重新输入密码后再传这几张' })
+      return
+    }
+    try {
+      await uploadOne(guestSession, item)
+    } catch (reason) {
+      expiredRef.current = reason
+      patch(item.key, { stage: 'failed', error: '上传链接已失效，请重新输入密码后再传这几张' })
+    }
+  }
+  settleRef.current = () => {
+    setQueueRunning(false)
+    const expired = expiredRef.current
+    expiredRef.current = null
     if (expired) handleGuestError(expired)
+  }
+
+  const startQueue = (queued: ShareUploadItem[]) => {
+    if (!queued.length) return
+    setQueueRunning(true)
+    pump.push(queued)
+  }
+
+  const retryFailed = () => {
+    const { items: next, retried } = markFailedForRetry(itemsRef.current)
+    updateItems(() => next)
+    startQueue(retried)
   }
 
   /** 轮询批次，直到满足条件或超时。超时不当失败：后台仍在跑。 */
@@ -341,13 +373,13 @@ export default function SharedUploadPage() {
     }
   }
 
+  /** 拖进来即开传，不再要访客另点一个按钮；正在传的时候再拖一批就排到后面。 */
   const enqueue = (files: File[]) => {
-    setItems(current => {
-      const added = addToQueue(current, files, uploadLimits)
-      added.errors.forEach(error => message.error(error))
-      if (added.dropped) message.warning(`一次最多 ${MAX_QUEUE_SIZE} 张，多出的 ${added.dropped} 张请分批上传`)
-      return [...current, ...added.items]
-    })
+    const added = addToQueue(itemsRef.current, files, uploadLimits)
+    added.errors.forEach(error => message.error(error))
+    if (added.dropped) message.warning(`一次最多 ${MAX_QUEUE_SIZE} 张，多出的 ${added.dropped} 张请分批上传`)
+    updateItems(current => [...current, ...added.items])
+    startQueue(added.items)
   }
 
   const summary = summarize(items)
@@ -425,16 +457,17 @@ export default function SharedUploadPage() {
         ? `上传照片${summary.total ? `（${summary.done} / ${summary.total}）` : ''}`
         : '打包上传'}
         extra={mode === 'files' ? <Space wrap>
-          {!!summary.total && !running &&
-            <Button onClick={() => setItems(current => current.filter(item => item.stage !== 'done'))}>
+          {queueRunning && <Tag icon={<CloudUploadOutlined />} color="processing">
+            正在上传，还剩 {summary.pending} 张
+          </Tag>}
+          {!!summary.done &&
+            <Button onClick={() => updateItems(current => current.filter(item => item.stage !== 'done'))}>
               清掉已完成
             </Button>}
-          <Button type="primary" icon={<CloudUploadOutlined />} loading={running}
-            disabled={!items.some(item => item.stage === 'waiting' || item.stage === 'failed')
-              || !access?.allowUpload}
-            onClick={() => void startUpload()}>
-            开始上传{summary.failed ? `（含重试 ${summary.failed} 张）` : ''}
-          </Button>
+          {!!summary.failed && <Button type="primary" danger disabled={!access?.allowUpload}
+            onClick={retryFailed}>
+            重试失败的 {summary.failed} 张
+          </Button>}
         </Space> : null}>
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
           {access && !access.allowUpload && <Alert type="warning" showIcon
@@ -442,7 +475,7 @@ export default function SharedUploadPage() {
             description="选题已经结束了。如果还需要补交照片，请联系发给你链接的同学。" />}
 
           {/* 几十上百张时打包传一次比逐张省事得多，所以两种方式都给，默认逐张。 */}
-          <Segmented value={mode} disabled={running}
+          <Segmented value={mode} disabled={running || queueRunning}
             onChange={value => setMode(value as UploadMode)}
             options={[
               { label: '逐张上传', value: 'files', icon: <CloudUploadOutlined /> },
@@ -460,8 +493,9 @@ export default function SharedUploadPage() {
           </Typography.Paragraph>
 
           {mode === 'files' ? <>
+            {/* 传的过程中也能接着拖：新的一批排到队尾，不用等前一批传完。 */}
             <Upload.Dragger multiple accept="image/jpeg,image/png" showUploadList={false}
-              disabled={running || !access?.allowUpload}
+              disabled={!access?.allowUpload}
               beforeUpload={(_file, fileList) => {
                 // 交给自己的队列跑：antd 的自动上传不认预签名地址那一套两步流程。
                 // fileList 是这一次选中的全部文件，所以只在第一个回调里入队一次。
@@ -470,7 +504,9 @@ export default function SharedUploadPage() {
               }}>
               <p className="ant-upload-drag-icon"><InboxOutlined /></p>
               <p className="ant-upload-text">把照片拖到这里，或者点击选择</p>
-              <p className="ant-upload-hint">可以一次选很多张，上传过程中请不要关闭这个页面</p>
+              <p className="ant-upload-hint">
+                放进来就会立刻开始上传，传的时候也可以接着添加；上传过程中请不要关闭这个页面
+              </p>
             </Upload.Dragger>
 
             {items.length ? <List size="small" dataSource={items} rowKey="key"
@@ -480,7 +516,8 @@ export default function SharedUploadPage() {
                     <span>{item.file.name}</span>
                     {item.stage === 'done' && <Tag color="green">已完成</Tag>}
                     {item.stage === 'processing' && <Tag color="blue">处理中</Tag>}
-                    {item.stage === 'waiting' && <Tag>等待上传</Tag>}
+                    {item.stage === 'uploading' && <Tag color="processing">上传中</Tag>}
+                    {item.stage === 'waiting' && <Tag>排队中</Tag>}
                     {item.stage === 'failed' && <Tag color="red">失败</Tag>}
                   </Space>}
                   description={item.stage === 'failed'
@@ -490,9 +527,9 @@ export default function SharedUploadPage() {
               </List.Item>} />
               : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有选择照片" />}
 
-            {!!summary.failed && !running && <Alert type="error" showIcon
+            {!!summary.failed && !queueRunning && <Alert type="error" showIcon
               message={`有 ${summary.failed} 张没有传成功`}
-              description="再点一次「开始上传」会只重传这几张。如果反复失败，多半是文件本身有问题。" />}
+              description="点右上角「重试失败的」会只重传这几张。如果反复失败，多半是文件本身有问题。" />}
           </> : <>
             <Upload.Dragger accept=".zip,application/zip" maxCount={1} showUploadList={false}
               disabled={running || !access?.allowUpload}

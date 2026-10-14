@@ -108,6 +108,21 @@ export function summarize(items: ShareUploadItem[]): ShareUploadSummary {
   }
 }
 
+/**
+ * 把失败的那几张放回「等待上传」，返回新的列表和需要重新入队的条目。
+ * 已完成和正在跑的不动——重试只该重传没传上去的，不该把传成功的再传一次。
+ */
+export function markFailedForRetry(items: ShareUploadItem[]) {
+  const retried: ShareUploadItem[] = []
+  const next = items.map(item => {
+    if (item.stage !== 'failed') return item
+    const reset = { ...item, stage: 'waiting' as const, percent: 0, error: undefined }
+    retried.push(reset)
+    return reset
+  })
+  return { items: next, retried }
+}
+
 /** ZIP 的前端校验，与后端 `ProjectShareUploadService.createZipTicket` 同一套规则。 */
 export function rejectArchiveReason(
   file: { name: string; size: number },
@@ -161,24 +176,56 @@ export function describeBatchOutcome(batch: {
   return { tone: 'warning', message: '图片仍在后台处理，稍后可以问发给你链接的同学确认' }
 }
 
+export interface UploadPump<T> {
+  /** 接到队尾。空着就立刻开跑；正在跑就由现有的并发位顺带取走，不另起一条。 */
+  push(items: T[]): void
+  /** 还有没跑完的（排队中或正在跑）。 */
+  readonly busy: boolean
+}
+
 /**
- * 跑完整个队列，最多 {@link UPLOAD_CONCURRENCY} 个并发。
+ * 一条常驻的上传队列，最多 {@link UPLOAD_CONCURRENCY} 个并发。
+ *
+ * <p>拖进来就传，不再等一个「开始上传」按钮：访客把照片拖进来之后普遍以为已经在传了，
+ * 页面一关，那一批其实一张都没出门。所以队列不是"一次跑完一批"，而是一直开着——
+ * 第一批还在传的时候再拖一批进来，接在后面排队，同一组并发位接着取，不会多开一条
+ * 把并发翻倍。</p>
  *
  * <p>一张失败不打断其余的：活动现场的一批照片里有一张坏文件是常事，因为它停下
- * 整批会让人重新从头挑一遍。失败的那几张留在队列里，可以单独重试。</p>
+ * 整批会让人重新从头挑一遍。失败的那几张留在列表里，可以单独重试。worker 自己
+ * 抛出的异常在这里吞掉，免得成为没人接的 rejection；该记的失败由 worker 自己记。</p>
+ *
+ * <p>{@code onIdle} 在队列从忙变闲时调一次——排队的和正在跑的都清空之后。</p>
  */
-export async function runQueue<T>(
-  items: T[],
+export function createUploadPump<T>(
   worker: (item: T) => Promise<void>,
+  onIdle: () => void = () => {},
   concurrency = UPLOAD_CONCURRENCY,
-) {
-  let cursor = 0
-  const next = async (): Promise<void> => {
-    const index = cursor
-    cursor += 1
-    if (index >= items.length) return
-    await worker(items[index])
-    return next()
+): UploadPump<T> {
+  const queue: T[] = []
+  let active = 0
+  const pump = () => {
+    while (active < concurrency && queue.length) {
+      const item = queue.shift() as T
+      active += 1
+      void Promise.resolve()
+        .then(() => worker(item))
+        .catch(() => {})
+        .finally(() => {
+          active -= 1
+          pump()
+          if (!active && !queue.length) onIdle()
+        })
+    }
   }
-  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, next))
+  return {
+    push(items) {
+      if (!items.length) return
+      queue.push(...items)
+      pump()
+    },
+    get busy() {
+      return active > 0 || queue.length > 0
+    },
+  }
 }

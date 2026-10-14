@@ -3,8 +3,8 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import {
   MAX_QUEUE_SIZE, addToQueue,
-  describeBatchOutcome, isTerminalBatchStatus, rejectArchiveReason, rejectReason, runQueue,
-  summarize,
+  createUploadPump, describeBatchOutcome, isTerminalBatchStatus, markFailedForRetry,
+  rejectArchiveReason, rejectReason, summarize,
 } from '../src/shareUpload.ts'
 import type { ShareUploadItem } from '../src/shareUpload.ts'
 import { DEFAULT_UPLOAD_LIMITS } from '../src/uploadLimits.ts'
@@ -77,22 +77,103 @@ test('进度汇总把"还在跑"和"已失败"分开数', () => {
   assert.deepEqual(summary, { total: 5, pending: 3, done: 1, failed: 1 })
 })
 
+const tick = (ms = 1) => new Promise(resolve => setTimeout(resolve, ms))
+
 test('队列按给定并发跑完每一张，且不会超发', async () => {
   const items = Array.from({ length: 7 }, (_, index) => index)
   const started: number[] = []
   let running = 0
   let peak = 0
 
-  await runQueue(items, async value => {
-    running += 1
-    peak = Math.max(peak, running)
-    started.push(value)
-    await new Promise(resolve => setTimeout(resolve, 1))
-    running -= 1
-  }, 3)
+  await new Promise<void>(resolve => {
+    const pump = createUploadPump<number>(async value => {
+      running += 1
+      peak = Math.max(peak, running)
+      started.push(value)
+      await tick()
+      running -= 1
+    }, resolve, 3)
+    pump.push(items)
+  })
 
   assert.deepEqual(started.sort((a, b) => a - b), items)
   assert.ok(peak <= 3, `并发峰值 ${peak} 超过了上限`)
+})
+
+test('放进队列就开传，不等任何「开始」', async () => {
+  const started: number[] = []
+  const pump = createUploadPump<number>(async value => { started.push(value) })
+
+  pump.push([1, 2])
+  assert.equal(pump.busy, true)
+  await tick()
+
+  assert.deepEqual(started, [1, 2])
+  assert.equal(pump.busy, false)
+})
+
+test('正在传的时候再拖一批，接在同一条队列后面，并发不翻倍', async () => {
+  const started: number[] = []
+  let running = 0
+  let peak = 0
+  let idleCount = 0
+  const gates = new Map<number, () => void>()
+  const pump = createUploadPump<number>(value => {
+    running += 1
+    peak = Math.max(peak, running)
+    started.push(value)
+    return new Promise<void>(resolve => gates.set(value, () => { running -= 1; resolve() }))
+  }, () => { idleCount += 1 }, 2)
+
+  pump.push([1, 2, 3])
+  await tick()
+  // 第一批还卡着，再拖一批进来：只能排队，不能另开并发位。
+  pump.push([4, 5])
+  await tick()
+  assert.deepEqual(started, [1, 2])
+
+  for (const value of [1, 2, 3, 4, 5]) {
+    while (!gates.has(value)) await tick()
+    gates.get(value)?.()
+    await tick()
+  }
+
+  assert.deepEqual(started, [1, 2, 3, 4, 5])
+  assert.ok(peak <= 2, `并发峰值 ${peak} 超过了上限`)
+  // 两批拼成一段连续的忙碌，收尾只该有一次。
+  assert.equal(idleCount, 1)
+})
+
+test('一张抛错不会卡死队列，也不会留下没人接的 rejection', async () => {
+  const done: number[] = []
+  await new Promise<void>(resolve => {
+    const pump = createUploadPump<number>(async value => {
+      if (value === 2) throw new Error('坏文件')
+      done.push(value)
+    }, resolve, 1)
+    pump.push([1, 2, 3])
+  })
+  assert.deepEqual(done, [1, 3])
+})
+
+test('重试只把失败的放回队列，传成功的不再传一次', () => {
+  const { items, retried } = markFailedForRetry([
+    item('ok', 'done'), item('bad', 'failed'), item('busy', 'uploading'),
+  ].map(entry => entry.key === 'bad' ? { ...entry, error: '网络断了', percent: 40 } : entry))
+
+  assert.deepEqual(retried.map(entry => entry.key), ['bad'])
+  assert.deepEqual(items.map(entry => entry.stage), ['done', 'waiting', 'uploading'])
+  assert.equal(items[1].error, undefined)
+  assert.equal(items[1].percent, 0)
+})
+
+test('上传页拖进来即开传，没有「开始上传」按钮，传的时候也能接着拖', async () => {
+  const page = await read('pages/SharedUploadPage.tsx')
+
+  assert.doesNotMatch(page, /startUpload|「开始上传」|>\s*开始上传/)
+  assert.match(page, /updateItems\(current => \[\.\.\.current, \.\.\.added\.items\]\)\s*startQueue\(added\.items\)/)
+  // 逐张的拖拽区不能因为"正在传"而禁用，否则又退回成"传完一批才能拖下一批"。
+  assert.match(page, /<Upload\.Dragger multiple accept="image\/jpeg,image\/png" showUploadList=\{false\}\s*disabled=\{!access\?\.allowUpload\}/)
 })
 
 test('ZIP 的前端校验与后端同一套：只收 .zip，且不超过 1.5 GB', () => {
