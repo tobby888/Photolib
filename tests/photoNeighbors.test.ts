@@ -137,7 +137,8 @@ test('the photo detail page wires the previous/next buttons to the resolved neig
     readFile(new URL('../src/photoLibrarySearch.ts', import.meta.url), 'utf8'),
   ])
 
-  assert.match(detailSource, /const neighbors = findPhotoNeighbors\(libraryPage, photoId\)/)
+  // 从选题点进来时改按选题相册翻（src/projectPhotoContext.ts），图库这一路仍按同一套筛选定位。
+  assert.match(detailSource, /const libraryNeighbors = findPhotoNeighbors\(libraryPage, photoId\)/)
   assert.match(detailSource, /disabled=\{!neighbors\.previous\}[\s\S]*?>上一张<\/Button>/)
   assert.match(detailSource, /disabled=\{!neighbors\.next\}[\s\S]*?>下一张<\/Button>/)
   // 跨页跳转必须把新页码写回 URL，否则回到图库会落在旧的一页上。

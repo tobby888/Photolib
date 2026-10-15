@@ -35,7 +35,8 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * 活动选题的选片（issue #94）。
+ * 选题的选片（issue #94）。两类选题都能选片；按标签清理图片（{@link #plan} / {@link #cleanup}）
+ * 只属于活动选题——创作选题的图片是按需求交上来的成品，结束时一张也不删。
  *
  * <p>选片就是打标签，所以这里刻意只做两件 {@link PhotoService#batchTags} 做不到的事：</p>
  * <ol>

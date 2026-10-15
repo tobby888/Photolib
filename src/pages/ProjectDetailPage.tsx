@@ -4,8 +4,8 @@ import {
 } from 'antd'
 import {
   ArrowLeftOutlined, CameraOutlined, CheckCircleOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, EyeOutlined,
-  FileImageOutlined, LinkOutlined, MinusCircleOutlined, PlusOutlined, RocketOutlined, ScissorOutlined,
-  ShareAltOutlined, StopOutlined, TagsOutlined, TeamOutlined, UnorderedListOutlined,
+  FileImageOutlined, LinkOutlined, MinusCircleOutlined, PlusOutlined, PushpinFilled, PushpinOutlined,
+  RocketOutlined, ScissorOutlined, ShareAltOutlined, StopOutlined, TagsOutlined, TeamOutlined, UnorderedListOutlined,
 } from '@ant-design/icons'
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
@@ -43,9 +43,13 @@ import {
 } from '../photoTags'
 import type { ProjectPhotoFilters } from '../photoTags'
 import ProjectPhotoFilterBar from '../ProjectPhotoFilterBar'
-import { PHOTO_LIBRARY_PAGE_SIZE } from '../photoLibrarySearch'
 import ListPagination from '../ListPagination'
-import { GRID_PAGE_SIZES, clientTablePagination } from '../pagination'
+import { clientTablePagination } from '../pagination'
+import {
+  PROJECT_ALBUM_PAGE_SIZE, PROJECT_ALBUM_PAGE_SIZES, loadProjectAlbumView, pageContaining,
+  projectPhotoDetailPath, saveProjectAlbumView,
+} from '../projectPhotoContext'
+import type { ProjectPhotoNavState } from '../projectPhotoContext'
 
 const ProjectShareLinksModal = lazy(() => import('../ProjectShareLinksModal'))
 const SelectionCleanupModal = lazy(() => import('../SelectionCleanupModal'))
@@ -73,8 +77,8 @@ const projectStateCopy = {
  * 相册分页。以前一次把选题里的全部图片都挂成卡片，400 张时首屏要卡 3 秒多、
  * 每勾一张图卡 1.5 秒。默认张数与图片库（PHOTO_LIBRARY_PAGE_SIZE）一致。
  */
-const PHOTO_PAGE_SIZES = GRID_PAGE_SIZES
-const DEFAULT_PHOTO_PAGE_SIZE = PHOTO_LIBRARY_PAGE_SIZE
+const PHOTO_PAGE_SIZES = PROJECT_ALBUM_PAGE_SIZES
+const DEFAULT_PHOTO_PAGE_SIZE = PROJECT_ALBUM_PAGE_SIZE
 
 const isDownloadableStatus = (status: Photo['status']) => status === 'AVAILABLE' || status === 'ARCHIVED'
 
@@ -289,8 +293,17 @@ export default function ProjectDetailPage() {
   // 项目相册里的勾选：打包下载和批量改标签共用一份选择。
   const [selectedAlbumPhotoIds, setSelectedAlbumPhotoIds] = useState<string[]>([])
   const [albumSelectionAnchor, setAlbumSelectionAnchor] = useState<string | null>(null)
-  const [photoFilters, setPhotoFilters] = useState<ProjectPhotoFilters>(emptyProjectPhotoFilters)
-  const [photoPage, setPhotoPage] = useState({ current: 1, pageSize: DEFAULT_PHOTO_PAGE_SIZE })
+  // 从图片详情页回来时恢复相册的筛选和页码（见 src/projectPhotoContext.ts）。只在挂载时读一次：
+  // 详情页记下的是「最后看的那张」，回来之后由下面的 effect 把它所在的那一页翻出来。
+  const [restoredAlbumView] = useState(() => loadProjectAlbumView(projectId))
+  const [photoFilters, setPhotoFilters] = useState<ProjectPhotoFilters>(
+    () => restoredAlbumView?.filters ?? emptyProjectPhotoFilters)
+  const [photoPage, setPhotoPage] = useState(() => ({
+    current: restoredAlbumView?.page ?? 1,
+    pageSize: restoredAlbumView?.pageSize ?? DEFAULT_PHOTO_PAGE_SIZE,
+  }))
+  const pendingFocusRef = useRef(restoredAlbumView?.focusPhotoId ?? null)
+  const [pinning, setPinning] = useState(false)
   const galleryRef = useRef<HTMLDivElement>(null)
   const [tagMode, setTagMode] = useState<BatchTagMode | null>(null)
   // 活动选题的选片人维护。候选账号只在弹窗打开时才去取——它是一条全量用户列表，
@@ -633,7 +646,14 @@ export default function ProjectDetailPage() {
   // 传给 memo 卡片的回调必须引用稳定，否则每次渲染都是新函数，memo 等于没加。
   const onToggleAlbumPhoto = useStableCallback(toggleAlbumPhoto)
   const onSelectAlbumRange = useStableCallback(selectAlbumRange)
-  const onOpenPhotoDetail = useStableCallback((photo: Photo) => navigate(`/photos/${photo.id}`))
+  // 带着来处进详情页：返回按钮回到这个选题，上一张 / 下一张按相册此刻（套过筛选）的顺序翻。
+  const onOpenPhotoDetail = useStableCallback((photo: Photo) => {
+    saveProjectAlbumView(projectId, {
+      filters: photoFilters, page: currentPhotoPage, pageSize: photoPage.pageSize, focusPhotoId: String(photo.id),
+    })
+    const state: ProjectPhotoNavState = { projectPhotoIds: filteredPhotos.map(item => String(item.id)) }
+    navigate(projectPhotoDetailPath(photo.id, projectId), { state })
+  })
   const onDownloadPhoto = useStableCallback((photo: Photo) => void downloadPhoto(photo))
   const onToggleAdoption = useStableCallback((photo: Photo) => void toggleAdoption(photo))
   const onPhotoTagClick = useStableCallback((tag: string) => updatePhotoFilters({ ...photoFilters,
@@ -643,6 +663,31 @@ export default function ProjectDetailPage() {
   useEffect(() => {
     setAlbumSelectionAnchor(null)
   }, [currentPhotoPage, photoPage.pageSize, photoFilters])
+  // 相册的筛选和页码随时记下来，从详情页回来、或者在别处转一圈再回来都还在原处。
+  useEffect(() => {
+    if (pendingFocusRef.current) return
+    saveProjectAlbumView(projectId, {
+      filters: photoFilters, page: photoPage.current, pageSize: photoPage.pageSize, focusPhotoId: null,
+    })
+  }, [projectId, photoFilters, photoPage])
+  // 回到选题时，把详情页最后看的那张所在的那一页翻出来并滚过去。图片要等整页数据回来才排得出顺序。
+  useEffect(() => {
+    const focusId = pendingFocusRef.current
+    if (!focusId || loading || !data.project) return
+    const ids = filteredPhotos.map(photo => String(photo.id))
+    const page = pageContaining(ids, focusId, photoPage.pageSize, photoPage.current)
+    if (page !== photoPage.current) {
+      setPhotoPage(current => ({ ...current, current: page }))
+      return
+    }
+    pendingFocusRef.current = null
+    saveProjectAlbumView(projectId, {
+      filters: photoFilters, page, pageSize: photoPage.pageSize, focusPhotoId: null,
+    })
+    // effect 运行时这一页的卡片已经提交到 DOM，直接滚；不套 requestAnimationFrame——
+    // 标签页在后台时它不触发，切回来就错过了。
+    document.querySelector(`[data-photo-id="${CSS.escape(focusId)}"]`)?.scrollIntoView({ block: 'center' })
+  }, [loading, data.project, filteredPhotos, photoPage, photoFilters, projectId])
   useEffect(() => {
     if (!selectedAlbumPhotoIds.length) setAlbumSelectionAnchor(null)
   }, [selectedAlbumPhotoIds.length])
@@ -700,6 +745,18 @@ export default function ProjectDetailPage() {
       setSelectorsOpen(false)
       await reload()
     } catch (reason) { message.error((reason as Error).message) } finally { setSaving(false) }
+  }
+
+  // 置顶只影响自己的选题列表，改完就地更新，不必整页重取。
+  const togglePin = async () => {
+    if (!data.project) return
+    const pinned = !data.project.pinned
+    setPinning(true)
+    try {
+      await api({ method: pinned ? 'PUT' : 'DELETE', url: `/projects/${projectId}/pin` })
+      setData(current => ({ ...current, project: current.project && { ...current.project, pinned } }))
+      message.success(pinned ? '已置顶，会排在选题列表最前面' : '已取消置顶')
+    } catch (reason) { message.error((reason as Error).message) } finally { setPinning(false) }
   }
 
   // 只改状态、不提示也不刷新：由清理弹窗决定之后是否继续删图、何时刷新。
@@ -763,7 +820,7 @@ export default function ProjectDetailPage() {
                     {isEvent ? '未设置。活动选题的选片人只能从预设标签里挑，请先定义一组' : '未设置，上传者可以自定义标签'}
                   </Typography.Text>}
             </div>
-            {isEvent && <div className="project-preset-tags">
+            {(isEvent || !!project.selectors?.length) && <div className="project-preset-tags">
               <Typography.Text type="secondary"><TeamOutlined /> 选片人</Typography.Text>
               {project.selectors?.length
                 ? project.selectors.map(selector => <Tag key={String(selector.userId)} variant="filled">
@@ -772,6 +829,9 @@ export default function ProjectDetailPage() {
             </div>}
           </div>
           <Space wrap>
+            <Button icon={project.pinned ? <PushpinFilled /> : <PushpinOutlined />} loading={pinning}
+              aria-pressed={!!project.pinned} onClick={() => void togglePin()}>
+              {project.pinned ? '取消置顶' : '置顶'}</Button>
             {project.canSelect && <Button type="primary" icon={<ScissorOutlined />}
               onClick={() => navigate(`/projects/${projectId}/select`)}>进入选片</Button>}
             {project.canManageSelection && <Button icon={<TeamOutlined />} onClick={() => {
@@ -810,13 +870,14 @@ export default function ProjectDetailPage() {
         <Space wrap>
           {canEdit && project.status === 'DRAFT' && <Button type="primary" icon={<RocketOutlined />} onClick={() => void changeStatus('ACTIVE')}>启动项目</Button>}
           {canComplete && project.status === 'ACTIVE' && <Button type="primary" icon={<CheckCircleOutlined />}
-            onClick={() => project.canManageSelection
+            onClick={() => isEvent && project.canManageSelection
               ? setCleanupMode('complete')
               : void changeStatus('COMPLETED')}>标记为已完成</Button>}
           {canEdit && ['DRAFT', 'ACTIVE'].includes(project.status) && <Button danger icon={<StopOutlined />}
             onClick={() => modal.confirm({ title: '确认取消这个项目？', content: '取消后不能再创建需求，已有记录会继续保留。',
               okText: '确认取消', okButtonProps: { danger: true }, onOk: () => changeStatus('CANCELLED') })}>取消项目</Button>}
-          {project.canManageSelection && project.status === 'COMPLETED' &&
+          {/* 只有活动选题在结束时清理图片；创作选题的图片是按需求交上来的成品，一张也不删。 */}
+          {isEvent && project.canManageSelection && project.status === 'COMPLETED' &&
             <Button danger icon={<DeleteOutlined />} onClick={() => setCleanupMode('cleanup')}>
               清理图片{project.deprecatedCount ? `（${DEPRECATED_TAG_LABEL} ${project.deprecatedCount}）` : ''}</Button>}
           {project.status === 'COMPLETED' && user?.permissionGroupCode === 'ADMIN' && <Button type="primary" onClick={reopen}>重新开放</Button>}
@@ -873,7 +934,7 @@ export default function ProjectDetailPage() {
             {pagedPhotos.map(photo => {
               const selected = selectedAlbumIdSet.has(photo.id)
               const downloadable = isDownloadableStatus(photo.status)
-              return <Col xs={24} sm={12} lg={8} xxl={6} key={photo.id}>
+              return <Col xs={24} sm={12} lg={8} xxl={6} key={photo.id} data-photo-id={photo.id}>
                 <ProjectPhotoCard
                   photo={photo}
                   requestLabel={requestTitles.get(String(photo.requestId))
@@ -1001,6 +1062,9 @@ export default function ProjectDetailPage() {
           选片人可以打开这个选题的选片页，逐张打标签、标记{DEPRECATED_TAG_LABEL}，并对图片做裁切和旋转。
           被指派本身就是查看这个选题的凭据——不必先让他接一条需求，也不需要图库权限。
           新加入的人会收到一条站内通知。
+          {isEvent
+            ? `活动选题完成后，标记为${DEPRECATED_TAG_LABEL}的图片可由负责人确认清理。`
+            : `创作选题结束时不会删除任何图片，${DEPRECATED_TAG_LABEL}只是一个标记。`}
         </Typography.Paragraph>
         {/*
           唯一的前置条件，写在这里而不是等他打开页面报 403：指派放行的是「看不看得到
