@@ -311,6 +311,131 @@ class AdoptionServiceTests {
     }
 
     @Test
+    void photographers_shouldAggregateAdoptedPhotosByAuthor() {
+        // Given: 张三两张被引、李四一张被引，再加一张在相册里但没被引的图片
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, project_id, title, photographer_student_id, photographer_name,
+                     uploaded_by, campus_id, taken_at, size, content_type, object_key, sha256, status)
+                VALUES
+                    (2004, :projectId, '照片4', '20230001', '张三', 300, :campusId,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/photo4.jpg', :sha256_4, 'AVAILABLE'),
+                    (2005, :projectId, '照片5', '20230003', '王五', 300, :campusId,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/photo5.jpg', :sha256_5, 'AVAILABLE')
+                """)
+                .param("projectId", activeProject.getId())
+                .param("campusId", testCampus.getId())
+                .param("sha256_4", "d".repeat(64))
+                .param("sha256_5", "e".repeat(64))
+                .update();
+        jdbc.sql("""
+                INSERT INTO photo_project (photo_id, project_id)
+                VALUES (2004, :projectId), (2005, :projectId)
+                """).param("projectId", activeProject.getId()).update();
+        adoptionService.adopt(activeProject.getId(), List.of(2001L, 2004L, 2002L), "被引", adminUser);
+
+        var photographers = adoptionService.photographers(activeProject.getId(), adminUser);
+
+        // Then: 只有被引的图片进名单，按张数从多到少；没被引的王五不出现
+        assertThat(photographers).hasSize(2);
+        assertThat(photographers.get(0).photographerName()).isEqualTo("张三");
+        assertThat(photographers.get(0).photographerStudentId()).isEqualTo("20230001");
+        assertThat(photographers.get(0).adoptedCount()).isEqualTo(2);
+        assertThat(photographers.get(1).photographerName()).isEqualTo("李四");
+        assertThat(photographers.get(1).adoptedCount()).isEqualTo(1);
+        assertThat(photographers).noneMatch(item -> "王五".equals(item.photographerName()));
+    }
+
+    @Test
+    void photographers_shouldFollowTheCurrentPhotographerAndDropCancelledAdoptions() {
+        var adoptions = adoptionService.adopt(
+                activeProject.getId(), List.of(2001L, 2002L), "被引", adminUser);
+
+        // Given: 采用之后把 2001 的拍摄者改成别人（PhotoService.update 允许），并取消 2002 的被引
+        jdbc.sql("""
+                UPDATE photo SET photographer_student_id='20230009', photographer_name='改后的人'
+                WHERE id=2001
+                """).update();
+        var cancelled = adoptions.stream()
+                .filter(adoption -> adoption.getPhotoId().equals(2002L)).findFirst().orElseThrow();
+        adoptionService.cancel(activeProject.getId(), cancelled.getId());
+
+        var photographers = adoptionService.photographers(activeProject.getId(), adminUser);
+
+        // Then: 名单跟着图片上现在的拍摄者走，而不是 adoption 行里的快照；取消的被引不算
+        assertThat(photographers).singleElement().satisfies(item -> {
+            assertThat(item.photographerName()).isEqualTo("改后的人");
+            assertThat(item.photographerStudentId()).isEqualTo("20230009");
+            assertThat(item.adoptedCount()).isEqualTo(1);
+        });
+    }
+
+    @Test
+    void photographers_shouldExcludeAuthorsOutsideCampusScope() {
+        // Given: 校区范围账号参与了本选题的一个需求（选题可见），但被引图片都是其他校区的
+        var otherCampus = campusService.create("AUTHOR-OTHER", "作者范围外校区");
+        adoptionService.adopt(activeProject.getId(), List.of(2001L), "他人上传的图片", adminUser);
+        jdbc.sql("""
+                INSERT INTO photo_request (id, project_id, title, campus_id, deadline, status, created_by)
+                VALUES (7200, :projectId, '参与需求', :campusId, NOW(), 'ACCEPTED', 300)
+                """).param("projectId", activeProject.getId())
+                .param("campusId", otherCampus.getId()).update();
+        jdbc.sql("""
+                INSERT INTO app_user
+                    (id, username, password_hash, display_name, role, campus_id, enabled, must_change_password)
+                VALUES (304, 'author-scoped', 'hash', '范围内负责人', 'CAMPUS_MANAGER', :campusId, true, false)
+                """).param("campusId", otherCampus.getId()).update();
+        jdbc.sql("""
+                INSERT INTO request_participant (request_id, user_id, accepted_at)
+                VALUES (7200, 304, NOW())
+                """).update();
+        var scoped = new AuthenticatedUser(304L, "author-scoped", "范围内负责人",
+                UserRole.CAMPUS_MANAGER, otherCampus.getId(), false, -72L, "SCOPED_AUTHORS",
+                "校区被引组", DataScope.CAMPUS,
+                Set.of(PermissionCode.PROJECT_VIEW), Set.of(otherCampus.getId()));
+
+        // Then: 与读采用记录同一条规则——选题可见不等于能读到其他校区图片的作者
+        assertThat(adoptionService.photographers(activeProject.getId(), scoped)).isEmpty();
+        assertThat(adoptionService.photographers(activeProject.getId(), adminUser)).hasSize(1);
+    }
+
+    @Test
+    void photographers_shouldStayEmptyForCampusScopedAccountWithoutAuthorizedCampus() {
+        // Given: 数据范围为校区但还没补授权校区的账号（权限组刚从 GLOBAL 改成 CAMPUS）。
+        // 这种账号靠「参与需求」看不到任何选题，但选片人那条路是无条件放行的（requireVisible
+        // 对 project_selector 直接 return），所以它确实能走到名单这一步。
+        adoptionService.adopt(activeProject.getId(), List.of(2001L), "被引", adminUser);
+        jdbc.sql("""
+                INSERT INTO app_user
+                    (id, username, password_hash, display_name, role, campus_id, enabled, must_change_password)
+                VALUES (305, 'author-unscoped', 'hash', '未授权校区账号', 'CAMPUS_MANAGER', null, true, false)
+                """).update();
+        jdbc.sql("""
+                INSERT INTO project_selector (project_id, user_id, created_by)
+                VALUES (:projectId, 305, 300)
+                """).param("projectId", activeProject.getId()).update();
+        var unscoped = new AuthenticatedUser(305L, "author-unscoped", "未授权校区账号",
+                UserRole.CAMPUS_MANAGER, null, false, -73L, "PENDING_CAMPUS",
+                "待补校区组", DataScope.CAMPUS, Set.of(PermissionCode.PROJECT_VIEW), Set.of());
+
+        // Then: 空授权集合不能被当成「全局范围」放行全量名单
+        assertThat(adoptionService.photographers(activeProject.getId(), unscoped)).isEmpty();
+    }
+
+    @Test
+    void photographers_shouldRequireProjectVisibility() {
+        var unassignedProject = projectService.create("未指派项目", "描述", ProjectStatus.ACTIVE, adminUser);
+        var scoped = new AuthenticatedUser(managerUser.id(), "test-manager", "测试负责人",
+                UserRole.CAMPUS_MANAGER, testCampus.getId(), false, -74L, "SCOPED_AUTHORS2",
+                "校区被引组", DataScope.CAMPUS,
+                Set.of(PermissionCode.PROJECT_VIEW), Set.of(testCampus.getId()));
+
+        assertThatThrownBy(() -> adoptionService.photographers(unassignedProject.getId(), scoped))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("无权查看");
+    }
+
+    @Test
     void adoptPhotos_outsideProjectAlbum_shouldThrowException() {
         // Given: 图片尚未加入目标项目相册
         var targetProject = projectService.create(

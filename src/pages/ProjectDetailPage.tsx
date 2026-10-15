@@ -53,6 +53,7 @@ import type { ProjectPhotoNavState } from '../projectPhotoContext'
 
 const ProjectShareLinksModal = lazy(() => import('../ProjectShareLinksModal'))
 const SelectionCleanupModal = lazy(() => import('../SelectionCleanupModal'))
+const AdoptedPhotographersModal = lazy(() => import('../AdoptedPhotographersModal'))
 
 const projectStateCopy = {
   DRAFT: {
@@ -288,6 +289,9 @@ export default function ProjectDetailPage() {
   const [editOpen, setEditOpen] = useState(false)
   const [galleryOpen, setGalleryOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
+  // 被引图片的作者名单。名单由后端现算，这里只记弹窗开没开——选题详情页自己那份 adoptions
+  // 对校区范围账号是空的（见下面的 useLoad），拿它凑名单会漏人。
+  const [photographersOpen, setPhotographersOpen] = useState(false)
   const [galleryKeyword, setGalleryKeyword] = useState('')
   const [selectedPhotoIds, setSelectedPhotoIds] = useState<string[]>([])
   // 项目相册里的勾选：打包下载和批量改标签共用一份选择。
@@ -840,6 +844,7 @@ export default function ProjectDetailPage() {
             }}>指定选片人</Button>}
             {canAdopt && project.status === 'ACTIVE' &&
               <Button icon={<FileImageOutlined />} onClick={() => setGalleryOpen(true)}>从图库添加图片</Button>}
+            <Button icon={<TeamOutlined />} onClick={() => setPhotographersOpen(true)}>被引图片作者</Button>
             {canShare && <Button icon={<ShareAltOutlined />} onClick={() => setShareOpen(true)}>分享链接</Button>}
             {canEdit && <>
             {project.status !== 'COMPLETED' && project.status !== 'CANCELLED' &&
@@ -1089,6 +1094,10 @@ export default function ProjectDetailPage() {
       {shareOpen && <Suspense fallback={null}>
         <ProjectShareLinksModal projectId={projectId} open onClose={() => setShareOpen(false)}
           uploadLinksAvailable={project.status === 'ACTIVE'} />
+      </Suspense>}
+      {photographersOpen && <Suspense fallback={null}>
+        <AdoptedPhotographersModal projectId={projectId} open
+          onClose={() => setPhotographersOpen(false)} />
       </Suspense>}
       {cleanupMode && <Suspense fallback={null}>
         <SelectionCleanupModal key={cleanupMode} open mode={cleanupMode} project={project} photos={data.photos}
