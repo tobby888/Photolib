@@ -6,6 +6,7 @@ import cn.photolib.auth.mfa.WebAuthnSupport;
 import cn.photolib.auth.model.AuthSessionEntity;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
+import cn.photolib.common.util.LoginIdentifiers;
 import cn.photolib.user.mapper.UserMapper;
 import cn.photolib.user.model.UserEntity;
 import cn.photolib.user.UserAvatarService;
@@ -17,8 +18,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
+import java.util.Set;
 import java.util.function.Function;
 
 @Service
@@ -70,18 +73,8 @@ public class AuthService {
      */
     @Transactional
     public LoginOutcome login(String loginIdentifier, String password, Function<Long, String> trustedToken) {
-        String identifier = loginIdentifier == null ? "" : loginIdentifier.trim();
-        UserEntity user = userMapper.selectOne(Wrappers.<UserEntity>lambdaQuery()
-                .eq(UserEntity::getUsername, identifier));
+        UserEntity user = authenticate(loginIdentifier, password == null ? "" : password);
         if (user == null) {
-            List<UserEntity> emailMatches = userMapper.selectList(Wrappers.<UserEntity>lambdaQuery()
-                    .eq(UserEntity::getEmail, identifier.toLowerCase(Locale.ROOT))
-                    .last("LIMIT 2"));
-            user = emailMatches.size() == 1 ? emailMatches.getFirst() : null;
-        }
-        String passwordHash = user == null ? DUMMY_PASSWORD_HASH : user.getPasswordHash();
-        boolean passwordMatches = passwordEncoder.matches(password == null ? "" : password, passwordHash);
-        if (user == null || !Boolean.TRUE.equals(user.getEnabled()) || !passwordMatches) {
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "账号、邮箱或密码错误");
         }
         if (mfa != null && toPrincipal(user).mfa().active()) {
@@ -92,6 +85,57 @@ public class AuthService {
             return new LoginOutcome(null, mfa.startLogin(user.getId()), null);
         }
         return new LoginOutcome(issue(user, null, false), null, null);
+    }
+
+    /**
+     * 找出这个标识和密码对应的启用账号，对不上返回 {@code null}。
+     *
+     * <p>账号和邮箱两路都要查，再按密码挑：不能"账号命中就不再看邮箱"。旧系统迁来的
+     * 账号用户名可以就是一个邮箱，它会把"同一个邮箱挂在新账号上"的人永远挡在门外——
+     * 邮箱、密码都对，查到的却是那个旧账号，密码自然对不上。两路都命中且密码都对时
+     * 以账号为准。
+     *
+     * <p>一个候选都没有时照样算一次哈希，响应时间不暴露标识是否存在。
+     */
+    private UserEntity authenticate(String loginIdentifier, String password) {
+        List<UserEntity> candidates = loginCandidates(loginIdentifier);
+        if (candidates.isEmpty()) {
+            passwordEncoder.matches(password, DUMMY_PASSWORD_HASH);
+            return null;
+        }
+        for (UserEntity candidate : candidates) {
+            if (passwordEncoder.matches(password, candidate.getPasswordHash())
+                    && Boolean.TRUE.equals(candidate.getEnabled())) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /** 按账号命中的排在前面；邮箱只在标识里带 @ 时才查，且必须恰好命中一个。 */
+    private List<UserEntity> loginCandidates(String loginIdentifier) {
+        String cleaned = LoginIdentifiers.clean(loginIdentifier);
+        if (cleaned.isEmpty()) return List.of();
+        // 账号先按清洗后的写法找；旧系统迁来的账号名里若本身就有全角字符，NFKC 会把它
+        // 折掉，所以再带上只去首尾空白的原样写法。
+        Set<String> usernames = new LinkedHashSet<>();
+        usernames.add(cleaned);
+        usernames.add(loginIdentifier.strip());
+        List<UserEntity> candidates = new ArrayList<>(userMapper.selectList(Wrappers.<UserEntity>lambdaQuery()
+                .in(UserEntity::getUsername, usernames)));
+        String email = LoginIdentifiers.email(loginIdentifier);
+        if (email != null && email.indexOf('@') > 0) {
+            List<UserEntity> emailMatches = userMapper.selectList(Wrappers.<UserEntity>lambdaQuery()
+                    .eq(UserEntity::getEmail, email)
+                    .last("LIMIT 2"));
+            if (emailMatches.size() == 1) {
+                UserEntity match = emailMatches.getFirst();
+                if (candidates.stream().noneMatch(candidate -> candidate.getId().equals(match.getId()))) {
+                    candidates.add(match);
+                }
+            }
+        }
+        return candidates;
     }
 
     /** 验过第二步、消费登录票据之后签发会话。账号在两步之间被停用的，照样拒绝。 */

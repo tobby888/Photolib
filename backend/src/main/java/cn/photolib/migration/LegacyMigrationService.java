@@ -1,5 +1,6 @@
 package cn.photolib.migration;
 
+import cn.photolib.common.util.LoginIdentifiers;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -75,7 +76,9 @@ public class LegacyMigrationService {
                         limit(text(row.get("real_name"), username), 100),
                         legacyRole(row.get("role")),
                         legacyRole(row.get("role")),
-                        row.get("email"),
+                        // 和管理员录入、自助注册走同一套规范化，否则旧库里带空格或大写的邮箱
+                        // 存进来就再也按邮箱登录不上。
+                        LoginIdentifiers.email(text(row.get("email"), null)),
                         !Boolean.TRUE.equals(row.get("is_frozen")),
                         timestamp(row.get("created_date")),
                         timestamp(row.get("created_date")));

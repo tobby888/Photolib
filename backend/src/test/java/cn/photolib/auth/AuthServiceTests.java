@@ -59,6 +59,44 @@ class AuthServiceTests {
     }
 
     @Test
+    void loginWithEmail_shouldAcceptFullWidthAndInvisibleCharacters() {
+        // 中文输入法全角状态下打的邮箱、从聊天软件复制来夹带零宽字符和全角空格的邮箱。
+        assertThat(authService.login("ｔｅｓｔ＠ｅｘａｍｐｌｅ．ｃｏｍ", "password123").user().username())
+                .isEqualTo("testuser");
+        assertThat(authService.login("​test@example。com　", "password123").user().username())
+                .isEqualTo("testuser");
+        assertThat(authService.login(" testuser﻿", "password123").user().username())
+                .isEqualTo("testuser");
+    }
+
+    @Test
+    void loginWithEmail_shouldNotBeShadowedByAnAccountWhoseUsernameIsThatEmail() {
+        // 旧系统迁来的账号，用户名本身就是这个邮箱；邮箱却挂在本人的新账号上。
+        UserEntity legacy = new UserEntity();
+        legacy.setUsername("test@example.com");
+        legacy.setPasswordHash(passwordEncoder.encode("legacyPassword1"));
+        legacy.setDisplayName("旧系统账号");
+        legacy.setRole(UserRole.MINISTER);
+        legacy.setEnabled(false);
+        legacy.setMustChangePassword(false);
+        userMapper.insert(legacy);
+
+        assertThat(authService.login("test@example.com", "password123").user().username())
+                .isEqualTo("testuser");
+        // 旧账号停用着，用它自己的密码也进不来；启用后按用户名照样能登录。
+        assertThatThrownBy(() -> authService.login("test@example.com", "legacyPassword1"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("账号、邮箱或密码错误");
+        legacy.setEnabled(true);
+        userMapper.updateById(legacy);
+        assertThat(authService.login("test@example.com", "legacyPassword1").user().username())
+                .isEqualTo("test@example.com");
+        assertThatThrownBy(() -> authService.login("test@example.com", "wrongPassword1"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("账号、邮箱或密码错误");
+    }
+
+    @Test
     void databaseConstraint_shouldRejectDuplicateEmail() {
         UserEntity duplicate = new UserEntity();
         duplicate.setUsername("duplicate-email-user");
