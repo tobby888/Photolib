@@ -9,6 +9,7 @@ import cn.photolib.campus.model.CampusEntity;
 import cn.photolib.common.api.PageResponse;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.util.LikeFilter;
+import cn.photolib.common.util.LoginIdentifiers;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.user.mapper.UserMapper;
 import cn.photolib.user.model.UserEntity;
@@ -26,7 +27,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.security.SecureRandom;
-import java.util.Locale;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.List;
@@ -378,7 +378,7 @@ public class UserService {
     }
 
     private String normalizeEmail(String email) {
-        return StringUtils.hasText(email) ? email.trim().toLowerCase(Locale.ROOT) : null;
+        return LoginIdentifiers.email(email);
     }
 
     /**

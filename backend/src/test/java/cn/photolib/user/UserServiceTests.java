@@ -9,9 +9,14 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.jdbc.datasource.DataSourceUtils;
+import org.springframework.jdbc.datasource.init.ScriptUtils;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
+
+import javax.sql.DataSource;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -32,6 +37,8 @@ class UserServiceTests {
     private PasswordEncoder passwordEncoder;
     @Autowired
     private JdbcClient jdbc;
+    @Autowired
+    private DataSource dataSource;
 
     private CampusEntity testCampus;
 
@@ -73,6 +80,52 @@ class UserServiceTests {
                 "email-second", "用户2", UserRole.MINISTER, null, null, "first@example.com")))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("邮箱已被其他用户使用");
+    }
+
+    /** 管理员从聊天记录里复制邮箱，带进来的全角空格、零宽字符不能跟着入库。 */
+    @Test
+    void createUser_shouldStripInvisibleCharactersFromEmail() {
+        UserService.CreatedUser created = userService.create(new UserService.CreateUser(
+                "email-pasted", "复制来的邮箱", UserRole.MINISTER, null, null, "　Pasted​@Example.com "));
+
+        assertThat(created.user().email()).isEqualTo("pasted@example.com");
+        assertThat(authService.login("pasted@example.com", created.initialPassword()).user().username())
+                .isEqualTo("email-pasted");
+        assertThatThrownBy(() -> userService.create(new UserService.CreateUser(
+                "email-pasted-again", "同一个邮箱", UserRole.MINISTER, null, null, "ｐａｓｔｅｄ＠ｅｘａｍｐｌｅ．ｃｏｍ")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("邮箱已被其他用户使用");
+    }
+
+    /** V66 把旧系统迁移原样写进来的邮箱放正；规范化后会撞别人的那条不动，免得升级失败。 */
+    @Test
+    void emailNormalizationMigration_shouldFixStoredEmailsWithoutCollisions() {
+        Long padded = insertRawEmailUser("legacy-padded", "  Padded@Example.com ");
+        Long blank = insertRawEmailUser("legacy-blank", "   ");
+        Long taken = insertRawEmailUser("legacy-taken", "taken@example.com");
+        Long colliding = insertRawEmailUser("legacy-colliding", " taken@example.com");
+
+        ScriptUtils.executeSqlScript(DataSourceUtils.getConnection(dataSource),
+                new ClassPathResource("db/migration/V66__normalize_user_email.sql"));
+
+        assertThat(storedEmail(padded)).isEqualTo("padded@example.com");
+        assertThat(storedEmail(blank)).isNull();
+        assertThat(storedEmail(taken)).isEqualTo("taken@example.com");
+        assertThat(storedEmail(colliding)).isEqualTo(" taken@example.com");
+    }
+
+    private Long insertRawEmailUser(String username, String email) {
+        jdbc.sql("""
+                INSERT INTO app_user (username, password_hash, display_name, role, email, enabled, must_change_password)
+                VALUES (:username, 'x', :username, 'MINISTER', :email, TRUE, FALSE)
+                """).param("username", username).param("email", email).update();
+        return jdbc.sql("SELECT id FROM app_user WHERE username = :username")
+                .param("username", username).query(Long.class).single();
+    }
+
+    private String storedEmail(Long id) {
+        return jdbc.sql("SELECT email FROM app_user WHERE id = :id").param("id", id)
+                .query(String.class).list().getFirst();
     }
 
     @Test

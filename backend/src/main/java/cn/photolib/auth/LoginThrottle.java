@@ -4,6 +4,7 @@ import cn.photolib.auth.mapper.LoginAttemptMapper;
 import cn.photolib.auth.model.LoginAttemptEntity;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
+import cn.photolib.common.util.LoginIdentifiers;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -13,7 +14,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
-import java.util.Locale;
 
 /**
  * Counts failed logins and refuses further attempts once a threshold is crossed.
@@ -158,12 +158,12 @@ public class LoginThrottle {
 
     /**
      * Normalizes the identifier the same way {@code AuthService} does before looking
-     * an account up, so "Admin" and "admin " cannot be used as separate budgets.
+     * an account up, so "Admin", "admin " and a full-width "ａｄｍｉｎ" cannot be used as
+     * separate budgets.
      */
     private static String identifierKey(String identifier) {
-        if (identifier == null) return null;
-        String normalized = identifier.trim().toLowerCase(Locale.ROOT);
-        if (normalized.isEmpty()) return null;
+        String normalized = LoginIdentifiers.email(identifier);
+        if (normalized == null) return null;
         return normalized.length() > MAX_KEY_LENGTH
                 ? normalized.substring(0, MAX_KEY_LENGTH) : normalized;
     }

@@ -4,6 +4,7 @@ import cn.photolib.common.api.PageResponse;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.common.util.LikeFilter;
+import cn.photolib.common.util.LoginIdentifiers;
 import cn.photolib.notification.NotificationService;
 import cn.photolib.permission.PermissionGroupEntity;
 import cn.photolib.permission.PermissionGroupService;
@@ -210,7 +211,10 @@ public class RegistrationService {
             // 删除账号时会把用户名改成 del.{id}.原名 来释放它，这个前缀留给那一步用。
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "登录账号不能以 del. 开头");
         }
-        String email = command.email().trim().toLowerCase(Locale.ROOT);
+        String email = LoginIdentifiers.email(command.email());
+        if (email == null) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请输入邮箱");
+        }
         String displayName = command.displayName().trim();
         if (permissionGroupMapper.selectById(code.getPermissionGroupId()) == null) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "该注册码已失效，请联系管理员");
