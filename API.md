@@ -1384,7 +1384,28 @@ UPLOADING -> PROCESSING -> WAITING_METADATA -> PROCESSING
 
 取消采用只逻辑删除采用记录，不删除项目相册归属，图片仍显示在项目详情中。
 
-### 10.3 采用排行
+### 10.3 被引图片作者名单
+
+`GET /projects/{projectId}/adoptions/photographers`，权限与 `GET /projects/{projectId}/adoptions` 完全一致（`PROJECT_VIEW` 或 `PROJECT_VIEW_ALL`，**不要求** `STATISTICS_DOWNLOAD`），选题负责人署名、核工时用。
+
+返回非分页数组，按被引张数从多到少，同张数时按姓名、学号：
+
+```json
+{
+  "photographerStudentId": "20260001",
+  "photographerName": "王同学",
+  "adoptedCount": 12
+}
+```
+
+规则：
+
+- 只统计本选题里**仍然有效**的采用记录（`adoption.deleted=0`），取消的被引不算；按 `COUNT(DISTINCT photo_id)` 计数。
+- 作者取**图片上现在的拍摄者**，不是采用记录里的作者快照——采用之后改过拍摄者的图片，这里跟着改，与选题详情页按拍摄者筛选同一个口径。
+- C（校区范围账号）与查询采用记录同一条收窄规则：只统计授权校区的图片；分享链接传进来的图片 `campusId` 为空，对校区范围账号同样不可见。授权校区为空的账号一律返回空数组。
+- 分享链接上传的图片可能没有学号（访客没有账号），此时 `photographerStudentId` 为 `null`。
+
+### 10.4 采用排行
 
 `GET /statistics/adoptions/ranking?from=2026-01-01&to=2026-12-31&projectId=...&campusId=...`，A/M。
 

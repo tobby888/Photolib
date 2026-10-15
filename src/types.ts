@@ -346,6 +346,19 @@ export interface Adoption {
 }
 
 /**
+ * 选题里被引图片的一位作者（`GET /projects/{id}/adoptions/photographers`）。
+ *
+ * 作者是图片上现在的拍摄者，不是采用记录里的快照——采用之后改过拍摄者的图片，
+ * 这里跟着改，与相册里显示的拍摄者一致。
+ */
+export interface AdoptionPhotographer {
+  /** 分享链接上传的图片可能没有学号（访客没有账号）。 */
+  photographerStudentId?: string | null
+  photographerName?: string | null
+  adoptedCount: number
+}
+
+/**
  * 选题项目的对外分享链接（管理端视图）。
  *
  * 明文密码只在创建和重置密码的返回里出现一次，之后服务端只剩哈希——这个类型里

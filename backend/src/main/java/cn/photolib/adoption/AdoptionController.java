@@ -37,6 +37,14 @@ public class AdoptionController {
         return ApiResponse.ok(service.list(projectId, page, pageSize, photographerStudentId, user));
     }
 
+    /** 本选题里被引图片的作者名单，前端用它一次拉齐署名名单。 */
+    @GetMapping("/projects/{projectId}/adoptions/photographers")
+    @PreAuthorize("hasAnyAuthority('PROJECT_VIEW','PROJECT_VIEW_ALL')")
+    ApiResponse<List<AdoptionService.Photographer>> photographers(
+            @PathVariable Long projectId, @AuthenticationPrincipal AuthenticatedUser user) {
+        return ApiResponse.ok(service.photographers(projectId, user));
+    }
+
     @DeleteMapping("/projects/{projectId}/adoptions/{id}")
     @PreAuthorize("hasAuthority('PROJECT_ADOPT')")
     ApiResponse<Void> cancel(@PathVariable Long projectId, @PathVariable Long id,

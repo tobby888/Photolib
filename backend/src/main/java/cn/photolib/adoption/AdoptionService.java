@@ -175,6 +175,47 @@ public class AdoptionService {
                 .map(String::valueOf).collect(Collectors.joining(","));
     }
 
+    /**
+     * 本选题里被引图片的作者名单（按被引张数从多到少）。
+     *
+     * <p>选题完成后要给被引用了图片的人署名、发工时，而这件事此前只能靠一张张翻
+     * 相册卡片或走 {@code /statistics/adoptions/ranking}——后者要 {@code STATISTICS_DOWNLOAD}，
+     * 部长和选题负责人常常没有。这条接口的凭据与读采用记录（{@link #list}）完全一致：
+     * 选题可见 + 校区范围收窄。</p>
+     *
+     * <p><b>作者取图片上现在的拍摄者，不取 {@code adoption} 行里的快照。</b>
+     * {@code PhotoService.update} 允许在采用之后改拍摄者（例如一开始填错了人），
+     * 快照不会跟着改。署名要的是「这张图到底是谁拍的」，和选题详情页按拍摄者筛选
+     * 同一个口径；用快照会让名单和相册里显示的拍摄者对不上。</p>
+     *
+     * <p>按 {@code COUNT(DISTINCT a.photo_id)} 计数：同一张图在本选题里只有一条
+     * 采用记录，但这里和工时导出（AGENTS.md §2.7）保持同一种写法，以免将来加了
+     * 别的 JOIN 之后一图算两张。</p>
+     */
+    public List<Photographer> photographers(Long projectId, AuthenticatedUser user) {
+        projectService.getVisible(projectId, user);
+        // 与 list 同理：选题可见不等于选题内其他校区的图片在授权范围内。分享链接传进来的
+        // 图片 campus_id 为空，对校区范围账号同样不可见——与 list 的 IN (...) 一致。
+        boolean campusScoped = user.isCampusScoped();
+        // 校区范围账号还没补授权校区时，空集合不能被当成「全局范围」放行；-1 匹配不到任何校区。
+        Set<Long> campusIds = campusScoped && !user.scopedCampusIds().isEmpty()
+                ? user.scopedCampusIds() : Set.of(-1L);
+        return jdbc.sql("""
+                        SELECT p.photographer_student_id, p.photographer_name,
+                               COUNT(DISTINCT a.photo_id) adopted_count
+                        FROM adoption a JOIN photo p ON p.id = a.photo_id
+                        WHERE a.deleted = 0 AND p.deleted = 0 AND a.project_id = :projectId
+                          AND (:campusScoped = FALSE OR p.campus_id IN (:campusIds))
+                        GROUP BY p.photographer_student_id, p.photographer_name
+                        ORDER BY adopted_count DESC, p.photographer_name, p.photographer_student_id
+                        """)
+                .param("projectId", projectId)
+                .param("campusScoped", campusScoped)
+                .param("campusIds", campusIds)
+                .query((rs, n) -> new Photographer(rs.getString(1), rs.getString(2), rs.getLong(3)))
+                .list();
+    }
+
     public List<Ranking> ranking(LocalDate from, LocalDate to, Long projectId, Long campusId) {
         return ranking(from, to, projectId, campusId, false, Set.of(-1L));
     }
@@ -218,4 +259,12 @@ public class AdoptionService {
     }
 
     public record Ranking(int rank, String photographerStudentId, String photographerName, long adoptedCount) {}
+
+    /**
+     * 被引图片的一位作者。
+     *
+     * @param photographerStudentId 学号；分享链接上传的图片可能没有（访客没有账号）
+     * @param adoptedCount          这位作者在本选题里被引的图片张数
+     */
+    public record Photographer(String photographerStudentId, String photographerName, long adoptedCount) {}
 }

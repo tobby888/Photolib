@@ -103,6 +103,17 @@ class ProjectDetailAccessHttpTests {
     }
 
     /**
+     * 被引作者名单与读采用记录同一道门槛，不认 {@code STATISTICS_DOWNLOAD}——
+     * 选题负责人要署名的时候往往没有统计权限。顺带钉住路由：
+     * {@code /adoptions/photographers} 不能被 {@code /adoptions/{id}} 吃掉。
+     */
+    @Test
+    void theAdoptedPhotographerListIsAllowedWithOnlyTheProjectViewPermission() throws Exception {
+        mvc.perform(authenticated(get("/api/v1/projects/" + projectId + "/adoptions/photographers")))
+                .andExpect(status().isOk());
+    }
+
+    /**
      * 需求列表刻意仍然只认 REQUEST_VIEW：能看选题不等于能看需求。
      * 前端因此必须自己把这条挡住，不能裸放进详情页的 Promise.all——那正是
      * 「勾了选题权限却打不开选题详情」的成因。
