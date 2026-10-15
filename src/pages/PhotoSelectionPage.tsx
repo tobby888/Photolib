@@ -1,5 +1,5 @@
 import {
-  App, Alert, Breadcrumb, Button, Empty, Progress, Segmented, Space, Spin, Tag, Tooltip, Typography,
+  App, Alert, Breadcrumb, Button, Empty, Input, Progress, Segmented, Space, Spin, Tag, Tooltip, Typography,
 } from 'antd'
 import {
   AppstoreOutlined, ArrowLeftOutlined, BlockOutlined, CheckCircleOutlined, CloseOutlined, CompressOutlined,
@@ -52,7 +52,7 @@ function matchesFilter(photo: SelectionPhoto, filter: SelectionFilter) {
 }
 
 /**
- * 活动选题的选片工作台（issue #94）。
+ * 选题的选片工作台（issue #94；创作选题也用这一页，只是结束时不清理图片）。
  *
  * 布局照着需求给的草图：外壳的侧边栏和顶栏照旧，内容区左边一列缩略图、
  * 右边是真正干活的地方——大图加打标签。当前这张在左列里用深色标出来。
@@ -154,7 +154,21 @@ export default function PhotoSelectionPage() {
   // 「待处理」筛选下把最后一张也打完标签，列表就空了——弹窗没有图可看，直接让位回页面。
   const focusOpen = focusRequested && !!active
   // 每次渲染都新建一个数组会让键盘监听的 effect 反复重挂（每次按键都重绑一遍）。
-  const presetTags = useMemo(() => project?.tags || [], [project?.tags])
+  const isEvent = project?.type === 'EVENT'
+  // 创作选题没有预设时不限标签：可选的那一排就是相册里已经用过的标签（按首次出现的顺序），
+  // 数字键照样能套用。活动选题仍然只能从预设里挑。
+  const usedTags = useMemo(() => {
+    const seen = new Set<string>()
+    for (const photo of photos) {
+      for (const tag of photo.tags) if (!isDeprecated([tag])) seen.add(tag)
+    }
+    return [...seen]
+  }, [photos])
+  const freeTagging = !!project && !isEvent && !project.tags?.length
+  const presetTags = useMemo(
+    () => freeTagging ? usedTags : project?.tags || [],
+    [freeTagging, project?.tags, usedTags])
+  const [newTag, setNewTag] = useState('')
   const decided = photos.filter(photo => photo.tags.length > 0).length
 
   // 翻到接近末尾就把下一页续上，不用用户自己去点「加载更多」。
@@ -358,14 +372,24 @@ export default function PhotoSelectionPage() {
   const renderTagRow = (photo: SelectionPhoto) => <>
     <div className="selection-tag-row">
       <Typography.Text type="secondary">标签</Typography.Text>
-      {presetTags.length
-        ? presetTags.map((tag, index) => <Tag.CheckableTag key={tag}
-            checked={photo.tags.includes(tag)}
-            onChange={() => { if (editable) void toggleTag(photo, tag) }}>
-            {tag}<span className="selection-tag-key">{index < 9 ? index + 1 : ''}</span>
-          </Tag.CheckableTag>)
-        : <Typography.Text type="secondary">
-            这个选题还没有预设标签，请让选题负责人在选题里先定义一组</Typography.Text>}
+      {presetTags.map((tag, index) => <Tag.CheckableTag key={tag}
+        checked={photo.tags.includes(tag)}
+        onChange={() => { if (editable) void toggleTag(photo, tag) }}>
+        {tag}<span className="selection-tag-key">{index < 9 ? index + 1 : ''}</span>
+      </Tag.CheckableTag>)}
+      {!presetTags.length && !freeTagging && <Typography.Text type="secondary">
+        这个选题还没有预设标签，请让选题负责人在选题里先定义一组</Typography.Text>}
+      {/* 创作选题没有预设时不限标签（与相册里批量打标签同一条规则），用过的标签之外还能直接输入新的。 */}
+      {freeTagging && <Input size="small" className="selection-tag-input" placeholder="输入新标签，回车添加"
+        maxLength={50} disabled={!editable} value={newTag}
+        onChange={event => setNewTag(event.target.value)}
+        onKeyDown={event => event.stopPropagation()}
+        onPressEnter={() => {
+          const tag = newTag.trim()
+          if (!tag || !editable) return
+          setNewTag('')
+          if (!photo.tags.includes(tag)) void toggleTag(photo, tag)
+        }} />}
       <Tag.CheckableTag checked={isDeprecated(photo.tags)}
         className="selection-tag-deprecated"
         onChange={() => { if (editable) void toggleTag(photo, DEPRECATED_TAG) }}>
@@ -373,8 +397,11 @@ export default function PhotoSelectionPage() {
       </Tag.CheckableTag>
       {taggingId === photo.id && <Spin size="small" />}
     </div>
-    {isDeprecated(photo.tags) && <Alert type="warning" showIcon
-      message={`标记为${DEPRECATED_TAG_LABEL}的图片会在选题完成、负责人确认后从图库和对象存储中删除`} />}
+    {isDeprecated(photo.tags) && (isEvent
+      ? <Alert type="warning" showIcon
+          message={`标记为${DEPRECATED_TAG_LABEL}的图片会在选题完成、负责人确认后从图库和对象存储中删除`} />
+      : <Alert type="info" showIcon
+          message={`创作选题结束时不会删除任何图片，${DEPRECATED_TAG_LABEL}只是一个标记`} />)}
   </>
 
   const qualitySwitch = <Tooltip title="原图按成品图渲染，看得清细节但更费流量；预览图是 480px 的压缩图">

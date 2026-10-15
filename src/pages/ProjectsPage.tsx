@@ -1,13 +1,15 @@
 import {
   App, Button, Card, Col, Form, Input, Modal, Radio, Row, Select, Space, Tag, Typography,
 } from 'antd'
-import { ArrowRightOutlined, FolderOpenOutlined, PlusOutlined, SearchOutlined, TagsOutlined } from '@ant-design/icons'
+import {
+  ArrowRightOutlined, FolderOpenOutlined, PlusOutlined, PushpinFilled, PushpinOutlined, SearchOutlined, TagsOutlined,
+} from '@ant-design/icons'
 import { useState } from 'react'
 import dayjs from 'dayjs'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth'
 import { api, emptyPage, qs } from '../api'
-import type { PageData, Project } from '../types'
+import type { EntityId, PageData, Project } from '../types'
 import { DataState, PageTitle, StatusTag } from '../components'
 import { useLoad } from '../hooks'
 import MarkdownEditor from '../MarkdownEditor'
@@ -23,7 +25,7 @@ import { GRID_PAGE_SIZES, turnPage } from '../pagination'
  * 中途切换会让已经打好的标签和已经接下的需求处在两套规则之间。
  */
 const typeOptions = [
-  { value: 'CREATION', label: '创作选题', hint: '原有流程：拆需求、接单、上传、标记被引' },
+  { value: 'CREATION', label: '创作选题', hint: '原有流程：拆需求、接单、上传、标记被引；也可以指定选片人打标签，结束时不删图' },
   { value: 'EVENT', label: '活动选题', hint: '整批进库后由指定选片人打标签，结束后清理未选中的图片' },
 ] as const
 
@@ -49,6 +51,16 @@ export default function ProjectsPage() {
     () => api<PageData<Project>>({ url: '/projects', params: qs({ ...filters }) }),
     emptyPage<Project>(), [filters.page, filters.pageSize, filters.keyword, filters.status],
   )
+  const [pinningId, setPinningId] = useState<EntityId | null>(null)
+  // 置顶是每个账号自己的书签：置顶的选题排在最前（后端排序），改完重取当前页让顺序跟上。
+  const togglePin = async (project: Project) => {
+    setPinningId(project.id)
+    try {
+      await api({ method: project.pinned ? 'DELETE' : 'PUT', url: `/projects/${project.id}/pin` })
+      message.success(project.pinned ? '已取消置顶' : '已置顶')
+      await reload()
+    } catch (e) { message.error((e as Error).message) } finally { setPinningId(null) }
+  }
   const create = async () => {
     const values = await form.validateFields()
     setSaving(true)
@@ -80,11 +92,18 @@ export default function ProjectsPage() {
         : '新建一个选题，就可以往下拆需求、收图片了。'}>
       <Row gutter={[16, 16]} className="project-grid">
         {data.items.map((item) => <Col xs={24} md={12} xl={8} key={item.id}>
-          <Card className="project-card" hoverable>
+          <Card className={`project-card${item.pinned ? ' project-card-pinned' : ''}`} hoverable>
             <div className="project-card-top"><div className="folder-icon"><FolderOpenOutlined /></div>
               <Space size={4}>
+                {item.pinned && <Tag color="gold" variant="filled">已置顶</Tag>}
                 {item.type === 'EVENT' && <Tag color="purple" variant="filled">活动选题</Tag>}
                 <StatusTag value={item.status} />
+                <Button type="text" size="small" loading={pinningId === item.id}
+                  icon={item.pinned ? <PushpinFilled /> : <PushpinOutlined />}
+                  aria-pressed={!!item.pinned}
+                  aria-label={item.pinned ? `取消置顶 ${item.title}` : `置顶 ${item.title}`}
+                  title={item.pinned ? '取消置顶' : '置顶到列表最前面（只影响你自己的列表）'}
+                  onClick={() => void togglePin(item)} />
               </Space>
             </div>
             <Typography.Title level={4}>{item.title}</Typography.Title>

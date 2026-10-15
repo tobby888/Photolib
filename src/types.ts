@@ -165,11 +165,13 @@ export interface Project extends BaseEntity {
   requestCount?: number
   photoCount?: number
   adoptionCount?: number
-  /** 以下四项只在选题详情（GET /projects/{id}）里返回，列表接口没有。 */
+  /** 当前账号有没有置顶这个选题（每个账号各置顶各的）。列表和详情都会返回。 */
+  pinned?: boolean
+  /** 以下四项只在选题详情（GET /projects/{id}）里返回，列表接口没有。两类选题都有选片。 */
   selectors?: ProjectSelector[]
   /** 当前账号能不能进这个选题的选片页。 */
   canSelect?: boolean
-  /** 当前账号能不能改选片人、能不能在选题结束时清理图片。 */
+  /** 当前账号能不能改选片人；活动选题还意味着能在结束时清理图片（创作选题不清理）。 */
   canManageSelection?: boolean
   /** 相册里打了 deprecated 的图片数。 */
   deprecatedCount?: number

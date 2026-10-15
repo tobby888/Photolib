@@ -61,6 +61,21 @@ public class ProjectController {
         return ApiResponse.ok();
     }
 
+    /** 置顶只影响当前账号自己的选题列表，凭据与查看选题一致。 */
+    @PutMapping("/{id}/pin")
+    @PreAuthorize("hasAnyAuthority('PROJECT_VIEW','PROJECT_VIEW_ALL')")
+    ApiResponse<Void> pin(@PathVariable Long id, @AuthenticationPrincipal AuthenticatedUser user) {
+        service.pin(id, user);
+        return ApiResponse.ok();
+    }
+
+    @DeleteMapping("/{id}/pin")
+    @PreAuthorize("hasAnyAuthority('PROJECT_VIEW','PROJECT_VIEW_ALL')")
+    ApiResponse<Void> unpin(@PathVariable Long id, @AuthenticationPrincipal AuthenticatedUser user) {
+        service.unpin(id, user);
+        return ApiResponse.ok();
+    }
+
     @PutMapping("/{id}")
     @PreAuthorize("hasAuthority('PROJECT_CREATE')")
     ApiResponse<ProjectEntity> update(@PathVariable Long id, @Valid @RequestBody UpdateRequest request,

@@ -204,6 +204,15 @@ button, input, textarea, select { font-family: inherit; }
 .project-grid, .photo-grid { margin-bottom: 22px; }
 .project-card { height: 100%; }
 .project-card-top { display: flex; justify-content: space-between; align-items: center; }
+/*
+  置顶的选题：左边一道金色细线，扫一眼就分得出来；颜色与「已置顶」标签同色系。
+  用伪元素而不是 box-shadow：几套主题都各自改写了卡片悬停时的阴影，阴影会被盖掉。
+*/
+.project-card.project-card-pinned { position: relative; }
+.project-card.project-card-pinned::before {
+  content: ''; position: absolute; left: 0; top: 14px; bottom: 14px; width: 3px;
+  border-radius: 0 3px 3px 0; background: #faad14; pointer-events: none;
+}
 .folder-icon { width: 48px; height: 48px; border-radius: 13px; display: grid; place-items: center; background: #edf3f0; color: #28594f; font-size: 22px; }
 .project-card h4 { margin: 19px 0 6px; }
 .project-card p { color: #6f7975; min-height: 44px; }
@@ -2937,6 +2946,7 @@ body {
 .selection-stage-meta > div { display: flex; flex-direction: column; min-width: 0; }
 .selection-tag-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .selection-tag-row .ant-tag { cursor: pointer; user-select: none; }
+.selection-tag-row .selection-tag-input { width: 180px; }
 .selection-tag-key { margin-left: 6px; opacity: .55; font-size: 11px; }
 .selection-tag-deprecated.ant-tag-checkable-checked { background: #a8323a; }
 

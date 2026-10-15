@@ -23,6 +23,10 @@ import {
   photoLibraryRequestParams, readPhotoLibraryFilters, withPhotoLibrarySearch, writePhotoLibraryFilters,
 } from '../photoLibrarySearch'
 import { findPhotoNeighbors, pickEdgePhotoId } from '../photoNeighbors'
+import {
+  neighborsInList, projectPhotoDetailPath, readProjectContext, readProjectNavState, rememberProjectAlbumFocus,
+} from '../projectPhotoContext'
+import type { ProjectPhotoNavState } from '../projectPhotoContext'
 
 function isLinkedToProject(photo: Photo, projectId: EntityId) {
   return photo.relatedProjects?.some(project => String(project.id) === String(projectId))
@@ -47,6 +51,10 @@ export default function PhotoDetailPage({ favoritesOnly = false }: { favoritesOn
   const navigate = useNavigate()
   const location = useLocation()
   const libraryRoot = favoritesOnly ? '/favorites' : '/photos'
+  // 从选题相册点进来的（URL 带 ?project=）：返回回到那个选题，上一张 / 下一张在那个相册里翻。
+  // 见 src/projectPhotoContext.ts。
+  const projectContext = favoritesOnly ? null : readProjectContext(location.search)
+  const navProjectPhotoIds = readProjectNavState(location.state)
   const { message, modal } = App.useApp()
   const { user } = useAuth()
   const canAddToProject = hasPermission(user, 'PROJECT_ADOPT')
@@ -97,16 +105,47 @@ export default function PhotoDetailPage({ favoritesOnly = false }: { favoritesOn
   const libraryTagKey = JSON.stringify(libraryFilters.tags)
   const libraryPageParams = (page: number) => photoLibraryRequestParams(libraryFilters, { page, favoritesOnly })
   const { data: libraryPage } = useLoad(
-    () => api<PageData<Photo>>({ url: '/photos', params: libraryPageParams(libraryFilters.page) }),
+    () => projectContext
+      ? Promise.resolve(emptyPage<Photo>())
+      : api<PageData<Photo>>({ url: '/photos', params: libraryPageParams(libraryFilters.page) }),
     emptyPage<Photo>(),
     [libraryFilters.page, libraryFilters.pageSize, libraryFilters.keyword, libraryFilters.status,
-      libraryTagKey, favoritesOnly],
+      libraryTagKey, favoritesOnly, projectContext],
   )
-  const neighbors = findPhotoNeighbors(libraryPage, photoId)
+  // 选题里的顺序优先用点进来时带的那一份（套过相册筛选）；直链或刷新丢了 state 时，
+  // 退回按整个相册的顺序翻——和选题详情页不加筛选时看到的一样。
+  const { data: fallbackProjectPhotoIds } = useLoad(async () => {
+    if (!projectContext || navProjectPhotoIds) return null
+    const params = { pageSize: 100, projectId: projectContext, includeAllStatuses: true }
+    const first = await api<PageData<Photo>>({ url: '/photos', params: { ...params, page: 1 } })
+    const rest = await Promise.all(Array.from({ length: Math.max(0, first.totalPages - 1) },
+      (_, index) => api<PageData<Photo>>({ url: '/photos', params: { ...params, page: index + 2 } })))
+    return [first, ...rest].flatMap(page => page.items).map(item => String(item.id))
+  }, null as string[] | null, [projectContext, !!navProjectPhotoIds])
+  const projectPhotoIds = navProjectPhotoIds ?? fallbackProjectPhotoIds
+  const projectNeighbors = neighborsInList(projectPhotoIds, photoId)
+  const libraryNeighbors = findPhotoNeighbors(libraryPage, photoId)
+  const neighbors = projectContext
+    ? { positioned: projectNeighbors.positioned, previous: projectNeighbors.previous, next: projectNeighbors.next }
+    : libraryNeighbors
   const [movingTo, setMovingTo] = useState<'previous' | 'next' | null>(null)
+  useEffect(() => {
+    // 记下最后看的那张，回到选题时滚到它那里。
+    if (projectContext && photoId) rememberProjectAlbumFocus(projectContext, photoId)
+  }, [projectContext, photoId])
+  const backToProject = (replace = false) => {
+    if (projectContext) navigate(`/projects/${projectContext}`, { replace })
+  }
 
   const goToNeighbor = async (direction: 'previous' | 'next') => {
-    const neighbor = direction === 'previous' ? neighbors.previous : neighbors.next
+    if (projectContext) {
+      const targetId = direction === 'previous' ? projectNeighbors.previous : projectNeighbors.next
+      if (!targetId) return
+      const state: ProjectPhotoNavState = { projectPhotoIds: projectPhotoIds ?? [] }
+      navigate(projectPhotoDetailPath(targetId, projectContext), { state })
+      return
+    }
+    const neighbor = direction === 'previous' ? libraryNeighbors.previous : libraryNeighbors.next
     if (!neighbor || movingTo) return
     setMovingTo(direction)
     try {
@@ -133,7 +172,9 @@ export default function PhotoDetailPage({ favoritesOnly = false }: { favoritesOn
   const neighborTitle = (direction: 'previous' | 'next') => {
     const label = direction === 'previous' ? '上一张' : '下一张'
     if (direction === 'previous' ? neighbors.previous : neighbors.next) return `查看${label}图片`
-    if (!neighbors.positioned) return `无法确定这张图片在图片库中的位置，${label}不可用`
+    if (!neighbors.positioned) {
+      return `无法确定这张图片在${projectContext ? '选题相册' : '图片库'}中的位置，${label}不可用`
+    }
     return direction === 'previous' ? '已经是第一张图片' : '已经是最后一张图片'
   }
 
@@ -180,7 +221,8 @@ export default function PhotoDetailPage({ favoritesOnly = false }: { favoritesOn
       async onOk() {
         await api({ method: 'DELETE', url: `/photos/${photo.id}` })
         message.success('图片已删除')
-        navigate(withPhotoLibrarySearch(libraryRoot, location.search), { replace: true })
+        if (projectContext) backToProject(true)
+        else navigate(withPhotoLibrarySearch(libraryRoot, location.search), { replace: true })
       },
     })
   }
@@ -229,10 +271,12 @@ export default function PhotoDetailPage({ favoritesOnly = false }: { favoritesOn
     <PageTitle eyebrow="PHOTO DETAIL" title={photo?.title || '图片详情'}
       description={photo ? `图片 #${photo.id} · ${photo.photographerName}` : '正在读取图片信息…'}
       extra={<>
-        <Button icon={<ArrowLeftOutlined />}
-          onClick={() => navigate(withPhotoLibrarySearch(libraryRoot, location.search))}>
-          {favoritesOnly ? '返回收藏图片' : '返回图片库'}
-        </Button>
+        {projectContext
+          ? <Button icon={<ArrowLeftOutlined />} onClick={() => backToProject()}>返回选题</Button>
+          : <Button icon={<ArrowLeftOutlined />}
+              onClick={() => navigate(withPhotoLibrarySearch(libraryRoot, location.search))}>
+              {favoritesOnly ? '返回收藏图片' : '返回图片库'}
+            </Button>}
         <Button icon={<LeftOutlined />} disabled={!neighbors.previous} loading={movingTo === 'previous'}
           title={neighborTitle('previous')} onClick={() => void goToNeighbor('previous')}>上一张</Button>
         <Button icon={<RightOutlined />} disabled={!neighbors.next} loading={movingTo === 'next'}

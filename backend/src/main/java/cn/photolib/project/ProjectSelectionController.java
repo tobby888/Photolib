@@ -30,7 +30,7 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * 活动选题的选片入口（issue #94）。
+ * 选题的选片入口（issue #94；创作选题自 V65 起也有，只是结束时不清理图片）。
  *
  * <p>整个控制器只有一条方法级权限 {@code PROJECT_VIEW|PROJECT_VIEW_ALL}——那只是
  * 「能进选题模块」的门槛。真正的授权在 Service 里：

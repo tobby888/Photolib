@@ -113,18 +113,37 @@ class EventProjectSelectionTests {
                 .query(Long.class).single();
         var detail = projectService.getDetail(legacyId, owner);
         assertThat(detail.type()).isEqualTo(ProjectType.CREATION);
-        assertThat(detail.canSelect()).isFalse();
         assertThat(detail.selectors()).isEmpty();
     }
 
     @Test
-    void creationProjectsHaveNoSelectionWorkflow() {
-        assertThatThrownBy(() -> projectService.requireSelectionAccess(creation.getId(), owner))
+    void creationProjectsSelectLikeEventProjectsButNeverCleanUp() {
+        // 创作选题也能指派选片人、进选片页、打标签（含 deprecated）——同一套凭据。
+        projectService.replaceSelectors(creation.getId(), List.of(SELECTOR_ID), owner);
+        var detail = projectService.getDetail(creation.getId(), selector);
+        assertThat(detail.canSelect()).isTrue();
+        assertThat(detail.canManageSelection()).isFalse();
+        assertThat(projectService.getDetail(creation.getId(), owner).canManageSelection()).isTrue();
+        assertThat(notificationCount(SELECTOR_ID)).isEqualTo(1);
+
+        long photoId = insertAlbumPhoto(creation.getId(), List.of());
+        // 没有预设的创作选题不限标签，与站内相册批量打标签同一条规则。
+        selectionService.tag(creation.getId(), List.of(photoId), List.of("封面候选"), List.of(), selector);
+        selectionService.tag(creation.getId(), List.of(photoId), List.of(PhotoTags.DEPRECATED), List.of(), selector);
+        assertThat(tags(photoId)).containsExactly("封面候选", PhotoTags.DEPRECATED);
+        assertThat(selectionService.photos(creation.getId(), 1, 20, selector).items())
+                .extracting(ProjectSelectionService.SelectionPhoto::id).containsExactly(photoId);
+
+        // 但结束时不按标签删图：创作选题的图是按需求交上来的成品。完成之后清理照样被拒。
+        ProjectEntity current = projectService.get(creation.getId());
+        projectService.changeStatus(creation.getId(), ProjectStatus.COMPLETED, current.getVersion(), owner);
+        assertThatThrownBy(() -> selectionService.plan(creation.getId(), null, owner))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("只有活动选题");
-        assertThatThrownBy(() -> projectService.replaceSelectors(creation.getId(), List.of(SELECTOR_ID), owner))
+        assertThatThrownBy(() -> selectionService.cleanup(creation.getId(), null, null, owner))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("只有活动选题");
+        assertThat(deleted(photoId)).isFalse();
     }
 
     @Test

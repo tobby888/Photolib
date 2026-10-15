@@ -11,6 +11,7 @@ import cn.photolib.photo.model.PhotoEntity;
 import cn.photolib.photo.model.PhotoStatus;
 import cn.photolib.notification.NotificationService;
 import cn.photolib.project.mapper.ProjectMapper;
+import cn.photolib.project.mapper.ProjectPinMapper;
 import cn.photolib.project.mapper.ProjectSelectorMapper;
 import cn.photolib.project.model.ProjectEntity;
 import cn.photolib.project.model.ProjectSelectorEntity;
@@ -19,7 +20,7 @@ import cn.photolib.project.model.ProjectType;
 import cn.photolib.permission.PermissionCode;
 import cn.photolib.user.mapper.UserMapper;
 import cn.photolib.user.model.UserEntity;
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
@@ -38,6 +39,7 @@ public class ProjectService {
     private final ProjectMapper mapper;
     private final PhotoMapper photoMapper;
     private final ProjectSelectorMapper selectorMapper;
+    private final ProjectPinMapper pinMapper;
     private final UserMapper userMapper;
     private final NotificationService notifications;
     private final JdbcClient jdbc;
@@ -75,12 +77,13 @@ public class ProjectService {
                                             AuthenticatedUser user) {
         requireViewPermission(user);
         String likeKeyword = LikeFilter.escape(keyword);
-        LambdaQueryWrapper<ProjectEntity> query = Wrappers.<ProjectEntity>lambdaQuery()
+        // 用字符串列名的 QueryWrapper 而不是 lambda 版：置顶排序是一段子查询，lambda 版写不进 ORDER BY。
+        QueryWrapper<ProjectEntity> query = Wrappers.<ProjectEntity>query()
                 .and(StringUtils.hasText(keyword), q -> q
                         .apply(LikeFilter.contains("title"), likeKeyword)
                         .or().apply(LikeFilter.contains("description"), likeKeyword)
                         .or().apply(LikeFilter.contains("tags_json"), likeKeyword))
-                .eq(status != null, ProjectEntity::getStatus, status);
+                .eq(status != null, "status", status);
 
         // 没有"无条件查看"权限的账号只看得到自己参与过需求的选题（校区范围账号再叠一层校区过滤）
         if (user.seesOnlyAssignedProjects()) {
@@ -89,12 +92,74 @@ public class ProjectService {
                 // No visible projects - return empty result
                 return PageResponse.from(Page.of(page, pageSize));
             }
-            query.in(ProjectEntity::getId, visibleProjectIds);
+            query.in("id", visibleProjectIds);
         }
 
-        query.orderByDesc(ProjectEntity::getCreatedAt);
+        // 自己置顶的排在最前，其余按创建时间倒序。user.id() 是 Long，直接拼进 SQL 没有注入面；
+        // 必须写成 project.id——project_pin 里没有 id 列，但不限定表名的话一旦以后加了就会悄悄指错。
+        query.orderByDesc("EXISTS (SELECT 1 FROM project_pin pin WHERE pin.project_id = project.id"
+                        + " AND pin.user_id = " + user.id() + ")")
+                .orderByDesc("created_at");
         Page<ProjectEntity> result = mapper.selectPage(Page.of(page, pageSize), query);
+        markPinned(result.getRecords(), user);
         return PageResponse.from(result);
+    }
+
+    // ---------------------------------------------------------------------
+    // 置顶：每个账号各置顶各的（V65）
+    // ---------------------------------------------------------------------
+
+    /** 一个账号最多置顶几个选题。置顶得太多就等于没置顶。 */
+    static final int MAX_PINS = 20;
+
+    /**
+     * 置顶一个选题。凭据就是「看得到这个选题」——置顶只影响自己的列表顺序，不该比查看要求更多。
+     * 已经置顶过的再点一次是幂等的，不算进上限。
+     */
+    @Transactional
+    public void pin(Long projectId, AuthenticatedUser user) {
+        requireViewPermission(user);
+        ProjectEntity project = get(projectId);
+        requireVisible(project, user);
+        if (isPinned(projectId, user.id())) return;
+        // 只数还存在的选题：被删掉的选题留下的置顶行不该占着名额。
+        long pinned = jdbc.sql("""
+                SELECT COUNT(*) FROM project_pin pin JOIN project p ON p.id = pin.project_id
+                WHERE pin.user_id = :userId AND p.deleted = 0
+                """).param("userId", user.id()).query(Long.class).single();
+        if (pinned >= MAX_PINS) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                    "最多置顶 " + MAX_PINS + " 个选题，请先取消一些再置顶");
+        }
+        pinMapper.pin(user.id(), projectId);
+    }
+
+    /**
+     * 取消置顶。只删自己那一行，不要求还看得到这个选题：被移出选片人名单之后，
+     * 选题从列表里消失了，残留的置顶行也该能清掉（虽然它已经不影响任何列表）。
+     */
+    @Transactional
+    public void unpin(Long projectId, AuthenticatedUser user) {
+        requireViewPermission(user);
+        pinMapper.unpin(user.id(), projectId);
+    }
+
+    public boolean isPinned(Long projectId, Long userId) {
+        if (projectId == null || userId == null) return false;
+        return jdbc.sql("SELECT COUNT(*) FROM project_pin WHERE project_id = :projectId AND user_id = :userId")
+                .param("projectId", projectId)
+                .param("userId", userId)
+                .query(Long.class).single() > 0;
+    }
+
+    private void markPinned(List<ProjectEntity> projects, AuthenticatedUser user) {
+        if (projects.isEmpty()) return;
+        java.util.Set<Long> pinned = new java.util.HashSet<>(jdbc.sql(
+                        "SELECT project_id FROM project_pin WHERE user_id = :userId AND project_id IN (:ids)")
+                .param("userId", user.id())
+                .param("ids", projects.stream().map(ProjectEntity::getId).toList())
+                .query(Long.class).list());
+        projects.forEach(project -> project.setPinned(pinned.contains(project.getId())));
     }
 
     public ProjectEntity get(Long id) {
@@ -115,15 +180,16 @@ public class ProjectService {
         ProjectSummary summary = user.isCampusScoped()
                 ? scopedSummary(id, user)
                 : projectSummary(id);
-        boolean event = project.getType() == ProjectType.EVENT;
+        // 两类选题都有选片（创作选题自 V65 起），区别只在结束时清不清理图片。
         return new ProjectDetail(project.getId(), project.getTitle(), project.getDescription(),
                 project.getStatus(), typeOf(project), project.getCreatedBy(), project.getCreatedAt(),
                 project.getUpdatedAt(), project.getVersion(), summary.requestCount(), summary.photoCount(),
                 summary.adoptionCount(), project.getTags(),
-                event ? selectors(id) : List.of(),
-                event && canSelect(project, user),
-                event && canManageSelection(project, user),
-                event ? deprecatedPhotoCount(id) : 0);
+                selectors(id),
+                canSelect(project, user),
+                canManageSelection(project, user),
+                deprecatedPhotoCount(id),
+                isPinned(id, user.id()));
     }
 
     /** 存量行的 {@code type} 可能是 {@code NULL}（迁移之前建的选题），一律按创作选题看待。 */
@@ -323,7 +389,7 @@ public class ProjectService {
     // 活动选题：选片人与选片权限（issue #94）
     // ---------------------------------------------------------------------
 
-    /** 选题的选片人列表，按加入顺序。创作选题恒为空。 */
+    /** 选题的选片人列表，按加入顺序。 */
     public List<Selector> selectors(Long projectId) {
         return jdbc.sql("""
                 SELECT u.id, u.display_name, u.username
@@ -346,7 +412,7 @@ public class ProjectService {
      * 不含手机号、邮箱和校区。</p>
      */
     public List<Selector> selectorCandidates(Long projectId, AuthenticatedUser user) {
-        requireManageableEventProject(projectId, user);
+        requireSelectionManager(projectId, user);
         return jdbc.sql("""
                 SELECT id, display_name, username FROM app_user
                 WHERE deleted = 0 AND enabled = TRUE
@@ -371,7 +437,8 @@ public class ProjectService {
      */
     @Transactional
     public List<Selector> replaceSelectors(Long projectId, List<Long> userIds, AuthenticatedUser user) {
-        ProjectEntity project = requireManageableEventProject(projectId, user);
+        ProjectEntity project = requireSelectionManager(projectId, user);
+        boolean event = typeOf(project) == ProjectType.EVENT;
         List<Long> wanted = userIds == null ? List.of()
                 : userIds.stream().filter(java.util.Objects::nonNull).distinct().limit(50).toList();
         for (Long userId : wanted) {
@@ -397,22 +464,26 @@ public class ProjectService {
                 notifications.notifyUser(id, "PROJECT_SELECTION_ASSIGNED",
                         "你被指定为选题「" + project.getTitle() + "」的选片人",
                         NotificationService.paragraphs(
-                                "活动选题「" + project.getTitle() + "」的图片已经可以开始选片。",
-                                "请在选题详情页进入选片，为可用的图片打上标签；用不上的图片标记为 deprecated，"
-                                        + "选题完成后由负责人确认清理。")));
+                                (event ? "活动选题「" : "创作选题「") + project.getTitle() + "」的图片已经可以开始选片。",
+                                event
+                                        ? "请在选题详情页进入选片，为可用的图片打上标签；用不上的图片标记为 deprecated，"
+                                                + "选题完成后由负责人确认清理。"
+                                        : "请在选题详情页进入选片，为可用的图片打上标签；用不上的图片可以标记为 deprecated，"
+                                                + "创作选题结束时不会删除任何图片。")));
         return selectors(projectId);
     }
 
-    /** 能不能进这个选题的选片页：活动选题的选片人、选题创建者或管理员。 */
+    /** 能不能进这个选题的选片页：选片人、选题创建者或管理员。两类选题一样。 */
     public boolean canSelect(ProjectEntity project, AuthenticatedUser user) {
-        if (typeOf(project) != ProjectType.EVENT) return false;
         return canManageSelection(project, user) || isSelector(project.getId(), user.id());
     }
 
-    /** 能不能改选片人名单、能不能清理 deprecated 图片：选题创建者或管理员。 */
+    /**
+     * 能不能改选片人名单：选题创建者或管理员。两类选题一样。
+     * 清理图片另有一道「只有活动选题」的门，见 {@link #requireManageableEventProject}。
+     */
     public boolean canManageSelection(ProjectEntity project, AuthenticatedUser user) {
-        return typeOf(project) == ProjectType.EVENT
-                && user.hasPermission(PermissionCode.PROJECT_CREATE)
+        return user.hasPermission(PermissionCode.PROJECT_CREATE)
                 && (user.isAdministrator() || project.getCreatedBy().equals(user.id()));
     }
 
@@ -425,23 +496,31 @@ public class ProjectService {
     public ProjectEntity requireSelectionAccess(Long projectId, AuthenticatedUser user) {
         requireViewPermission(user);
         ProjectEntity project = get(projectId);
-        if (typeOf(project) != ProjectType.EVENT) {
-            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "只有活动选题才有选片流程");
-        }
         if (!canSelect(project, user)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "你不是这个选题的选片人");
         }
         return project;
     }
 
-    /** 改选片人 / 清理图片共用的前置校验。 */
-    public ProjectEntity requireManageableEventProject(Long projectId, AuthenticatedUser user) {
+    /** 改选片人名单的前置校验：{@code PROJECT_CREATE} + 本人创建或管理员。两类选题一样。 */
+    public ProjectEntity requireSelectionManager(Long projectId, AuthenticatedUser user) {
         requirePermission(user, PermissionCode.PROJECT_CREATE);
         ProjectEntity project = get(projectId);
-        if (typeOf(project) != ProjectType.EVENT) {
-            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "只有活动选题才有选片流程");
-        }
         requireOwnerOrAdmin(project, user);
+        return project;
+    }
+
+    /**
+     * 清理图片的前置校验：在 {@link #requireSelectionManager} 之上再要求是活动选题。
+     *
+     * <p>创作选题的图片是按需求交上来的成品，选题结束就是交付完成，不再按标签删图——
+     * 选片在那里只是帮负责人挑图、做标记。</p>
+     */
+    public ProjectEntity requireManageableEventProject(Long projectId, AuthenticatedUser user) {
+        ProjectEntity project = requireSelectionManager(projectId, user);
+        if (typeOf(project) != ProjectType.EVENT) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "只有活动选题在结束时清理图片");
+        }
         return project;
     }
 
@@ -583,17 +662,18 @@ public class ProjectService {
     }
 
     /**
-     * @param selectors      活动选题的选片人；创作选题恒为空列表
+     * @param selectors      选题的选片人
      * @param canSelect      当前账号能不能进这个选题的选片页
-     * @param canManageSelection 当前账号能不能改选片人、能不能清理 deprecated 图片
+     * @param canManageSelection 当前账号能不能改选片人；活动选题还意味着能清理 deprecated 图片
      * @param deprecatedCount 相册里打了 {@code deprecated} 的图片数（含已被引的，前端按需提示）
+     * @param pinned         当前账号有没有置顶这个选题
      */
     public record ProjectDetail(Long id, String title, String description, ProjectStatus status,
                                 ProjectType type, Long createdBy, LocalDateTime createdAt,
                                 LocalDateTime updatedAt, Integer version, long requestCount,
                                 long photoCount, long adoptionCount, List<String> tags,
                                 List<Selector> selectors, boolean canSelect, boolean canManageSelection,
-                                long deprecatedCount) {
+                                long deprecatedCount, boolean pinned) {
     }
 
     public record Selector(Long userId, String displayName, String username) {
