@@ -10,10 +10,12 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import lombok.RequiredArgsConstructor;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -59,10 +61,18 @@ public class PhotoController {
             @RequestParam(defaultValue = "false") boolean selectableOnly,
             @RequestParam(required = false) List<String> tags,
             @RequestParam(required = false) @Size(max = 200) List<String> photographers,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate takenFrom,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate takenTo,
+            @RequestParam(required = false) Boolean adopted,
+            @RequestParam(required = false) Boolean inProject,
+            // 多个标签时的匹配方式：ALL 同时包含（默认，与改动前一致），ANY 任意其一。
+            @RequestParam(defaultValue = "ALL") @Pattern(regexp = "ALL|ANY") String tagMatch,
             @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.list(page, pageSize, keyword, projectId, requestId,
                 photographerStudentId, photographerName, uploadedBy, campusId, status,
-                includeAllStatuses, favoritesOnly, selectableOnly, tags, photographers, user));
+                includeAllStatuses, favoritesOnly, selectableOnly, tags, photographers,
+                new PhotoService.LibraryFilter(takenFrom, takenTo, adopted, inProject, "ANY".equals(tagMatch)),
+                user));
     }
 
     /** 图库「按拍摄者筛选」的候选。范围与 {@code GET /photos} 完全一致，见 PhotoService.photographers。 */

@@ -3313,3 +3313,96 @@ body {
   .dashboard-bar-row { grid-template-columns: 1fr auto; }
   .dashboard-bar-track { grid-column: 1 / -1; grid-row: 2; }
 }
+
+/* 图库：筛选条下方的「共 N 张 / 全选筛选结果 / 全选本页 / 反选本页」一行。 */
+.filter-card .ant-card-body:has(.library-selection-bar) { flex-wrap: wrap; }
+.library-selection-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; width: 100%; }
+.library-selection-bar .ant-btn-link { padding-inline: 4px; }
+/* 工时分析：图表配色（dataviz 校验脚本验过：两色在色盲模拟下仍可辨），文字一律走文字色。 */
+:root {
+  --viz-surface: #fcfcfb;
+  --viz-series-1: #2a78d6;
+  --viz-series-2: #eb6834;
+  --viz-series-3: #1baf7a;
+  --viz-status-good: #0ca30c;
+  --viz-status-warning: #fab219;
+  --viz-status-critical: #d03b3b;
+  --viz-heat-1: #cde2fb;
+  --viz-heat-2: #9ec5f4;
+  --viz-heat-3: #5598e7;
+  --viz-heat-4: #256abf;
+  --viz-heat-5: #104281;
+  --viz-heat-empty: #eceae4;
+  --viz-ink: #20384b;
+  --viz-ink-secondary: #52514e;
+  --viz-muted: #898781;
+  --viz-grid: #e1e0d9;
+  --viz-baseline: #c3c2b7;
+}
+.statistics-tabs { margin-bottom: 4px; }
+.worklog-analysis { display: grid; gap: 16px; }
+.worklog-analysis .metric-grid { margin-bottom: 0; }
+.analysis-filter-card .ant-card-body { display: grid !important; gap: 14px; }
+.analysis-filter-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; }
+.analysis-scope-note { font-size: 12px; }
+.analysis-card .ant-card-body { position: relative; }
+
+.condition-group { border: 1px solid var(--porcelain-rule, rgba(70,130,180,.2)); border-radius: 10px; padding: 10px 12px;
+  background: rgba(255,255,255,.6); }
+.condition-group .condition-group { margin-top: 2px; background: rgba(224,255,255,.35); }
+.condition-group-root { border-style: dashed; }
+.condition-group-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 8px; }
+.condition-group-body { display: grid; gap: 8px; padding-left: 12px; border-left: 2px solid var(--sky-powder, #B0E0E6); }
+.condition-leaf { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.condition-leaf-incomplete .ant-select-selector, .condition-leaf-incomplete .ant-picker { border-style: dashed !important; }
+.condition-leaf-hint { font-size: 12px; }
+
+.viz-chart { position: relative; width: 100%; }
+.viz-chart svg { display: block; overflow: visible; touch-action: pan-y; }
+.viz-grid line { stroke: var(--viz-grid); stroke-width: 1; }
+.viz-grid text, .viz-axis { fill: var(--viz-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.viz-baseline { stroke: var(--viz-baseline); stroke-width: 1; }
+.viz-hit { fill: transparent; }
+.viz-hover-band { fill: var(--viz-series-1); fill-opacity: .06; pointer-events: none; }
+.viz-row-label { fill: var(--viz-ink-secondary); font-size: 12px; }
+.viz-row-value { fill: var(--viz-ink); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.viz-tooltip { position: absolute; top: 4px; z-index: 5; min-width: 140px; transform: translateX(-50%); pointer-events: none;
+  display: grid; gap: 2px; padding: 8px 10px; border-radius: 8px; background: #fff; color: var(--viz-ink);
+  box-shadow: 0 6px 20px rgba(32,56,75,.16); border: 1px solid rgba(11,11,11,.08); font-size: 12px; }
+.viz-tooltip > span { color: var(--viz-ink-secondary); margin-bottom: 2px; }
+.viz-tooltip-row { display: flex; align-items: center; gap: 6px; }
+.viz-tooltip-row em { flex: 1; font-style: normal; color: var(--viz-ink-secondary); }
+.viz-tooltip-row strong { font-variant-numeric: tabular-nums; }
+.viz-tooltip-row i, .viz-legend i, .viz-share-labels i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; }
+.viz-legend { display: inline-flex; flex-wrap: wrap; gap: 4px 12px; color: var(--viz-ink-secondary); font-size: 12px; }
+.viz-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.viz-share { display: grid; gap: 8px; margin-top: 6px; }
+.viz-share-track { display: flex; gap: 2px; height: 14px; border-radius: 4px; overflow: hidden; background: var(--viz-surface); }
+.viz-share-track span { min-width: 3px; }
+.viz-share-labels { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--viz-ink-secondary); }
+.viz-share-labels span { display: inline-flex; align-items: center; gap: 6px; }
+.viz-share-labels strong { color: var(--viz-ink); font-variant-numeric: tabular-nums; }
+.viz-share-labels em { font-style: normal; color: var(--viz-muted); }
+.viz-share-empty { color: var(--viz-muted); font-size: 12px; padding: 6px 0; }
+.viz-heatmap { display: grid; gap: 8px; }
+.viz-heatmap-scroll { position: relative; overflow-x: auto; padding-bottom: 4px; }
+.viz-heatmap rect.viz-heat-empty, .viz-heat-empty-swatch { fill: var(--viz-heat-empty); background: var(--viz-heat-empty); }
+.viz-heatmap .viz-tooltip { top: 0; }
+.viz-heat-legend { display: flex; align-items: center; gap: 4px; color: var(--viz-muted); font-size: 12px; }
+.viz-heat-legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
+.project-worklog-metrics .ant-statistic-content { font-size: 20px; }
+@media (max-width: 640px) {
+  .analysis-filter-head { align-items: stretch; }
+  .condition-group-body { padding-left: 6px; }
+  .condition-leaf > .ant-select, .condition-leaf > .ant-input, .condition-leaf > .ant-picker { flex: 1 1 100%; max-width: none !important; }
+}.analysis-metrics .ant-card-body { padding: 16px 18px; }
+.analysis-metrics .ant-statistic-title { font-size: 12px; min-height: 2.6em; }
+.analysis-metrics .ant-statistic-content { font-size: 24px; white-space: nowrap; }
+.analysis-metrics .ant-statistic-content-suffix { font-size: 13px; color: var(--viz-ink-secondary); }/* 窄屏：条件编辑器和筛选头都是 flex / grid 子项，默认最小宽度是内容宽，不放开就会把整页撑出横向滚动。 */
+.analysis-filter-head > *, .condition-group, .condition-group-body > *, .condition-leaf { min-width: 0; max-width: 100%; }
+.worklog-analysis, .worklog-analysis > * { min-width: 0; }
+@media (max-width: 640px) {
+  .analysis-filter-head .ant-picker-range { width: 100%; }
+  .condition-leaf > .ant-select, .condition-leaf > .ant-picker { width: 100% !important; min-width: 0 !important; }
+  .condition-group-head > .ant-select { width: 100% !important; }
+}

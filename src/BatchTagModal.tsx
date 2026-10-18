@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { api } from './api'
 import type { EntityId, TaggedPhoto } from './types'
 import TagSelect from './TagSelect'
+import { runInChunks } from './librarySelection'
 import { normalizeTags, tagRules, tagsOnPhotos } from './photoTags'
 import type { TaggablePhoto } from './photoTags'
 
@@ -36,16 +37,28 @@ export default function BatchTagModal({ mode, photos, projectId, presets = [], o
     }
     setSaving(true)
     try {
-      const result = await api<TaggedPhoto[]>({
-        method: 'POST',
-        url: '/photos/batch-tags',
-        data: {
-          photoIds: photos.map(photo => photo.id),
-          addTags: mode === 'add' ? tags : [],
-          removeTags: mode === 'remove' ? tags : [],
-          projectId: projectId ?? null,
-        },
+      // 图库「筛选结果全选」能选上几百张，而后端一次最多改 200 张：按批顺序发。
+      // 中途失败时前面几批已经改好了，照样回传给页面，并如实说明还剩多少没改。
+      const result: TaggedPhoto[] = []
+      const { error } = await runInChunks(photos.map(photo => photo.id), async batch => {
+        result.push(...await api<TaggedPhoto[]>({
+          method: 'POST',
+          url: '/photos/batch-tags',
+          data: {
+            photoIds: batch,
+            addTags: mode === 'add' ? tags : [],
+            removeTags: mode === 'remove' ? tags : [],
+            projectId: projectId ?? null,
+          },
+        }))
       })
+      if (error) {
+        message.error(result.length
+          ? `已处理 ${result.length} 张，其余 ${photos.length - result.length} 张没有改动：${error.message}`
+          : error.message)
+        if (result.length) onDone(result)
+        return
+      }
       message.success(mode === 'add'
         ? `已为 ${result.length} 张图片添加标签`
         : `已从 ${result.length} 张图片移除标签`)

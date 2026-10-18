@@ -3,7 +3,7 @@ import {
   Modal, Radio, Row, Select, Space, Statistic, Tag, Tooltip, Typography,
 } from 'antd'
 import {
-  ArrowLeftOutlined, CameraOutlined, CheckCircleOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, EyeOutlined,
+  ArrowLeftOutlined, CameraOutlined, CheckCircleOutlined, ClockCircleOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, EyeOutlined,
   FileImageOutlined, LinkOutlined, MinusCircleOutlined, PlusOutlined, PushpinFilled, PushpinOutlined,
   RocketOutlined, ScissorOutlined, ShareAltOutlined, StopOutlined, TagsOutlined, TeamOutlined, UnorderedListOutlined,
 } from '@ant-design/icons'
@@ -23,7 +23,7 @@ import MarkdownEditor from '../MarkdownEditor'
 import MarkdownRenderer, { markdownExcerpt } from '../MarkdownRenderer'
 import RequestAssigneeSelect from '../RequestAssigneeSelect'
 import { preparePhotoBatchDownload } from '../photoBatchDownload'
-import { hasPermission } from '../permissions'
+import { hasAnyPermission, hasPermission } from '../permissions'
 import { selectPhotoRange } from '../photoSelection'
 import { groupPhotoRequests, selectedRequestFor } from '../requestBatch'
 import type { RequestBatchRow } from '../requestBatch'
@@ -44,7 +44,6 @@ import {
 import type { ProjectPhotoFilters } from '../photoTags'
 import ProjectPhotoFilterBar from '../ProjectPhotoFilterBar'
 import ListPagination from '../ListPagination'
-import { clientTablePagination } from '../pagination'
 import {
   PROJECT_ALBUM_PAGE_SIZE, PROJECT_ALBUM_PAGE_SIZES, loadProjectAlbumView, pageContaining,
   projectPhotoDetailPath, saveProjectAlbumView,
@@ -54,6 +53,8 @@ import type { ProjectPhotoNavState } from '../projectPhotoContext'
 const ProjectShareLinksModal = lazy(() => import('../ProjectShareLinksModal'))
 const SelectionCleanupModal = lazy(() => import('../SelectionCleanupModal'))
 const AdoptedPhotographersModal = lazy(() => import('../AdoptedPhotographersModal'))
+const LibraryPickerModal = lazy(() => import('../LibraryPickerModal'))
+const ProjectWorklogsDrawer = lazy(() => import('../ProjectWorklogsDrawer'))
 
 const projectStateCopy = {
   DRAFT: {
@@ -292,8 +293,9 @@ export default function ProjectDetailPage() {
   // 被引图片的作者名单。名单由后端现算，这里只记弹窗开没开——选题详情页自己那份 adoptions
   // 对校区范围账号是空的（见下面的 useLoad），拿它凑名单会漏人。
   const [photographersOpen, setPhotographersOpen] = useState(false)
-  const [galleryKeyword, setGalleryKeyword] = useState('')
-  const [selectedPhotoIds, setSelectedPhotoIds] = useState<string[]>([])
+  // 本选题工时：与 GET /worklogs 的方法级授权一致；只有填报权限的人看到的是自己填的那些。
+  const [worklogsOpen, setWorklogsOpen] = useState(false)
+  const canViewWorklogs = hasAnyPermission(user, 'WORKLOG_SUBMIT', 'WORKLOG_CONFIRM', 'WORKLOG_EXPORT')
   // 项目相册里的勾选：打包下载和批量改标签共用一份选择。
   const [selectedAlbumPhotoIds, setSelectedAlbumPhotoIds] = useState<string[]>([])
   const [albumSelectionAnchor, setAlbumSelectionAnchor] = useState<string | null>(null)
@@ -377,16 +379,6 @@ export default function ProjectDetailPage() {
       ? api<ProjectSelector[]>({ url: `/projects/${projectId}/selector-candidates` })
       : Promise.resolve([] as ProjectSelector[]),
     [] as ProjectSelector[], [selectorsOpen, projectId],
-  )
-
-  const { data: galleryPhotos, loading: galleryLoading } = useLoad(
-    () => galleryOpen && hasPermission(user, 'PROJECT_ADOPT') && hasPermission(user, 'PHOTO_VIEW')
-      ? api<PageData<Photo>>({
-      url: '/photos',
-      params: { page: 1, pageSize: 100, status: 'AVAILABLE', keyword: galleryKeyword || undefined },
-    }) : Promise.resolve(emptyPage<Photo>()),
-    emptyPage<Photo>(),
-    [galleryOpen, galleryKeyword, user?.permissionGroupId],
   )
 
   const toggleAdoption = async (photo: Photo) => {
@@ -552,29 +544,6 @@ export default function ProjectDetailPage() {
       setEditOpen(false)
       await reload()
     } catch (reason) { message.error((reason as Error).message) } finally { setSaving(false) }
-  }
-
-  const addFromGallery = async () => {
-    if (!selectedPhotoIds.length) {
-      message.warning('请至少选择一张图库图片')
-      return
-    }
-    setSaving(true)
-    try {
-      await api({
-        method: 'POST',
-        url: `/projects/${projectId}/photos`,
-        data: { photoIds: selectedPhotoIds },
-      })
-      message.success(`已向项目相册添加 ${selectedPhotoIds.length} 张图片，请按需标注采纳`)
-      setGalleryOpen(false)
-      setSelectedPhotoIds([])
-      await reload()
-    } catch (reason) {
-      message.error((reason as Error).message)
-    } finally {
-      setSaving(false)
-    }
   }
 
   const toggleAlbumPhoto = (photoId: string, checked: boolean) => {
@@ -792,8 +761,6 @@ export default function ProjectDetailPage() {
   const downloadablePhotoCount = useMemo(
     () => data.photos.filter(photo => isDownloadableStatus(photo.status)).length, [data.photos])
   const selectionFull = selectedAlbumPhotoIds.length >= 200
-  const addableGalleryPhotos = galleryPhotos.items.filter(photo =>
-    !photo.relatedProjectIds?.some(id => String(id) === projectId))
   return <DataState loading={loading} error={error} empty={!project} onRetry={reload}
     emptyText="找不到这个项目"
     emptyHint="它可能已经被删除，或者你参与的需求都不在这个项目下。">
@@ -845,6 +812,8 @@ export default function ProjectDetailPage() {
             {canAdopt && project.status === 'ACTIVE' &&
               <Button icon={<FileImageOutlined />} onClick={() => setGalleryOpen(true)}>从图库添加图片</Button>}
             <Button icon={<TeamOutlined />} onClick={() => setPhotographersOpen(true)}>被引图片作者</Button>
+            {canViewWorklogs && <Button icon={<ClockCircleOutlined />} onClick={() => setWorklogsOpen(true)}>
+              本选题工时</Button>}
             {canShare && <Button icon={<ShareAltOutlined />} onClick={() => setShareOpen(true)}>分享链接</Button>}
             {canEdit && <>
             {project.status !== 'COMPLETED' && project.status !== 'CANCELLED' &&
@@ -1024,43 +993,15 @@ export default function ProjectDetailPage() {
         </Form>
       </Modal>
 
-      <Modal title="从图库添加图片" width={860} open={galleryOpen}
-        onCancel={() => setGalleryOpen(false)} onOk={addFromGallery}
-        okText={`添加所选图片${selectedPhotoIds.length ? `（${selectedPhotoIds.length}）` : ''}`}
-        confirmLoading={saving}>
-        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-          <Typography.Paragraph type="secondary">
-            选择你有权查看的可用图库图片。添加后只会进入项目相册，默认不标记为采纳；
-            管理员可在项目图片中按需标注。
-          </Typography.Paragraph>
-          <Input.Search allowClear placeholder="搜索图片标题、描述或标签"
-            onSearch={setGalleryKeyword} style={{ maxWidth: 420 }} />
-          <ContentFitTable<Photo> rowKey="id" size="small" loading={galleryLoading}
-            dataSource={addableGalleryPhotos}
-            pagination={clientTablePagination(addableGalleryPhotos.length,
-              { defaultPageSize: 8, sizes: [8, 16, 32] })}
-            rowSelection={{
-              // 这张表是本地分页（dataSource 就是全部候选图），勾选本来就跨页保留；
-              // preserveSelectedRowKeys 还管住「换了关键词再搜一次」时已勾选的那几张。
-              preserveSelectedRowKeys: true,
-              selectedRowKeys: selectedPhotoIds,
-              onChange: keys => setSelectedPhotoIds(keys.map(String)),
-            }}
-            locale={{ emptyText: '没有可添加的图库图片' }}
-            columns={[
-              { title: '预览', width: 92, render: (_, photo) =>
-                photo.thumbnailUrl ? <PreviewPhoto width={68} height={48} style={{ objectFit: 'contain' }}
-                  preview={false} src={photo.thumbnailUrl}
-                  refresh={() => refreshPhotoPreviewUrl(photo.id)}
-                  fallback={pickPlaceholderImage(placeholderImages, photo.id)} /> : '-' },
-              { title: '图片', dataIndex: 'title', render: (value, photo) =>
-                <div className="table-title"><strong>{value || '未命名图片'}</strong>
-                  <span>{photo.photographerName} · {dayjs(photo.takenAt).format('YYYY-MM-DD')}</span></div> },
-              { title: '标签', dataIndex: 'tags', render: tags =>
-                <Space size={4} wrap>{tags?.slice(0, 3).map((tag: string) => <Tag key={tag}>{tag}</Tag>)}</Space> },
-            ]} />
-        </Space>
-      </Modal>
+      {/* 和下面几个弹窗一样按需加载：只有点了「从图库添加图片」才需要这段代码。 */}
+      {galleryOpen && canAdopt && hasPermission(user, 'PHOTO_VIEW') && <Suspense fallback={null}>
+        <LibraryPickerModal open={galleryOpen} projectId={projectId}
+          onClose={() => setGalleryOpen(false)} onAdded={() => void reload()} />
+      </Suspense>}
+      {worklogsOpen && <Suspense fallback={null}>
+        <ProjectWorklogsDrawer open={worklogsOpen} projectId={projectId} projectTitle={project.title}
+          onClose={() => setWorklogsOpen(false)} />
+      </Suspense>}
       <Modal title="指定选片人" width={620} open={selectorsOpen} onCancel={() => setSelectorsOpen(false)}
         onOk={saveSelectors} okText="保存名单" confirmLoading={saving}>
         <Typography.Paragraph type="secondary">

@@ -34,6 +34,39 @@ export interface PhotoLibraryFilters {
    * 认的是图片上的拍摄者而不是上传账号——上传的人不一定是拍的人。
    */
   photographers: string[]
+  /**
+   * 以下几项可选，缺省就是「不限」，也不进 URL——旧链接和旧的书签照样能打开。
+   * 拍摄日期是 `YYYY-MM-DD`，两端都含整天（后端按次日零点之前取）。
+   */
+  takenFrom?: string
+  takenTo?: string
+  /** `yes` 只看被任意选题引用过的，`no` 只看从没被引用过的。 */
+  adopted?: PhotoLibraryFlag
+  /** `yes` 只看进过选题相册的，`no` 只看还没进过任何选题的（常用来找「还没整理的图」）。 */
+  inProject?: PhotoLibraryFlag
+  /** 多个标签时 `any` 是「任意其一」；缺省是「同时包含」。 */
+  tagMatch?: 'any'
+}
+
+export type PhotoLibraryFlag = 'yes' | 'no'
+
+const FLAGS: readonly string[] = ['yes', 'no']
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
+
+/** URL 里的日期可能被手改：格式不对、或者不是真实存在的日子（2026-02-30）都当没填。 */
+function readDate(value: string | null): string | undefined {
+  if (!value || !DATE_PATTERN.test(value)) return undefined
+  const date = new Date(`${value}T00:00:00Z`)
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value ? value : undefined
+}
+
+function readFlag(value: string | null): PhotoLibraryFlag | undefined {
+  return value && FLAGS.includes(value) ? value as PhotoLibraryFlag : undefined
+}
+
+/** 拍摄日期、被引、进没进选题这几项有没有生效——和关键词 / 标签 / 拍摄者一起决定要不要显示「清空筛选」。 */
+export function hasExtraLibraryFilters(filters: PhotoLibraryFilters): boolean {
+  return Boolean(filters.takenFrom || filters.takenTo || filters.adopted || filters.inProject)
 }
 
 export const DEFAULT_PHOTO_LIBRARY_FILTERS: PhotoLibraryFilters = {
@@ -48,7 +81,14 @@ export const DEFAULT_PHOTO_LIBRARY_FILTERS: PhotoLibraryFilters = {
 export function readPhotoLibraryFilters(searchParams: URLSearchParams): PhotoLibraryFilters {
   const requestedPage = Number(searchParams.get('page'))
   const requestedStatus = searchParams.get('status')
+  let takenFrom = readDate(searchParams.get('takenFrom'))
+  let takenTo = readDate(searchParams.get('takenTo'))
+  // 起止颠倒时后端会 400，整页变成加载出错；手改的 URL 直接把两端换过来。
+  if (takenFrom && takenTo && takenFrom > takenTo) [takenFrom, takenTo] = [takenTo, takenFrom]
+  const adopted = readFlag(searchParams.get('adopted'))
+  const inProject = readFlag(searchParams.get('inProject'))
 
+  // 新增的几项只在 URL 里真有值时才出现在结果里：缺省就是没有这个键，而不是 undefined。
   return {
     page: Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1,
     // URL 可能被手改：后端的 pageSize 上限是 100，超出会 400 让整页变成加载出错。
@@ -60,6 +100,11 @@ export function readPhotoLibraryFilters(searchParams: URLSearchParams): PhotoLib
     // URL 可能被手改：超长的标签后端会直接 400，这里先丢掉，页面按剩下的条件正常加载。
     tags: normalizeTags(searchParams.getAll('tags')).filter(tag => !isTagTooLong(tag)).slice(0, MAX_TAGS),
     photographers: normalizePhotographerFilter(searchParams.getAll('photographers')),
+    ...(takenFrom ? { takenFrom } : {}),
+    ...(takenTo ? { takenTo } : {}),
+    ...(adopted ? { adopted } : {}),
+    ...(inProject ? { inProject } : {}),
+    ...(searchParams.get('tagMatch') === 'any' ? { tagMatch: 'any' as const } : {}),
   }
 }
 
@@ -92,6 +137,12 @@ export function photoLibraryRequestParams(
   params.set('status', filters.status)
   for (const tag of filters.tags) params.append('tags', tag)
   for (const photographer of filters.photographers) params.append('photographers', photographer)
+  if (filters.takenFrom) params.set('takenFrom', filters.takenFrom)
+  if (filters.takenTo) params.set('takenTo', filters.takenTo)
+  if (filters.adopted) params.set('adopted', String(filters.adopted === 'yes'))
+  if (filters.inProject) params.set('inProject', String(filters.inProject === 'yes'))
+  // 只有一个标签时「同时包含」和「任意其一」是一回事，不必多发一个参数。
+  if (filters.tagMatch === 'any' && filters.tags.length > 1) params.set('tagMatch', 'ANY')
   if (options.favoritesOnly) params.set('favoritesOnly', 'true')
   return params
 }
@@ -104,6 +155,11 @@ export function writePhotoLibraryFilters(filters: PhotoLibraryFilters): URLSearc
   if (filters.pageSize !== DEFAULT_PHOTO_LIBRARY_FILTERS.pageSize) searchParams.set('pageSize', String(filters.pageSize))
   for (const tag of filters.tags ?? []) searchParams.append('tags', tag)
   for (const photographer of filters.photographers ?? []) searchParams.append('photographers', photographer)
+  if (filters.takenFrom) searchParams.set('takenFrom', filters.takenFrom)
+  if (filters.takenTo) searchParams.set('takenTo', filters.takenTo)
+  if (filters.adopted) searchParams.set('adopted', filters.adopted)
+  if (filters.inProject) searchParams.set('inProject', filters.inProject)
+  if (filters.tagMatch === 'any') searchParams.set('tagMatch', 'any')
   return searchParams
 }
 

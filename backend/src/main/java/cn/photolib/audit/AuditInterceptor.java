@@ -44,7 +44,10 @@ public class AuditInterceptor implements HandlerInterceptor {
                 // MCP 客户端每两秒轮询一次 /auth/mcp/token 等批准，一次配对能刷出几百条
                 // 一模一样的记录，把真正要查的东西冲掉。安全上要看的那一条是"谁批准了
                 // 这次配对"，它由 /authorizations/{id}/approve 记下来，带着操作者。
-                || request.getRequestURI().endsWith("/auth/mcp/token")) return;
+                || request.getRequestURI().endsWith("/auth/mcp/token")
+                // 统计面板的工时分析是只读查询，只因条件树太长才用 POST 带请求体；
+                // 面板每改一次条件就重算一次，记进审计只会把真正的写操作冲掉。
+                || request.getRequestURI().endsWith("/statistics/worklog-analysis")) return;
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         Long userId = auth != null && auth.getPrincipal() instanceof AuthenticatedUser user ? user.id() : null;
         AuditLogEntity log = new AuditLogEntity();

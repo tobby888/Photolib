@@ -11,7 +11,8 @@ test('图库把单击选图、双击详情和 Shift 连选接到图片封面上'
   assert.match(page, /usePhotoCardClick<Photo>/)
   assert.match(page, /onDoubleClick=\{event => \{[\s\S]*?openPhotoDetail\(photo\)/)
   assert.match(page, /event\.shiftKey[\s\S]*?selectRangeTo\(photo\.id\)/)
-  assert.match(page, /selectPhotoRange\(selectedIds, orderedIds, selectionAnchor, photoId, 200\)/)
+  // 上限放宽到 MAX_LIBRARY_SELECTION（筛选结果全选），提交时再按后端的 200 张一批拆开发。
+  assert.match(page, /selectPhotoRange\(selectedIds, orderedIds, selectionAnchor, photoId, MAX_LIBRARY_SELECTION\)/)
 })
 
 test('选题详情页和分享页也支持单击 / Shift 连选，并且保留 memo 的稳定回调', async () => {
