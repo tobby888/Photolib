@@ -5,6 +5,7 @@ import {
   CheckOutlined, ClockCircleOutlined, DeleteOutlined, DownloadOutlined, PlusOutlined, StopOutlined,
 } from '@ant-design/icons'
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { api, emptyPage, qs } from '../api'
 import { useAuth } from '../auth'
@@ -45,13 +46,22 @@ export default function WorklogsPage() {
   // 第 1 页的那几行已经不在 data.items 里了（见 src/rowSelection.ts）。
   const [selectedItems, setSelectedItems] = useState<Worklog[]>([])
   const [filters, setFilters] = useState({ page: 1, pageSize: 20, status: '' })
+  // 从选题详情页「本选题工时」跳过来时带着 ?projectId=，只看这个选题的工时；清掉就回到全部。
+  const [searchParams, setSearchParams] = useSearchParams()
+  const projectFilter = /^\d+$/.test(searchParams.get('projectId') || '') ? searchParams.get('projectId')! : ''
+  const clearProjectFilter = () => {
+    const next = new URLSearchParams(searchParams)
+    next.delete('projectId')
+    setSearchParams(next, { replace: true })
+    setFilters(current => ({ ...current, page: 1 }))
+  }
   const reviewer = hasPermission(user, 'WORKLOG_CONFIRM')
   const canExport = hasPermission(user, 'WORKLOG_EXPORT')
   const canSubmit = hasPermission(user, 'WORKLOG_SUBMIT')
   const canSubmitAny = hasPermission(user, 'WORKLOG_SUBMIT_ANY')
   const { data, loading, error, reload } = useLoad(
-    () => api<PageData<Worklog>>({ url: '/worklogs', params: qs({ ...filters }) }),
-    emptyPage<Worklog>(), [filters.page, filters.pageSize, filters.status],
+    () => api<PageData<Worklog>>({ url: '/worklogs', params: qs({ ...filters, projectId: projectFilter }) }),
+    emptyPage<Worklog>(), [filters.page, filters.pageSize, filters.status, projectFilter],
   )
   const selectedIds = selectedItems.map(item => item.id)
   // 列表重取之后把勾着的行换成新数据：批准和删除都带版本号，拿着旧快照去提交会被乐观锁拒掉。
@@ -274,6 +284,8 @@ export default function WorklogsPage() {
           { value: 'CONFIRMED', label: '已确认' },
           { value: 'REJECTED', label: '已退回' },
         ]} onChange={(status = '') => setFilters({ ...filters, page: 1, status })} />
+        {projectFilter && <Tag closable color="blue" onClose={event => { event.preventDefault(); clearProjectFilter() }}>
+          只看选题 #{projectFilter} 的工时</Tag>}
         {reviewer && <>
           <span>已选择 {selectedItems.length} 条{
             selectedItems.some(item => !data.items.some(row => row.id === item.id)) ? '（含其他页）' : ''}</span>

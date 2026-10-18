@@ -129,12 +129,30 @@ public class WorklogService {
     public PageResponse<WorklogEntity> list(int page, int pageSize, Long requestId, Long userId,
                                             WorklogStatus status, LocalDate from, LocalDate to,
                                             AuthenticatedUser principal) {
+        return list(page, pageSize, requestId, null, userId, status, from, to, principal);
+    }
+
+    /**
+     * @param projectId 只看这个选题的工时：站内填报的按需求所属选题，链接申报的按链接所属选题，
+     *                  与统计里 {@code COALESCE(需求的选题, 链接的选题)} 是同一个口径。
+     *                  它只是收窄条件，可见范围（本人 / 校区）照旧由下面几条决定。
+     */
+    public PageResponse<WorklogEntity> list(int page, int pageSize, Long requestId, Long projectId, Long userId,
+                                            WorklogStatus status, LocalDate from, LocalDate to,
+                                            AuthenticatedUser principal) {
         boolean reviewer = principal.hasAnyPermission(
                 PermissionCode.WORKLOG_CONFIRM, PermissionCode.WORKLOG_EXPORT);
         Long effectiveUser = reviewer ? userId : principal.id();
         Page<WorklogEntity> result = mapper.selectPage(Page.of(page, pageSize),
                 Wrappers.<WorklogEntity>lambdaQuery()
                         .eq(requestId != null, WorklogEntity::getRequestId, requestId)
+                        // {0} 由 MyBatis-Plus 绑定成参数，不拼进 SQL 文本。链接是软删的，撤销之后
+                        // 申报的工时仍属于这个选题，所以链接那一侧不看 deleted。
+                        .and(projectId != null, q -> q
+                                .apply("request_id IN (SELECT id FROM photo_request WHERE project_id = {0})",
+                                        projectId)
+                                .or().apply("share_link_id IN (SELECT id FROM project_share_link"
+                                        + " WHERE project_id = {0})", projectId))
                         // 链接申报的工时没有需求（request_id 为 NULL），于是校区范围账号在这里
                         // 天然筛不到它们——这类工时不属于任何校区，见 requireVisible。
                         .inSql(principal.isCampusScoped(), WorklogEntity::getRequestId,

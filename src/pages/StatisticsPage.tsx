@@ -1,6 +1,7 @@
-import { App, Button, Card, Col, DatePicker, Descriptions, Modal, Progress, Row, Space, Statistic, Tag, Typography } from 'antd'
+import { App, Button, Card, Col, DatePicker, Descriptions, Modal, Progress, Row, Space, Statistic, Tabs, Tag, Typography } from 'antd'
 import { CameraOutlined, ClockCircleOutlined, DownloadOutlined, FolderOutlined, TrophyOutlined } from '@ant-design/icons'
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { api } from '../api'
 import type { MemberStats, MemberWorklogDetail } from '../types'
@@ -8,6 +9,7 @@ import { DataState, PageTitle } from '../components'
 import { ContentFitTable, TableEllipsisText } from '../ContentFitTable'
 import { useLoad } from '../hooks'
 import { clientTablePagination } from '../pagination'
+import WorklogAnalysisPanel from '../WorklogAnalysisPanel'
 
 interface ExportJobView {
   job: { status: 'PENDING' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED'; errorMessage?: string }
@@ -17,8 +19,18 @@ interface ExportJobView {
 const wait = (milliseconds: number) => new Promise(resolve => window.setTimeout(resolve, milliseconds))
 const formatHours = (minutes = 0) => `${Number((minutes / 60).toFixed(2))} 小时`
 
+type StatisticsTab = 'members' | 'analysis'
+
 export default function StatisticsPage() {
   const { message } = App.useApp()
+  // 页签进 URL：选题详情页「在统计面板分析」带着 ?tab=analysis&projectId= 跳过来，直接落在分析页签并预填选题条件。
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tab: StatisticsTab = searchParams.get('tab') === 'analysis' ? 'analysis' : 'members'
+  const [initialProjectId] = useState(() => {
+    const value = searchParams.get('projectId') || ''
+    return /^\d+$/.test(value) ? value : undefined
+  })
+  const switchTab = (next: StatisticsTab) => setSearchParams(next === 'analysis' ? { tab: next } : {}, { replace: true })
   const [range, setRange] = useState<[string, string]>([dayjs().startOf('year').format('YYYY-MM-DD'), dayjs().format('YYYY-MM-DD')])
   const [exporting, setExporting] = useState(false)
   const [detailMember, setDetailMember] = useState<MemberStats | null>(null)
@@ -68,8 +80,17 @@ export default function StatisticsPage() {
   }
   const maxAdopted = Math.max(1, ...data.members.map(m => m.adoptedCount))
   return <>
-    <PageTitle eyebrow="INSIGHTS" title="数据统计" description="按选题结束时间统计工时，并对应每位成员的图片采纳数。"
-      extra={<Button type="primary" size="large" icon={<DownloadOutlined />} loading={exporting} onClick={() => void exportData()}>导出 XLSX</Button>} />
+    <PageTitle eyebrow="INSIGHTS" title="数据统计"
+      description={tab === 'analysis'
+        ? '按工作日期筛选、汇总工时，条件可以自由组合，并用图表看走势与分布。'
+        : '按选题结束时间统计工时，并对应每位成员的图片采纳数。'}
+      extra={tab === 'members' && <Button type="primary" size="large" icon={<DownloadOutlined />} loading={exporting} onClick={() => void exportData()}>导出 XLSX</Button>} />
+    <Tabs className="statistics-tabs" activeKey={tab} onChange={key => switchTab(key as StatisticsTab)} items={[
+      { key: 'members', label: '成员核算' },
+      { key: 'analysis', label: '工时分析' },
+    ]} />
+    {tab === 'analysis' && <WorklogAnalysisPanel initialProjectId={initialProjectId} />}
+    {tab === 'members' && <>
     <Card className="filter-card">
       <Space><span>选题结束时间</span><DatePicker.RangePicker value={[dayjs(range[0]), dayjs(range[1])]}
         onChange={values => values?.[0] && values[1] && setRange([values[0].format('YYYY-MM-DD'), values[1].format('YYYY-MM-DD')])} /></Space>
@@ -102,6 +123,7 @@ export default function StatisticsPage() {
         </Card></Col>
       </Row>
     </DataState>
+    </>}
     <Modal open={detailMember !== null} width={880} onCancel={() => setDetailMember(null)}
       title={detailMember ? `${detailMember.displayName}的工时详情` : '工时详情'}
       footer={<Button onClick={() => setDetailMember(null)}>关闭</Button>}>

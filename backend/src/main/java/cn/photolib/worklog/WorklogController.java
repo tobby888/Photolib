@@ -33,12 +33,13 @@ public class WorklogController {
             @RequestParam(defaultValue = "1") @Min(1) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int pageSize,
             @RequestParam(required = false) Long requestId,
+            @RequestParam(required = false) Long projectId,
             @RequestParam(required = false) Long userId,
             @RequestParam(required = false) WorklogStatus status,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
             @AuthenticationPrincipal AuthenticatedUser user) {
-        return ApiResponse.ok(service.list(page, pageSize, requestId, userId, status, from, to, user));
+        return ApiResponse.ok(service.list(page, pageSize, requestId, projectId, userId, status, from, to, user));
     }
 
     @PutMapping("/worklogs/{id}")

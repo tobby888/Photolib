@@ -28,10 +28,14 @@ import PreviewPhoto from '../PreviewPhoto'
 import { refreshPhotoPreviewUrl } from '../previewRefresh'
 import { PhotoPlaceholder, pickPlaceholderImage, usePlaceholderImages } from '../photoPlaceholder'
 import {
-  PHOTO_LIBRARY_PAGE_SIZES, isTagTooLong, normalizePhotographerFilter, photoLibraryRequestParams,
-  readPhotoLibraryFilters, writePhotoLibraryFilters, withPhotoLibrarySearch,
+  DEFAULT_PHOTO_LIBRARY_FILTERS, PHOTO_LIBRARY_PAGE_SIZES, hasExtraLibraryFilters, isTagTooLong,
+  normalizePhotographerFilter, photoLibraryRequestParams, readPhotoLibraryFilters, writePhotoLibraryFilters,
+  withPhotoLibrarySearch,
 } from '../photoLibrarySearch'
-import type { PhotoLibraryFilters, PhotoLibraryStatus } from '../photoLibrarySearch'
+import type { PhotoLibraryFilters, PhotoLibraryFlag, PhotoLibraryStatus } from '../photoLibrarySearch'
+import {
+  BATCH_REQUEST_LIMIT, MAX_LIBRARY_SELECTION, collectAllPages, invertPage, mergeById, runInChunks,
+} from '../librarySelection'
 import ListPagination from '../ListPagination'
 import { turnPage } from '../pagination'
 import { updateFavoritePage } from '../photoFavorites'
@@ -73,6 +77,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
   const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null)
   const shortcuts = usePhotoCardShortcuts()
   const [batchDownloading, setBatchDownloading] = useState(false)
+  const [selectingAll, setSelectingAll] = useState(false)
   const [projectPickerOpen, setProjectPickerOpen] = useState(false)
   const [projectSaving, setProjectSaving] = useState(false)
   const [selectedProjectId, setSelectedProjectId] = useState<EntityId | null>(null)
@@ -106,7 +111,8 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
   const { data, setData, loading, error, reload, refresh } = useLoad(
     () => api<PageData<Photo>>({ url: '/photos', params: photoLibraryRequestParams(filters, { favoritesOnly }) }),
     emptyPage<Photo>(),
-    [filters.page, filters.pageSize, filters.keyword, filters.status, photographerSearchKey, tagSearchKey, favoritesOnly],
+    [filters.page, filters.pageSize, filters.keyword, filters.status, photographerSearchKey, tagSearchKey, favoritesOnly,
+      filters.takenFrom, filters.takenTo, filters.adopted, filters.inProject, filters.tagMatch],
   )
   useRefreshOnResume(refresh)
   useEffect(() => {
@@ -132,9 +138,31 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
   const showPhotographerFilter = photographerOptions.length > 1 || filters.photographers.length > 0
   const searchLabel = [
     filters.keyword ? `关键词“${filters.keyword}”` : '',
-    filters.tags.length ? `标签 ${filters.tags.map(tag => `“${tag}”`).join('、')}` : '',
+    filters.tags.length ? `标签 ${filters.tags.map(tag => `“${tag}”`).join(filters.tagMatch === 'any' ? '或' : '、')}` : '',
     filters.photographers.length ? `拍摄者 ${filters.photographers.map(name => `“${name}”`).join('、')}` : '',
+    filters.takenFrom || filters.takenTo
+      ? `拍摄于 ${filters.takenFrom || '…'} ~ ${filters.takenTo || '…'}` : '',
+    filters.adopted ? (filters.adopted === 'yes' ? '已被引用' : '未被引用') : '',
+    filters.inProject ? (filters.inProject === 'yes' ? '已进选题' : '未进任何选题') : '',
   ].filter(Boolean).join(' 与 ')
+  const filtersActive = Boolean(filters.keyword || filters.tags.length || filters.photographers.length
+    || hasExtraLibraryFilters(filters))
+  const setFlag = (key: 'adopted' | 'inProject', value: PhotoLibraryFlag | '') => {
+    const next = { ...filters, page: 1 }
+    if (value) next[key] = value
+    else delete next[key]
+    setFilters(next)
+  }
+  const setTakenRange = (from?: string, to?: string) => {
+    const next = { ...filters, page: 1 }
+    delete next.takenFrom
+    delete next.takenTo
+    setFilters({ ...next, ...(from ? { takenFrom: from } : {}), ...(to ? { takenTo: to } : {}) })
+  }
+  // 清空筛选只清条件，状态和每页张数是浏览方式，保持不动。
+  const clearFilters = () => setFilters({
+    ...DEFAULT_PHOTO_LIBRARY_FILTERS, status: filters.status, pageSize: filters.pageSize,
+  })
   const { data: photographers, loading: photographersLoading } = useLoad(
     async () => !canUpload ? [] : user?.dataScope === 'CAMPUS'
       ? (await api<CampusMember[]>({ url: '/campus-members', params: { enabled: true } }))
@@ -248,14 +276,55 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
     }
   }
   const toggleSelected = (photo: Photo, checked: boolean) => {
-    if (checked && selectedIds.length >= 200 && !selectedIds.includes(photo.id)) {
-      message.info('单次最多选择 200 张，已选到上限')
+    if (checked && selectedIds.length >= MAX_LIBRARY_SELECTION && !selectedIds.includes(photo.id)) {
+      message.info(`单次最多选择 ${MAX_LIBRARY_SELECTION} 张，已选到上限`)
       return
     }
     setSelectedPhotos(current => checked
-      ? current.some(item => item.id === photo.id) ? current : [...current, photo].slice(0, 200)
+      ? current.some(item => item.id === photo.id) ? current : [...current, photo].slice(0, MAX_LIBRARY_SELECTION)
       : current.filter(item => item.id !== photo.id))
     if (checked) setSelectionAnchor(photo.id)
+  }
+  const reportMerge = (added: number, truncated: boolean, verb: string) => {
+    if (truncated) message.warning(`单次最多选择 ${MAX_LIBRARY_SELECTION} 张，${verb}到上限为止`)
+    else if (added) message.success(`已${verb} ${added} 张`)
+    else message.info('这些图片都已经选上了')
+  }
+  const selectCurrentPage = () => {
+    const result = mergeById(selectedPhotos, data.items.filter(canSelectPhoto))
+    setSelectedPhotos(result.selected)
+    reportMerge(result.added, result.truncated, '选中本页')
+  }
+  const invertCurrentPage = () => {
+    const result = invertPage(selectedPhotos, data.items.filter(canSelectPhoto))
+    setSelectedPhotos(result.selected)
+    if (result.truncated) message.warning(`单次最多选择 ${MAX_LIBRARY_SELECTION} 张，已选到上限`)
+  }
+  /**
+   * 筛选结果全选：按当前这套筛选条件把每一页都取回来并入勾选（已经勾着的别的图保留）。
+   * 走的是列表同一个接口、同一套参数，所以选中的恰好是翻页能看到的那些图，可见范围由后端裁。
+   * 取数期间用户改了筛选的话，旧条件取回来的结果直接丢掉，免得选中一批已经看不见的图。
+   */
+  const selectAllFiltered = async () => {
+    const operationViewKey = currentViewKeyRef.current
+    setSelectingAll(true)
+    try {
+      const { items, total } = await collectAllPages((page, pageSize) => api<PageData<Photo>>({
+        url: '/photos', params: photoLibraryRequestParams({ ...filters, pageSize }, { page, favoritesOnly }),
+      }))
+      if (currentViewKeyRef.current !== operationViewKey) return
+      const result = mergeById(selectedPhotos, items.filter(canSelectPhoto))
+      setSelectedPhotos(result.selected)
+      if (total > MAX_LIBRARY_SELECTION || result.truncated) {
+        message.warning(`筛选结果共 ${total} 张，单次最多选择 ${MAX_LIBRARY_SELECTION} 张，已选到上限为止`)
+      } else {
+        reportMerge(result.added, false, '选中筛选结果')
+      }
+    } catch (e) {
+      message.error(`全选失败：${(e as Error).message}`)
+    } finally {
+      setSelectingAll(false)
+    }
   }
   const selectRangeTo = (photoId: string) => {
     // 只在可勾选的图片里连选：处理中 / 失败的图片没有勾选框，被连选进去就取消不掉。
@@ -265,13 +334,13 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
       if (target) toggleSelected(target, !selectedIds.includes(photoId))
       return
     }
-    const result = selectPhotoRange(selectedIds, orderedIds, selectionAnchor, photoId, 200)
+    const result = selectPhotoRange(selectedIds, orderedIds, selectionAnchor, photoId, MAX_LIBRARY_SELECTION)
     const candidates = new Map([...selectedPhotos, ...data.items].map(item => [item.id, item]))
     setSelectedPhotos(result.selected
       .map(id => candidates.get(id))
       .filter((item): item is Photo => Boolean(item)))
     setSelectionAnchor(result.anchorId)
-    if (result.truncated) message.info('单次最多选择 200 张，已选到上限')
+    if (result.truncated) message.info(`单次最多选择 ${MAX_LIBRARY_SELECTION} 张，已选到上限`)
   }
   const { click: queuePhotoSelect, doubleClick: openPhotoDetail } = usePhotoCardClick<Photo>(
     photo => toggleSelected(photo, !selectedIds.includes(photo.id)),
@@ -288,6 +357,13 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
     && (photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED')
   const batchDownload = async () => {
     if (!selectedIds.length) return
+    // 一个 ZIP 是一个任务，后端一次最多打包 200 张。拆成几个 ZIP 会让浏览器连弹好几次下载，
+    // 悄悄只打前 200 张又会让人以为全下了——所以请用户先收窄。
+    if (selectedIds.length > BATCH_REQUEST_LIMIT) {
+      message.warning(`打包下载一次最多 ${BATCH_REQUEST_LIMIT} 张，当前选了 ${selectedIds.length} 张。`
+        + '可以加一个拍摄日期或标签筛选，分几次下载。')
+      return
+    }
     setBatchDownloading(true)
     try {
       const downloadUrl = await preparePhotoBatchDownload(selectedIds)
@@ -311,8 +387,20 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
       content: '删除后图片记录和存储对象将被清理；已采纳图片不能直接删除。',
       okText: '确认删除', okButtonProps: { danger: true }, cancelText: '取消',
       onOk: async () => {
-        await api({ method: 'POST', url: '/photos/batch-delete', data: { photoIds: selectedIds } })
-        setSelectedPhotos([]); message.success('所选图片已删除'); await reload()
+        // 后端一次最多删 200 张，多了按批顺序发；中途失败时前面几批已经删掉了，如实告诉用户。
+        const ids = selectedIds
+        const { done, error } = await runInChunks(ids, batch =>
+          api({ method: 'POST', url: '/photos/batch-delete', data: { photoIds: batch } }))
+        const deleted = new Set(ids.slice(0, done))
+        setSelectedPhotos(current => current.filter(photo => !deleted.has(photo.id)))
+        if (error) {
+          message.error(done
+            ? `已删除 ${done} 张，其余 ${ids.length - done} 张没有删除：${error.message}`
+            : error.message)
+        } else {
+          message.success('所选图片已删除')
+        }
+        await reload()
       },
     })
   }
@@ -358,14 +446,22 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
       return
     }
     const photos = projectPickerPhotos
-    const photoIds = photos.map(photo => photo.id)
+    // 已经在这个选题里的不必再发；后端一次最多收 200 张，多了按批顺序发。
+    const photoIds = photos.filter(photo => !isLinkedToProject(photo, project.id)).map(photo => photo.id)
     setProjectSaving(true)
     try {
-      await api({
+      const { done, error } = await runInChunks(photoIds, batch => api({
         method: 'POST',
         url: `/projects/${project.id}/photos`,
-        data: { photoIds },
-      })
+        data: { photoIds: batch },
+      }))
+      if (error) {
+        message.error(done
+          ? `已添加 ${done} 张，其余 ${photoIds.length - done} 张没有添加：${error.message}`
+          : error.message)
+        if (done) await reload()
+        return
+      }
       setSelectedPhotos([])
       closeProjectPicker()
       message.success(`已将 ${photoIds.length} 张图片添加到选题项目“${project.title}”`)
@@ -410,16 +506,52 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
         <TagSelect presets={recentTags} value={filters.tags}
           onChange={selectTags}
           placeholder="按标签筛选（回车添加，同时包含）" style={{ width: 280 }} />
+        {filters.tags.length > 1 && <Select value={filters.tagMatch ?? 'all'} style={{ width: 132 }}
+          aria-label="多个标签的匹配方式" options={[
+            { value: 'all', label: '同时包含' }, { value: 'any', label: '任意其一' },
+          ]} onChange={(match: 'all' | 'any') => {
+            const next = { ...filters, page: 1 }
+            if (match === 'any') next.tagMatch = 'any'
+            else delete next.tagMatch
+            setFilters(next)
+          }} />}
         {showPhotographerFilter && <Select mode="multiple" allowClear maxTagCount="responsive" optionFilterProp="label"
           style={{ width: 240 }} placeholder="按拍摄者筛选" loading={photographerNamesLoading}
           options={photographerOptions} value={filters.photographers}
           onChange={(photographers: string[]) => setFilters({
             ...filters, page: 1, photographers: normalizePhotographerFilter(photographers),
           })} />}
+        <DatePicker.RangePicker allowEmpty={[true, true]} placeholder={['拍摄日期起', '拍摄日期止']}
+          value={[filters.takenFrom ? dayjs(filters.takenFrom) : null, filters.takenTo ? dayjs(filters.takenTo) : null]}
+          onChange={values => setTakenRange(values?.[0]?.format('YYYY-MM-DD'), values?.[1]?.format('YYYY-MM-DD'))} />
+        <Select value={filters.adopted ?? ''} style={{ width: 132 }} aria-label="被引状态" options={[
+          { value: '', label: '被引不限' }, { value: 'yes', label: '已被引用' }, { value: 'no', label: '未被引用' },
+        ]} onChange={(value: PhotoLibraryFlag | '') => setFlag('adopted', value)} />
+        <Select value={filters.inProject ?? ''} style={{ width: 140 }} aria-label="是否进过选题" options={[
+          { value: '', label: '选题不限' }, { value: 'yes', label: '已进选题' }, { value: 'no', label: '未进任何选题' },
+        ]} onChange={(value: PhotoLibraryFlag | '') => setFlag('inProject', value)} />
+        {filtersActive && <Button type="link" onClick={clearFilters}>清空筛选</Button>}
       </Space>
       <RecentTagChips scope={tagHistoryScope} selected={filters.tags} onChange={setTagFilters}
         onClear={rerenderTagHistory} />
-      <Typography.Text type="secondary">共 {data.total} 张图片</Typography.Text>
+      <div className="library-selection-bar">
+        <Typography.Text type="secondary">
+          {filtersActive ? `筛选出 ${data.total} 张图片` : `共 ${data.total} 张图片`}
+        </Typography.Text>
+        {(canAddToProject || canDownload || canDelete || canTag)
+          && (filters.status === 'AVAILABLE' || filters.status === 'ARCHIVED') && <Space size={4} wrap>
+          <Button type="link" size="small" loading={selectingAll} disabled={!data.total}
+            onClick={() => void selectAllFiltered()}>
+            {filtersActive ? '全选筛选结果' : '全选'}（{Math.min(data.total, MAX_LIBRARY_SELECTION)}）
+          </Button>
+          <Button type="link" size="small" disabled={!data.items.length} onClick={selectCurrentPage}>全选本页</Button>
+          <Button type="link" size="small" disabled={!data.items.length} onClick={invertCurrentPage}>反选本页</Button>
+          {!!selectedIds.length && <Typography.Text>
+            已选 {selectedIds.length} 张{selectedPhotos.some(photo => !data.items.some(item => item.id === photo.id))
+              ? '（含其他页或其他筛选条件下选的）' : ''}
+          </Typography.Text>}
+        </Space>}
+      </div>
     </Card>
     <DataState loading={loading} error={error} empty={!data.items.length} onRetry={reload}
       emptyText={searchLabel
@@ -431,7 +563,9 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
           ? '图片必须同时包含所选标签，换个标签或清空筛选再看看。'
           : filters.keyword
             ? '标题、描述和标签都会被搜索，换个词或清空搜索框再看看。'
-            : '所选拍摄者在当前状态下没有图片，换个人或清空筛选再看看。'
+            : filters.photographers.length
+              ? '所选拍摄者在当前状态下没有图片，换个人或清空筛选再看看。'
+              : '换个拍摄日期范围或放宽筛选条件再看看。'
         : favoritesOnly ? '在图片上点收藏，之后就能在这里集中查看。'
           : filters.status === 'AVAILABLE' ? '上传的图片处理完成后会出现在这里。' : '换一个状态筛选试试。'}>
       <Row gutter={[16, 20]} className="photo-grid">
@@ -486,7 +620,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
               {(canAddToProject || canDownload || canDelete || canTag) && (photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED') && <Checkbox
                 className="photo-select-checkbox"
                 checked={selectedIds.includes(photo.id)}
-                disabled={selectedIds.length >= 200 && !selectedIds.includes(photo.id)}
+                disabled={selectedIds.length >= MAX_LIBRARY_SELECTION && !selectedIds.includes(photo.id)}
                 onClick={event => event.stopPropagation()}
                 onChange={event => toggleSelected(photo, event.target.checked)}
                 aria-label={`选择图片 ${photo.title || photo.id}`} />}

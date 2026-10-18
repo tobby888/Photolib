@@ -188,17 +188,36 @@ public class PhotoService {
                                         boolean includeAllStatuses, boolean favoritesOnly,
                                         boolean selectableOnly, List<String> tags, List<String> photographers,
                                         AuthenticatedUser user) {
+        return list(page, pageSize, keyword, projectId, requestId, studentId, photographerName, uploadedBy,
+                campusId, status, includeAllStatuses, favoritesOnly, selectableOnly, tags, photographers,
+                LibraryFilter.NONE, user);
+    }
+
+    /**
+     * @param library 图库页额外的筛选（拍摄日期、被引与否、是否进过选题、标签任意其一），
+     *                见 {@link LibraryFilter}
+     */
+    public PageResponse<PhotoView> list(int page, int pageSize, String keyword, Long projectId,
+                                        Long requestId, String studentId, String photographerName,
+                                        Long uploadedBy, Long campusId, PhotoStatus status,
+                                        boolean includeAllStatuses, boolean favoritesOnly,
+                                        boolean selectableOnly, List<String> tags, List<String> photographers,
+                                        LibraryFilter library, AuthenticatedUser user) {
         requireListPermission(projectId, requestId, favoritesOnly, selectableOnly, user);
         if (requestId != null && user.isCampusScoped()) requestService.requireParticipantAccess(requestId, user);
         if (projectId != null) projectService.getVisible(projectId, user);
+        LibraryFilter extra = library == null ? LibraryFilter.NONE : library;
+        if (extra.takenFrom() != null && extra.takenTo() != null && extra.takenFrom().isAfter(extra.takenTo())) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "拍摄日期的开始不能晚于结束");
+        }
         List<String> normalizedTags = PhotoTags.normalize(tags);
         var query = buildListQuery(keyword, projectId, requestId, studentId, photographerName, photographers,
-                uploadedBy, campusId, status, includeAllStatuses, favoritesOnly, selectableOnly, user);
+                uploadedBy, campusId, status, includeAllStatuses, favoritesOnly, selectableOnly, extra, user);
         if (!normalizedTags.isEmpty()) {
-            Set<Long> tagMatches = photoIdsWithAllTags(buildListQuery(
+            Set<Long> tagMatches = photoIdsWithTags(buildListQuery(
                     keyword, projectId, requestId, studentId, photographerName, photographers, uploadedBy,
-                    campusId, status, includeAllStatuses, favoritesOnly, selectableOnly, user),
-                    normalizedTags);
+                    campusId, status, includeAllStatuses, favoritesOnly, selectableOnly, extra, user),
+                    normalizedTags, extra.anyTag());
             if (tagMatches.isEmpty()) {
                 return new PageResponse<>(List.of(), page, pageSize, 0, 0);
             }
@@ -236,7 +255,7 @@ public class PhotoService {
     public List<String> photographers(boolean favoritesOnly, AuthenticatedUser user) {
         requireListPermission(null, null, favoritesOnly, false, user);
         return mapper.selectList(buildListScope(null, null, null, null, null, List.of(),
-                        null, null, null, true, favoritesOnly, false, user)
+                        null, null, null, true, favoritesOnly, false, LibraryFilter.NONE, user)
                         .select(PhotoEntity::getPhotographerName)
                         .groupBy(PhotoEntity::getPhotographerName))
                 .stream().filter(Objects::nonNull).map(PhotoEntity::getPhotographerName)
@@ -253,9 +272,9 @@ public class PhotoService {
             String keyword, Long projectId, Long requestId, String studentId,
             String photographerName, List<String> photographers, Long uploadedBy, Long campusId,
             PhotoStatus status, boolean includeAllStatuses, boolean favoritesOnly, boolean selectableOnly,
-            AuthenticatedUser user) {
+            LibraryFilter library, AuthenticatedUser user) {
         return buildListScope(keyword, projectId, requestId, studentId, photographerName, photographers,
-                uploadedBy, campusId, status, includeAllStatuses, favoritesOnly, selectableOnly, user)
+                uploadedBy, campusId, status, includeAllStatuses, favoritesOnly, selectableOnly, library, user)
                 // 批量上传常有同一秒入库的图片，只按 created_at 排时分页边界上的顺序不稳定，
                 // 翻页会重复或漏图，详情页「上一张 / 下一张」也会跳号；用 id 兜底成全序。
                 .orderByDesc(PhotoEntity::getCreatedAt)
@@ -270,7 +289,7 @@ public class PhotoService {
             String keyword, Long projectId, Long requestId, String studentId,
             String photographerName, List<String> photographers, Long uploadedBy, Long campusId,
             PhotoStatus status, boolean includeAllStatuses, boolean favoritesOnly, boolean selectableOnly,
-            AuthenticatedUser user) {
+            LibraryFilter library, AuthenticatedUser user) {
         // selectableOnly 是好图精选选图弹窗用的：它要的是"这个账号能选用的图片"，而选图范围
         // 固定为授权校区（见 requireGallerySelectable），与权限组的图库可见范围无关。因此它
         // 既压过 SELF 的上传者过滤，也压过 GLOBAL 的跨校区放行——否则弹窗里会列出点下去必然
@@ -317,7 +336,21 @@ public class PhotoService {
                                 "SELECT request_id FROM request_participant WHERE user_id = " + user.id()))
                 .inSql(favoritesOnly, PhotoEntity::getId,
                         "SELECT photo_id FROM photo_favorite WHERE user_id = " + user.id())
-                .eq(effectiveStatus != null, PhotoEntity::getStatus, effectiveStatus);
+                .eq(effectiveStatus != null, PhotoEntity::getStatus, effectiveStatus)
+                // 拍摄日期按整天算，两端都含：结束那天要取到次日零点之前。
+                .ge(library.takenFrom() != null, PhotoEntity::getTakenAt,
+                        library.takenFrom() == null ? null : library.takenFrom().atStartOfDay())
+                .lt(library.takenTo() != null, PhotoEntity::getTakenAt,
+                        library.takenTo() == null ? null : library.takenTo().plusDays(1).atStartOfDay())
+                // 下面两组子查询是固定文本，不拼任何调用方传进来的值。
+                .inSql(Boolean.TRUE.equals(library.adopted()), PhotoEntity::getId,
+                        "SELECT photo_id FROM adoption WHERE deleted = 0")
+                .notInSql(Boolean.FALSE.equals(library.adopted()), PhotoEntity::getId,
+                        "SELECT photo_id FROM adoption WHERE deleted = 0")
+                .inSql(Boolean.TRUE.equals(library.inProject()), PhotoEntity::getId,
+                        "SELECT photo_id FROM photo_project")
+                .notInSql(Boolean.FALSE.equals(library.inProject()), PhotoEntity::getId,
+                        "SELECT photo_id FROM photo_project");
     }
 
     /**
@@ -326,18 +359,30 @@ public class PhotoService {
      * 图库是全库范围，不粗筛就会把整个可见图库的 tags_json 读进内存，且详情页翻上一张 / 下一张
      * 都会重跑一遍。
      */
-    private Set<Long> photoIdsWithAllTags(LambdaQueryWrapper<PhotoEntity> baseQuery, List<String> tags) {
+    private Set<Long> photoIdsWithTags(LambdaQueryWrapper<PhotoEntity> baseQuery, List<String> tags,
+                                       boolean anyTag) {
         baseQuery.select(PhotoEntity::getId, PhotoEntity::getTagsJson);
-        for (String tag : tags) {
-            // 含引号、反斜杠或控制字符的标签在 JSON 文本里会被转义（H2 双层时还会转义两次），
-            // 原文 LIKE 会漏掉它们；这类标签不粗筛，只靠下面的精确比对，结果不变。
-            if (appearsVerbatimInJson(tag)) {
-                baseQuery.apply(LikeFilter.contains("tags_json"), LikeFilter.escape(tag));
+        if (!anyTag) {
+            for (String tag : tags) {
+                // 含引号、反斜杠或控制字符的标签在 JSON 文本里会被转义（H2 双层时还会转义两次），
+                // 原文 LIKE 会漏掉它们；这类标签不粗筛，只靠下面的精确比对，结果不变。
+                if (appearsVerbatimInJson(tag)) {
+                    baseQuery.apply(LikeFilter.contains("tags_json"), LikeFilter.escape(tag));
+                }
             }
+        } else if (tags.stream().allMatch(PhotoService::appearsVerbatimInJson)) {
+            // 「任意其一」的粗筛是一组 OR：只要有一个标签没法粗筛，整组就不能粗筛，否则会漏掉只带它的图。
+            baseQuery.and(q -> {
+                for (int i = 0; i < tags.size(); i++) {
+                    if (i > 0) q.or();
+                    q.apply(LikeFilter.contains("tags_json"), LikeFilter.escape(tags.get(i)));
+                }
+            });
         }
         Set<Long> ids = new LinkedHashSet<>();
         for (PhotoEntity photo : mapper.selectList(baseQuery)) {
-            if (PhotoTags.parse(photo.getTagsJson()).containsAll(tags)) {
+            List<String> photoTags = PhotoTags.parse(photo.getTagsJson());
+            if (anyTag ? tags.stream().anyMatch(photoTags::contains) : photoTags.containsAll(tags)) {
                 ids.add(photo.getId());
             }
         }
@@ -949,6 +994,20 @@ public class PhotoService {
     public record BatchTags(List<Long> photoIds, List<String> addTags, List<String> removeTags,
                             Long projectId) {}
     public record TaggedPhoto(Long id, List<String> tags, Integer version) {}
+
+    /**
+     * 图库页额外的筛选条件，全部可空（不限）。
+     *
+     * @param takenFrom 拍摄日期起（含当天）
+     * @param takenTo   拍摄日期止（含当天）
+     * @param adopted   {@code true} 只看被任意选题引用过的，{@code false} 只看从没被引用过的
+     * @param inProject {@code true} 只看进过某个选题相册的，{@code false} 只看还没进过任何选题的
+     * @param anyTag    多个标签时按「任意其一」匹配；默认 {@code false} 是「同时包含」
+     */
+    public record LibraryFilter(java.time.LocalDate takenFrom, java.time.LocalDate takenTo,
+                                Boolean adopted, Boolean inProject, boolean anyTag) {
+        public static final LibraryFilter NONE = new LibraryFilter(null, null, null, null, false);
+    }
     public record UploadTicket(Long photoId, String uploadUrl, String method, String contentType,
                                java.time.Instant expiresAt) {}
     public record DownloadUrl(String downloadUrl, java.time.Instant expiresAt, String fileName) {}
