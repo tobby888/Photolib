@@ -18,6 +18,7 @@ import cn.photolib.request.model.RequestParticipantEntity;
 import cn.photolib.user.mapper.UserMapper;
 import cn.photolib.user.model.UserEntity;
 import cn.photolib.permission.PermissionCode;
+import cn.photolib.recruitment.RecruitmentStudentId;
 import cn.photolib.worklog.mapper.WorklogMapper;
 import cn.photolib.worklog.model.WorklogEntity;
 import cn.photolib.worklog.model.WorklogStatus;
@@ -32,6 +33,7 @@ import org.springframework.util.StringUtils;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -249,6 +251,94 @@ public class WorklogService {
         return mapper.selectById(id);
     }
 
+    /**
+     * 管理员更正一条已经报上来的工时：姓名、学号、工作日期、两项时长和说明都可以直接改。
+     *
+     * <p>和填报侧的 {@link #update} 是两回事，刻意不复用：</p>
+     * <ul>
+     *   <li>只给管理员（权限组 {@code ADMIN}），不看是不是本人填的、选题是否已结束——
+     *       发现报错了的时候选题往往早就结束了，这正是要更正的场景；</li>
+     *   <li>不改状态：已确认的改完仍是已确认，统计和导出立刻按新值算，不用再走一遍审核；</li>
+     *   <li>姓名学号直接写，不走通讯录。站内填报的工时从通讯录取身份快照，链接申报的是访客自报，
+     *       两种报错了都只能在这里改；学号用和链接申报同一套格式校验（全角转半角、去首尾空白）。</li>
+     *   <li>草稿不能改：它还没交上来，是填报人自己的东西。</li>
+     * </ul>
+     *
+     * <p>返回值里带着改了哪些字段（旧值 → 新值），控制器把它写进审计日志；
+     * 填报账号不是管理员本人时还会收到一条通知，免得核对时发现数字变了却不知道是谁改的。</p>
+     */
+    @Transactional
+    public Correction correct(Long id, CorrectionCommand command, int version, AuthenticatedUser admin) {
+        if (!admin.isAdministrator()) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "只有管理员可以修改已报上来的工时");
+        }
+        WorklogEntity worklog = require(id);
+        if (worklog.getStatus() == WorklogStatus.DRAFT) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "草稿还没提交，由填报人自己修改");
+        }
+        validate(command.workDate(), command.shootingMinutes(), command.retouchingMinutes());
+        String name = command.memberName() == null ? "" : command.memberName().strip();
+        if (name.isEmpty()) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "姓名不能为空");
+        }
+        String studentId = RecruitmentStudentId.normalize(command.memberStudentId()).display();
+        String remark = StringUtils.hasText(command.remark()) ? command.remark().strip() : null;
+
+        Map<String, Object> changes = new LinkedHashMap<>();
+        track(changes, "memberName", worklog.getMemberName(), name);
+        track(changes, "memberStudentId", worklog.getMemberStudentId(), studentId);
+        track(changes, "workDate", worklog.getWorkDate(), command.workDate());
+        track(changes, "shootingMinutes", worklog.getShootingMinutes(), command.shootingMinutes());
+        track(changes, "retouchingMinutes", worklog.getRetouchingMinutes(), command.retouchingMinutes());
+        track(changes, "remark", worklog.getRemark(), remark);
+        if (changes.isEmpty()) {
+            return new Correction(worklog, changes);
+        }
+        worklog.setMemberName(name);
+        worklog.setMemberStudentId(studentId);
+        worklog.setWorkDate(command.workDate());
+        worklog.setShootingMinutes(command.shootingMinutes());
+        worklog.setRetouchingMinutes(command.retouchingMinutes());
+        worklog.setRemark(remark);
+        worklog.setVersion(version);
+        updateChecked(worklog);
+        if (!worklog.getUserId().equals(admin.id())) {
+            notifications.notifyUser(worklog.getUserId(), "WORKLOG_CORRECTED", "工时被管理员修改",
+                    NotificationService.paragraphs(
+                            "工时记录 #" + worklog.getId() + declaredBy(worklog) + " 已由管理员 "
+                                    + admin.displayName() + " 修改：" + describe(changes)));
+        }
+        return new Correction(mapper.selectById(id), changes);
+    }
+
+    private static void track(Map<String, Object> changes, String field, Object before, Object after) {
+        if (!Objects.equals(before, after)) {
+            Map<String, Object> change = new LinkedHashMap<>();
+            // 日期写成字符串：这份差异要进审计详情的 JSON，也要拼进通知正文。
+            change.put("from", before instanceof LocalDate date ? date.toString() : before);
+            change.put("to", after instanceof LocalDate date ? date.toString() : after);
+            changes.put(field, change);
+        }
+    }
+
+    private static final Map<String, String> CORRECTION_LABELS = Map.of(
+            "memberName", "姓名", "memberStudentId", "学号", "workDate", "工作日期",
+            "shootingMinutes", "拍摄（分钟）", "retouchingMinutes", "修图（分钟）", "remark", "说明");
+
+    private static String describe(Map<String, Object> changes) {
+        return changes.entrySet().stream().map(entry -> {
+            // 说明最长 1000 字，新旧两段拼进来会撑爆通知正文（同样 1000 字）；原文在审计详情里。
+            if (entry.getKey().equals("remark")) return "说明已修改";
+            Map<?, ?> change = (Map<?, ?>) entry.getValue();
+            return CORRECTION_LABELS.get(entry.getKey()) + " " + display(change.get("from"))
+                    + " → " + display(change.get("to"));
+        }).collect(Collectors.joining("；"));
+    }
+
+    private static String display(Object value) {
+        return value == null || value.toString().isEmpty() ? "（空）" : value.toString();
+    }
+
     @Transactional
     public void delete(Long id, AuthenticatedUser user) {
         WorklogEntity worklog = require(id);
@@ -442,6 +532,15 @@ public class WorklogService {
     public record WorklogCommand(LocalDate workDate, Long memberContactId,
                                  int shootingMinutes, int retouchingMinutes,
                                  String remark, WorklogStatus status) {
+    }
+
+    /** 管理员更正工时的新值，见 {@link #correct}。 */
+    public record CorrectionCommand(String memberName, String memberStudentId, LocalDate workDate,
+                                    int shootingMinutes, int retouchingMinutes, String remark) {
+    }
+
+    /** @param changes 改了的字段，{@code 字段名 → {from, to}}；什么都没改时为空，也不写库 */
+    public record Correction(WorklogEntity worklog, Map<String, Object> changes) {
     }
 
     /**

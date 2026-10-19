@@ -42,8 +42,17 @@ export const WORKLOG_OWNER_ACTION_MIN_WIDTH = calculateActionColumnWidth([[
   { label: '删除', icon: true },
 ]])
 
-export const WORKLOG_REVIEW_ACTION_MIN_WIDTH = calculateActionColumnWidth([[
-  { label: '批准', icon: true },
-  { label: '退回', icon: true },
-  { label: '删除', icon: true },
-]])
+// 第二种是管理员看待确认工时时的一行：多一个「修改」（管理员更正已报上来的工时）。
+export const WORKLOG_REVIEW_ACTION_MIN_WIDTH = calculateActionColumnWidth([
+  [
+    { label: '批准', icon: true },
+    { label: '退回', icon: true },
+    { label: '删除', icon: true },
+  ],
+  [
+    { label: '修改', icon: true },
+    { label: '批准', icon: true },
+    { label: '退回', icon: true },
+    { label: '删除', icon: true },
+  ],
+])

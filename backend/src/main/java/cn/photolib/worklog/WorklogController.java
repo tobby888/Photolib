@@ -1,10 +1,12 @@
 package cn.photolib.worklog;
 
+import cn.photolib.audit.AuditInterceptor;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.api.PageResponse;
 import cn.photolib.worklog.model.WorklogEntity;
 import cn.photolib.worklog.model.WorklogStatus;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import lombok.RequiredArgsConstructor;
@@ -14,6 +16,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.util.Map;
 
 @RestController
 @RequiredArgsConstructor
@@ -48,6 +51,20 @@ public class WorklogController {
                                       @RequestParam @Min(1) int version,
                                       @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.update(id, request.command(), version, user));
+    }
+
+    /**
+     * 管理员更正已报上来的工时（姓名、学号、日期、时长、说明），状态不变。
+     * 审计只看得到路径，改了哪些字段、从什么改成什么记进详情，事后能查到原值。
+     */
+    @PutMapping("/worklogs/{id}/correction")
+    @PreAuthorize("hasRole('ADMIN')")
+    ApiResponse<WorklogEntity> correct(@PathVariable Long id, @Valid @RequestBody CorrectionRequest request,
+                                       @AuthenticationPrincipal AuthenticatedUser user,
+                                       HttpServletRequest http) {
+        WorklogService.Correction correction = service.correct(id, request.command(), request.version(), user);
+        http.setAttribute(AuditInterceptor.DETAIL_ATTRIBUTE, Map.of("changes", correction.changes()));
+        return ApiResponse.ok(correction.worklog());
     }
 
     @PostMapping("/worklogs/{id}/submit")
@@ -88,6 +105,19 @@ public class WorklogController {
             return new WorklogService.WorklogCommand(
                     workDate, memberContactId,
                     shootingMinutes, retouchingMinutes, remark, status);
+        }
+    }
+
+    record CorrectionRequest(@NotBlank @Size(max = 100) String memberName,
+                             @NotBlank @Size(max = 64) String memberStudentId,
+                             @NotNull @PastOrPresent LocalDate workDate,
+                             @Min(0) @Max(1440) int shootingMinutes,
+                             @Min(0) @Max(1440) int retouchingMinutes,
+                             @Size(max = 1000) String remark,
+                             @Min(1) int version) {
+        WorklogService.CorrectionCommand command() {
+            return new WorklogService.CorrectionCommand(memberName, memberStudentId, workDate,
+                    shootingMinutes, retouchingMinutes, remark);
         }
     }
 

@@ -40,6 +40,10 @@ public class StatisticsService {
      * 学号归并成一行。链接申报的工时没有校区：按校区筛选或校区范围账号查看时它们不出现
      * （{@code r.campus_id} 为 NULL，两个校区条件都不成立），与这类工时在审核面板里对校区
      * 范围账号不可见是同一条边界。本方法下面三处查询都是这个写法，要改一起改。</p>
+     *
+     * <p>有被引、却没有任何已确认工时的摄影师也各占一行（工时为 0、{@code userId} 为空），
+     * 与工时导出的 {@code export_people} 同一个口径：统计面板按被引张数筛选时，"图被用了却没报工时"
+     * 的人正是最需要看见的。按填报账号（{@code userId}）筛时这类行没有账号可比，不出现。</p>
      */
     public List<MemberStatistics> members(LocalDate from, LocalDate to, Long projectId,
                                           Long campusId, Long userId, Set<Long> allowedCampusIds) {
@@ -54,32 +58,48 @@ public class StatisticsService {
                       AND (:projectId=0 OR id=:projectId)
                 ),
                 adoption_totals AS (
-                    SELECT a.photographer_student_id, COUNT(DISTINCT a.photo_id) AS adopted_count
+                    SELECT a.photographer_student_id,
+                           MIN(a.photographer_name) AS photographer_name,
+                           GROUP_CONCAT(DISTINCT c.name ORDER BY c.name SEPARATOR '、') AS campus,
+                           COUNT(DISTINCT a.photo_id) AS adopted_count
                     FROM adoption a
                     JOIN photo p ON p.id=a.photo_id
                     JOIN eligible_projects ep ON ep.id=a.project_id
+                    LEFT JOIN campus c ON c.id=p.campus_id
                     WHERE a.deleted=0
                       AND (:campusId=0 OR p.campus_id=:campusId)
                       AND (:campusScoped=FALSE OR p.campus_id IN (:campusIds))
                     GROUP BY a.photographer_student_id
+                ),
+                worklog_totals AS (
+                    SELECT MIN(w.user_id) AS user_id, w.member_student_id,
+                           MIN(w.member_name) AS member_name,
+                           GROUP_CONCAT(DISTINCT c.name ORDER BY c.name SEPARATOR '、') AS campus,
+                           COALESCE(SUM(w.shooting_minutes),0) AS shooting_minutes,
+                           COALESCE(SUM(w.retouching_minutes),0) AS retouching_minutes
+                    FROM worklog w
+                    LEFT JOIN photo_request r ON r.id=w.request_id
+                    LEFT JOIN project_share_link l ON l.id=w.share_link_id
+                    JOIN eligible_projects ep ON ep.id=COALESCE(r.project_id, l.project_id)
+                    LEFT JOIN campus c ON c.id=r.campus_id
+                    WHERE w.deleted=0 AND w.status='CONFIRMED'
+                      AND (:campusId=0 OR r.campus_id=:campusId)
+                      AND (:campusScoped=FALSE OR r.campus_id IN (:campusIds))
+                      AND (:userId=0 OR w.user_id=:userId)
+                    GROUP BY w.member_student_id
                 )
-                SELECT MIN(w.user_id), w.member_student_id, MIN(w.member_name),
-                       GROUP_CONCAT(DISTINCT c.name ORDER BY c.name SEPARATOR '、'),
-                       COALESCE(SUM(w.shooting_minutes),0),
-                       COALESCE(SUM(w.retouching_minutes),0),
-                       COALESCE(MAX(a.adopted_count),0)
-                FROM worklog w
-                LEFT JOIN photo_request r ON r.id=w.request_id
-                LEFT JOIN project_share_link l ON l.id=w.share_link_id
-                JOIN eligible_projects ep ON ep.id=COALESCE(r.project_id, l.project_id)
-                LEFT JOIN campus c ON c.id=r.campus_id
-                LEFT JOIN adoption_totals a ON a.photographer_student_id=w.member_student_id
-                WHERE w.deleted=0 AND w.status='CONFIRMED'
-                  AND (:campusId=0 OR r.campus_id=:campusId)
-                  AND (:campusScoped=FALSE OR r.campus_id IN (:campusIds))
-                  AND (:userId=0 OR w.user_id=:userId)
-                GROUP BY w.member_student_id
-                ORDER BY MIN(w.member_name)
+                SELECT wt.user_id, wt.member_student_id, wt.member_name, wt.campus,
+                       wt.shooting_minutes, wt.retouching_minutes, COALESCE(a.adopted_count,0)
+                FROM worklog_totals wt
+                LEFT JOIN adoption_totals a ON a.photographer_student_id=wt.member_student_id
+                UNION ALL
+                SELECT NULL, a.photographer_student_id, a.photographer_name, a.campus,
+                       0, 0, a.adopted_count
+                FROM adoption_totals a
+                WHERE :userId=0
+                  AND NOT EXISTS (SELECT 1 FROM worklog_totals wt
+                                  WHERE wt.member_student_id=a.photographer_student_id)
+                ORDER BY 3, 2
                 """).param("fromDate", from == null ? LocalDate.of(1900,1,1) : from)
                 .param("toExclusive", to == null ? LocalDate.of(3000,1,1) : to.plusDays(1))
                 .param("projectId", projectId == null ? 0L : projectId)
@@ -90,8 +110,9 @@ public class StatisticsService {
                 .query((rs, n) -> {
                     int shooting = rs.getInt(5);
                     int retouching = rs.getInt(6);
-                    return new MemberStatistics(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4),
-                            shooting, retouching, shooting + retouching, rs.getLong(7));
+                    // 只有被引、没有工时的那几行没有填报账号：getLong 会把 NULL 读成 0。
+                    return new MemberStatistics(rs.getObject(1, Long.class), rs.getString(2), rs.getString(3),
+                            rs.getString(4), shooting, retouching, shooting + retouching, rs.getLong(7));
                 }).list();
     }
 

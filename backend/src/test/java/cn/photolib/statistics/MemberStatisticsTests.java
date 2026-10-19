@@ -139,6 +139,50 @@ class MemberStatisticsTests {
                 .hasMessageContaining("无权查看该校区");
     }
 
+    @Test
+    void photographersWithAdoptionsButNoWorklogsStillGetARow() {
+        // 李四有工时也有被引：一行里两样都有，不因为 UNION 多出第二行。
+        insertWorklog(base + 10, requestA, LocalDate.of(2021, 11, 3), "李四", "20210001", 60, 30);
+        insertAdoption(base + 40, projectId, insertPhoto(base + 30, projectId, requestA, campusA,
+                "20210001", "李四"), "20210001", "李四");
+        // 王五只有被引、没报工时：要出现在统计里，否则按被引张数筛选时就看不见他。
+        insertAdoption(base + 41, projectId, insertPhoto(base + 31, projectId, requestB, campusB,
+                "20210009", "王五"), "20210009", "王五");
+        insertAdoption(base + 42, projectId, insertPhoto(base + 32, projectId, requestB, campusB,
+                "20210009", "王五"), "20210009", "王五");
+        // 区间外选题的被引不算。
+        String outOfRange = "OUT-" + base;
+        insertAdoption(base + 43, otherProjectId, insertPhoto(base + 33, otherProjectId, otherRequest, campusA,
+                outOfRange, "赵六"), outOfRange, "赵六");
+
+        List<StatisticsService.MemberStatistics> rows = statistics.members(FROM, TO, projectId, null, null);
+
+        assertThat(rows).extracting(StatisticsService.MemberStatistics::studentId)
+                .containsExactlyInAnyOrder("20210001", "20210009");
+        assertThat(rows).filteredOn(row -> row.studentId().equals("20210001")).singleElement()
+                .satisfies(row -> {
+                    assertThat(row.adoptedCount()).isEqualTo(1);
+                    assertThat(row.totalMinutes()).isEqualTo(90);
+                    assertThat(row.userId()).isEqualTo(userId);
+                });
+        assertThat(rows).filteredOn(row -> row.studentId().equals("20210009")).singleElement()
+                .satisfies(row -> {
+                    assertThat(row.displayName()).isEqualTo("王五");
+                    assertThat(row.adoptedCount()).isEqualTo(2);
+                    assertThat(row.totalMinutes()).isZero();
+                    assertThat(row.campus()).isEqualTo("南校区");
+                    assertThat(row.userId()).isNull();
+                });
+        assertThat(statistics.members(FROM, TO, null, null, null))
+                .noneMatch(row -> row.studentId().equals(outOfRange));
+        // 按填报账号筛时，没有账号的被引行不出现。
+        assertThat(statistics.members(FROM, TO, projectId, null, userId))
+                .extracting(StatisticsService.MemberStatistics::studentId).containsExactly("20210001");
+        // 按校区筛：被引按图片的校区算。
+        assertThat(statistics.members(FROM, TO, projectId, campusA, null))
+                .extracting(StatisticsService.MemberStatistics::studentId).containsExactly("20210001");
+    }
+
     private void insertProject(long id, String title, LocalDateTime completedAt) {
         jdbc.sql("""
                 INSERT INTO project(id, title, status, created_by, completed_at)
@@ -171,5 +215,36 @@ class MemberStatisticsTests {
                 """).param("id", id).param("requestId", requestId).param("userId", userId)
                 .param("workDate", date).param("shooting", shooting).param("retouching", retouching)
                 .param("memberName", name).param("studentId", studentId).param("status", status).update();
+    }
+
+    private long insertPhoto(long id, long project, long requestId, long campusId, String studentId, String name) {
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, request_id, project_id, title, photographer_student_id, photographer_name,
+                     uploaded_by, campus_id, taken_at, size, content_type, object_key,
+                     stored_file_name, sha256, status)
+                VALUES
+                    (:id, :requestId, :projectId, '测试图片', :studentId, :name,
+                     :userId, :campusId, :takenAt, 100, 'image/jpeg', :objectKey,
+                     'test.jpg', :sha256, 'AVAILABLE')
+                """)
+                .param("id", id).param("requestId", requestId).param("projectId", project)
+                .param("studentId", studentId).param("name", name).param("userId", userId)
+                .param("campusId", campusId).param("takenAt", LocalDateTime.of(2021, 11, 2, 10, 0))
+                .param("objectKey", "member-stats-" + id + ".jpg")
+                .param("sha256", Long.toHexString(id) + "0".repeat(48)).update();
+        return id;
+    }
+
+    private void insertAdoption(long id, long project, long photoId, String studentId, String name) {
+        jdbc.sql("""
+                INSERT INTO adoption
+                    (id, project_id, photo_id, photographer_student_id, photographer_name,
+                     adopted_by, adopted_at)
+                VALUES (:id, :projectId, :photoId, :studentId, :name, :userId, :adoptedAt)
+                """)
+                .param("id", id).param("projectId", project).param("photoId", photoId)
+                .param("studentId", studentId).param("name", name).param("userId", userId)
+                .param("adoptedAt", LocalDateTime.of(2021, 11, 10, 10, 0)).update();
     }
 }

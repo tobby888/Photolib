@@ -3340,6 +3340,16 @@ body {
   --viz-baseline: #c3c2b7;
 }
 .statistics-tabs { margin-bottom: 4px; }
+.member-filter-bar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; }
+.cited-distribution { display: grid; gap: 6px; }
+.cited-bucket { display: grid; grid-template-columns: 84px 1fr 52px; align-items: center; gap: 10px; width: 100%;
+  padding: 6px 8px; border: 1px solid transparent; border-radius: 8px; background: none; font: inherit; color: inherit;
+  text-align: left; cursor: pointer; }
+.cited-bucket:hover { background: rgba(70,130,180,.06); }
+.cited-bucket:focus-visible { outline: 2px solid #4682B4; outline-offset: 1px; }
+.cited-bucket .ant-progress { margin: 0; }
+.cited-bucket > strong { text-align: right; }
+.cited-bucket-active { border-color: #4682B4; background: rgba(70,130,180,.1); }
 .worklog-analysis { display: grid; gap: 16px; }
 .worklog-analysis .metric-grid { margin-bottom: 0; }
 .analysis-filter-card .ant-card-body { display: grid !important; gap: 14px; }

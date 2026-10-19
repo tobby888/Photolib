@@ -1434,6 +1434,7 @@ UPLOADING -> PROCESSING -> WAITING_METADATA -> PROCESSING
 | `POST /worklogs/{id}/submit` | 本人或 A | `{ version }` | `WorklogEntity` |
 | `POST /worklogs/{id}/confirm` | A/M | `{ version }` | `WorklogEntity` |
 | `POST /worklogs/{id}/reject` | A/M | `{ reason, version }` | `WorklogEntity` |
+| `PUT /worklogs/{id}/correction` | 仅权限组 `ADMIN` | `CorrectionRequest` | `WorklogEntity`，状态不变 |
 | `DELETE /worklogs/{id}` | A/M/C | 无 | `data: null` |
 
 创建/编辑请求：
@@ -1463,6 +1464,26 @@ UPLOADING -> PROCESSING -> WAITING_METADATA -> PROCESSING
 - 通过上传链接申报的工时（`shareLinkId` 非空）不能走 `PUT /worklogs/{id}` 和 `/submit`，返回 `409 RESOURCE_STATE_CONFLICT`：被退回的由申报人在上传页重新申报一条。确认、退回、删除照常。它们不属于任何校区，校区范围账号在列表里看不到，凭 id 操作返回 `403`。退回/确认通知发给开链接的成员。
 - C 只能编辑/提交自己的填报记录。M 是审核人，不能编辑他人记录。
 - A/M 可删除任意状态；普通填报人只能删除自己的 `DRAFT`/`REJECTED`。
+
+管理员更正（`PUT /worklogs/{id}/correction`）：
+
+```json
+{
+  "memberName": "李四",
+  "memberStudentId": "20260002",
+  "workDate": "2026-07-24",
+  "shootingMinutes": 90,
+  "retouchingMinutes": 15,
+  "remark": "补拍",
+  "version": 3
+}
+```
+
+- 只给权限组 `ADMIN`（`hasRole('ADMIN')`，服务端再判一次），部长和其他持有工时权限的账号都是 `403`。
+- 用于修正已经报上来的工时：`SUBMITTED` / `CONFIRMED` / `REJECTED` 都可改，状态、审核人和审核时间保持不变，已确认的改完立即按新值计入统计和导出。`DRAFT` 返回 `409`（还没交上来，由填报人自己改）。
+- 不看是否本人填报、所属选题是否已结束；站内填报和上传链接申报的都能改。
+- 姓名学号直接写入，不对照通讯录。学号按链接申报同一套格式校验（NFKC 全角转半角、去首尾空白，去空白后为 2~64 位字母/数字/下划线/连字符），保存去首尾空白后的写法。其余校验与填报相同：日期不晚于今天、两类分钟 `0..1440` 且不同时为 0、说明最多 1000。
+- 什么都没改时不写库、版本号不变。改了的字段（旧值 → 新值）写进审计日志详情 `changes`；填报账号不是管理员本人时收到一条 `WORKLOG_CORRECTED` 站内通知（说明只写"已修改"，原文在审计里）。
 
 列表：
 
@@ -1504,6 +1525,7 @@ C 的 `userId` 会被强制为本人。日期按 `workDate >= from AND workDate 
 - 工时只统计这些项目需求中的 `CONFIRMED` 记录；这里不是按 `workDate` 直接筛选。
 - 通过上传链接申报的工时（§19.2）没有需求，所属项目按那条链接所在的选题算，与站内填报的按同一个学号归并成一行；它们没有校区，传了 `campusId` 或由校区范围账号查看时不计入。工时导出同理。
 - 采用按摄影师学号关联，统计这些已完成项目中的 `COUNT(DISTINCT photo_id)`。
+- 有被引、却没有任何符合条件的已确认工时的摄影师也各占一行：工时为 0、`userId` 为 `null`，姓名取采用记录上的作者快照，校区取被引图片的校区。与工时导出的 `export_people` 同一口径。传了 `userId` 时这类行不出现。
 - `campusId` 同时限制需求校区和照片校区；`userId` 限制工时填报账号。
 - `from`/`to` 可空；空值相当于极宽时间范围。
 
