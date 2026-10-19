@@ -532,7 +532,8 @@ export interface DedupedMember {
 }
 
 export interface MemberStats {
-  userId: EntityId
+  /** 填报账号；只有被引、没有已确认工时的摄影师没有账号可对应，为 null。 */
+  userId: EntityId | null
   studentId: string
   displayName: string
   campus: string

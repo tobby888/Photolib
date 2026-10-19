@@ -20,15 +20,19 @@ const BOM = String.fromCharCode(0xfeff)
 
 const hours = (minutes: number) => (minutes / 60).toFixed(2)
 
+/** 一张表导出成 CSV：表头一行、每条一行，单元格都过 {@link csvCell}，开头带 BOM。 */
+export function tableToCsv(header: readonly string[], rows: readonly (readonly unknown[])[]): string {
+  return `${BOM}${[header, ...rows].map(cells => cells.map(csvCell).join(',')).join('\r\n')}\r\n`
+}
+
 /** 工时分析明细导出成 CSV。开头带 BOM，Excel 才认得出这是 UTF-8，中文不乱码。时长与 XLSX 导出一致，写小时。 */
 export function rowsToCsv(rows: readonly AnalysisRow[]): string {
   const header = ['工作日期', '姓名', '学号', '选题', '需求', '校区', '拍摄（小时）', '修图（小时）', '合计（小时）',
     '状态', '填报账号', '工作说明']
-  const lines = rows.map(row => [
+  return tableToCsv(header, rows.map(row => [
     row.workDate, row.memberName, row.memberStudentId, row.projectTitle ?? '',
     row.requestId == null ? '上传链接申报' : row.requestTitle ?? '', row.campusName ?? '',
     hours(row.shootingMinutes), hours(row.retouchingMinutes), hours(row.shootingMinutes + row.retouchingMinutes),
     STATUS[row.status] ?? row.status, row.userDisplayName ?? '', row.remark ?? '',
-  ].map(csvCell).join(','))
-  return `${BOM}${[header.map(csvCell).join(','), ...lines].join('\r\n')}\r\n`
+  ]))
 }

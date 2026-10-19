@@ -1,6 +1,11 @@
-import { App, Button, Card, Col, DatePicker, Descriptions, Modal, Progress, Row, Space, Statistic, Tabs, Tag, Typography } from 'antd'
-import { CameraOutlined, ClockCircleOutlined, DownloadOutlined, FolderOutlined, TrophyOutlined } from '@ant-design/icons'
-import { useState } from 'react'
+import {
+  App, Button, Card, Col, DatePicker, Descriptions, Input, InputNumber, Modal, Progress, Row, Segmented, Select, Space,
+  Statistic, Tabs, Tag, Typography,
+} from 'antd'
+import {
+  CameraOutlined, ClockCircleOutlined, DownloadOutlined, FolderOutlined, SearchOutlined, TrophyOutlined,
+} from '@ant-design/icons'
+import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { api } from '../api'
@@ -10,6 +15,13 @@ import { ContentFitTable, TableEllipsisText } from '../ContentFitTable'
 import { useLoad } from '../hooks'
 import { clientTablePagination } from '../pagination'
 import WorklogAnalysisPanel from '../WorklogAnalysisPanel'
+import {
+  EMPTY_FILTER, MEMBER_CSV_HEADER, bucketSelected, campusOptions, citedDistribution, filterMembers, isFiltering,
+  memberCsvRows, minutesPerCited, summarize,
+} from '../memberStats'
+import type { MemberFilter, WorklogPresence } from '../memberStats'
+import { tableToCsv } from '../worklogCsv'
+import { saveBlobAs } from '../exportDownload'
 
 interface ExportJobView {
   job: { status: 'PENDING' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED'; errorMessage?: string }
@@ -32,6 +44,8 @@ export default function StatisticsPage() {
   })
   const switchTab = (next: StatisticsTab) => setSearchParams(next === 'analysis' ? { tab: next } : {}, { replace: true })
   const [range, setRange] = useState<[string, string]>([dayjs().startOf('year').format('YYYY-MM-DD'), dayjs().format('YYYY-MM-DD')])
+  const [filter, setFilter] = useState<MemberFilter>(EMPTY_FILTER)
+  const patchFilter = (patch: Partial<MemberFilter>) => setFilter(current => ({ ...current, ...patch }))
   const [exporting, setExporting] = useState(false)
   const [detailMember, setDetailMember] = useState<MemberStats | null>(null)
   const [details, setDetails] = useState<MemberWorklogDetail[]>([])
@@ -45,6 +59,11 @@ export default function StatisticsPage() {
     ])
     return { overview, members }
   }, { overview: {} as Record<string, number>, members: [] as MemberStats[] }, [range[0], range[1]])
+  const campuses = useMemo(() => campusOptions(data.members), [data.members])
+  const members = useMemo(() => filterMembers(data.members, filter), [data.members, filter])
+  const summary = useMemo(() => summarize(members), [members])
+  const distribution = useMemo(() => citedDistribution(data.members, filter), [data.members, filter])
+  const filtering = isFiltering(filter)
   // 明细按学号取：统计表的一行本来就是按学号归并出来的，同一个人在几个校区的工时算在一起。
   const openDetail = async (member: MemberStats) => {
     setDetailMember(member)
@@ -78,12 +97,20 @@ export default function StatisticsPage() {
     } catch (e) { message.error((e as Error).message) }
     finally { setExporting(false) }
   }
-  const maxAdopted = Math.max(1, ...data.members.map(m => m.adoptedCount))
+  // XLSX 由后端按时间范围出全表；筛过的结果在前端直接导成 CSV，和屏幕上看到的一致。
+  const exportFiltered = () => {
+    saveBlobAs(new Blob([tableToCsv(MEMBER_CSV_HEADER, memberCsvRows(members))], { type: 'text/csv;charset=utf-8' }),
+      `成员核算-${range[0]}-${range[1]}${filtering ? '-筛选结果' : ''}.csv`)
+  }
+  const ranked = members.filter(member => member.adoptedCount > 0)
+    .sort((a, b) => b.adoptedCount - a.adoptedCount).slice(0, 6)
+  const maxAdopted = Math.max(1, ...ranked.map(m => m.adoptedCount))
+  const maxBucket = Math.max(1, ...distribution.map(bucket => bucket.count))
   return <>
     <PageTitle eyebrow="INSIGHTS" title="数据统计"
       description={tab === 'analysis'
         ? '按工作日期筛选、汇总工时，条件可以自由组合，并用图表看走势与分布。'
-        : '按选题结束时间统计工时，并对应每位成员的图片采纳数。'}
+        : '按选题结束时间统计工时，并对应每位成员的被引张数；可按被引张数、校区、工时情况筛选。'}
       extra={tab === 'members' && <Button type="primary" size="large" icon={<DownloadOutlined />} loading={exporting} onClick={() => void exportData()}>导出 XLSX</Button>} />
     <Tabs className="statistics-tabs" activeKey={tab} onChange={key => switchTab(key as StatisticsTab)} items={[
       { key: 'members', label: '成员核算' },
@@ -92,33 +119,110 @@ export default function StatisticsPage() {
     {tab === 'analysis' && <WorklogAnalysisPanel initialProjectId={initialProjectId} />}
     {tab === 'members' && <>
     <Card className="filter-card">
-      <Space><span>选题结束时间</span><DatePicker.RangePicker value={[dayjs(range[0]), dayjs(range[1])]}
-        onChange={values => values?.[0] && values[1] && setRange([values[0].format('YYYY-MM-DD'), values[1].format('YYYY-MM-DD')])} /></Space>
+      <div className="member-filter-bar">
+        <Space wrap>
+          <span>选题结束时间</span>
+          <DatePicker.RangePicker allowClear={false} value={[dayjs(range[0]), dayjs(range[1])]}
+            onChange={values => values?.[0] && values[1] && setRange([values[0].format('YYYY-MM-DD'), values[1].format('YYYY-MM-DD')])} />
+          <Input allowClear prefix={<SearchOutlined />} placeholder="姓名或学号" style={{ width: 160 }}
+            value={filter.keyword} onChange={event => patchFilter({ keyword: event.target.value })} />
+          <Select allowClear placeholder="全部校区" style={{ width: 140 }} value={filter.campus}
+            options={campuses.map(name => ({ value: name, label: name }))}
+            onChange={campus => patchFilter({ campus })} />
+        </Space>
+        <Space wrap>
+          <span>被引张数</span>
+          <Space.Compact>
+            <InputNumber min={0} precision={0} placeholder="不限" style={{ width: 84 }} aria-label="被引张数下限"
+              value={filter.citedMin} onChange={value => patchFilter({ citedMin: value ?? null })} />
+            <Input disabled value="~" style={{ width: 32, textAlign: 'center', pointerEvents: 'none' }} />
+            <InputNumber min={0} precision={0} placeholder="不限" style={{ width: 84 }} aria-label="被引张数上限"
+              value={filter.citedMax} onChange={value => patchFilter({ citedMax: value ?? null })} />
+          </Space.Compact>
+          <Segmented<WorklogPresence> value={filter.worklog} onChange={worklog => patchFilter({ worklog })} options={[
+            { value: 'all', label: '全部' }, { value: 'with', label: '有工时' }, { value: 'without', label: '未报工时' },
+          ]} />
+          <Button type="link" disabled={!filtering} onClick={() => setFilter(EMPTY_FILTER)}>清空筛选</Button>
+        </Space>
+      </div>
+      {filter.citedMin != null && filter.citedMax != null && filter.citedMin > filter.citedMax &&
+        <Typography.Text type="warning">被引张数的下限大于上限，没有人能同时满足。</Typography.Text>}
     </Card>
     <DataState loading={loading} error={error} onRetry={reload}>
       <Row gutter={[16, 16]} className="metric-grid">
-        <Col xs={12} xl={6}><Card><Statistic title="项目数" value={data.overview.projectCount || 0} prefix={<FolderOutlined />} /></Card></Col>
-        <Col xs={12} xl={6}><Card><Statistic title="图库图片" value={data.overview.photoCount || 0} prefix={<CameraOutlined />} /></Card></Col>
-        <Col xs={12} xl={6}><Card><Statistic title="已采纳图片" value={data.overview.adoptedPhotoCount || data.overview.adoptionCount || 0} prefix={<TrophyOutlined />} /></Card></Col>
-        <Col xs={12} xl={6}><Card><Statistic title="总工时" value={Math.round(((data.overview.shootingMinutes || 0) + (data.overview.retouchingMinutes || 0)) / 60)} suffix="小时" prefix={<ClockCircleOutlined />} /></Card></Col>
+        <Col xs={12} xl={6}><Card><Statistic title="选题总数" value={data.overview.projects || 0} prefix={<FolderOutlined />} /></Card></Col>
+        <Col xs={12} xl={6}><Card><Statistic title="图库图片" value={data.overview.photos || 0} prefix={<CameraOutlined />} /></Card></Col>
+        <Col xs={12} xl={6}><Card><Statistic title="被引记录" value={data.overview.adoptions || 0} prefix={<TrophyOutlined />} /></Card></Col>
+        <Col xs={12} xl={6}><Card><Statistic title="区间内已确认工时" value={Math.round(((data.overview.shootingMinutes || 0) + (data.overview.retouchingMinutes || 0)) / 60)} suffix="小时" prefix={<ClockCircleOutlined />} /></Card></Col>
       </Row>
       <Row gutter={[16, 16]}>
-        <Col xs={24} xl={9}><Card title="采纳贡献">
-          <div className="ranking-list">{data.members.slice().sort((a,b) => b.adoptedCount - a.adoptedCount).slice(0, 6).map((member, index) => <div className="ranking-item" key={member.studentId}>
-            <span className={`rank rank-${index + 1}`}>{index + 1}</span><div><strong>{member.displayName}</strong><Typography.Text type="secondary">{member.campus}</Typography.Text></div>
-            <Progress percent={Math.round(member.adoptedCount / maxAdopted * 100)} showInfo={false} strokeColor="#4682B4" />
-            <strong>{member.adoptedCount} 张</strong>
-          </div>)}</div>
+        <Col xs={24} xl={9}><Card title="被引张数分布" extra={<Typography.Text type="secondary">点一档只看这一档</Typography.Text>}>
+          <div className="cited-distribution">{distribution.map(bucket => {
+            const active = bucketSelected(bucket, filter)
+            return <button type="button" key={bucket.key} className={`cited-bucket${active ? ' cited-bucket-active' : ''}`}
+              aria-pressed={active}
+              onClick={() => patchFilter(active ? { citedMin: null, citedMax: null } : { citedMin: bucket.min, citedMax: bucket.max })}>
+              <span>{bucket.label}</span>
+              <Progress percent={Math.round(bucket.count / maxBucket * 100)} showInfo={false} strokeColor="#4682B4" />
+              <strong>{bucket.count} 人</strong>
+            </button>
+          })}</div>
         </Card></Col>
-        <Col xs={24} xl={15}><Card title="成员工作统计">
-          <ContentFitTable rowKey={member => member.studentId} dataSource={data.members} pagination={false} columns={[
-            { title: '成员', dataIndex: 'displayName' }, { title: '学号', dataIndex: 'studentId' }, { title: '校区', dataIndex: 'campus' },
-            { title: '已采纳', dataIndex: 'adoptedCount', render: value => `${value} 张`, sorter: (a,b) => a.adoptedCount - b.adoptedCount },
-            { title: '拍摄（小时）', dataIndex: 'shootingMinutes', render: formatHours },
-            { title: '修图（小时）', dataIndex: 'retouchingMinutes', render: formatHours },
-            { title: '合计（小时）', dataIndex: 'totalMinutes', render: value => <strong>{formatHours(value)}</strong> },
+        <Col xs={24} xl={15}><Card title={filtering ? '筛选结果' : '本期概况'}
+          extra={filtering && <Typography.Text type="secondary">{summary.memberCount} / {data.members.length} 人</Typography.Text>}>
+          <Row gutter={[16, 20]}>
+            <Col xs={12} md={8}><Statistic title={`成员（${summary.citedMembers} 人有被引）`} value={summary.memberCount} suffix="人" /></Col>
+            <Col xs={12} md={8}><Statistic title="被引张数合计" value={summary.citedTotal} suffix="张" /></Col>
+            <Col xs={12} md={8}><Statistic title="有被引的人人均" value={summary.averageCited} suffix="张" /></Col>
+            <Col xs={12} md={8}><Statistic title="已确认工时合计" value={Number((summary.totalMinutes / 60).toFixed(1))} suffix="小时" /></Col>
+            <Col xs={12} md={8}><Statistic title="平均每张被引对应工时"
+              value={summary.minutesPerCited == null ? '—' : Number((summary.minutesPerCited / 60).toFixed(2))}
+              suffix={summary.minutesPerCited == null ? undefined : '小时'} /></Col>
+            <Col xs={12} md={8}><Statistic title="有被引但未报工时" value={summary.citedWithoutWorklog} suffix="人"
+              styles={summary.citedWithoutWorklog ? { content: { color: '#b26a00' } } : undefined} />
+              {summary.citedWithoutWorklog > 0 && filter.worklog !== 'without' &&
+                <Button type="link" size="small" style={{ padding: 0 }}
+                  onClick={() => patchFilter({ worklog: 'without', citedMin: filter.citedMin ?? 1 })}>只看这些人</Button>}
+            </Col>
+          </Row>
+        </Card></Col>
+      </Row>
+      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+        <Col xs={24} xl={9}><Card title="被引排行">
+          {ranked.length
+            ? <div className="ranking-list">{ranked.map((member, index) => <div className="ranking-item" key={member.studentId}>
+              <span className={`rank rank-${index + 1}`}>{index + 1}</span><div><strong>{member.displayName}</strong><Typography.Text type="secondary">{member.campus}</Typography.Text></div>
+              <Progress percent={Math.round(member.adoptedCount / maxAdopted * 100)} showInfo={false} strokeColor="#4682B4" />
+              <strong>{member.adoptedCount} 张</strong>
+            </div>)}</div>
+            : <Typography.Text type="secondary">当前条件下没有被引图片。</Typography.Text>}
+        </Card></Col>
+        <Col xs={24} xl={15}><Card title="成员工作统计"
+          extra={<Button icon={<DownloadOutlined />} disabled={!members.length} onClick={exportFiltered}>
+            {filtering ? '导出筛选结果 CSV' : '导出 CSV'}</Button>}>
+          <ContentFitTable rowKey={member => member.studentId} dataSource={members}
+            pagination={clientTablePagination(members.length, { size: 'small' })}
+            locale={{ emptyText: filtering ? '没有符合筛选条件的成员' : '这个时间范围内没有可统计的成员' }} columns={[
+            { title: '成员', dataIndex: 'displayName', render: (value, member) => <Space size={4} wrap>
+              <span>{value}</span>
+              {member.totalMinutes <= 0 && member.adoptedCount > 0 && <Tag color="orange">未报工时</Tag>}
+            </Space> },
+            { title: '学号', dataIndex: 'studentId' }, { title: '校区', dataIndex: 'campus', render: value => value || '—' },
+            { title: '被引张数', dataIndex: 'adoptedCount', render: value => `${value} 张`,
+              sorter: (a, b) => a.adoptedCount - b.adoptedCount },
+            { title: '拍摄（小时）', dataIndex: 'shootingMinutes', render: formatHours,
+              sorter: (a, b) => a.shootingMinutes - b.shootingMinutes },
+            { title: '修图（小时）', dataIndex: 'retouchingMinutes', render: formatHours,
+              sorter: (a, b) => a.retouchingMinutes - b.retouchingMinutes },
+            { title: '合计（小时）', dataIndex: 'totalMinutes', render: value => <strong>{formatHours(value)}</strong>,
+              sorter: (a, b) => a.totalMinutes - b.totalMinutes },
+            { title: '每张被引工时', key: 'perCited', render: (_, member) => {
+              const value = minutesPerCited(member)
+              return value == null ? '—' : formatHours(value)
+            }, sorter: (a, b) => (minutesPerCited(a) ?? -1) - (minutesPerCited(b) ?? -1) },
             { title: '工时详情', key: 'detail', render: (_, member) =>
-              <Button type="link" size="small" onClick={() => void openDetail(member)}>查看</Button> },
+              <Button type="link" size="small" disabled={member.totalMinutes <= 0}
+                onClick={() => void openDetail(member)}>查看</Button> },
           ]} />
         </Card></Col>
       </Row>

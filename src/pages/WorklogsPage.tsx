@@ -2,7 +2,7 @@ import {
   App, Button, Card, DatePicker, Form, Input, InputNumber, Modal, Select, Space, Tag,
 } from 'antd'
 import {
-  CheckOutlined, ClockCircleOutlined, DeleteOutlined, DownloadOutlined, PlusOutlined, StopOutlined,
+  CheckOutlined, ClockCircleOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, PlusOutlined, StopOutlined,
 } from '@ant-design/icons'
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -20,6 +20,7 @@ import {
   WORKLOG_REVIEW_ACTION_MIN_WIDTH,
 } from '../tableActionWidths'
 import ListPagination from '../ListPagination'
+import WorklogCorrectionModal from '../WorklogCorrectionModal'
 import { TABLE_PAGE_SIZES, turnPage } from '../pagination'
 import { keepSelectedRows } from '../rowSelection'
 
@@ -34,6 +35,8 @@ export default function WorklogsPage() {
   const { user } = useAuth()
   const { message, modal } = App.useApp()
   const [form] = Form.useForm()
+  // 管理员更正已报上来的工时（姓名、学号、日期、时长、说明），后端只放行权限组 ADMIN。
+  const [correcting, setCorrecting] = useState<Worklog | null>(null)
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [exporting, setExporting] = useState(false)
@@ -59,6 +62,7 @@ export default function WorklogsPage() {
   const canExport = hasPermission(user, 'WORKLOG_EXPORT')
   const canSubmit = hasPermission(user, 'WORKLOG_SUBMIT')
   const canSubmitAny = hasPermission(user, 'WORKLOG_SUBMIT_ANY')
+  const isAdmin = user?.permissionGroupCode === 'ADMIN'
   const { data, loading, error, reload } = useLoad(
     () => api<PageData<Worklog>>({ url: '/worklogs', params: qs({ ...filters, projectId: projectFilter }) }),
     emptyPage<Worklog>(), [filters.page, filters.pageSize, filters.status, projectFilter],
@@ -354,6 +358,10 @@ export default function WorklogsPage() {
               {canSubmit && !item.shareLinkId && item.userId === user?.id && ['DRAFT', 'REJECTED'].includes(item.status) && (
                 <Button onClick={() => void runAction(item, 'submit')}>提交</Button>
               )}
+              {/* 草稿还没交上来，由填报人自己改；其余状态管理员都能直接更正，状态不变。 */}
+              {isAdmin && item.status !== 'DRAFT' && (
+                <Button icon={<EditOutlined />} onClick={() => setCorrecting(item)}>修改</Button>
+              )}
               {reviewer && item.status === 'SUBMITTED' && <>
                 <Button type="primary" icon={<CheckOutlined />} onClick={() => void runAction(item, 'confirm')}>批准</Button>
                 <Button icon={<StopOutlined />} onClick={() => rejectWorklog(item)}>退回</Button>
@@ -418,6 +426,8 @@ export default function WorklogsPage() {
         </Form.Item>
       </Form>
     </Modal>
+    {correcting && <WorklogCorrectionModal worklog={correcting} currentUserId={user?.id}
+      onClose={() => setCorrecting(null)} onSaved={reload} />}
     <Modal
       title="导出工时"
       open={exportOpen}
