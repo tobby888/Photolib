@@ -327,10 +327,6 @@ button, input, textarea, select { font-family: inherit; }
 .danger-text { color: #b34f4f; }
 .summary-chip { background: #edf3f0; color: #28594f; padding: 8px 12px; border-radius: 9px; font-size: 12px; }
 .form-grid { width: 100%; }
-.ranking-list { display: grid; gap: 22px; padding: 6px 0; }
-.ranking-item { display: grid; grid-template-columns: 30px 100px 1fr 48px; align-items: center; gap: 10px; }
-.ranking-item > div { display: flex; flex-direction: column; }
-.ranking-item > div span { font-size: 11px; }
 .rank { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 8px; background: #eeeae3; font-weight: 700; font-size: 11px; }
 .rank-1 { background: #f0b66d; color: #173b35; }
 .rank-2 { background: #dbe4e0; }
@@ -520,8 +516,6 @@ button, input, textarea, select { font-family: inherit; }
   .project-detail-heading, .state-guide .ant-card-body { align-items: flex-start; flex-direction: column; }
   .project-detail-hero { padding: 20px; }
   .photo-cover { height: 250px; }
-  .ranking-item { grid-template-columns: 28px 90px 1fr; }
-  .ranking-item > strong { display: none; }
 }
 .fatal-error {
   min-height: 100vh;
@@ -3340,6 +3334,39 @@ body {
   --viz-baseline: #c3c2b7;
 }
 .statistics-tabs { margin-bottom: 4px; }
+/* 数据统计页。筛选卡片沿用全站 .filter-card 的横向 flex，会把「下限大于上限」的提示挤到右边，这里改成上下排。 */
+.statistics-page .member-filter-card .ant-card-body { display: grid; gap: 8px; }
+.member-stats-body { display: grid; gap: 16px; }
+.member-stats-body > *, .statistics-page .ant-col { min-width: 0; }
+.member-stats-body .metric-grid { margin-bottom: 0; }
+.statistics-page .metric-grid .ant-statistic-content { white-space: nowrap; }
+/* 并排的两张卡片等高，内容少的那张不会悬在半空。 */
+.statistics-equal-row > .ant-col > .ant-card { height: 100%; }
+.member-summary-card .ant-statistic-title { font-size: 12px; }
+.stat-ranking { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.stat-ranking-row { display: grid; grid-template-columns: 26px minmax(0, 160px) minmax(48px, 1fr) auto; align-items: center; gap: 10px;
+  width: 100%; padding: 6px 8px; border: 1px solid transparent; border-radius: 8px; background: none; font: inherit;
+  color: inherit; text-align: left; cursor: pointer; }
+.stat-ranking-row:hover { background: rgba(70,130,180,.06); }
+.stat-ranking-row:focus-visible { outline: 2px solid #4682B4; outline-offset: 1px; }
+.stat-ranking-row .ant-progress { margin: 0; }
+.stat-ranking-name { display: flex; flex-direction: column; min-width: 0; line-height: 1.35; }
+.stat-ranking-name strong, .stat-ranking-name small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stat-ranking-name small { font-size: 11px; color: var(--viz-muted); }
+.stat-ranking-value { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.statistics-page .nowrap { white-space: nowrap; }
+.viz-hit-clickable { cursor: pointer; }
+.member-adoption-heading.ant-typography { margin: 0 0 8px; font-size: 14px; }
+.member-adoption-section-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+.member-adoption-section-head .member-adoption-heading.ant-typography { margin: 0; }
+.member-adoption-metrics .ant-statistic-title { min-height: 0; }
+.member-adoption-detail > .ant-descriptions { margin-bottom: 12px; }
+.analysis-card-hint.ant-typography { display: block; margin-bottom: 8px; font-size: 12px; }
+@media (max-width: 640px) {
+  /* 窄屏把进度条放到第二行，名字和张数都留在第一行，张数不能像以前那样被藏掉。 */
+  .stat-ranking-row { grid-template-columns: 24px minmax(0, 1fr) auto; row-gap: 4px; }
+  .stat-ranking-row .ant-progress { grid-column: 2 / -1; grid-row: 2; }
+}
 .member-filter-bar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; }
 .cited-distribution { display: grid; gap: 6px; }
 .cited-bucket { display: grid; grid-template-columns: 84px 1fr 52px; align-items: center; gap: 10px; width: 100%;

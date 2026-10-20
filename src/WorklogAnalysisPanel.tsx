@@ -187,7 +187,7 @@ export default function WorklogAnalysisPanel({ initialProjectId }: { initialProj
                   : <RankingChart buckets={ranking} series={HOUR_SERIES} label={`${GROUP_LABELS[result.groupBy]}汇总`} />}
               </Card></Col>
               <Col xs={24} xl={10}><Card className="analysis-card" title="构成">
-                <Space direction="vertical" size={18} style={{ width: '100%' }}>
+                <Space orientation="vertical" size={18} style={{ width: '100%' }}>
                   <div><Typography.Text type="secondary">拍摄与修图</Typography.Text>
                     <ShareBar label="拍摄与修图时长占比" format={hours} parts={[
                       { key: 'shooting', label: '拍摄', value: summary.shootingMinutes, color: 'var(--viz-series-1)' },
