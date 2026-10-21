@@ -773,6 +773,7 @@ function parseTags(value?: string | null): string[] {
 | `GET /projects` | A/M/C | `page`、`pageSize`、`keyword?`、`status?` | `PageData<ProjectEntity>` |
 | `GET /projects/{id}` | A/M/C | — | `ProjectDetail` |
 | `POST /projects/{id}/photos` | A/M/C | `{ photoIds }` | `data: null` |
+| `POST /projects/{id}/photos/remove` | A/M/C | `{ photoIds }` | `{ removed, skippedAdopted, skippedUploadedHere }` |
 | `PUT /projects/{id}` | A/M | `{ title, description?, version }` | `ProjectEntity` |
 | `POST /projects/{id}/status` | A/M | `{ status, version }` | `ProjectEntity` |
 | `POST /projects/{id}/reopen` | A | `{ reason, version }` | `ProjectEntity` |
@@ -836,6 +837,22 @@ COMPLETED -> ACTIVE 仅管理员通过 /reopen
 - 加入相册不会创建采用记录；采用是另一个动作。
 
 项目相册列表通过 `GET /photos?projectId={id}` 获取。
+
+### 7.4 移出项目相册
+
+`POST /projects/{id}/photos/remove`，请求体与 7.3 相同，返回：
+
+```json
+{ "removed": 2, "skippedAdopted": 1, "skippedUploadedHere": 0 }
+```
+
+规则：
+
+- 权限、1～200 个 ID、项目必须 `ACTIVE`、C 只能操作本人上传的图片，均与 7.3 相同；C 选中他人上传的图片时整个请求 403。
+- 只解除本项目的相册归属，不删除图片，也不影响图片在其他项目中的归属。
+- 在本项目已被采用的图片跳过（计入 `skippedAdopted`），需先取消采用。
+- 来源项目就是本项目的图片（按需求或上传链接传入的）跳过（计入 `skippedUploadedHere`）。
+- 操作是幂等的：不存在或已不在相册里的图片不报错，也不计入 `removed`。
 
 ## 8. 图片需求接口
 

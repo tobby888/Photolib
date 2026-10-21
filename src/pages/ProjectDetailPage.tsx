@@ -3,7 +3,8 @@ import {
   Modal, Radio, Row, Select, Space, Statistic, Tag, Tooltip, Typography,
 } from 'antd'
 import {
-  ArrowLeftOutlined, CameraOutlined, CheckCircleOutlined, ClockCircleOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, EyeOutlined,
+  ArrowLeftOutlined, CameraOutlined, CheckCircleOutlined, ClockCircleOutlined, DeleteOutlined, DisconnectOutlined,
+  DownloadOutlined, EditOutlined, EyeOutlined,
   FileImageOutlined, LinkOutlined, MinusCircleOutlined, PlusOutlined, PushpinFilled, PushpinOutlined,
   RocketOutlined, ScissorOutlined, ShareAltOutlined, StopOutlined, TagsOutlined, TeamOutlined, UnorderedListOutlined,
 } from '@ant-design/icons'
@@ -43,6 +44,8 @@ import {
 } from '../photoTags'
 import type { ProjectPhotoFilters } from '../photoTags'
 import ProjectPhotoFilterBar from '../ProjectPhotoFilterBar'
+import { describeRemovalResult, planPhotoRemoval } from '../projectPhotoRemoval'
+import type { RemovePhotosResult } from '../projectPhotoRemoval'
 import ListPagination from '../ListPagination'
 import {
   PROJECT_ALBUM_PAGE_SIZE, PROJECT_ALBUM_PAGE_SIZES, loadProjectAlbumView, pageContaining,
@@ -319,6 +322,7 @@ export default function ProjectDetailPage() {
   // 活动选题结束时的图片清理弹窗：`complete` 是点「标记为已完成」打开的，`cleanup` 是完成之后再清理。
   const [cleanupMode, setCleanupMode] = useState<SelectionCleanupMode | null>(null)
   const [batchDownloading, setBatchDownloading] = useState(false)
+  const [removingPhotos, setRemovingPhotos] = useState(false)
   // 部分校区发布失败时记下已成功的那一批；重试时带回这个批次号，重试成功的校区才会并进同一行。
   const [retryBatch, setRetryBatch] = useState<{ projectId: string; batchId: string } | null>(null)
   const [saving, setSaving] = useState(false)
@@ -706,6 +710,49 @@ export default function ProjectDetailPage() {
     }
   }
 
+  /**
+   * 把勾选的图片移出本选题：只解除相册归属，图片本身和它在别的选题里的归属都在。
+   * 已采纳的、在本选题上传的不提交（后端同样会跳过，见 projectPhotoRemoval.ts）。
+   */
+  const confirmRemovePhotos = () => {
+    const selected = data.photos.filter(photo => selectedAlbumIdSet.has(photo.id))
+    const plan = planPhotoRemoval(selected, projectId, adoptedPhotoIds)
+    const notes = [
+      plan.adopted.length ? `${plan.adopted.length} 张已采纳，需先取消采纳` : '',
+      plan.uploadedHere.length ? `${plan.uploadedHere.length} 张是在本选题上传的，不能移出` : '',
+    ].filter(Boolean)
+    if (!plan.removable.length) {
+      message.info(`所选图片都不能移出：${notes.join('；')}`)
+      return
+    }
+    modal.confirm({
+      title: `将 ${plan.removable.length} 张图片移出选题？`,
+      content: <div>
+        <p>图片不会被删除，仍保留在图片库和其他选题中，之后可以从图库重新添加。</p>
+        {!!notes.length && <p>另有 {notes.join('；')}，这些会保留在选题中。</p>}
+      </div>,
+      okText: '确认移出',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        setRemovingPhotos(true)
+        try {
+          const result = await api<RemovePhotosResult>({
+            method: 'POST',
+            url: `/projects/${projectId}/photos/remove`,
+            data: { photoIds: plan.removable },
+          })
+          setSelectedAlbumPhotoIds([])
+          message.success(describeRemovalResult(result))
+          refresh()
+        } catch (reason) {
+          message.error((reason as Error).message)
+        } finally {
+          setRemovingPhotos(false)
+        }
+      },
+    })
+  }
+
   const saveSelectors = async () => {
     setSaving(true)
     try {
@@ -754,7 +801,9 @@ export default function ProjectDetailPage() {
     + (project?.adoptionCount || 0) > 0
   // 与 PUT /photos/{id}、POST /photos/batch-tags 的方法级授权一致；逐张的归属/上传者限制由后端判断。
   const canTag = hasPermission(user, 'PHOTO_UPLOAD') || hasPermission(user, 'REQUEST_PHOTO_MANAGE')
-  const canSelectPhotos = canBatchDownload || canTag
+  // 与 POST /projects/{id}/photos/remove 一致：和「从图库添加图片」同一条权限，且只在进行中的选题里。
+  const canRemovePhotos = canAdopt && project?.status === 'ACTIVE'
+  const canSelectPhotos = canBatchDownload || canTag || canRemovePhotos
   const presetTags = project?.tags || []
   const selectedAlbumPhotos = useMemo(
     () => data.photos.filter(photo => selectedAlbumIdSet.has(photo.id)), [data.photos, selectedAlbumIdSet])
@@ -893,6 +942,10 @@ export default function ProjectDetailPage() {
             <Button icon={<MinusCircleOutlined />} disabled={!selectedAlbumPhotoIds.length}
               onClick={() => setTagMode('remove')}>移除标签</Button>
           </>}
+          {canRemovePhotos &&
+            <Button danger icon={<DisconnectOutlined />} loading={removingPhotos}
+              disabled={!selectedAlbumPhotoIds.length || batchDownloading}
+              onClick={confirmRemovePhotos}>移出选题</Button>}
           {canBatchDownload &&
             <Button type="primary" icon={<DownloadOutlined />} loading={batchDownloading}
               disabled={!selectedAlbumPhotoIds.length} onClick={() => void batchDownload()}>

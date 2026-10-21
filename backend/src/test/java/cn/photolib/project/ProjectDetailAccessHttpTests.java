@@ -11,6 +11,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -22,10 +23,13 @@ import org.springframework.web.context.WebApplicationContext;
 import java.util.List;
 import java.util.Set;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
@@ -123,6 +127,31 @@ class ProjectDetailAccessHttpTests {
         mvc.perform(authenticated(get("/api/v1/requests")
                         .param("projectId", String.valueOf(projectId))))
                 .andExpect(status().isForbidden());
+    }
+
+    /**
+     * 移出相册与加入相册同一道门槛（{@code PROJECT_ADOPT}），走完整过滤器链；
+     * URL 里只有选题 id，移了哪几张要靠审计详情补上。
+     */
+    @Test
+    void removingPhotosFromTheAlbumIsAuditedWithThePhotoIds() throws Exception {
+        mvc.perform(authenticated(post("/api/v1/projects/" + projectId + "/photos/remove")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"photoIds\":[" + PHOTO_ID + "]}")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.removed").value(1))
+                .andExpect(jsonPath("$.data.skippedAdopted").value(0));
+
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM photo_project WHERE project_id=:projectId")
+                .param("projectId", projectId).query(Integer.class).single()).isZero();
+        var details = jdbc.sql("""
+                SELECT detail_json FROM audit_log
+                WHERE resource_type = 'PROJECTS' AND resource_id = :projectId AND operator_id = :operator
+                """).param("projectId", String.valueOf(projectId)).param("operator", VIEWER_ID)
+                .query(String.class).list();
+        assertThat(details).hasSize(1);
+        // H2 把 JSON 列读回来是带引号转义的字符串，只比对关键字。
+        assertThat(details.getFirst()).contains("photoIds").contains(String.valueOf(PHOTO_ID)).contains("removed");
     }
 
     /**
