@@ -584,6 +584,66 @@ public class ProjectService {
     }
 
     /**
+     * 把图片移出选题相册：只删 {@code photo_project} 链接，图片本身、它在别的选题里的归属都不动。
+     *
+     * <p>凭据、项目状态和校区负责人的「仅限本人上传」与 {@link #addPhotos} 对称。两类图片跳过不移、
+     * 计数后返回，而不是让整批失败——相册勾选可能已经过时，一张移不了不该拖累其他：</p>
+     * <ul>
+     *   <li>在本选题里被采用的：采用只允许落在相册里的图片上，移走会留下一条「相册里没有的采用」，
+     *       得先取消采纳；</li>
+     *   <li>来源项目就是本选题的（{@code photo.project_id}，按需求或上传链接传进来的）：移走之后
+     *       需求交付、图片详情仍指向本选题，相册却看不到它，任何选题都不再展示这张图。</li>
+     * </ul>
+     * 已经不在相册里、或已被删除的图片视为已移除，幂等。
+     */
+    @Transactional
+    public RemovePhotosResult removePhotos(Long projectId, List<Long> photoIds, AuthenticatedUser user) {
+        requirePermission(user, PermissionCode.PROJECT_ADOPT);
+        if (photoIds == null || photoIds.isEmpty() || photoIds.size() > 200) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择 1 至 200 张图片");
+        }
+        if (getVisible(projectId, user).getStatus() != ProjectStatus.ACTIVE) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "仅进行中项目可移除图片");
+        }
+
+        int removed = 0;
+        int skippedAdopted = 0;
+        int skippedUploadedHere = 0;
+        for (Long photoId : photoIds.stream().distinct().toList()) {
+            PhotoEntity photo = photoMapper.selectById(photoId);
+            if (photo == null) {
+                continue;
+            }
+            if (user.isCampusScoped() && !photo.getUploadedBy().equals(user.id())) {
+                throw new BusinessException(ErrorCode.FORBIDDEN, "只能移除本人上传的图片");
+            }
+            if (projectId.equals(photo.getProjectId())) {
+                skippedUploadedHere++;
+                continue;
+            }
+            long adopted = jdbc.sql("""
+                    SELECT COUNT(*) FROM adoption
+                    WHERE photo_id=:photoId AND project_id=:projectId AND deleted=0
+                    """)
+                    .param("photoId", photoId)
+                    .param("projectId", projectId)
+                    .query(Long.class).single();
+            if (adopted > 0) {
+                skippedAdopted++;
+                continue;
+            }
+            removed += jdbc.sql("DELETE FROM photo_project WHERE photo_id=:photoId AND project_id=:projectId")
+                    .param("photoId", photoId)
+                    .param("projectId", projectId)
+                    .update();
+        }
+        return new RemovePhotosResult(removed, skippedAdopted, skippedUploadedHere);
+    }
+
+    public record RemovePhotosResult(int removed, int skippedAdopted, int skippedUploadedHere) {
+    }
+
+    /**
      * 选题可见性的唯一判定点。两条限制是**正交**的，不要合并：
      * <ul>
      *   <li>参与人限制来自权限码——没有 {@code PROJECT_VIEW_ALL} 就只看得到自己接过需求的选题；</li>

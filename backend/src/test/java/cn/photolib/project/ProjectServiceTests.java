@@ -352,6 +352,110 @@ class ProjectServiceTests {
     }
 
     @Test
+    void removePhotos_shouldOnlyUnlinkLibraryPhotosAndSkipAdoptedOrUploadedHere() {
+        var project = projectService.create("移除图片项目", "描述", ProjectStatus.ACTIVE, adminUser);
+        var other = projectService.create("另一个项目", "描述", ProjectStatus.ACTIVE, adminUser);
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, project_id, title, photographer_student_id, photographer_name, uploaded_by, campus_id,
+                     taken_at, size, content_type, object_key, sha256, status)
+                VALUES
+                    (2221, NULL, '图库添加的', '20230001', '张三', 100, 901,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/r1.jpg', :sha1, 'AVAILABLE'),
+                    (2222, NULL, '已采纳的', '20230001', '张三', 100, 901,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/r2.jpg', :sha2, 'AVAILABLE'),
+                    (2223, :projectId, '本选题上传的', '20230001', '张三', 100, 901,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/r3.jpg', :sha3, 'AVAILABLE')
+                """)
+                .param("projectId", project.getId())
+                .param("sha1", "1".repeat(64))
+                .param("sha2", "2".repeat(64))
+                .param("sha3", "3".repeat(64))
+                .update();
+        jdbc.sql("""
+                INSERT INTO photo_project (photo_id, project_id) VALUES
+                    (2221, :projectId), (2222, :projectId), (2223, :projectId), (2221, :otherId)
+                """)
+                .param("projectId", project.getId())
+                .param("otherId", other.getId())
+                .update();
+        jdbc.sql("""
+                INSERT INTO adoption
+                    (project_id, photo_id, photographer_student_id, photographer_name, adopted_by, adopted_at)
+                VALUES (:projectId, 2222, '20230001', '张三', 100, NOW())
+                """)
+                .param("projectId", project.getId())
+                .update();
+
+        // 2299 不存在、2221 重复：都不应报错。
+        var result = projectService.removePhotos(project.getId(), List.of(2221L, 2222L, 2223L, 2221L, 2299L),
+                adminUser);
+
+        assertThat(result.removed()).isEqualTo(1);
+        assertThat(result.skippedAdopted()).isEqualTo(1);
+        assertThat(result.skippedUploadedHere()).isEqualTo(1);
+        assertThat(jdbc.sql("SELECT photo_id FROM photo_project WHERE project_id=:projectId ORDER BY photo_id")
+                .param("projectId", project.getId()).query(Long.class).list()).containsExactly(2222L, 2223L);
+        // 别的选题里的归属、图片本身都不受影响。
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM photo_project WHERE photo_id=2221 AND project_id=:otherId")
+                .param("otherId", other.getId()).query(Integer.class).single()).isEqualTo(1);
+        assertThat(jdbc.sql("SELECT deleted FROM photo WHERE id=2221").query(Boolean.class).single()).isFalse();
+        assertThat(projectService.getDetail(project.getId(), adminUser).photoCount()).isEqualTo(2L);
+
+        // 再移一次是幂等的。
+        assertThat(projectService.removePhotos(project.getId(), List.of(2221L), adminUser).removed()).isZero();
+    }
+
+    @Test
+    void removePhotos_shouldRejectProjectsThatAreNotActive() {
+        var project = projectService.create("草稿项目", "描述", ProjectStatus.DRAFT, adminUser);
+
+        assertThatThrownBy(() -> projectService.removePhotos(project.getId(), List.of(2231L), adminUser))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("仅进行中项目");
+    }
+
+    @Test
+    void campusManager_shouldOnlyRemoveOwnUploadedPhotos() {
+        var project = projectService.create("负责人移除项目", "描述", ProjectStatus.ACTIVE, adminUser);
+        jdbc.sql("""
+                INSERT INTO photo_request
+                    (id, project_id, title, campus_id, required_count, deadline, status, created_by)
+                VALUES
+                    (9111, :projectId, '负责人需求', 901, 1, DATEADD('DAY', 1, CURRENT_TIMESTAMP),
+                     'ACCEPTED', :adminId)
+                """)
+                .param("projectId", project.getId())
+                .param("adminId", adminUser.id())
+                .update();
+        jdbc.sql("INSERT INTO request_participant (request_id, user_id, accepted_at) VALUES (9111, 102, CURRENT_TIMESTAMP)")
+                .update();
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, title, photographer_student_id, photographer_name, uploaded_by, campus_id,
+                     taken_at, size, content_type, object_key, sha256, status)
+                VALUES
+                    (2241, '管理员上传的', '20230001', '张三', 100, 901,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/m1.jpg', :sha1, 'AVAILABLE'),
+                    (2242, '负责人自己上传的', '20230001', '张三', 102, 901,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/m2.jpg', :sha2, 'AVAILABLE')
+                """)
+                .param("sha1", "4".repeat(64))
+                .param("sha2", "5".repeat(64))
+                .update();
+        jdbc.sql("INSERT INTO photo_project (photo_id, project_id) VALUES (2241, :projectId), (2242, :projectId)")
+                .param("projectId", project.getId())
+                .update();
+
+        assertThatThrownBy(() -> projectService.removePhotos(project.getId(), List.of(2241L), managerUser))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("本人上传");
+        assertThat(projectService.removePhotos(project.getId(), List.of(2242L), managerUser).removed()).isEqualTo(1);
+        assertThat(jdbc.sql("SELECT photo_id FROM photo_project WHERE project_id=:projectId")
+                .param("projectId", project.getId()).query(Long.class).list()).containsExactly(2241L);
+    }
+
+    @Test
     void campusManager_shouldOnlySeeProjectsWithAssignedRequests() {
         var assigned = projectService.create("已指派项目", "描述", ProjectStatus.ACTIVE, adminUser);
         var hidden = projectService.create("未指派项目", "描述", ProjectStatus.ACTIVE, adminUser);
