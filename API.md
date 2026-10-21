@@ -1644,6 +1644,43 @@ PENDING -> FAILED
 
 建议每秒轮询，成功后使用顶层 `downloadUrl`，失败时显示 `job.errorMessage`。ZIP 条目名为 `{photoId}-{storedFileName}`，路径分隔符会被清理并处理重名。
 
+### 12.5 被引分析
+
+`GET /statistics/adoption-analysis?from=2026-01-01&to=2026-06-30&basis=ADOPTED&projectId=...&campusId=...&studentId=...&granularity=AUTO`，需要 `STATISTICS_DOWNLOAD`。
+
+- `from`、`to` 必填，两端都含，最长三年。
+- `basis`：`ADOPTED`（默认）按被引时间 `adoptedAt` 落在 `[from, to + 1 day)` 取；`PROJECT_COMPLETED` 按选题 `completedAt` 落在同一区间、且选题为 `COMPLETED` 取，与 §12.1 的被引侧同一口径——带上 `studentId` 时 `summary.photoCount` 等于成员统计那一行的 `adoptedCount`。
+- `projectId` / `campusId` / `studentId` 可空，用来收窄；校区按图片的校区。摄影师按被引时的学号快照（`adoption.photographer_student_id`），与成员统计一致。
+- 校区范围账号只看图片在授权校区的被引，授权校区为空时结果为空；传了无权的 `campusId` 返回 403。
+- `granularity`：`AUTO` / `DAY` / `WEEK` / `MONTH`，跨度太长时自动放粗。走势、星期分布始终按被引时间分组；`PROJECT_COMPLETED` 口径下走势的横轴从最早一次被引画到最晚一次。
+- 命中超过 50000 条返回 400，请缩小范围；`rows` 最多带回最新 500 条，`rowsTruncated` 表示是否截断。
+
+```json
+{
+  "basis": "ADOPTED",
+  "summary": { "adoptionCount": 170, "photoCount": 157, "projectCount": 10, "photographerCount": 8,
+               "reusedPhotoCount": 13, "activeDays": 110 },
+  "trend": [{ "key": "2026-03-02", "label": "2026-03-02 起一周", "adoptionCount": 5, "photoCount": 5,
+              "projectCount": 2, "photographerCount": 3 }],
+  "granularity": "WEEK",
+  "weekdays": [], "lags": [], "campuses": [],
+  "projects": [{ "projectId": "...", "title": "校运会", "status": "COMPLETED", "completedAt": "...",
+                 "adoptionCount": 19, "photoCount": 19, "photographerCount": 4,
+                 "firstAdoptedAt": "...", "lastAdoptedAt": "..." }],
+  "photographers": [{ "studentId": "2023001", "name": "张三", "adoptionCount": 19, "photoCount": 19,
+                      "projectCount": 2, "campus": "南校区、西校区" }],
+  "rows": [{ "adoptionId": "...", "adoptedAt": "...", "projectId": "...", "projectTitle": "...",
+             "projectStatus": "COMPLETED", "projectCompletedAt": "...", "photoId": "...", "photoTitle": "IMG_1.jpg",
+             "takenAt": "...", "campusId": "...", "campusName": "...", "photographerStudentId": "...",
+             "photographerName": "...", "adoptedByName": "...", "remark": null }],
+  "rowsTruncated": false
+}
+```
+
+`adoptionCount` 是被引次数（adoption 行数，一张图被几个选题引用算几次），`photoCount` 是按图片去重的被引张数；`reusedPhotoCount` 是被两个及以上选题引用的图片数。`lags` 是从拍摄到被引的间隔分布（当天 / 1~3 天 / 4~7 天 / 8~30 天 / 31~90 天 / 90 天以上，按自然日）。
+
+`GET /statistics/adoption-analysis/options?from=...&to=...&basis=...` 返回 `{ projects, campuses, photographers }` 三组 `{ value, label }` 下拉候选，与分析共用可见范围。
+
 ## 13. 站内通知、管理消息与邮件日志
 
 ### 13.1 当前用户通知

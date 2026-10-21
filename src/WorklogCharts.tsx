@@ -14,6 +14,8 @@ export interface ChartSeries {
   key: 'shootingMinutes' | 'retouchingMinutes' | 'totalMinutes' | 'worklogCount'
   label: string
   color: string
+  /** 计数序列的单位，默认「条」；被引分析借这几张图画张数 / 次数时传「张」「次」。 */
+  unit?: string
 }
 
 export const HOUR_SERIES: ChartSeries[] = [
@@ -23,7 +25,7 @@ export const HOUR_SERIES: ChartSeries[] = [
 
 const formatHours = (minutes: number) => `${Number((minutes / 60).toFixed(1))} 小时`
 export const formatValue = (series: ChartSeries, value: number) =>
-  series.key === 'worklogCount' ? `${value} 条` : formatHours(value)
+  series.key === 'worklogCount' ? `${value} ${series.unit ?? '条'}` : formatHours(value)
 
 function useWidth() {
   const ref = useRef<HTMLDivElement>(null)
@@ -102,12 +104,14 @@ const PAD = { left: 48, right: 8, top: 10, bottom: 28 }
  * 纵向堆叠柱：趋势（按日 / 周 / 月）、按星期、时长分布都用它。
  * 横轴标签放不下时隔几个画一个，悬停照样能看每一根。
  */
-export function ColumnChart({ buckets, series, label, height = 220, axisLabel = (bucket: AnalysisBucket) => bucket.label }: {
+export function ColumnChart({ buckets, series, label, height = 220, axisLabel = (bucket: AnalysisBucket) => bucket.label, tooltip }: {
   buckets: AnalysisBucket[]
   series: ChartSeries[]
   label: string
   height?: number
   axisLabel?: (bucket: AnalysisBucket) => string
+  /** 换掉默认的悬停提示内容（默认是工时的拍摄 / 修图 / 条数）。 */
+  tooltip?: (bucket: AnalysisBucket) => ReactNode
 }) {
   const [ref, width] = useWidth()
   const [hover, setHover] = useState<number | null>(null)
@@ -160,17 +164,20 @@ export function ColumnChart({ buckets, series, label, height = 220, axisLabel = 
         width={slot} height={plotHeight} />}
     </svg>}
     {active && hover != null && <Tooltip x={PAD.left + (hover + 0.5) * slot} width={width}>
-      <TooltipBody bucket={active} series={series} />
+      {tooltip ? tooltip(active) : <TooltipBody bucket={active} series={series} />}
     </Tooltip>}
     <HiddenTable label={label} buckets={buckets} series={series} />
   </div>
 }
 
 /** 横向堆叠条：按成员 / 校区 / 选题的排行。名字在左、合计在右，条本身只表达长短。 */
-export function RankingChart({ buckets, series, label }: {
+export function RankingChart({ buckets, series, label, tooltip, onSelect }: {
   buckets: AnalysisBucket[]
   series: ChartSeries[]
   label: string
+  tooltip?: (bucket: AnalysisBucket) => ReactNode
+  /** 点一行时调用（比如点开那位成员的详情）；不传就不可点。 */
+  onSelect?: (bucket: AnalysisBucket) => void
 }) {
   const [ref, width] = useWidth()
   const [hover, setHover] = useState<number | null>(null)
@@ -208,14 +215,15 @@ export function RankingChart({ buckets, series, label }: {
           <text className="viz-row-value" x={width - 4} y={top + barHeight / 2} dy="0.32em" textAnchor="end">
             {formatValue(series.length > 1 ? { key: 'totalMinutes', label: '', color: '' } : series[0], sum(bucket))}
           </text>
-          <rect className="viz-hit" x={0} y={index * rowHeight} width={width} height={rowHeight}
-            onPointerEnter={() => setHover(index)} />
+          <rect className={onSelect ? 'viz-hit viz-hit-clickable' : 'viz-hit'} x={0} y={index * rowHeight}
+            width={width} height={rowHeight} onPointerEnter={() => setHover(index)}
+            onClick={onSelect ? () => onSelect(bucket) : undefined} />
         </g>
       })}
     </svg>}
     {active && hover != null && <div className="viz-tooltip" style={{
       left: Math.min(labelWidth + plotWidth / 2, Math.max(80, width - 80)), top: hover * rowHeight + rowHeight,
-    }}><TooltipBody bucket={active} series={series} /></div>}
+    }}>{tooltip ? tooltip(active) : <TooltipBody bucket={active} series={series} />}</div>}
     <HiddenTable label={label} buckets={buckets} series={series} />
   </div>
 }
