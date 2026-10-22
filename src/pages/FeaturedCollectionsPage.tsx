@@ -50,6 +50,7 @@ export default function FeaturedCollectionsPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [requirementHtml, setRequirementHtml] = useState('')
   const [saving, setSaving] = useState(false)
+  const [imageUploading, setImageUploading] = useState(false)
   const [filters, setFilters] = useState({ page: 1, pageSize: GRID_PAGE_SIZES[0], keyword: '', status: '' })
   const canManage = hasPermission(user, 'FEATURED_MANAGE')
 
@@ -292,7 +293,7 @@ export default function FeaturedCollectionsPage() {
 
     <Modal open={modalOpen} width={720} title={editing ? '编辑好图精选' : '发布好图精选'}
       okText={editing ? '保存' : '创建草稿'} cancelText="取消" confirmLoading={saving}
-      onOk={() => void save()} onCancel={() => setModalOpen(false)} destroyOnHidden>
+      okButtonProps={{ disabled: imageUploading }} onOk={() => void save()} onCancel={() => setModalOpen(false)} destroyOnHidden>
       <Form form={form} layout="vertical">
         <Form.Item name="title" label="标题" rules={[{ required: true, message: '请填写标题' }]}>
           <Input maxLength={200} placeholder="例如：2026 年春季好图精选" />
@@ -301,7 +302,7 @@ export default function FeaturedCollectionsPage() {
           {/* 说明图片对任何登录用户可读，正是这里需要的可见范围；
               消息图片只对收件人可读，用在这里会让负责人看到裂图。 */}
           <RichTextEditor value={requirementHtml} onChange={setRequirementHtml}
-            uploadUrl="/description-images" placeholder="写清楚要什么题材、什么风格、交几张……" />
+            uploadUrl="/description-images" onUploadingChange={setImageUploading} placeholder="写清楚要什么题材、什么风格、交几张……" />
         </Form.Item>
         <Row gutter={16}>
           <Col span={16}>
