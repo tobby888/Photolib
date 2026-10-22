@@ -148,16 +148,32 @@ public class AbandonedUploadCleanupJob {
                 .list();
         int cleaned = 0;
         for (KeyedRow<Long> row : rows) {
+            // 选出来之后，上传者可能重传同一张图、把这张票据续期了（issue #156，
+            // PhotoService.resumeTicket）：删对象之前再看一眼到期时间，清列时也带上它。
+            if (!stillExpired(row, deletableBefore)) continue;
             if (!deleteObject(row.objectKey(), "未完成上传的原图", String.valueOf(row.id()))) continue;
             cleaned += jdbc.sql("""
                     UPDATE photo SET original_object_key = NULL, deleted = 1,
                         failure_reason = '上传未完成，临时文件已清理', updated_at = :now
                     WHERE id = :id AND status = 'UPLOADING' AND failure_reason IS NULL
                       AND original_object_key = :objectKey
+                      AND upload_url_expires_at IS NOT NULL AND upload_url_expires_at <= :before
                     """).param("id", row.id()).param("objectKey", row.objectKey())
+                    .param("before", deletableBefore)
                     .param("now", LocalDateTime.now(clock)).update();
         }
         return cleaned;
+    }
+
+    private boolean stillExpired(KeyedRow<Long> row, LocalDateTime deletableBefore) {
+        return jdbc.sql("""
+                        SELECT COUNT(*) FROM photo
+                        WHERE id = :id AND deleted = 0 AND status = 'UPLOADING' AND failure_reason IS NULL
+                          AND original_object_key = :objectKey
+                          AND upload_url_expires_at IS NOT NULL AND upload_url_expires_at <= :before
+                        """)
+                .param("id", row.id()).param("objectKey", row.objectKey()).param("before", deletableBefore)
+                .query(Long.class).single() == 1;
     }
 
     /** 传完却没 complete 的压缩包。批次标成 FAILED，界面上才看得出它没成。 */

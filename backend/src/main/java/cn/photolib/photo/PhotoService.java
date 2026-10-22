@@ -81,10 +81,17 @@ public class PhotoService {
         }
         // 先完成业务上下文授权，再执行可能暴露既有图片标题的全库哈希查询。
         String sha256Lower = command.sha256().toLowerCase();
-        PhotoEntity existing = findDuplicate(sha256Lower, null);
-        if (existing != null) {
-            throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE,
-                    "已经上传过该图片（标题：" + existing.getTitle() + "）");
+        List<PhotoEntity> duplicates = findDuplicates(sha256Lower);
+        if (!duplicates.isEmpty()) {
+            PhotoEntity blocking = duplicates.stream()
+                    .filter(candidate -> !isResumableTicket(candidate, command.requestId(), projectId, user))
+                    .findFirst().orElse(null);
+            if (blocking != null) {
+                throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE,
+                        "已经上传过该图片（标题：" + blocking.getTitle() + "）");
+            }
+            // 撞上的全是自己在同一处没传完的票据：续一张新地址，而不是让人干等清理任务。
+            return resumeTicket(duplicates.get(0), user);
         }
         // 强制拍摄者来自通讯录：解析放在文件校验、参与人校区校验之后，快照姓名/学号写入照片。
         var photographer = campusMemberService.resolvePhotographer(command.photographerContactId(), campusId);
@@ -672,14 +679,85 @@ public class PhotoService {
      * 失败行本身由 {@link FailedUploadRetentionJob} 到期收走。
      */
     private PhotoEntity findDuplicate(String sha256Lower, Long exceptPhotoId) {
-        return mapper.selectOne(Wrappers.<PhotoEntity>lambdaQuery()
+        return mapper.selectOne(duplicateQuery(sha256Lower, exceptPhotoId).last("LIMIT 1"));
+    }
+
+    /** 同一条查重规则下的全部候选，新的在前；签票据时要逐条判断能不能续用。 */
+    private List<PhotoEntity> findDuplicates(String sha256Lower) {
+        return mapper.selectList(duplicateQuery(sha256Lower, null)
+                .orderByDesc(PhotoEntity::getId).last("LIMIT 20"));
+    }
+
+    private LambdaQueryWrapper<PhotoEntity> duplicateQuery(String sha256Lower, Long exceptPhotoId) {
+        return Wrappers.<PhotoEntity>lambdaQuery()
                 .eq(PhotoEntity::getSha256, sha256Lower)
                 .eq(PhotoEntity::getDeleted, false)
                 .ne(exceptPhotoId != null, PhotoEntity::getId, exceptPhotoId)
                 .not(failed -> failed
                         .eq(PhotoEntity::getStatus, PhotoStatus.UPLOADING)
-                        .isNotNull(PhotoEntity::getFailureReason))
-                .last("LIMIT 1"));
+                        .isNotNull(PhotoEntity::getFailureReason));
+    }
+
+    /**
+     * 这张查重命中的照片是不是「同一个人在同一处签过、还没传完」的票据（issue #156）。
+     *
+     * <p>PUT 失败、complete 失败、关掉页面，都会留下 {@code UPLOADING} 且没有失败原因的行，
+     * 要等直传地址过期再加一小时宽限才会被清理任务收走。在那之前同一个文件的每次重传
+     * 都会撞上它。条件要卡死在「同一上传者 + 同一需求 + 同一选题」：换了人、换了地方，
+     * 那就是另一次上传，仍按重复处理。上传链接（访客）的行不续用——它的 {@code uploaded_by}
+     * 记的是链接创建者，不是这次上传的人。</p>
+     */
+    private static boolean isResumableTicket(PhotoEntity photo, Long requestId, Long projectId,
+                                             AuthenticatedUser user) {
+        return photo.getStatus() == PhotoStatus.UPLOADING
+                && photo.getFailureReason() == null
+                && StringUtils.hasText(photo.getOriginalObjectKey())
+                && photo.getShareLinkId() == null
+                && Objects.equals(photo.getUploadedBy(), user.id())
+                && Objects.equals(photo.getRequestId(), requestId)
+                && Objects.equals(photo.getProjectId(), projectId);
+    }
+
+    /**
+     * 给没传完的票据续一张新的直传地址：同一行、同一个原图 key、同一个 photoId。
+     *
+     * <p>只刷新 {@code upload_url_expires_at}，不动 {@code status}、{@code failure_reason}、
+     * {@code version}——version 是 complete 乐观锁的依据，这里用 JdbcClient 正是为了不经过
+     * {@code @Version} 拦截器。也不再插 {@code photo_project}，那条归属在签第一张票时已经插过。
+     * 签名用行上存的 {@code content_type}，不用这次请求声明的：浏览器 PUT 时带的必须与签名
+     * 时一致，而 complete 和处理流程认的都是行上那一个。</p>
+     *
+     * <p>更新带上全部条件并检查影响行数：清理任务可能正好在这一刻收走这一行。两个清理任务
+     * 删之前也会再确认到期时间没被续过，见 {@link AbandonedUploadCleanupJob}、
+     * {@link MissingUploadObjectScanJob}。</p>
+     */
+    private UploadTicket resumeTicket(PhotoEntity pending, AuthenticatedUser user) {
+        String sameRequest = pending.getRequestId() == null ? "request_id IS NULL" : "request_id = :requestId";
+        String sameProject = pending.getProjectId() == null ? "project_id IS NULL" : "project_id = :projectId";
+        var update = jdbc.sql("""
+                        UPDATE photo SET upload_url_expires_at = :expiresAt
+                        WHERE id = :id AND deleted = 0 AND status = 'UPLOADING' AND failure_reason IS NULL
+                          AND original_object_key = :originalKey AND share_link_id IS NULL
+                          AND uploaded_by = :userId AND sha256 = :sha256
+                          AND %s AND %s
+                          AND NOT EXISTS (SELECT 1 FROM photo_upload_item i WHERE i.photo_id = photo.id)
+                        """.formatted(sameRequest, sameProject))
+                .param("expiresAt", abandonedUploads.uploadUrlExpiresAt())
+                .param("id", pending.getId())
+                .param("originalKey", pending.getOriginalObjectKey())
+                .param("userId", user.id())
+                .param("sha256", pending.getSha256());
+        if (pending.getRequestId() != null) update = update.param("requestId", pending.getRequestId());
+        if (pending.getProjectId() != null) update = update.param("projectId", pending.getProjectId());
+        if (update.update() != 1) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
+                    "这张图片上一次没传完的记录刚刚发生了变化，请重新上传");
+        }
+        ObjectStorageService.SignedUrl signed = storage.presignPut(
+                pending.getOriginalObjectKey(), pending.getContentType(), properties.uploadUrlTtl());
+        abandonedUploads.nudge();
+        return new UploadTicket(pending.getId(), signed.url().toString(), signed.method(),
+                pending.getContentType(), signed.expiresAt());
     }
 
     private void performDelete(PhotoEntity photo) {
