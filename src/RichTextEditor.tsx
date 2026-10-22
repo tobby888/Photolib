@@ -2,10 +2,12 @@ import { App, Button, Space, Tooltip } from 'antd'
 import {
   BoldOutlined, ItalicOutlined, OrderedListOutlined, PictureOutlined, UnorderedListOutlined,
 } from '@ant-design/icons'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type ClipboardEvent } from 'react'
 import { api } from './api'
 import { describeBytes } from './uploadLimits'
 import { useUploadLimits } from './useUploadLimits'
+
+const MAX_CONTENT_CHARS = 20000
 
 /**
  * 受控富文本编辑器。
@@ -26,13 +28,24 @@ export default function RichTextEditor({
   const inlineImageMaxBytes = useUploadLimits().INLINE_IMAGE_MAX_BYTES
   const editor = useRef<HTMLDivElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
+  const lastHtml = useRef(value)
   useEffect(() => {
+    lastHtml.current = value
     if (!value && editor.current) editor.current.innerHTML = ''
   }, [value])
+  const emit = (html: string) => {
+    if (html.length > MAX_CONTENT_CHARS) {
+      message.warning(`正文最多 ${MAX_CONTENT_CHARS} 个字符`)
+      if (editor.current) editor.current.innerHTML = lastHtml.current
+      return
+    }
+    lastHtml.current = html
+    onChange(html)
+  }
   const command = (name: string) => {
     editor.current?.focus()
     document.execCommand(name)
-    onChange(editor.current?.innerHTML || '')
+    emit(editor.current?.innerHTML || '')
   }
   const uploadImage = async (file?: File) => {
     if (!file) return
@@ -48,12 +61,28 @@ export default function RichTextEditor({
       editor.current?.focus()
       document.execCommand('insertHTML', false,
         `<p><img src="${result.url}" alt="${file.name.replace(/[<>"]/g, '')}"></p>`)
-      onChange(editor.current?.innerHTML || '')
+      emit(editor.current?.innerHTML || '')
     } catch (error) {
       message.error((error as Error).message)
     } finally {
       if (fileInput.current) fileInput.current.value = ''
     }
+  }
+  const onPaste = (event: ClipboardEvent<HTMLDivElement>) => {
+    const items = event.clipboardData?.items
+    const files: File[] = []
+    if (items) {
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i]
+        if (item.kind === 'file' && item.type.startsWith('image/')) {
+          const file = item.getAsFile()
+          if (file) files.push(file)
+        }
+      }
+    }
+    if (files.length === 0) return
+    event.preventDefault()
+    files.forEach((file) => void uploadImage(file))
   }
   return <div className="rich-editor">
     <Space className="rich-editor-toolbar" wrap>
@@ -67,6 +96,7 @@ export default function RichTextEditor({
     </Space>
     <div ref={editor} className="rich-editor-content" contentEditable suppressContentEditableWarning
       data-placeholder={placeholder}
-      onInput={(event) => onChange(event.currentTarget.innerHTML)} />
+      onInput={(event) => emit(event.currentTarget.innerHTML)}
+      onPaste={onPaste} />
   </div>
 }
