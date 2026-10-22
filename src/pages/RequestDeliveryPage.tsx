@@ -2,6 +2,7 @@ import {
   Alert, App, Button, Card, Checkbox, Col, DatePicker, Descriptions, Form, Input, Progress,
   Result, Row, Select, Space, Statistic, Tag, Typography, Upload,
 } from 'antd'
+import { useBatchDownloadProgress } from '../BatchDownloadModal'
 import {
   ArrowLeftOutlined, CheckCircleOutlined, CloudUploadOutlined, DeleteOutlined, DownloadOutlined, EyeOutlined,
   InboxOutlined, PictureOutlined, SendOutlined,
@@ -63,6 +64,7 @@ export default function RequestDeliveryPage() {
   const [previewPhotoId, setPreviewPhotoId] = useState<string | null>(null)
   const shortcuts = usePhotoCardShortcuts()
   const [batchWorking, setBatchWorking] = useState(false)
+  const batchProgress = useBatchDownloadProgress()
 
   const requestState = useLoad(async () => {
     const request = await api<PhotoRequest>({ url: `/requests/${requestId}` })
@@ -232,16 +234,8 @@ export default function RequestDeliveryPage() {
 
   const batchDownload = async () => {
     if (!selectedPhotoIds.length) return
-    setBatchWorking(true)
-    try {
-      const downloadUrl = await preparePhotoBatchDownload(selectedPhotoIds)
-      if (downloadUrl) window.location.assign(downloadUrl)
-      else message.info('ZIP 仍在后台生成，请稍后重试')
-    } catch (error) {
-      message.error((error as Error).message)
-    } finally {
-      setBatchWorking(false)
-    }
+    const ids = selectedPhotoIds
+    await batchProgress.run(ids.length, options => preparePhotoBatchDownload(ids, options))
   }
 
   const batchDelete = () => {
@@ -319,7 +313,7 @@ export default function RequestDeliveryPage() {
           <Card title="需求图片" extra={<Space wrap>
             {!!selectedPhotoIds.length && <Typography.Text>已选 {selectedPhotoIds.length} 张</Typography.Text>}
             {canManagePhotos && <Button icon={<DownloadOutlined />} disabled={!selectedPhotoIds.length}
-              loading={batchWorking} onClick={() => void batchDownload()}>批量下载</Button>}
+              loading={batchWorking || batchProgress.running} onClick={() => void batchDownload()}>批量下载</Button>}
             {canDelete && <Button danger icon={<DeleteOutlined />} disabled={!selectedPhotoIds.length}
               loading={batchWorking} onClick={batchDelete}>批量删除</Button>}
             <Select value={photoStatus} options={photoStatuses} onChange={value => {
@@ -470,5 +464,6 @@ export default function RequestDeliveryPage() {
         ]} />
       </Card>}
     </div>}
+    {batchProgress.modal}
   </DataState>
 }

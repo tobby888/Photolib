@@ -12,8 +12,21 @@ import java.time.LocalDateTime;
 public class ExportJobEntity {
     @TableId private String id;
     private String type;
+    /** PENDING（排队）→ PROCESSING → SUCCEEDED / FAILED。 */
     private String status;
+    /** 0–100，见 {@link ExportProgress}。 */
     private Integer progress;
+    /** 图片打包任务所处的阶段：PACKING / UPLOADING；排队时和其他类型的任务为空。 */
+    private String phase;
+    private Integer totalItems;
+    private Integer doneItems;
+    /**
+     * 当前阶段的总字节数：打包时是所选图片按库里记的大小相加（有图片没记大小时为空，
+     * 进度改按张数算），上传时是 ZIP 文件的大小。
+     */
+    private Long totalBytes;
+    /** 当前阶段已处理的字节数：打包时是已从存储读出的，上传时是 ZIP 已上传的。 */
+    private Long doneBytes;
     private Long createdBy;
     /**
      * 分享链接发起的打包任务归属的链接（其余任务为 null）。

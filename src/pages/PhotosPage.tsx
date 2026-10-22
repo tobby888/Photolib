@@ -2,6 +2,7 @@ import {
   App, Button, Card, Checkbox, Col, DatePicker, Form, Input, Modal,
   Progress, Row, Select, Space, Tag, Typography, Upload,
 } from 'antd'
+import { useBatchDownloadProgress } from '../BatchDownloadModal'
 import {
   CloudUploadOutlined, DeleteOutlined, DownloadOutlined, FolderAddOutlined, InboxOutlined, MinusCircleOutlined,
   EyeOutlined, SearchOutlined, StarFilled, StarOutlined, TagsOutlined,
@@ -76,7 +77,8 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
   const [selectedPhotos, setSelectedPhotos] = useState<Photo[]>([])
   const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null)
   const shortcuts = usePhotoCardShortcuts()
-  const [batchDownloading, setBatchDownloading] = useState(false)
+  const batchProgress = useBatchDownloadProgress()
+  const batchDownloading = batchProgress.running
   const [selectingAll, setSelectingAll] = useState(false)
   const [projectPickerOpen, setProjectPickerOpen] = useState(false)
   const [projectSaving, setProjectSaving] = useState(false)
@@ -364,21 +366,9 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
         + '可以加一个拍摄日期或标签筛选，分几次下载。')
       return
     }
-    setBatchDownloading(true)
-    try {
-      const downloadUrl = await preparePhotoBatchDownload(selectedIds)
-      if (downloadUrl) {
-        window.location.assign(downloadUrl)
-        setSelectedPhotos([])
-        message.success('所选图片已打包为 ZIP')
-      } else {
-        message.info('ZIP 仍在后台生成，请稍后重新发起下载')
-      }
-    } catch (e) {
-      message.error((e as Error).message)
-    } finally {
-      setBatchDownloading(false)
-    }
+    const ids = selectedIds
+    const started = await batchProgress.run(ids.length, options => preparePhotoBatchDownload(ids, options))
+    if (started) setSelectedPhotos([])
   }
   const batchRemove = () => {
     if (!selectedIds.length) return
@@ -759,5 +749,6 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
           ]} />
       </Space>
     </Modal>
+    {batchProgress.modal}
   </>
 }

@@ -28,6 +28,7 @@ import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
+import java.io.BufferedOutputStream;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -40,6 +41,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.zip.Deflater;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -48,6 +50,7 @@ import java.util.zip.ZipOutputStream;
 @RequiredArgsConstructor
 public class ExportService {
     private static final double MINUTES_PER_HOUR = 60.0;
+    private static final int ZIP_BUFFER_BYTES = 64 * 1024;
 
     private final ExportJobMapper mapper;
     private final StatisticsService statistics;
@@ -258,34 +261,62 @@ public class ExportService {
         }
     }
 
+    /**
+     * 打包所选图片。进度边做边写回任务（{@link ExportProgress}），前端弹窗据此显示
+     * 「正在打包 37 / 120 张」和「正在生成下载文件」两段。
+     */
     @Async
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void exportPhotos(PhotoZipRequested event) {
         Path temporary = null;
+        ExportProgress progress = new ExportProgress(jdbc, event.jobId());
         try {
+            // 仅打包在库/归档且未软删的图片；已删除或处理中的图片不得进入下载包。
+            List<PhotoEntity> photos = photoMapper.selectList(Wrappers.<PhotoEntity>lambdaQuery()
+                    .in(PhotoEntity::getId, event.photoIds())
+                    .eq(PhotoEntity::getDeleted, false)
+                    .in(PhotoEntity::getStatus, PhotoStatus.AVAILABLE, PhotoStatus.ARCHIVED));
+            if (photos.size() != event.photoIds().size()) {
+                throw new IllegalStateException("所选图片状态已变化，请重新选择后下载");
+            }
+            int total = photos.size();
+            Long totalBytes = photos.stream().allMatch(photo -> photo.getSize() != null && photo.getSize() >= 0)
+                    ? photos.stream().mapToLong(PhotoEntity::getSize).sum() : null;
+            progress.packing(total, totalBytes, 0, 0, true);
             temporary = Files.createTempFile("photolib-export-", ".zip");
-            try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(temporary))) {
-                // 仅打包在库/归档且未软删的图片；已删除或处理中的图片不得进入下载包。
-                List<PhotoEntity> photos = photoMapper.selectList(Wrappers.<PhotoEntity>lambdaQuery()
-                        .in(PhotoEntity::getId, event.photoIds())
-                        .eq(PhotoEntity::getDeleted, false)
-                        .in(PhotoEntity::getStatus, PhotoStatus.AVAILABLE, PhotoStatus.ARCHIVED));
-                if (photos.size() != event.photoIds().size()) {
-                    throw new IllegalStateException("所选图片状态已变化，请重新选择后下载");
-                }
+            try (ZipOutputStream zip = new ZipOutputStream(
+                    new BufferedOutputStream(Files.newOutputStream(temporary), ZIP_BUFFER_BYTES))) {
+                // 图片本身已经是压缩格式，再 deflate 一遍几乎不变小，却是大批量打包里最耗 CPU 的一步。
+                zip.setLevel(Deflater.NO_COMPRESSION);
                 java.util.Set<String> usedNames = new java.util.HashSet<>();
+                byte[] buffer = new byte[ZIP_BUFFER_BYTES];
+                int done = 0;
+                long read = 0;
                 for (PhotoEntity photo : photos) {
                     zip.putNextEntry(new ZipEntry(uniqueEntryName(usedNames, photo)));
                     try (InputStream input = storage.open(photo.getObjectKey())) {
-                        input.transferTo(zip);
+                        // 逐块读写而不是 transferTo：一张几十兆的原图读到一半也要报进度、刷新心跳。
+                        int count;
+                        while ((count = input.read(buffer)) > 0) {
+                            zip.write(buffer, 0, count);
+                            read += count;
+                            progress.packing(total, totalBytes, done, read, false);
+                        }
                     }
                     zip.closeEntry();
+                    done++;
+                    progress.packing(total, totalBytes, done, read, done == total);
                 }
             }
             String key = "exports/" + event.jobId() + ".zip";
-            try (InputStream input = Files.newInputStream(temporary)) {
-                storage.put(key, input, Files.size(temporary), "application/zip");
+            long zipBytes = Files.size(temporary);
+            progress.uploading(total, zipBytes, 0, true);
+            try (InputStream input = new ExportProgress.CountingInputStream(Files.newInputStream(temporary),
+                    uploaded -> progress.uploading(total, zipBytes, uploaded, false))) {
+                storage.put(key, input, zipBytes, "application/zip");
             }
+            // 最后一块可能被节流掉了，这里补一次，让记录停在"上传完"。
+            progress.uploading(total, zipBytes, zipBytes, true);
             succeed(event.jobId(), key);
         } catch (Exception ex) {
             fail(event.jobId(), ex);

@@ -81,6 +81,11 @@ class PhotoExportLocalStorageIntegrationTests {
         assertThat(job.getStatus()).isEqualTo("SUCCEEDED");
         assertThat(job.getProgress()).isEqualTo(100);
         assertThat(job.getObjectKey()).isEqualTo("exports/" + jobId + ".zip");
+        // 进度弹窗读的这几列：打包完 1 / 1 张，最后停在上传阶段、字节数是 ZIP 的大小。
+        assertThat(job.getTotalItems()).isEqualTo(1);
+        assertThat(job.getDoneItems()).isEqualTo(1);
+        assertThat(job.getPhase()).isEqualTo("UPLOADING");
+        assertThat(job.getDoneBytes()).isEqualTo(job.getTotalBytes()).isPositive();
 
         try (ZipInputStream zip = new ZipInputStream(storage.open(job.getObjectKey()));
              ByteArrayOutputStream extracted = new ByteArrayOutputStream()) {
@@ -105,7 +110,8 @@ class PhotoExportLocalStorageIntegrationTests {
             ExportJobEntity job = jdbc.sql("""
                     SELECT * FROM export_job WHERE id=:id
                     """).param("id", jobId).query(ExportJobEntity.class).single();
-            if (!"PENDING".equals(job.getStatus())) return job;
+            // PROCESSING 也还没完：打包过程中会先进入处理中，再到成功或失败。
+            if ("SUCCEEDED".equals(job.getStatus()) || "FAILED".equals(job.getStatus())) return job;
             Thread.sleep(100);
         }
         return jdbc.sql("SELECT * FROM export_job WHERE id=:id")
