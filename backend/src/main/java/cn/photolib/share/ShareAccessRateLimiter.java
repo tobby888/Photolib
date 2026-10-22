@@ -4,6 +4,7 @@ import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.common.ratelimit.ClientAddress;
 import cn.photolib.common.ratelimit.FixedWindowRateLimiter;
+import cn.photolib.common.ratelimit.SharedAddressAllowance;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
@@ -15,11 +16,12 @@ import java.util.regex.Pattern;
  * 分享链接匿名入口的进程内限速，和招募、文档那两处同源（{@link FixedWindowRateLimiter}）。
  *
  * <p>和它们不同的是这里**每个动作都记两个计数器**：一个带客户端地址，一个只带
- * 链接 token。原因是 {@link ClientAddress} 对回环/内网地址一律失败开放（反向代理
- * 后面 {@code remoteAddr} 是代理地址），只按地址记的话密码校验在生产部署里等于
- * 没有限速——而密码正是这条链路上唯一一道可猜的门。只按 token 记的那一路把一条
- * 链接的猜测总量压住，代价是同一条链接上的正常访客会互相影响，所以只对写和密码
- * 这类低频动作用紧的额度，读列表给的额度足够一个班的人同时看图。</p>
+ * 链接 token。原因是 {@link ClientAddress} 拿不到真实地址时失败开放（代理没把地址
+ * 传过来时），只按地址记的话密码校验就等于没有限速——而密码正是这条链路上唯一
+ * 一道可猜的门。只按 token 记的那一路把一条链接的猜测总量压住，代价是同一条链接上的
+ * 正常访客会互相影响，所以只对写和密码这类低频动作用紧的额度，读列表的额度足够一个班的
+ * 人同时看图。按地址的额度是一位访客的量，计数时由 {@link SharedAddressAllowance} 放大；
+ * 按链接的额度不放大。</p>
  *
  * <p>这仍然只是纵深防御：进程内状态重启即失，分布式限流由网关负责。</p>
  */
@@ -29,9 +31,11 @@ public class ShareAccessRateLimiter {
     private static final Pattern TOKEN = Pattern.compile("[0-9A-HJKMNP-TV-Z]{26}");
 
     private final FixedWindowRateLimiter limiter;
+    private final SharedAddressAllowance allowance;
 
-    public ShareAccessRateLimiter(Clock clock) {
+    public ShareAccessRateLimiter(Clock clock, SharedAddressAllowance allowance) {
         this.limiter = new FixedWindowRateLimiter(clock, MAX_TRACKED_KEYS);
+        this.allowance = allowance;
     }
 
     public void requireAllowed(Action action, String token, String remoteAddress) {
@@ -43,7 +47,8 @@ public class ShareAccessRateLimiter {
                 action.name() + "|LINK|" + linkKey, action.linkLimit(), action.window());
         if (remoteKey != null) {
             allowed &= limiter.tryAcquire(
-                    action.name() + '|' + linkKey + '|' + remoteKey, action.addressLimit(), action.window());
+                    action.name() + '|' + linkKey + '|' + remoteKey,
+                    allowance.perAddress(action.addressLimit()), action.window());
         }
         if (!allowed) {
             throw new BusinessException(ErrorCode.RATE_LIMITED, "操作过于频繁，请稍后重试");

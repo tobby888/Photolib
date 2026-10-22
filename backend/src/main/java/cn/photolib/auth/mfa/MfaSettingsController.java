@@ -1,5 +1,6 @@
 package cn.photolib.auth.mfa;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
 import jakarta.servlet.http.HttpServletRequest;
@@ -29,6 +30,7 @@ public class MfaSettingsController {
         return ApiResponse.ok(mfa.settings());
     }
 
+    @AuditAction("修改全站两步验证设置")
     @PutMapping
     ApiResponse<MfaService.SettingsView> update(@AuthenticationPrincipal AuthenticatedUser admin,
                                                 @Valid @RequestBody UpdateRequest request,

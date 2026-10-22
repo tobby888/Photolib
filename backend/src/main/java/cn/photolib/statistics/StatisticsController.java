@@ -1,5 +1,6 @@
 package cn.photolib.statistics;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
 import jakarta.validation.Valid;
@@ -55,6 +56,7 @@ public class StatisticsController {
         return ApiResponse.ok(statistics.overview(from, to, projectId, principal));
     }
 
+    @AuditAction("导出成员统计")
     @PostMapping("/statistics/members/export")
     @PreAuthorize("hasAuthority('STATISTICS_DOWNLOAD')")
     ApiResponse<ExportJobEntity> export(@Valid @RequestBody ExportRequest request,
@@ -63,6 +65,7 @@ public class StatisticsController {
                 request.projectId(), request.campusId(), user));
     }
 
+    @AuditAction("导出工时")
     @PostMapping("/worklogs/export")
     @PreAuthorize("hasAuthority('WORKLOG_EXPORT')")
     ApiResponse<ExportJobEntity> exportWorklogs(@Valid @RequestBody WorklogExportRequest request,
@@ -70,6 +73,7 @@ public class StatisticsController {
         return ApiResponse.ok(exports.createWorklogs(request.from(), request.to(), user));
     }
 
+    @AuditAction("打包下载图片")
     @PostMapping("/photos/batch-download")
     @PreAuthorize("hasAnyAuthority('PHOTO_DOWNLOAD','PROJECT_DOWNLOAD','REQUEST_PHOTO_MANAGE')")
     ApiResponse<ExportJobEntity> photoZip(@Valid @RequestBody PhotoZipRequest request,

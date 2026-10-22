@@ -1,5 +1,6 @@
 package cn.photolib.admin;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.auth.mfa.RequiresStepUp;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.error.BusinessException;
@@ -50,6 +51,7 @@ public class BrandingController {
         return ApiResponse.ok(toResponse(mapper.selectById(SETTING_ID)));
     }
 
+    @AuditAction("修改站点外观")
     @PutMapping("/branding")
     @PreAuthorize("hasRole('ADMIN')")
     @RequiresStepUp
@@ -83,6 +85,7 @@ public class BrandingController {
      * 合并成一个请求体会逼着任何一块的保存都把另一块的当前值一起回传，
      * 少传一个字段就是一次静默清空。
      */
+    @AuditAction("修改站点信息")
     @PutMapping("/branding/site")
     @PreAuthorize("hasRole('ADMIN')")
     @RequiresStepUp
@@ -104,6 +107,7 @@ public class BrandingController {
         return ApiResponse.ok(toResponse(setting));
     }
 
+    @AuditAction("上传站点图标")
     @PostMapping(value = "/branding/icon", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasRole('ADMIN')")
     @RequiresStepUp
@@ -146,6 +150,7 @@ public class BrandingController {
         return ApiResponse.ok(scheduledIconService.list());
     }
 
+    @AuditAction("设置定时切换图标")
     @PutMapping(value = "/branding/scheduled-icons", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasRole('ADMIN')")
     @RequiresStepUp
@@ -177,6 +182,7 @@ public class BrandingController {
         return ApiResponse.ok(placeholderImageService.list());
     }
 
+    @AuditAction("上传缺图占位图")
     @PostMapping(value = "/branding/placeholder-images", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasRole('ADMIN')")
     @RequiresStepUp
@@ -185,6 +191,7 @@ public class BrandingController {
         return ApiResponse.ok(placeholderImageService.add(files));
     }
 
+    @AuditAction("删除缺图占位图")
     @DeleteMapping("/branding/placeholder-images/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     @RequiresStepUp

@@ -1,5 +1,6 @@
 package cn.photolib.notification;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.auth.mfa.RequiresStepUp;
 import cn.photolib.common.api.ApiResponse;
 import lombok.RequiredArgsConstructor;
@@ -22,6 +23,7 @@ public class NotificationController {
         return ApiResponse.ok(service.list(status, userId));
     }
 
+    @AuditAction("重发通知")
     @PostMapping("/{id}/retry")
     ApiResponse<Void> retry(@PathVariable Long id) {
         service.retry(id);

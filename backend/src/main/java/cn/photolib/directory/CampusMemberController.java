@@ -1,5 +1,6 @@
 package cn.photolib.directory;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
 import jakarta.validation.Valid;
@@ -35,6 +36,7 @@ public class CampusMemberController {
         return ApiResponse.ok(service.listDeduped(user));
     }
 
+    @AuditAction("新增通讯录成员")
     @PostMapping
     @PreAuthorize("hasAuthority('DIRECTORY_MANAGE')")
     ApiResponse<CampusMemberEntity> create(@Valid @RequestBody MemberRequest request,
@@ -42,6 +44,7 @@ public class CampusMemberController {
         return ApiResponse.ok(service.create(request.campusId(), request.studentId(), request.name(), user));
     }
 
+    @AuditAction("修改通讯录成员")
     @PutMapping("/{id}")
     @PreAuthorize("hasAuthority('DIRECTORY_MANAGE')")
     ApiResponse<CampusMemberEntity> update(@PathVariable Long id, @Valid @RequestBody UpdateRequest request,
@@ -50,6 +53,7 @@ public class CampusMemberController {
                 request.enabled(), request.version(), user));
     }
 
+    @AuditAction("删除通讯录成员")
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAuthority('DIRECTORY_MANAGE')")
     ApiResponse<Void> delete(@PathVariable Long id, @AuthenticationPrincipal AuthenticatedUser user) {

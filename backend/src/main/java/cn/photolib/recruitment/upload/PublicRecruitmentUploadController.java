@@ -1,5 +1,7 @@
 package cn.photolib.recruitment.upload;
 
+import cn.photolib.audit.AuditAction;
+import cn.photolib.common.ratelimit.RateLimitAddress;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.recruitment.AnonymousRecruitmentRateLimiter;
 import cn.photolib.recruitment.RecruitmentTaskService;
@@ -31,6 +33,7 @@ public class PublicRecruitmentUploadController {
     private final AnonymousRecruitmentRateLimiter limiter;
     private final RecruitmentTaskService taskService;
 
+    @AuditAction("开始上传报名作品")
     @PostMapping
     ApiResponse<RecruitmentUploadService.BatchTicket> create(
             @PathVariable String publicId,
@@ -40,7 +43,7 @@ public class PublicRecruitmentUploadController {
             HttpServletRequest servletRequest) {
         String activePublicId = taskService.requireActivePublicId(publicId);
         limiter.requireAllowed(AnonymousRecruitmentRateLimiter.Action.UPLOAD_CREATE,
-                activePublicId, servletRequest.getRemoteAddr());
+                activePublicId, RateLimitAddress.of(servletRequest));
         List<RecruitmentUploadService.FileSpec> files = request.files() == null ? null
                 : request.files().stream().map(file -> new RecruitmentUploadService.FileSpec(
                         file.fileName(), file.contentType(), file.size(), file.sha256())).toList();
@@ -49,6 +52,7 @@ public class PublicRecruitmentUploadController {
                         request.archiveSize(), files)));
     }
 
+    @AuditAction("完成上传报名作品")
     @PostMapping("/{batchId}/complete")
     ApiResponse<RecruitmentUploadService.BatchView> complete(
             @PathVariable String publicId,
@@ -58,7 +62,7 @@ public class PublicRecruitmentUploadController {
             HttpServletRequest servletRequest) {
         String activePublicId = taskService.requireActivePublicId(publicId);
         limiter.requireAllowed(AnonymousRecruitmentRateLimiter.Action.UPLOAD_COMPLETE,
-                activePublicId, servletRequest.getRemoteAddr());
+                activePublicId, RateLimitAddress.of(servletRequest));
         return ApiResponse.ok(service.complete(activePublicId, draftId, batchId, rawToken));
     }
 

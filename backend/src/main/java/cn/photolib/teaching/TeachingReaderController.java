@@ -1,5 +1,6 @@
 package cn.photolib.teaching;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.audit.AuditInterceptor;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.teaching.model.TeachingMaterialEntity;
@@ -63,6 +64,7 @@ public class TeachingReaderController {
      * 下载：计数 +1 并返回签名地址，浏览器直接去存储取文件。
      * 用 POST 而不是 GET：计数是写操作，要进审计，也不能被浏览器缓存吞掉。
      */
+    @AuditAction("下载教学资料")
     @PostMapping("/{publicId}/download")
     ApiResponse<TeachingService.Download> download(@PathVariable String publicId,
                                                    HttpServletRequest servletRequest) {

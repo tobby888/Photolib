@@ -1,5 +1,7 @@
 package cn.photolib.notification;
 
+import cn.photolib.audit.AuditAction;
+import cn.photolib.audit.AuditSkip;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
 import lombok.RequiredArgsConstructor;
@@ -37,18 +39,21 @@ public class UserNotificationController {
         return ApiResponse.ok(new UnreadCount(service.unreadCount(user.id())));
     }
 
+    @AuditSkip("点开一条消息就会触发，记下来只是噪音")
     @PostMapping("/{id}/read")
     ApiResponse<Void> markRead(@PathVariable Long id, @AuthenticationPrincipal AuthenticatedUser user) {
         service.markRead(id, user.id());
         return ApiResponse.ok();
     }
 
+    @AuditAction("全部消息标为已读")
     @PostMapping("/read-all")
     ApiResponse<Void> markAllRead(@AuthenticationPrincipal AuthenticatedUser user) {
         service.markAllRead(user.id());
         return ApiResponse.ok();
     }
 
+    @AuditAction("发送站内消息")
     @PostMapping("/messages")
     @PreAuthorize("hasAuthority('MESSAGE_SEND')")
     ApiResponse<SendResult> send(@Valid @RequestBody SendMessageRequest request,

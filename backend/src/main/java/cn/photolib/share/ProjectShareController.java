@@ -1,5 +1,6 @@
 package cn.photolib.share;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
 import jakarta.validation.Valid;
@@ -30,6 +31,7 @@ public class ProjectShareController {
         return ApiResponse.ok(service.list(projectId, user));
     }
 
+    @AuditAction("新建选题对外链接")
     @PostMapping
     ApiResponse<ProjectShareService.CreatedShareLink> create(
             @PathVariable Long projectId, @Valid @RequestBody CreateRequest request,
@@ -37,6 +39,7 @@ public class ProjectShareController {
         return ApiResponse.ok(service.create(projectId, request.command(), user));
     }
 
+    @AuditAction("修改选题对外链接")
     @PutMapping("/{linkId}")
     ApiResponse<ProjectShareService.ShareLinkView> update(
             @PathVariable Long projectId, @PathVariable Long linkId,
@@ -45,6 +48,7 @@ public class ProjectShareController {
         return ApiResponse.ok(service.update(projectId, linkId, request.command(), user));
     }
 
+    @AuditAction("重置对外链接密码")
     @PostMapping("/{linkId}/password")
     ApiResponse<ProjectShareService.ResetPassword> resetPassword(
             @PathVariable Long projectId, @PathVariable Long linkId,
@@ -53,6 +57,7 @@ public class ProjectShareController {
         return ApiResponse.ok(service.resetPassword(projectId, linkId, request.password(), user));
     }
 
+    @AuditAction("删除选题对外链接")
     @DeleteMapping("/{linkId}")
     ApiResponse<Void> delete(@PathVariable Long projectId, @PathVariable Long linkId,
                              @AuthenticationPrincipal AuthenticatedUser user) {

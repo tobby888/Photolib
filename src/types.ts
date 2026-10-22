@@ -622,13 +622,35 @@ export interface AuditLog {
   operatorId?: EntityId | null
   operatorUsername?: string | null
   operatorDisplayName?: string | null
-  action: 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+  /** 操作者现在的角色和权限组（不是操作当时的）。 */
+  operatorRole?: string | null
+  operatorGroupName?: string | null
+  /** HTTP 方法。导出、下载备份这类读操作是 GET。 */
+  action: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+  /** 「删除图片」这样的操作名；升级前的老记录由后端按路径推断（actionNameInferred）。 */
+  actionName?: string | null
+  actionNameInferred?: boolean
   resourceType: string
+  resourceLabel?: string | null
   resourceId?: string | null
+  /** 操作对象当时的名字。 */
+  resourceName?: string | null
   requestId: string
+  httpStatus?: number | null
+  success?: boolean | null
+  errorCode?: string | null
+  errorMessage?: string | null
   detailJson?: string | null
   ipAddress?: string | null
+  userAgent?: string | null
+  durationMs?: number | null
   createdAt: string
+}
+
+/** `GET /audit-logs/catalog`：筛选框的选项。 */
+export interface AuditLogCatalog {
+  actions: Array<{ value: string; resourceType: string; resourceLabel: string }>
+  resourceTypes: Array<{ value: string; label: string }>
 }
 
 export type DatabaseBackupType = 'SCHEDULED' | 'MANUAL' | 'PRE_RESTORE' | 'UPLOADED'

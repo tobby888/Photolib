@@ -1,5 +1,6 @@
 package cn.photolib.admin;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.auth.mfa.RequiresStepUp;
 import cn.photolib.common.api.ApiResponse;
@@ -52,6 +53,7 @@ public class AdminController {
                 .orderByDesc(AdminAlertEntity::getCreatedAt).last("LIMIT 500")));
     }
 
+    @AuditAction("处理系统告警")
     @PostMapping("/admin-alerts/{id}/resolve")
     @PreAuthorize("hasRole('ADMIN')")
     @RequiresStepUp

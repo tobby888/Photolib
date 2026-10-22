@@ -1,5 +1,7 @@
 package cn.photolib.photo;
 
+import cn.photolib.audit.AuditAction;
+import cn.photolib.audit.AuditSkip;
 import cn.photolib.audit.AuditInterceptor;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.auth.mfa.RequiresStepUp;
@@ -27,6 +29,7 @@ import java.util.Map;
 public class PhotoController {
     private final PhotoService service;
 
+    @AuditSkip("每张图先签上传票据再完成上传，完成那一步另有记录")
     @PostMapping("/upload-tickets")
     @PreAuthorize("hasAnyAuthority('PHOTO_UPLOAD','REQUEST_PHOTO_MANAGE')")
     ApiResponse<PhotoService.UploadTicket> ticket(@Valid @RequestBody TicketRequest request,
@@ -34,6 +37,7 @@ public class PhotoController {
         return ApiResponse.ok(service.createTicket(request.command(), user));
     }
 
+    @AuditAction("上传图片")
     @PostMapping("/{id}/complete-upload")
     @PreAuthorize("hasAnyAuthority('PHOTO_UPLOAD','REQUEST_PHOTO_MANAGE')")
     ApiResponse<PhotoService.PhotoView> complete(@PathVariable Long id,
@@ -91,6 +95,7 @@ public class PhotoController {
         return ApiResponse.ok(service.get(id, user));
     }
 
+    @AuditAction("收藏图片")
     @PutMapping("/{id}/favorite")
     @PreAuthorize("hasAuthority('PHOTO_VIEW')")
     ApiResponse<Void> favorite(@PathVariable Long id,
@@ -99,6 +104,7 @@ public class PhotoController {
         return ApiResponse.ok();
     }
 
+    @AuditAction("取消收藏图片")
     @DeleteMapping("/{id}/favorite")
     @PreAuthorize("hasAuthority('PHOTO_VIEW')")
     ApiResponse<Void> unfavorite(@PathVariable Long id,
@@ -107,6 +113,7 @@ public class PhotoController {
         return ApiResponse.ok();
     }
 
+    @AuditAction("修改图片信息")
     @PutMapping("/{id}")
     @PreAuthorize("hasAnyAuthority('PHOTO_UPLOAD','REQUEST_PHOTO_MANAGE')")
     ApiResponse<PhotoService.PhotoView> update(@PathVariable Long id, @Valid @RequestBody MetadataRequest request,
@@ -118,6 +125,7 @@ public class PhotoController {
      * 批量增删标签。在选题详情页里操作时带上 {@code projectId}，新增标签就要受该选题的预设约束。
      * 审计详情里记下选题、张数和增删了哪些标签，否则一条 POST /photos/batch-tags 事后看不出做了什么。
      */
+    @AuditAction("批量修改图片标签")
     @PostMapping("/batch-tags")
     @PreAuthorize("hasAnyAuthority('PHOTO_UPLOAD','REQUEST_PHOTO_MANAGE')")
     ApiResponse<List<PhotoService.TaggedPhoto>> batchTags(@Valid @RequestBody BatchTagsRequest request,
@@ -133,6 +141,7 @@ public class PhotoController {
                 request.addTags(), request.removeTags(), request.projectId()), user));
     }
 
+    @AuditAction("修改图片校区")
     @PatchMapping("/{id}/campus")
     @PreAuthorize("hasRole('ADMIN')")
     ApiResponse<PhotoService.PhotoView> updateCampus(@PathVariable Long id,
@@ -141,6 +150,7 @@ public class PhotoController {
         return ApiResponse.ok(service.updateCampus(id, request.campusId(), request.version(), user));
     }
 
+    @AuditAction("下载原图")
     @PostMapping("/{id}/download-url")
     @PreAuthorize("hasAnyAuthority('PHOTO_DOWNLOAD','PROJECT_DOWNLOAD','REQUEST_PHOTO_MANAGE')")
     ApiResponse<PhotoService.DownloadUrl> download(@PathVariable Long id,
@@ -148,6 +158,7 @@ public class PhotoController {
         return ApiResponse.ok(service.download(id, user));
     }
 
+    @AuditAction("归档图片")
     @PostMapping("/{id}/archive")
     @PreAuthorize("hasAuthority('PHOTO_ARCHIVE')")
     ApiResponse<PhotoService.PhotoView> archive(@PathVariable Long id,
@@ -155,6 +166,7 @@ public class PhotoController {
         return ApiResponse.ok(service.changeArchive(id, true, user));
     }
 
+    @AuditAction("恢复归档图片")
     @PostMapping("/{id}/restore")
     @PreAuthorize("hasAuthority('PHOTO_ARCHIVE')")
     ApiResponse<PhotoService.PhotoView> restore(@PathVariable Long id,
@@ -162,6 +174,7 @@ public class PhotoController {
         return ApiResponse.ok(service.changeArchive(id, false, user));
     }
 
+    @AuditAction("删除图片")
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAnyAuthority('PHOTO_DELETE','REQUEST_PHOTO_MANAGE')")
     @RequiresStepUp
@@ -170,6 +183,7 @@ public class PhotoController {
         return ApiResponse.ok();
     }
 
+    @AuditAction("批量删除图片")
     @PostMapping("/batch-delete")
     @PreAuthorize("hasAnyAuthority('PHOTO_DELETE','REQUEST_PHOTO_MANAGE')")
     @RequiresStepUp

@@ -1,5 +1,6 @@
 package cn.photolib.storage;
 
+import cn.photolib.audit.AuditSkip;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.common.util.LimitedInputStream;
@@ -32,6 +33,7 @@ public class LocalStorageController {
     private final ObjectStorageService storage;
     private final UploadLimitService uploadLimits;
 
+    @AuditSkip("本地磁盘模式下的文件直传；签票据和完成上传两步另有记录")
     @PutMapping("/{token}")
     ResponseEntity<Void> upload(@PathVariable String token, HttpServletRequest request) throws IOException {
         LocalObjectStorageService local = local();

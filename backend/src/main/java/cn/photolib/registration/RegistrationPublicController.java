@@ -1,5 +1,7 @@
 package cn.photolib.registration;
 
+import cn.photolib.audit.AuditAction;
+import cn.photolib.common.ratelimit.RateLimitAddress;
 import cn.photolib.audit.AuditInterceptor;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.error.BusinessException;
@@ -32,13 +34,14 @@ public class RegistrationPublicController {
     private final RegistrationService registrations;
     private final RegistrationRateLimiter rateLimiter;
 
+    @AuditAction("提交注册申请")
     @PostMapping
     ApiResponse<RegistrationService.SubmittedApplication> register(@Valid @RequestBody RegisterRequest request,
                                                                     HttpServletRequest servletRequest) {
         // 审计里记下想注册的账号，事后能看清是谁在灌申请；密码和注册码都不记。
         servletRequest.setAttribute(AuditInterceptor.DETAIL_ATTRIBUTE,
                 Map.of("username", request.username().trim()));
-        rateLimiter.requireAllowed(servletRequest.getRemoteAddr());
+        rateLimiter.requireAllowed(RateLimitAddress.of(servletRequest));
         if (!request.password().equals(request.confirmPassword())) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "两次输入的密码不一致");
         }

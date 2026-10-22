@@ -1,5 +1,6 @@
 package cn.photolib.request;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.auth.mfa.RequiresStepUp;
 import cn.photolib.common.api.ApiResponse;
@@ -22,6 +23,7 @@ import java.util.List;
 public class RequestController {
     private final RequestService service;
 
+    @AuditAction("新建需求")
     @PostMapping("/projects/{projectId}/requests")
     @PreAuthorize("hasAuthority('REQUEST_CREATE')")
     ApiResponse<PhotoRequestEntity> create(@PathVariable Long projectId,
@@ -32,6 +34,7 @@ public class RequestController {
                 request.requiredCount(), request.deadline(), request.assigneeId()), user));
     }
 
+    @AuditAction("批量发布需求")
     @PostMapping("/projects/{projectId}/requests/batch-publish")
     @PreAuthorize("hasAuthority('REQUEST_CREATE')")
     ApiResponse<List<RequestService.BatchPublishResult>> batchPublish(
@@ -71,6 +74,7 @@ public class RequestController {
         return ApiResponse.ok(service.get(id, user));
     }
 
+    @AuditAction("修改需求")
     @PutMapping("/requests/{id}")
     @PreAuthorize("hasAuthority('REQUEST_CREATE')")
     ApiResponse<PhotoRequestEntity> update(@PathVariable Long id, @Valid @RequestBody UpdateRequest request,
@@ -80,6 +84,7 @@ public class RequestController {
                 request.requiredCount(), request.deadline(), request.assigneeId()), request.version(), user));
     }
 
+    @AuditAction("发布需求")
     @PostMapping("/requests/{id}/publish")
     @PreAuthorize("hasAuthority('REQUEST_CREATE')")
     ApiResponse<PhotoRequestEntity> publish(@PathVariable Long id, @Valid @RequestBody VersionRequest request,
@@ -87,6 +92,7 @@ public class RequestController {
         return ApiResponse.ok(service.publish(id, request.version(), user));
     }
 
+    @AuditAction("认领需求")
     @PostMapping("/requests/{id}/accept")
     @PreAuthorize("hasAuthority('REQUEST_VIEW')")
     ApiResponse<PhotoRequestEntity> accept(@PathVariable Long id,
@@ -108,6 +114,7 @@ public class RequestController {
         return ApiResponse.ok(service.participants(id, user));
     }
 
+    @AuditAction("退出需求")
     @DeleteMapping("/requests/{id}/participants/me")
     @PreAuthorize("hasAuthority('REQUEST_VIEW')")
     ApiResponse<Void> leave(@PathVariable Long id, @AuthenticationPrincipal AuthenticatedUser user) {
@@ -115,6 +122,7 @@ public class RequestController {
         return ApiResponse.ok();
     }
 
+    @AuditAction("提交需求交付")
     @PostMapping("/requests/{id}/submit")
     @PreAuthorize("hasAuthority('REQUEST_VIEW')")
     ApiResponse<PhotoRequestEntity> submit(@PathVariable Long id, @Valid @RequestBody VersionRequest request,
@@ -122,6 +130,7 @@ public class RequestController {
         return ApiResponse.ok(service.submit(id, request.version(), user));
     }
 
+    @AuditAction("验收完成需求")
     @PostMapping("/requests/{id}/complete")
     @PreAuthorize("hasAuthority('REQUEST_CONFIRM')")
     ApiResponse<PhotoRequestEntity> complete(@PathVariable Long id, @Valid @RequestBody VersionRequest request,
@@ -129,6 +138,7 @@ public class RequestController {
         return ApiResponse.ok(service.complete(id, request.version(), user));
     }
 
+    @AuditAction("退回需求修改")
     @PostMapping("/requests/{id}/return")
     @PreAuthorize("hasAuthority('REQUEST_CONFIRM')")
     ApiResponse<PhotoRequestEntity> returnForRevision(
@@ -138,6 +148,7 @@ public class RequestController {
         return ApiResponse.ok(service.returnForRevision(id, request.reason(), request.version(), user));
     }
 
+    @AuditAction("取消需求")
     @PostMapping("/requests/{id}/cancel")
     @PreAuthorize("hasAuthority('REQUEST_CLOSE')")
     ApiResponse<PhotoRequestEntity> cancel(@PathVariable Long id, @Valid @RequestBody CancelRequest request,
@@ -145,6 +156,7 @@ public class RequestController {
         return ApiResponse.ok(service.cancel(id, request.reason(), request.version(), user));
     }
 
+    @AuditAction("删除需求")
     @DeleteMapping("/requests/{id}")
     @PreAuthorize("hasAuthority('REQUEST_DELETE')")
     @RequiresStepUp

@@ -1,5 +1,6 @@
 package cn.photolib.dashboard;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.audit.AuditInterceptor;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.auth.mfa.RequiresStepUp;
@@ -44,6 +45,7 @@ public class AdminDashboardController {
         return ApiResponse.ok(layouts.get(user.id()));
     }
 
+    @AuditAction("保存管理面板布局")
     @PutMapping("/layout")
     ApiResponse<DashboardLayoutService.LayoutView> saveLayout(@Valid @RequestBody SaveLayoutRequest request,
                                                               @AuthenticationPrincipal AuthenticatedUser user,
@@ -55,6 +57,7 @@ public class AdminDashboardController {
         return ApiResponse.ok(saved);
     }
 
+    @AuditAction("重置管理面板布局")
     @DeleteMapping("/layout")
     ApiResponse<Void> resetLayout(@AuthenticationPrincipal AuthenticatedUser user, HttpServletRequest http) {
         layouts.reset(user.id());

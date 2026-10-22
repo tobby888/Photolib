@@ -1,5 +1,6 @@
 package cn.photolib.user;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.auth.mfa.RequiresStepUp;
 import cn.photolib.common.api.ApiResponse;
@@ -40,6 +41,7 @@ public class UserController {
 
     private final UserService userService;
 
+    @AuditAction("新建账号")
     @PostMapping
     @PreAuthorize("hasRole('ADMIN')")
     @RequiresStepUp
@@ -84,6 +86,7 @@ public class UserController {
         return ApiResponse.ok(userService.get(id));
     }
 
+    @AuditAction("修改账号信息")
     @PutMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     @RequiresStepUp
@@ -94,6 +97,7 @@ public class UserController {
                 request.permissionGroupId(), request.campusIds())));
     }
 
+    @AuditAction("修改账号权限")
     @PutMapping("/{id}/authorization")
     @PreAuthorize("hasRole('ADMIN')")
     @RequiresStepUp
@@ -103,6 +107,7 @@ public class UserController {
                 request.campusIds(), request.version()));
     }
 
+    @AuditAction("修改账号校区")
     @PutMapping("/{id}/campus")
     @PreAuthorize("hasAuthority('MANAGER_CAMPUS_ASSIGN')")
     ApiResponse<UserService.UserView> updateCampus(
@@ -111,6 +116,7 @@ public class UserController {
         return ApiResponse.ok(userService.updateCampus(id, request.campusId(), request.version(), user));
     }
 
+    @AuditAction("重置账号密码")
     @PutMapping("/{id}/password")
     @PreAuthorize("hasRole('ADMIN')")
     @RequiresStepUp
@@ -118,6 +124,7 @@ public class UserController {
         return ApiResponse.ok(new ResetPasswordResponse(userService.resetPassword(id)));
     }
 
+    @AuditAction("启用账号")
     @PostMapping("/{id}/enable")
     @PreAuthorize("hasRole('ADMIN')")
     @RequiresStepUp
@@ -125,6 +132,7 @@ public class UserController {
         return ApiResponse.ok(userService.setEnabled(id, true));
     }
 
+    @AuditAction("停用账号")
     @PostMapping("/{id}/disable")
     @PreAuthorize("hasRole('ADMIN')")
     @RequiresStepUp
@@ -132,6 +140,7 @@ public class UserController {
         return ApiResponse.ok(userService.setEnabled(id, false));
     }
 
+    @AuditAction("删除账号")
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     @RequiresStepUp

@@ -4,18 +4,23 @@ import java.util.Locale;
 import java.util.regex.Pattern;
 
 /**
- * Turns a servlet container's {@code remoteAddr} into a rate-limiting key.
+ * Turns a client address into a rate-limiting key.
  *
- * <p>The value deliberately comes from {@code remoteAddr} and never from
- * X-Forwarded-For: an application must not trust a client-spoofable forwarding
- * header without an explicit trusted-proxy policy.</p>
+ * <p>The address comes from {@link RateLimitAddress}: {@code remoteAddr}, or the
+ * {@code X-Real-IP} the local nginx overwrites when the request arrived through it.
+ * Never from X-Forwarded-For, which a client can prefill.</p>
  *
- * <p>Behind a reverse proxy {@code remoteAddr} therefore identifies the proxy
- * rather than the browser. Non-public addresses (loopback, link-local, private
- * and carrier-grade-NAT ranges, multicast) return {@code null} so callers fail
- * open instead of throttling every visitor behind one shared key. The gateway
- * must provide its own durable, distributed rate limiting; the process-local
- * limiters in this codebase are defense in depth, not a replacement.</p>
+ * <p>Non-public addresses (loopback, link-local, private and carrier-grade-NAT
+ * ranges, multicast) return {@code null} so callers fail open instead of
+ * throttling every visitor behind one shared key — that is what happens when
+ * the proxy in front does not pass the real address. IPv6 addresses collapse to
+ * their /64: one subscriber usually holds a whole /64 and can rotate through it
+ * freely, so a per-address key would not limit anyone.</p>
+ *
+ * <p>A public IPv4 address is often a campus or dormitory NAT shared by hundreds
+ * of people; limiters scale their per-address budgets with
+ * {@link SharedAddressAllowance} for that reason. The process-local limiters are
+ * defense in depth; the gateway should still provide durable rate limiting.</p>
  */
 public final class ClientAddress {
     private static final Pattern IPV4 = Pattern.compile("[0-9]{1,3}(?:\\.[0-9]{1,3}){3}");
@@ -41,7 +46,42 @@ public final class ClientAddress {
                 || address.startsWith("fe9") || address.startsWith("fea")
                 || address.startsWith("feb") || address.startsWith("fc")
                 || address.startsWith("fd") || address.startsWith("ff")) return null;
-        return normalized;
+        return ipv6Prefix(address);
+    }
+
+    /** The first four hextets of an IPv6 literal, or {@code null} if it does not parse. */
+    static String ipv6Prefix(String address) {
+        String[] head;
+        String[] tail;
+        int gap = address.indexOf("::");
+        if (gap >= 0) {
+            if (address.indexOf("::", gap + 1) >= 0) return null;
+            head = split(address.substring(0, gap));
+            tail = split(address.substring(gap + 2));
+        } else {
+            head = split(address);
+            tail = new String[0];
+        }
+        if (head == null || tail == null) return null;
+        int missing = 8 - head.length - tail.length;
+        if (gap >= 0 ? missing < 1 : missing != 0) return null;
+        String[] groups = new String[8];
+        for (int i = 0; i < 8; i++) {
+            String group = i < head.length ? head[i] : i < head.length + missing ? "0" : tail[i - head.length - missing];
+            if (group.isEmpty() || group.length() > 4) return null;
+            groups[i] = Integer.toHexString(Integer.parseInt(group, 16));
+        }
+        return String.join(":", groups[0], groups[1], groups[2], groups[3]) + "::/64";
+    }
+
+    private static String[] split(String part) {
+        if (part.isEmpty()) return new String[0];
+        if (part.contains(".")) return null;
+        String[] groups = part.split(":", -1);
+        for (String group : groups) {
+            if (group.isEmpty()) return null;
+        }
+        return groups;
     }
 
     private static String normalizePublicIpv4(String value) {

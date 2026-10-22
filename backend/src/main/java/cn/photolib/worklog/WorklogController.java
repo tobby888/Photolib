@@ -1,5 +1,6 @@
 package cn.photolib.worklog;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.audit.AuditInterceptor;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
@@ -23,6 +24,7 @@ import java.util.Map;
 public class WorklogController {
     private final WorklogService service;
 
+    @AuditAction("填写工时")
     @PostMapping("/requests/{requestId}/worklogs")
     @PreAuthorize("hasAuthority('WORKLOG_SUBMIT')")
     ApiResponse<WorklogEntity> create(@PathVariable Long requestId, @Valid @RequestBody WorklogRequest request,
@@ -45,6 +47,7 @@ public class WorklogController {
         return ApiResponse.ok(service.list(page, pageSize, requestId, projectId, userId, status, from, to, user));
     }
 
+    @AuditAction("修改工时")
     @PutMapping("/worklogs/{id}")
     @PreAuthorize("hasAuthority('WORKLOG_SUBMIT')")
     ApiResponse<WorklogEntity> update(@PathVariable Long id, @Valid @RequestBody WorklogRequest request,
@@ -57,6 +60,7 @@ public class WorklogController {
      * 管理员更正已报上来的工时（姓名、学号、日期、时长、说明），状态不变。
      * 审计只看得到路径，改了哪些字段、从什么改成什么记进详情，事后能查到原值。
      */
+    @AuditAction("直接修改已报工时")
     @PutMapping("/worklogs/{id}/correction")
     @PreAuthorize("hasRole('ADMIN')")
     ApiResponse<WorklogEntity> correct(@PathVariable Long id, @Valid @RequestBody CorrectionRequest request,
@@ -67,6 +71,7 @@ public class WorklogController {
         return ApiResponse.ok(correction.worklog());
     }
 
+    @AuditAction("提交工时")
     @PostMapping("/worklogs/{id}/submit")
     @PreAuthorize("hasAuthority('WORKLOG_SUBMIT')")
     ApiResponse<WorklogEntity> submit(@PathVariable Long id, @Valid @RequestBody VersionRequest request,
@@ -74,6 +79,7 @@ public class WorklogController {
         return ApiResponse.ok(service.submit(id, request.version(), user));
     }
 
+    @AuditAction("确认工时")
     @PostMapping("/worklogs/{id}/confirm")
     @PreAuthorize("hasAuthority('WORKLOG_CONFIRM')")
     ApiResponse<WorklogEntity> confirm(@PathVariable Long id, @Valid @RequestBody VersionRequest request,
@@ -81,6 +87,7 @@ public class WorklogController {
         return ApiResponse.ok(service.confirm(id, request.version(), user));
     }
 
+    @AuditAction("退回工时")
     @PostMapping("/worklogs/{id}/reject")
     @PreAuthorize("hasAuthority('WORKLOG_CONFIRM')")
     ApiResponse<WorklogEntity> reject(@PathVariable Long id, @Valid @RequestBody RejectRequest request,
@@ -88,6 +95,7 @@ public class WorklogController {
         return ApiResponse.ok(service.reject(id, request.reason(), request.version(), user));
     }
 
+    @AuditAction("删除工时")
     @DeleteMapping("/worklogs/{id}")
     @PreAuthorize("hasAnyAuthority('WORKLOG_SUBMIT','WORKLOG_CONFIRM')")
     ApiResponse<Void> delete(@PathVariable Long id, @AuthenticationPrincipal AuthenticatedUser user) {

@@ -1,4 +1,5 @@
 import { api, qs } from './api'
+import { waitForExportJob, type ExportJobView, type WaitOptions } from './batchDownloadProgress'
 import type { ProjectPhotoFilters } from './photoTags'
 import type {
   EntityId, PageData, ShareGuestAccess, ShareGuestSession, SharePhoto, ShareLinkPurpose,
@@ -185,39 +186,24 @@ export const shareUploadApi = {
     api<ShareGuestWorklog[]>({ url: `/public/shares/${token}/worklogs`, ...guest(session) }),
 }
 
-interface ShareExportJobView {
-  job: {
-    status: 'PENDING' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED'
-    errorMessage?: string
-  }
-  downloadUrl?: string
-}
-
-const wait = (milliseconds: number) => new Promise(resolve => window.setTimeout(resolve, milliseconds))
-
 /**
  * 分享链接的打包下载，和站内的 `preparePhotoBatchDownload` 是同一套任务与轮询，
  * 只是走访客通道：任务归属认的是分享链接而不是账号。
  */
 export async function prepareSharedBatchDownload(
   token: string, session: string, photoIds: EntityId[],
-): Promise<string | null> {
+  options: Pick<WaitOptions, 'onProgress' | 'signal'> = {},
+): Promise<string> {
   const job = await api<{ id: string }>({
     method: 'POST',
     url: `/public/shares/${token}/batch-downloads`,
     data: { photoIds },
     ...guest(session),
   })
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    const result = await api<ShareExportJobView>({
-      url: `/public/shares/${token}/batch-downloads/${job.id}`, ...guest(session),
-    })
-    if (result.job.status === 'SUCCEEDED' && result.downloadUrl) return result.downloadUrl
-    if (result.job.status === 'FAILED') {
-      throw new Error(result.job.errorMessage
-        || '这批图片没能打包成 ZIP。可能其中有图片已被移出项目或删除，重新选一次再试。')
-    }
-    await wait(1000)
-  }
-  return null
+  return waitForExportJob(() => api<ExportJobView>({
+    url: `/public/shares/${token}/batch-downloads/${job.id}`, ...guest(session),
+  }), {
+    ...options,
+    failureMessage: '这批图片没能打包成 ZIP。可能其中有图片已被移出项目或删除，重新选一次再试。',
+  })
 }

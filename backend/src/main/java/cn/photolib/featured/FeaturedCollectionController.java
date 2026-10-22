@@ -1,5 +1,6 @@
 package cn.photolib.featured;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.api.PageResponse;
@@ -78,6 +79,7 @@ public class FeaturedCollectionController {
         return ApiResponse.ok(service.document(id));
     }
 
+    @AuditAction("新建好图精选")
     @PostMapping
     @PreAuthorize("hasAuthority('FEATURED_MANAGE')")
     ApiResponse<FeaturedCollectionService.CollectionView> create(
@@ -86,6 +88,7 @@ public class FeaturedCollectionController {
         return ApiResponse.ok(service.create(request.toCommand(), user));
     }
 
+    @AuditAction("修改好图精选")
     @PutMapping("/{id}")
     @PreAuthorize("hasAuthority('FEATURED_MANAGE')")
     ApiResponse<FeaturedCollectionService.CollectionView> update(
@@ -94,6 +97,7 @@ public class FeaturedCollectionController {
         return ApiResponse.ok(service.update(id, request.toCommand(), request.version(), user));
     }
 
+    @AuditAction("发布好图精选")
     @PostMapping("/{id}/publish")
     @PreAuthorize("hasAuthority('FEATURED_MANAGE')")
     ApiResponse<FeaturedCollectionService.CollectionView> publish(
@@ -102,6 +106,7 @@ public class FeaturedCollectionController {
         return ApiResponse.ok(service.publish(id, request.version(), user));
     }
 
+    @AuditAction("关闭好图精选")
     @PostMapping("/{id}/close")
     @PreAuthorize("hasAuthority('FEATURED_MANAGE')")
     ApiResponse<FeaturedCollectionService.CollectionView> close(
@@ -109,6 +114,7 @@ public class FeaturedCollectionController {
         return ApiResponse.ok(service.close(id, user));
     }
 
+    @AuditAction("重新生成精选文档")
     @PostMapping("/{id}/document")
     @PreAuthorize("hasAuthority('FEATURED_MANAGE')")
     ApiResponse<FeaturedCollectionService.CollectionView> regenerate(
@@ -116,6 +122,7 @@ public class FeaturedCollectionController {
         return ApiResponse.ok(service.regenerateDocument(id, user));
     }
 
+    @AuditAction("删除好图精选")
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAuthority('FEATURED_MANAGE')")
     ApiResponse<Void> delete(@PathVariable long id, @RequestParam @Min(1) int version,
@@ -124,6 +131,7 @@ public class FeaturedCollectionController {
         return ApiResponse.ok(null);
     }
 
+    @AuditAction("向好图精选添加图片")
     @PostMapping("/{id}/entries")
     @PreAuthorize("isAuthenticated()")
     ApiResponse<FeaturedCollectionService.EntryView> addEntry(
@@ -132,6 +140,7 @@ public class FeaturedCollectionController {
         return ApiResponse.ok(service.addEntry(id, request.toCommand(), user));
     }
 
+    @AuditAction("修改精选图片")
     @PutMapping("/{id}/entries/{entryId}")
     @PreAuthorize("isAuthenticated()")
     ApiResponse<FeaturedCollectionService.EntryView> updateEntry(
@@ -142,6 +151,7 @@ public class FeaturedCollectionController {
                 request.version(), user));
     }
 
+    @AuditAction("移除精选图片")
     @DeleteMapping("/{id}/entries/{entryId}")
     @PreAuthorize("isAuthenticated()")
     ApiResponse<Void> deleteEntry(@PathVariable long id, @PathVariable long entryId,

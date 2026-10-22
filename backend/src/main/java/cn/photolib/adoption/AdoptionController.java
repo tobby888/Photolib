@@ -1,5 +1,6 @@
 package cn.photolib.adoption;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.api.PageResponse;
@@ -19,6 +20,7 @@ import java.util.List;
 public class AdoptionController {
     private final AdoptionService service;
 
+    @AuditAction("标记被引")
     @PostMapping("/projects/{projectId}/adoptions")
     @PreAuthorize("hasAuthority('PROJECT_ADOPT')")
     ApiResponse<List<AdoptionEntity>> adopt(@PathVariable Long projectId,
@@ -45,6 +47,7 @@ public class AdoptionController {
         return ApiResponse.ok(service.photographers(projectId, user));
     }
 
+    @AuditAction("取消被引")
     @DeleteMapping("/projects/{projectId}/adoptions/{id}")
     @PreAuthorize("hasAuthority('PROJECT_ADOPT')")
     ApiResponse<Void> cancel(@PathVariable Long projectId, @PathVariable Long id,

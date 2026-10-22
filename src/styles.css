@@ -324,6 +324,9 @@ button, input, textarea, select { font-family: inherit; }
 .workflow-steps .done i { background: #28594f; color: white; }
 .table-title { display: flex; flex-direction: column; gap: 3px; }
 .table-title span { color: #959d99; font-size: 11px; }
+.audit-json { margin: 0; max-height: 360px; overflow: auto; padding: 10px 12px; border-radius: 8px;
+  background: var(--studio-paper, #f7f7f3); border: 1px solid var(--studio-rule, #eeebe5);
+  font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-all; }
 .danger-text { color: #b34f4f; }
 .summary-chip { background: #edf3f0; color: #28594f; padding: 8px 12px; border-radius: 9px; font-size: 12px; }
 .form-grid { width: 100%; }

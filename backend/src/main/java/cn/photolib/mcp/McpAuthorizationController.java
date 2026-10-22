@@ -1,10 +1,13 @@
 package cn.photolib.mcp;
 
+import cn.photolib.audit.AuditAction;
+import cn.photolib.audit.AuditSkip;
 import cn.photolib.audit.AuditInterceptor;
 import cn.photolib.auth.AuthService;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.auth.mfa.RequiresStepUp;
 import cn.photolib.common.api.ApiResponse;
+import cn.photolib.common.util.ClientIp;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -38,11 +41,12 @@ public class McpAuthorizationController {
     private final McpAuthorizationService service;
     private final AuthService authService;
 
+    @AuditAction("发起 MCP 客户端配对")
     @PostMapping("/authorizations")
     ApiResponse<McpAuthorizationService.Pairing> open(@Valid @RequestBody OpenRequest request,
                                                       HttpServletRequest servletRequest) {
         return ApiResponse.ok(service.open(request.clientName(), request.deviceLabel(),
-                servletRequest.getRemoteAddr()));
+                ClientIp.of(servletRequest)));
     }
 
     /**
@@ -55,6 +59,7 @@ public class McpAuthorizationController {
         return ApiResponse.ok(service.describe(requestId));
     }
 
+    @AuditAction("批准 MCP 客户端配对")
     @PostMapping("/authorizations/{requestId}/approve")
     @PreAuthorize("isAuthenticated()")
     // 批准会签发一个独立、可以一直续期的会话。两步验证生效的账号必须先再验证：
@@ -72,6 +77,7 @@ public class McpAuthorizationController {
         return ApiResponse.ok();
     }
 
+    @AuditAction("拒绝 MCP 客户端配对")
     @PostMapping("/authorizations/{requestId}/deny")
     @PreAuthorize("isAuthenticated()")
     ApiResponse<Void> deny(@PathVariable String requestId,
@@ -96,6 +102,7 @@ public class McpAuthorizationController {
     }
 
     /** 客户端轮询换令牌。批准之前一直回 {@code PENDING}，不是错误。 */
+    @AuditSkip("MCP 客户端每两秒轮询一次等批准，一次配对能刷出几百条；批准动作另有记录")
     @PostMapping("/token")
     ApiResponse<McpAuthorizationService.Grant> token(@Valid @RequestBody TokenRequest request) {
         return ApiResponse.ok(service.poll(request.requestId(), request.deviceCode()));
@@ -105,6 +112,7 @@ public class McpAuthorizationController {
      * 续期。和浏览器那条 {@code /auth/refresh} 是同一套会话与轮换规则，区别只在
      * 刷新令牌从请求体里来——MCP 客户端不是浏览器，没有 Cookie 可用。
      */
+    @AuditSkip("MCP 客户端定时续期访问令牌，和网页会话刷新一样不记")
     @PostMapping("/token/refresh")
     ApiResponse<TokenResponse> refresh(@Valid @RequestBody RefreshRequest request) {
         AuthService.TokenPair pair = authService.refresh(request.refreshToken());
@@ -116,6 +124,7 @@ public class McpAuthorizationController {
      * 注销这台设备。匿名可调，因为刷新令牌本身就是凭据；拿不到令牌的人也注销不了别人。
      * 成员在别的地方改密或被停用时，这条会话同样会跟着失效（{@code AuthService}）。
      */
+    @AuditAction("注销 MCP 客户端令牌")
     @PostMapping("/token/revoke")
     ApiResponse<Void> revoke(@Valid @RequestBody RefreshRequest request) {
         authService.logout(request.refreshToken());

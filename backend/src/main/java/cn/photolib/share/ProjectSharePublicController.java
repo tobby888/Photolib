@@ -1,5 +1,8 @@
 package cn.photolib.share;
 
+import cn.photolib.audit.AuditAction;
+import cn.photolib.audit.AuditSkip;
+import cn.photolib.common.ratelimit.RateLimitAddress;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.api.PageResponse;
 import cn.photolib.photo.PhotoService;
@@ -60,12 +63,13 @@ public class ProjectSharePublicController {
      * 进门。上传链接还要求自报姓名和学号——那是这次会话上传的每一张图片的拍摄者
      * 快照，理由见 {@link ProjectShareUploadService} 第 2 条不变量。浏览链接忽略这两项。
      */
+    @AuditAction("打开对外链接")
     @PostMapping("/sessions")
     ApiResponse<ProjectShareService.GuestSession> openSession(
             @PathVariable String token, @Valid @RequestBody PasswordRequest request,
             HttpServletRequest servletRequest) {
         rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.PASSWORD, token,
-                servletRequest.getRemoteAddr());
+                RateLimitAddress.of(servletRequest));
         return ApiResponse.ok(service.openSession(token, request.password(), request.identity()));
     }
 
@@ -76,7 +80,7 @@ public class ProjectSharePublicController {
             @RequestHeader(value = SESSION_HEADER, required = false) String session,
             HttpServletRequest servletRequest) {
         rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.BROWSE, token,
-                servletRequest.getRemoteAddr());
+                RateLimitAddress.of(servletRequest));
         return ApiResponse.ok(service.access(service.resolveGuestContext(token, session)));
     }
 
@@ -94,7 +98,7 @@ public class ProjectSharePublicController {
             @RequestParam(required = false) ProjectShareService.AdoptionFilter adoption,
             HttpServletRequest servletRequest) {
         rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.BROWSE, token,
-                servletRequest.getRemoteAddr());
+                RateLimitAddress.of(servletRequest));
         return ApiResponse.ok(service.photos(service.resolveGuest(token, session), page, pageSize,
                 new ProjectShareService.PhotoFilter(keyword, tags, takenFrom, takenTo, photographers, adoption)));
     }
@@ -106,27 +110,29 @@ public class ProjectSharePublicController {
             @RequestHeader(value = SESSION_HEADER, required = false) String session,
             HttpServletRequest servletRequest) {
         rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.BROWSE, token,
-                servletRequest.getRemoteAddr());
+                RateLimitAddress.of(servletRequest));
         return ApiResponse.ok(service.filterOptions(service.resolveGuest(token, session)));
     }
 
+    @AuditAction("通过分享链接下载图片")
     @PostMapping("/photos/{photoId}/download-url")
     ApiResponse<PhotoService.DownloadUrl> download(
             @PathVariable String token, @PathVariable Long photoId,
             @RequestHeader(value = SESSION_HEADER, required = false) String session,
             HttpServletRequest servletRequest) {
         rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.DOWNLOAD, token,
-                servletRequest.getRemoteAddr());
+                RateLimitAddress.of(servletRequest));
         return ApiResponse.ok(service.download(service.resolveGuest(token, session), photoId));
     }
 
+    @AuditAction("通过分享链接打包下载")
     @PostMapping("/batch-downloads")
     ApiResponse<ExportJobEntity> batchDownload(
             @PathVariable String token,
             @RequestHeader(value = SESSION_HEADER, required = false) String session,
             @Valid @RequestBody BatchDownloadRequest request, HttpServletRequest servletRequest) {
         rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.BATCH_DOWNLOAD, token,
-                servletRequest.getRemoteAddr());
+                RateLimitAddress.of(servletRequest));
         return ApiResponse.ok(service.batchDownload(
                 service.resolveGuest(token, session), request.photoIds()));
     }
@@ -137,51 +143,55 @@ public class ProjectSharePublicController {
             @RequestHeader(value = SESSION_HEADER, required = false) String session,
             HttpServletRequest servletRequest) {
         rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.BROWSE, token,
-                servletRequest.getRemoteAddr());
+                RateLimitAddress.of(servletRequest));
         return ApiResponse.ok(service.batchDownloadStatus(
                 service.resolveGuest(token, session), jobId));
     }
 
+    @AuditAction("通过分享链接标记被引")
     @PostMapping("/photos/{photoId}/adoption")
     ApiResponse<ProjectShareService.SharePhotoAdoption> adopt(
             @PathVariable String token, @PathVariable Long photoId,
             @RequestHeader(value = SESSION_HEADER, required = false) String session,
             HttpServletRequest servletRequest) {
         rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.ADOPTION, token,
-                servletRequest.getRemoteAddr());
+                RateLimitAddress.of(servletRequest));
         return ApiResponse.ok(service.adopt(service.resolveGuest(token, session), photoId));
     }
 
+    @AuditAction("通过分享链接取消被引")
     @DeleteMapping("/photos/{photoId}/adoption")
     ApiResponse<ProjectShareService.SharePhotoAdoption> cancelAdoption(
             @PathVariable String token, @PathVariable Long photoId,
             @RequestHeader(value = SESSION_HEADER, required = false) String session,
             HttpServletRequest servletRequest) {
         rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.ADOPTION, token,
-                servletRequest.getRemoteAddr());
+                RateLimitAddress.of(servletRequest));
         return ApiResponse.ok(service.cancelAdoption(service.resolveGuest(token, session), photoId));
     }
 
     // ------------------------------------------------------------------ 上传链接
 
+    @AuditSkip("每张图先签上传票据再完成上传，完成那一步另有记录")
     @PostMapping("/upload-tickets")
     ApiResponse<ProjectShareUploadService.UploadTicket> uploadTicket(
             @PathVariable String token,
             @RequestHeader(value = SESSION_HEADER, required = false) String session,
             @Valid @RequestBody UploadTicketRequest request, HttpServletRequest servletRequest) {
         rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.UPLOAD, token,
-                servletRequest.getRemoteAddr());
+                RateLimitAddress.of(servletRequest));
         return ApiResponse.ok(uploadService.createTicket(
                 service.resolveGuestContext(token, session), request.command()));
     }
 
+    @AuditAction("通过上传链接上传图片")
     @PostMapping("/uploads/{photoId}/complete")
     ApiResponse<ProjectShareUploadService.UploadedPhoto> completeUpload(
             @PathVariable String token, @PathVariable Long photoId,
             @RequestHeader(value = SESSION_HEADER, required = false) String session,
             @Valid @RequestBody UploadCompleteRequest request, HttpServletRequest servletRequest) {
         rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.UPLOAD, token,
-                servletRequest.getRemoteAddr());
+                RateLimitAddress.of(servletRequest));
         return ApiResponse.ok(uploadService.complete(service.resolveGuestContext(token, session),
                 photoId, new ProjectShareUploadService.CompleteCommand(
                         request.title(), request.description())));
@@ -194,7 +204,7 @@ public class ProjectSharePublicController {
             @RequestHeader(value = SESSION_HEADER, required = false) String session,
             HttpServletRequest servletRequest) {
         rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.UPLOAD_STATUS, token,
-                servletRequest.getRemoteAddr());
+                RateLimitAddress.of(servletRequest));
         return ApiResponse.ok(uploadService.status(
                 service.resolveGuestContext(token, session), photoId));
     }
@@ -203,13 +213,14 @@ public class ProjectSharePublicController {
      * ZIP 批量上传：建批次并签出压缩包的上传地址。限额与站内需求批量上传完全一致，
      * 见 {@link ProjectShareUploadService#createZipTicket}。
      */
+    @AuditAction("通过上传链接开始上传压缩包")
     @PostMapping("/upload-batches")
     ApiResponse<BatchUploadService.BatchTicket> createUploadBatch(
             @PathVariable String token,
             @RequestHeader(value = SESSION_HEADER, required = false) String session,
             @Valid @RequestBody UploadBatchRequest request, HttpServletRequest servletRequest) {
         rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.UPLOAD, token,
-                servletRequest.getRemoteAddr());
+                RateLimitAddress.of(servletRequest));
         return ApiResponse.ok(uploadService.createZipTicket(
                 service.resolveGuestContext(token, session),
                 new ProjectShareUploadService.ZipCommand(
@@ -217,13 +228,14 @@ public class ProjectSharePublicController {
     }
 
     /** 压缩包已经传完，交给解包（异步）。 */
+    @AuditAction("通过上传链接传完压缩包")
     @PostMapping("/upload-batches/{batchId}/complete")
     ApiResponse<ProjectShareUploadService.GuestBatch> completeUploadBatch(
             @PathVariable String token, @PathVariable String batchId,
             @RequestHeader(value = SESSION_HEADER, required = false) String session,
             HttpServletRequest servletRequest) {
         rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.UPLOAD, token,
-                servletRequest.getRemoteAddr());
+                RateLimitAddress.of(servletRequest));
         return ApiResponse.ok(uploadService.completeZip(
                 service.resolveGuestContext(token, session), batchId));
     }
@@ -235,19 +247,20 @@ public class ProjectSharePublicController {
             @RequestHeader(value = SESSION_HEADER, required = false) String session,
             HttpServletRequest servletRequest) {
         rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.UPLOAD_STATUS, token,
-                servletRequest.getRemoteAddr());
+                RateLimitAddress.of(servletRequest));
         return ApiResponse.ok(uploadService.batchStatus(
                 service.resolveGuestContext(token, session), batchId));
     }
 
     /** 解包完成后把这一批落成照片。访客没有元数据要填，拍摄者来自会话身份。 */
+    @AuditAction("通过上传链接导入压缩包图片")
     @PostMapping("/upload-batches/{batchId}/finish")
     ApiResponse<ProjectShareUploadService.GuestBatch> finishUploadBatch(
             @PathVariable String token, @PathVariable String batchId,
             @RequestHeader(value = SESSION_HEADER, required = false) String session,
             @Valid @RequestBody UploadBatchFinishRequest request, HttpServletRequest servletRequest) {
         rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.UPLOAD, token,
-                servletRequest.getRemoteAddr());
+                RateLimitAddress.of(servletRequest));
         return ApiResponse.ok(uploadService.finishZip(
                 service.resolveGuestContext(token, session), batchId, request.takenAt()));
     }
@@ -258,13 +271,14 @@ public class ProjectSharePublicController {
      * 传完图之后申报这次的工时，直接进入部长和管理员的工时审核面板。
      * 姓名学号取会话身份，不在这里再报一次，见 {@link ProjectShareUploadService#declareWorklog}。
      */
+    @AuditAction("通过上传链接申报工时")
     @PostMapping("/worklogs")
     ApiResponse<ProjectShareUploadService.GuestWorklog> declareWorklog(
             @PathVariable String token,
             @RequestHeader(value = SESSION_HEADER, required = false) String session,
             @Valid @RequestBody WorklogDeclarationRequest request, HttpServletRequest servletRequest) {
         rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.WORKLOG, token,
-                servletRequest.getRemoteAddr());
+                RateLimitAddress.of(servletRequest));
         return ApiResponse.ok(uploadService.declareWorklog(
                 service.resolveGuestContext(token, session),
                 new ProjectShareUploadService.WorklogDeclaration(request.workDate(),
@@ -278,7 +292,7 @@ public class ProjectSharePublicController {
             @RequestHeader(value = SESSION_HEADER, required = false) String session,
             HttpServletRequest servletRequest) {
         rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.UPLOAD_STATUS, token,
-                servletRequest.getRemoteAddr());
+                RateLimitAddress.of(servletRequest));
         return ApiResponse.ok(uploadService.worklogs(service.resolveGuestContext(token, session)));
     }
 

@@ -1,5 +1,6 @@
 package cn.photolib.doc.file;
 
+import cn.photolib.common.ratelimit.SharedAddressAllowance;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.doc.DocReader;
@@ -30,7 +31,7 @@ class DocFileTrafficTests {
     void globalQpsComesFromTheUploadLimitsAndSeparatesUploadsFromDownloads() {
         UploadLimitService limits = TestUploadLimits.with(Map.of(
                 UploadLimit.FILE_UPLOAD_QPS, 2L, UploadLimit.FILE_DOWNLOAD_QPS, 1L));
-        DocFileTraffic traffic = new DocFileTraffic(limits, mock(JdbcClient.class), FIXED);
+        DocFileTraffic traffic = new DocFileTraffic(limits, mock(JdbcClient.class), FIXED, SharedAddressAllowance.fixed(1));
 
         assertThat(traffic.tryAcquireUpload()).isTrue();
         assertThat(traffic.tryAcquireUpload()).isTrue();
@@ -43,7 +44,7 @@ class DocFileTrafficTests {
     @Test
     void readersAreCountedByAccountOrByPublicAddress() {
         UploadLimitService limits = TestUploadLimits.with(UploadLimit.FILE_DOWNLOADS_PER_HOUR, 1L);
-        DocFileTraffic traffic = new DocFileTraffic(limits, mock(JdbcClient.class), FIXED);
+        DocFileTraffic traffic = new DocFileTraffic(limits, mock(JdbcClient.class), FIXED, SharedAddressAllowance.fixed(1));
 
         traffic.requireReaderAllowance(new DocReader(1L, null, Set.of()), "203.0.113.1");
         // 同一个账号换了地址还是同一个人。
@@ -63,7 +64,7 @@ class DocFileTrafficTests {
     void theQpsFilterRejectsBeforeTheBodyIsReadAndOnlyOnFileEndpoints() throws Exception {
         UploadLimitService limits = TestUploadLimits.with(Map.of(
                 UploadLimit.FILE_UPLOAD_QPS, 1L, UploadLimit.FILE_DOWNLOAD_QPS, 1L));
-        DocFileQpsFilter filter = new DocFileQpsFilter(new DocFileTraffic(limits, mock(JdbcClient.class), FIXED));
+        DocFileQpsFilter filter = new DocFileQpsFilter(new DocFileTraffic(limits, mock(JdbcClient.class), FIXED, SharedAddressAllowance.fixed(1)));
 
         assertThat(run(filter, "POST", "/api/v1/doc-files").getStatus()).isEqualTo(200);
         MockHttpServletResponse rejected = run(filter, "POST", "/api/v1/doc-files");

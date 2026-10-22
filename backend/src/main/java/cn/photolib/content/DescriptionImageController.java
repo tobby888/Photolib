@@ -1,5 +1,6 @@
 package cn.photolib.content;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.upload.InlineImageUpload;
@@ -31,6 +32,7 @@ public class DescriptionImageController {
     private final DescriptionImageAuthorizationService authorization;
     private final UploadLimitService uploadLimits;
 
+    @AuditAction("上传正文插图")
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasAnyAuthority('PROJECT_CREATE','REQUEST_CREATE','FEATURED_MANAGE','SURVEY_CREATE')")
     ApiResponse<UploadResult> upload(@RequestPart("file") MultipartFile file,

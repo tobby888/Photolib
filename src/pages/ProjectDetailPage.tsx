@@ -2,6 +2,7 @@ import {
   App, Breadcrumb, Button, Card, Checkbox, Col, DatePicker, Form, Input,
   Modal, Radio, Row, Select, Space, Statistic, Tag, Tooltip, Typography,
 } from 'antd'
+import { useBatchDownloadProgress } from '../BatchDownloadModal'
 import {
   ArrowLeftOutlined, CameraOutlined, CheckCircleOutlined, ClockCircleOutlined, DeleteOutlined, DisconnectOutlined,
   DownloadOutlined, EditOutlined, EyeOutlined,
@@ -321,7 +322,8 @@ export default function ProjectDetailPage() {
   const [selectorIds, setSelectorIds] = useState<string[]>([])
   // 活动选题结束时的图片清理弹窗：`complete` 是点「标记为已完成」打开的，`cleanup` 是完成之后再清理。
   const [cleanupMode, setCleanupMode] = useState<SelectionCleanupMode | null>(null)
-  const [batchDownloading, setBatchDownloading] = useState(false)
+  const batchProgress = useBatchDownloadProgress()
+  const batchDownloading = batchProgress.running
   const [removingPhotos, setRemovingPhotos] = useState(false)
   // 部分校区发布失败时记下已成功的那一批；重试时带回这个批次号，重试成功的校区才会并进同一行。
   const [retryBatch, setRetryBatch] = useState<{ projectId: string; batchId: string } | null>(null)
@@ -693,21 +695,9 @@ export default function ProjectDetailPage() {
 
   const batchDownload = async () => {
     if (!selectedAlbumPhotoIds.length) return
-    setBatchDownloading(true)
-    try {
-      const downloadUrl = await preparePhotoBatchDownload(selectedAlbumPhotoIds)
-      if (downloadUrl) {
-        window.location.assign(downloadUrl)
-        setSelectedAlbumPhotoIds([])
-        message.success('所选项目图片已打包为 ZIP')
-      } else {
-        message.info('ZIP 仍在后台生成，请稍后重新发起下载')
-      }
-    } catch (reason) {
-      message.error((reason as Error).message)
-    } finally {
-      setBatchDownloading(false)
-    }
+    const ids = selectedAlbumPhotoIds
+    const started = await batchProgress.run(ids.length, options => preparePhotoBatchDownload(ids, options))
+    if (started) setSelectedAlbumPhotoIds([])
   }
 
   /**
@@ -1097,6 +1087,7 @@ export default function ProjectDetailPage() {
         <SelectionCleanupModal key={cleanupMode} open mode={cleanupMode} project={project} photos={data.photos}
           onCancel={() => setCleanupMode(null)} onComplete={markCompleted} onFinished={reload} />
       </Suspense>}
+      {batchProgress.modal}
     </>}
   </DataState>
 }

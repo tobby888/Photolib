@@ -4,6 +4,7 @@ import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.common.ratelimit.ClientAddress;
 import cn.photolib.common.ratelimit.FixedWindowRateLimiter;
+import cn.photolib.common.ratelimit.SharedAddressAllowance;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
@@ -14,8 +15,10 @@ import java.util.regex.Pattern;
 /**
  * Small in-process defense-in-depth limiter for the unauthenticated recruitment
  * mutation endpoints. Keys combine the action, the recruitment task and the
- * client address from {@link ClientAddress} — see that class for why the key
- * never comes from a forwarding header, and why non-public addresses fail open.
+ * client address from {@link ClientAddress} — see that class for where the
+ * address comes from, and why non-public addresses fail open. Each action's
+ * limit is per visitor; {@link SharedAddressAllowance} scales it for the many
+ * applicants a campus Wi-Fi puts behind one address.
  *
  * <p>Invalid task ids are deliberately not tracked either: controllers validate
  * an active task before calling in, so an unparseable id can only come from a
@@ -27,9 +30,11 @@ public class AnonymousRecruitmentRateLimiter {
     private static final Pattern PUBLIC_ID = Pattern.compile("[0-9A-HJKMNP-TV-Z]{26}");
 
     private final FixedWindowRateLimiter limiter;
+    private final SharedAddressAllowance allowance;
 
-    public AnonymousRecruitmentRateLimiter(Clock recruitmentClock) {
+    public AnonymousRecruitmentRateLimiter(Clock recruitmentClock, SharedAddressAllowance allowance) {
         this.limiter = new FixedWindowRateLimiter(recruitmentClock, MAX_TRACKED_KEYS);
+        this.allowance = allowance;
     }
 
     public void requireAllowed(Action action, String publicId, String remoteAddress) {
@@ -38,7 +43,7 @@ public class AnonymousRecruitmentRateLimiter {
         String remoteKey = ClientAddress.normalize(remoteAddress);
         if (taskKey == null || remoteKey == null) return;
         String key = action.name() + '|' + taskKey + '|' + remoteKey;
-        if (!limiter.tryAcquire(key, action.limit(), action.window())) {
+        if (!limiter.tryAcquire(key, allowance.perAddress(action.limit()), action.window())) {
             throw new BusinessException(ErrorCode.RATE_LIMITED, "请求过于频繁，请稍后重试");
         }
     }

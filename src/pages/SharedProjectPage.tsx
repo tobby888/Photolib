@@ -1,6 +1,7 @@
 import {
   App, Button, Card, Checkbox, Col, Empty, Form, Input, Result, Row, Skeleton, Space, Tag, Typography,
 } from 'antd'
+import { useBatchDownloadProgress } from '../BatchDownloadModal'
 import { DownloadOutlined, EyeOutlined, KeyOutlined, LinkOutlined, LockOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -75,7 +76,8 @@ export default function SharedProjectPage() {
   const [shortcutSettingsOpen, setShortcutSettingsOpen] = useState(false)
   const shortcuts = usePhotoCardShortcuts()
   const [selectingAll, setSelectingAll] = useState(false)
-  const [batchDownloading, setBatchDownloading] = useState(false)
+  const batchProgress = useBatchDownloadProgress()
+  const batchDownloading = batchProgress.running
   const [markingPhotoId, setMarkingPhotoId] = useState<string | null>(null)
 
   const dropSession = useCallback((notice?: string) => {
@@ -271,21 +273,19 @@ export default function SharedProjectPage() {
 
   const batchDownload = async () => {
     if (!session || !selected.length) return
-    setBatchDownloading(true)
-    try {
-      const downloadUrl = await prepareSharedBatchDownload(token, session, selected)
-      if (downloadUrl) {
-        window.location.assign(downloadUrl)
-        setSelected([])
-        message.success('所选图片已打包为 ZIP')
-      } else {
-        message.info('ZIP 仍在后台生成，请稍后重新发起下载')
-      }
-    } catch (reason) {
-      handleGuestError(reason)
-    } finally {
-      setBatchDownloading(false)
-    }
+    const ids = selected
+    const started = await batchProgress.run(ids.length,
+      options => prepareSharedBatchDownload(token, session, ids, options), {
+        // 会话失效（403/404）要退回输密码那一步，交给页面；其余失败在弹窗里说明。
+        handleError: reason => {
+          if (reason instanceof ApiError && (reason.status === 403 || reason.status === 404)) {
+            handleGuestError(reason)
+            return true
+          }
+          return false
+        },
+      })
+    if (started) setSelected([])
   }
 
   const toggleAdoption = async (photo: SharePhoto) => {
@@ -525,5 +525,6 @@ export default function SharedProjectPage() {
     {shortcutSettingsOpen && <Suspense fallback={null}>
       <PhotoCardShortcutsModal open onClose={() => setShortcutSettingsOpen(false)} />
     </Suspense>}
+    {batchProgress.modal}
   </main>
 }
