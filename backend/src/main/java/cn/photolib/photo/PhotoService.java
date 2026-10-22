@@ -83,6 +83,9 @@ public class PhotoService {
         String sha256Lower = command.sha256().toLowerCase();
         PhotoEntity existing = findDuplicate(sha256Lower, null);
         if (existing != null) {
+            // 上一次签了票却没传完的那行可以接着用（见 resumeAbandonedUpload）；其余一律算重复。
+            UploadTicket resumed = resumeAbandonedUpload(existing, command, projectId, user);
+            if (resumed != null) return resumed;
             throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE,
                     "已经上传过该图片（标题：" + existing.getTitle() + "）");
         }
@@ -123,6 +126,55 @@ public class PhotoService {
         abandonedUploads.nudge();
         return new UploadTicket(photo.getId(), signed.url().toString(), signed.method(),
                 command.contentType(), signed.expiresAt());
+    }
+
+    /**
+     * 复用"签了票据却没传完"的那一行：同一个上传者、同一个需求/选题、同一份文件，
+     * 说明他就是在重试上次没传完的那次上传，给他一条新的直传地址即可。
+     *
+     * <p>不这么做的话，这行会在 {@link AbandonedUploadCleanupJob} 把它收走之前一直把
+     * 同样的文件挡成 {@code DUPLICATE_RESOURCE}——传失败一次，最长约 105 分钟（直传地址
+     * 有效期 + 1 小时宽限）都传不上去。</p>
+     *
+     * <p>只刷新 {@code upload_url_expires_at}：行不重插（{@code photo_project} 也不再插
+     * 一遍），状态保持 {@code UPLOADING}，{@code failure_reason} 保持为空——那张图还在
+     * 同一条临时对象路径上，complete 的语义一点没变。</p>
+     *
+     * <p>{@code Content-Type} 也沿用行上的值，不用本次请求声明的：对象键的扩展名和库里
+     * 的类型都是第一次签票时定的，同一个哈希换个扩展名（.jpg 声明成 {@code image/png}）再传
+     * 时两者会不一样，签出不一致的签名头会让处理链以很难懂的方式失败。</p>
+     *
+     * <p>复用保留首次票据的摄影师、拍摄时间、校区、分享链接，重试请求里的这些字段不生效。</p>
+     *
+     * <p>任何一条对不上（别的上传者、别的需求/选题、已进图库的照片、处理失败的行）都
+     * 返回 {@code null}，调用方照旧报重复。</p>
+     */
+    private UploadTicket resumeAbandonedUpload(PhotoEntity existing, CreateTicket command,
+                                               Long projectId, AuthenticatedUser user) {
+        boolean resumable = existing.getStatus() == PhotoStatus.UPLOADING
+                && !StringUtils.hasText(existing.getFailureReason())
+                && Objects.equals(existing.getUploadedBy(), user.id())
+                && Objects.equals(existing.getRequestId(), command.requestId())
+                && Objects.equals(existing.getProjectId(), projectId)
+                && StringUtils.hasText(existing.getOriginalObjectKey());
+        if (!resumable) return null;
+        // 只写这一列：整行更新会连 version 一起动，而 complete 的乐观锁正靠它。
+        // 把读到的条件原样写进 WHERE 并看影响行数：SELECT 之后、UPDATE 之前这行可能已经被
+        // complete 推到 PROCESSING，或被清理任务软删——那样就不能再签新票。
+        int updated = jdbc.sql("""
+                UPDATE photo SET upload_url_expires_at = :expiresAt
+                WHERE id = :id AND deleted = 0 AND status = 'UPLOADING'
+                  AND failure_reason IS NULL AND original_object_key = :objectKey
+                """)
+                .param("expiresAt", abandonedUploads.uploadUrlExpiresAt())
+                .param("id", existing.getId())
+                .param("objectKey", existing.getOriginalObjectKey())
+                .update();
+        if (updated != 1) return null;
+        ObjectStorageService.SignedUrl signed = storage.presignPut(
+                existing.getOriginalObjectKey(), existing.getContentType(), properties.uploadUrlTtl());
+        return new UploadTicket(existing.getId(), signed.url().toString(), signed.method(),
+                existing.getContentType(), signed.expiresAt());
     }
 
     @Transactional

@@ -119,6 +119,23 @@ class AbandonedUploadCleanupJobTests {
     }
 
     @Test
+    void onlyRowsWhoseExpiryActuallyStayedInThePastRemainAbandoned() {
+        // resume 只刷新 upload_url_expires_at，不改 status / version：清理任务在删对象前
+        // 必须用时间条件再判一次，否则会把刚续上的行连对象一起收走。
+        long photoId = abandonedPhoto("f", LocalDateTime.now(clock).minusDays(1), null);
+        LocalDateTime before = LocalDateTime.now(clock).minus(AbandonedUploadCleanupJob.GRACE);
+
+        assertThat(job.stillAbandoned(photoId, "temporary/photos/cleanup-f.jpg", before)).isTrue();
+
+        // 模拟 resume 续期：这一行已经不该清了。
+        jdbc.sql("UPDATE photo SET upload_url_expires_at = :expiresAt WHERE id = :id")
+                .param("expiresAt", LocalDateTime.now(clock).plusMinutes(10))
+                .param("id", photoId).update();
+
+        assertThat(job.stillAbandoned(photoId, "temporary/photos/cleanup-f.jpg", before)).isFalse();
+    }
+
+    @Test
     void aPhotoThatFailedProcessingKeepsItsOnlyCopy() {
         // 处理失败的照片同样停在 UPLOADING，但它带着 failure_reason、页面上正显示着
         // 让人重试，而那个临时对象是这张图唯一的副本。

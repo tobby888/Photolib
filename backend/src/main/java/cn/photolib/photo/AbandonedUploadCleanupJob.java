@@ -148,16 +148,38 @@ public class AbandonedUploadCleanupJob {
                 .list();
         int cleaned = 0;
         for (KeyedRow<Long> row : rows) {
+            // 从 SELECT 到真正动手之间，上传者可能正好重签了票据（resume 只刷新
+            // upload_url_expires_at，不改 status）。删对象之前按同一组条件再判一次：
+            // 这一行已经不该清了就不能动它的对象，否则刚签出去的票据指向一个被删掉的键。
+            if (!stillAbandoned(row.id(), row.objectKey(), deletableBefore)) continue;
             if (!deleteObject(row.objectKey(), "未完成上传的原图", String.valueOf(row.id()))) continue;
             cleaned += jdbc.sql("""
                     UPDATE photo SET original_object_key = NULL, deleted = 1,
                         failure_reason = '上传未完成，临时文件已清理', updated_at = :now
                     WHERE id = :id AND status = 'UPLOADING' AND failure_reason IS NULL
                       AND original_object_key = :objectKey
+                      AND upload_url_expires_at IS NOT NULL AND upload_url_expires_at <= :before
                     """).param("id", row.id()).param("objectKey", row.objectKey())
+                    .param("before", deletableBefore)
                     .param("now", LocalDateTime.now(clock)).update();
         }
         return cleaned;
+    }
+
+    /**
+     * 候选行是否仍然符合"可以清"的条件。时间用 {@code <=} 再判一次而不是等值比较：
+     * {@code DATETIME(6)} 的精度不保证往返完全一致，等值可能永远不命中。不再单独取
+     * {@code now}，用本轮已经算好的 {@code deletableBefore}，避免两次时钟读数不一致。
+     */
+    boolean stillAbandoned(Long id, String objectKey, LocalDateTime deletableBefore) {
+        return jdbc.sql("""
+                        SELECT COUNT(*) FROM photo
+                        WHERE id = :id AND deleted = 0 AND status = 'UPLOADING'
+                          AND failure_reason IS NULL AND original_object_key = :objectKey
+                          AND upload_url_expires_at IS NOT NULL AND upload_url_expires_at <= :before
+                        """)
+                .param("id", id).param("objectKey", objectKey).param("before", deletableBefore)
+                .query(Long.class).single() > 0;
     }
 
     /** 传完却没 complete 的压缩包。批次标成 FAILED，界面上才看得出它没成。 */

@@ -153,7 +153,10 @@ public class MissingUploadObjectScanJob {
     }
 
     private ScanResult scanLocked() {
-        List<StuckUpload> candidates = loadCandidates();
+        // 这一轮统一用同一个"过期加宽限"时刻：候选查询和后面的 CAS 软删必须看同一条时间边界，
+        // 两边各算一次 now 的话，两次读数之间的微小差异会让判断说不清楚。
+        LocalDateTime before = LocalDateTime.now(clock).minus(GRACE);
+        List<StuckUpload> candidates = loadCandidates(before);
         if (candidates.isEmpty()) {
             // 这一页空了说明已经扫到尾，下一轮从头再来。
             cursor.set(0);
@@ -202,7 +205,7 @@ public class MissingUploadObjectScanJob {
 
         int deleted = 0;
         for (StuckUpload upload : missing) {
-            if (softDelete(upload)) {
+            if (softDelete(upload, before)) {
                 deleted++;
                 releaseLeftoverObjects(upload);
             } else {
@@ -219,7 +222,7 @@ public class MissingUploadObjectScanJob {
      * 用 {@code updated_at} 判断。{@code original_object_key} 为空的行不进候选：没有 key
      * 就没有可以 HEAD 的东西，而"确认不存在"是这个任务唯一的删除凭据。</p>
      */
-    private List<StuckUpload> loadCandidates() {
+    private List<StuckUpload> loadCandidates(LocalDateTime before) {
         return jdbc.sql("""
                         SELECT id, original_object_key, object_key, thumbnail_object_key, version
                         FROM photo
@@ -231,7 +234,7 @@ public class MissingUploadObjectScanJob {
                         LIMIT :limit
                         """)
                 .param("cursor", cursor.get())
-                .param("before", LocalDateTime.now(clock).minus(GRACE))
+                .param("before", before)
                 .param("limit", LIMIT)
                 .query((rs, row) -> new StuckUpload(
                         rs.getLong("id"),
@@ -270,8 +273,12 @@ public class MissingUploadObjectScanJob {
      * <p>{@code status} 保持 {@code UPLOADING} 不动（与 {@code PhotoService.performDelete}
      * 和 §2.15 的既有语义一致），但 {@code failure_reason} 改写成人能看懂的原因——运维翻到
      * 这一行时要能看出它是被自动收走的，而不是谁手点了删除。</p>
+     *
+     * <p>时间条件在这里再判一次，用 {@code scanLocked} 传进来的同一个 {@code before}：
+     * HEAD 期间上传者可能正好重签了票据，resume 只刷新 {@code upload_url_expires_at}、
+     * 不改 version，光靠 version CAS 拦不住，会把刚续上的行连对象一起收走。</p>
      */
-    private boolean softDelete(StuckUpload upload) {
+    private boolean softDelete(StuckUpload upload, LocalDateTime before) {
         return Boolean.TRUE.equals(transactions.execute(status -> {
             int updated = jdbc.sql("""
                     UPDATE photo
@@ -279,10 +286,12 @@ public class MissingUploadObjectScanJob {
                         version = version + 1, updated_at = :now
                     WHERE id = :id AND deleted = 0 AND status = 'UPLOADING'
                       AND version = :version AND original_object_key = :objectKey
+                      AND COALESCE(upload_url_expires_at, updated_at) <= :before
                     """)
                     .param("id", upload.id())
                     .param("version", upload.version())
                     .param("objectKey", upload.originalObjectKey())
+                    .param("before", before)
                     .param("reason", "这张图片没有真正传到对象存储，记录已自动清理")
                     .param("now", LocalDateTime.now(clock))
                     .update();
