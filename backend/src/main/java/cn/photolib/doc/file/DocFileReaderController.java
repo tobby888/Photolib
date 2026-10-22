@@ -1,5 +1,7 @@
 package cn.photolib.doc.file;
 
+import cn.photolib.audit.AuditAction;
+import cn.photolib.common.ratelimit.RateLimitAddress;
 import cn.photolib.audit.AuditInterceptor;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
@@ -47,15 +49,16 @@ public class DocFileReaderController {
             @AuthenticationPrincipal AuthenticatedUser user,
             HttpServletRequest request) {
         // 列表只对匿名限速，理由同文档目录：成员可追责，限住他们只会妨碍正常使用。
-        if (user == null) rateLimiter.requireAllowed(DocRateLimiter.Action.PUBLIC_FILE_LIST, request.getRemoteAddr());
+        if (user == null) rateLimiter.requireAllowed(DocRateLimiter.Action.PUBLIC_FILE_LIST, RateLimitAddress.of(request));
         return ApiResponse.ok(service.list(DocReader.of(user), keyword, mine, page, pageSize));
     }
 
+    @AuditAction("下载文件库文件")
     @PostMapping("/{publicId}/download")
     ApiResponse<DocFileService.Download> download(@PathVariable String publicId,
                                                   @AuthenticationPrincipal AuthenticatedUser user,
                                                   HttpServletRequest request) {
-        DocFileService.Download download = service.download(publicId, DocReader.of(user), request.getRemoteAddr());
+        DocFileService.Download download = service.download(publicId, DocReader.of(user), RateLimitAddress.of(request));
         request.setAttribute(AuditInterceptor.DETAIL_ATTRIBUTE, Map.of(
                 "size", download.size(), "anonymous", user == null));
         return ApiResponse.ok(download);

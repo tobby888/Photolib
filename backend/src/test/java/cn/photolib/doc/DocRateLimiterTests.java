@@ -1,5 +1,6 @@
 package cn.photolib.doc;
 
+import cn.photolib.common.ratelimit.SharedAddressAllowance;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.common.ratelimit.ClientAddress;
@@ -26,7 +27,7 @@ class DocRateLimiterTests {
     @Test
     void requestsAreRefusedOnceTheWindowQuotaIsUsedUp() {
         MutableClock clock = new MutableClock(Instant.parse("2026-08-30T10:00:00Z"));
-        DocRateLimiter limiter = new DocRateLimiter(clock);
+        DocRateLimiter limiter = new DocRateLimiter(clock, SharedAddressAllowance.fixed(1));
 
         for (int attempt = 0; attempt < DocRateLimiter.Action.PUBLIC_DOCUMENT.limit(); attempt++) {
             limiter.requireAllowed(DocRateLimiter.Action.PUBLIC_DOCUMENT, CLIENT);
@@ -43,7 +44,7 @@ class DocRateLimiterTests {
     @Test
     void aNewWindowStartsCleanAndTheKeyIsReleased() {
         MutableClock clock = new MutableClock(Instant.parse("2026-08-30T10:00:00Z"));
-        DocRateLimiter limiter = new DocRateLimiter(clock);
+        DocRateLimiter limiter = new DocRateLimiter(clock, SharedAddressAllowance.fixed(1));
 
         for (int attempt = 0; attempt < DocRateLimiter.Action.PUBLIC_TREE.limit(); attempt++) {
             limiter.requireAllowed(DocRateLimiter.Action.PUBLIC_TREE, CLIENT);
@@ -59,7 +60,7 @@ class DocRateLimiterTests {
     @Test
     void differentClientsDoNotShareAQuota() {
         MutableClock clock = new MutableClock(Instant.parse("2026-08-30T10:00:00Z"));
-        DocRateLimiter limiter = new DocRateLimiter(clock);
+        DocRateLimiter limiter = new DocRateLimiter(clock, SharedAddressAllowance.fixed(1));
 
         for (int attempt = 0; attempt < DocRateLimiter.Action.PUBLIC_TREE.limit(); attempt++) {
             limiter.requireAllowed(DocRateLimiter.Action.PUBLIC_TREE, CLIENT);
@@ -69,11 +70,24 @@ class DocRateLimiterTests {
     }
 
     @Test
+    void perVisitorLimitsAreScaledForSharedWifi() {
+        // 校园网出口：一个 IP 后面按 3 位访客计，额度就是单人的 3 倍。
+        MutableClock clock = new MutableClock(Instant.parse("2026-08-30T10:00:00Z"));
+        DocRateLimiter limiter = new DocRateLimiter(clock, SharedAddressAllowance.fixed(3));
+
+        for (int attempt = 0; attempt < DocRateLimiter.Action.PUBLIC_TREE.limit() * 3; attempt++) {
+            limiter.requireAllowed(DocRateLimiter.Action.PUBLIC_TREE, CLIENT);
+        }
+        assertThatThrownBy(() -> limiter.requireAllowed(DocRateLimiter.Action.PUBLIC_TREE, CLIENT))
+                .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
     void nonPublicAddressesFailOpenInsteadOfThrottlingEveryoneTogether() {
         MutableClock clock = new MutableClock(Instant.parse("2026-08-30T10:00:00Z"));
-        DocRateLimiter limiter = new DocRateLimiter(clock);
+        DocRateLimiter limiter = new DocRateLimiter(clock, SharedAddressAllowance.fixed(1));
 
-        // 反向代理后面 remoteAddr 是代理地址，所有访客会共用一个键。
+        // 代理没把真实地址传过来时，所有访客会共用一个回环/内网地址的键。
         // 那种情况下限速只会变成一次全站性的误伤，所以这里刻意放行，
         // 由网关的分布式限流负责——不要"修"掉这条。
         for (String shared : new String[]{"127.0.0.1", "10.0.0.8", "192.168.1.5", "::1", "不是地址"}) {

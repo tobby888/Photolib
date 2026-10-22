@@ -4,6 +4,7 @@ import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.common.ratelimit.ClientAddress;
 import cn.photolib.common.ratelimit.FixedWindowRateLimiter;
+import cn.photolib.common.ratelimit.SharedAddressAllowance;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
@@ -20,24 +21,28 @@ import java.time.Duration;
  * <p>已登录的编辑接口不走这里：它们要 {@code DOC_MANAGE}，被授权的人本来就
  * 屈指可数，再加一层限制只会妨碍正常写作。</p>
  *
- * <p>键的来源和失败开放的语义见 {@link ClientAddress}——反向代理后面
- * {@code remoteAddr} 是代理地址，此时本限制器让行，由网关限流负责。</p>
+ * <p>键的来源和失败开放的语义见 {@link ClientAddress}：拿不到真实地址时本限制器让行，
+ * 由网关限流负责。每个动作的额度按一位访客定，按 IP 计数时由
+ * {@link SharedAddressAllowance} 放大，免得同一个校园网出口下的读者互相挤占。</p>
  */
 @Component
 public class DocRateLimiter {
     static final int MAX_TRACKED_KEYS = 4_096;
 
     private final FixedWindowRateLimiter limiter;
+    private final SharedAddressAllowance allowance;
 
-    public DocRateLimiter(Clock clock) {
+    public DocRateLimiter(Clock clock, SharedAddressAllowance allowance) {
         this.limiter = new FixedWindowRateLimiter(clock, MAX_TRACKED_KEYS);
+        this.allowance = allowance;
     }
 
     public void requireAllowed(Action action, String remoteAddress) {
         if (action == null) throw new IllegalArgumentException("rate-limit action is required");
         String remoteKey = ClientAddress.normalize(remoteAddress);
         if (remoteKey == null) return;
-        if (!limiter.tryAcquire(action.name() + '|' + remoteKey, action.limit(), action.window())) {
+        if (!limiter.tryAcquire(action.name() + '|' + remoteKey,
+                allowance.perAddress(action.limit()), action.window())) {
             throw new BusinessException(ErrorCode.RATE_LIMITED, "文档访问过于频繁，请稍后重试");
         }
     }

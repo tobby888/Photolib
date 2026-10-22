@@ -1,5 +1,6 @@
 package cn.photolib.registration;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.audit.AuditInterceptor;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.auth.mfa.RequiresStepUp;
@@ -47,6 +48,7 @@ public class RegistrationApplicationController {
         return ApiResponse.ok(registrations.listApplications(page, pageSize, keyword, status, codeId));
     }
 
+    @AuditAction("通过注册申请")
     @PostMapping("/approve")
     ApiResponse<RegistrationService.ReviewResult> approve(@Valid @RequestBody ApproveRequest request,
                                                           @AuthenticationPrincipal AuthenticatedUser user,
@@ -56,6 +58,7 @@ public class RegistrationApplicationController {
         return ApiResponse.ok(result);
     }
 
+    @AuditAction("驳回注册申请")
     @PostMapping("/reject")
     ApiResponse<RegistrationService.ReviewResult> reject(@Valid @RequestBody RejectRequest request,
                                                          @AuthenticationPrincipal AuthenticatedUser user,

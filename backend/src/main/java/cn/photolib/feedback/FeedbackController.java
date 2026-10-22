@@ -1,5 +1,6 @@
 package cn.photolib.feedback;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.api.PageResponse;
@@ -33,6 +34,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class FeedbackController {
     private final FeedbackService service;
 
+    @AuditAction("提交问题反馈")
     @PostMapping
     ApiResponse<FeedbackService.FeedbackView> submit(@Valid @RequestBody SubmitRequest request,
                                                      @AuthenticationPrincipal AuthenticatedUser user) {
@@ -55,6 +57,7 @@ public class FeedbackController {
         return ApiResponse.ok(service.get(id, user));
     }
 
+    @AuditAction("回复问题反馈")
     @PostMapping("/{id}/reply")
     ApiResponse<FeedbackService.FeedbackView> reply(@PathVariable long id,
                                                     @Valid @RequestBody ReplyRequest request,
@@ -62,6 +65,7 @@ public class FeedbackController {
         return ApiResponse.ok(service.reply(id, request.contentHtml(), user));
     }
 
+    @AuditAction("修改反馈状态")
     @PatchMapping("/{id}/status")
     @PreAuthorize("hasRole('ADMIN')")
     ApiResponse<FeedbackService.FeedbackView> changeStatus(@PathVariable long id,

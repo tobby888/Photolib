@@ -1,5 +1,6 @@
 package cn.photolib.uploadlimit;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.audit.AuditInterceptor;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.auth.mfa.RequiresStepUp;
@@ -41,6 +42,7 @@ public class UploadLimitController {
         return ApiResponse.ok(service.settings());
     }
 
+    @AuditAction("修改上传限额")
     @PutMapping
     @PreAuthorize("hasRole('ADMIN')")
     @RequiresStepUp

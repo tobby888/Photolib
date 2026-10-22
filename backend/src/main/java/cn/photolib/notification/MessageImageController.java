@@ -1,5 +1,6 @@
 package cn.photolib.notification;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.error.BusinessException;
@@ -41,6 +42,7 @@ public class MessageImageController {
     private final MessageImageAuthorizationService authorization;
     private final UploadLimitService uploadLimits;
 
+    @AuditAction("上传消息图片")
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     // 上传对任何已登录成员开放：图片本体是谁的、谁能看，由 MessageImageAuthorizationService
     // 在读侧收紧（上传人 + ADMIN + 投递到的人 + 反馈提交人读别人回复里的图），不是靠上传这道门。

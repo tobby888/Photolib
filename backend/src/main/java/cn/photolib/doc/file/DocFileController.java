@@ -1,5 +1,6 @@
 package cn.photolib.doc.file;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.audit.AuditInterceptor;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
@@ -52,6 +53,7 @@ public class DocFileController {
      * 请求体大小在 {@code EndpointUploadLimitFilter} 早筛、全站 QPS 在 {@link DocFileQpsFilter} 早筛，
      * 都发生在 Spring 解析 multipart 之前。
      */
+    @AuditAction("上传文件到文件库")
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasAuthority('FILE_UPLOAD')")
     ApiResponse<DocFileService.FileView> upload(
@@ -81,6 +83,7 @@ public class DocFileController {
         return ApiResponse.ok(service.usage(user));
     }
 
+    @AuditAction("修改文件库文件")
     @PutMapping("/{id}")
     @PreAuthorize("hasAnyAuthority('FILE_UPLOAD','FILE_MANAGE')")
     ApiResponse<DocFileService.FileView> update(@PathVariable long id, @Valid @RequestBody UpdateRequest request,
@@ -95,6 +98,7 @@ public class DocFileController {
         return ApiResponse.ok(updated);
     }
 
+    @AuditAction("删除文件库文件")
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAnyAuthority('FILE_UPLOAD','FILE_MANAGE')")
     ApiResponse<Void> delete(@PathVariable long id, @RequestParam @Min(1) int version,

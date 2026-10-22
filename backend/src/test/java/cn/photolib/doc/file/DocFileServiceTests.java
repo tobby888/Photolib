@@ -190,7 +190,8 @@ class DocFileServiceTests {
 
     @Test
     void eachReaderHasAnHourlyDownloadAllowance() throws IOException {
-        limits.update(Map.of(UploadLimit.FILE_DOWNLOADS_PER_HOUR.name(), 1L), null);
+        limits.update(Map.of(UploadLimit.FILE_DOWNLOADS_PER_HOUR.name(), 1L,
+                UploadLimit.SHARED_IP_VISITORS.name(), 1L), null);
         DocFileService.FileView file = upload(uploader, "每小时.txt", "x", DocVisibility.PUBLIC, Set.of(), Set.of());
 
         // 匿名按公网地址计数。
@@ -202,6 +203,14 @@ class DocFileServiceTests {
         DocReader member = new DocReader(OUTSIDER_ID, null, Set.of());
         service.download(file.publicId(), member, "198.51.100.62");
         assertThatThrownBy(() -> service.download(file.publicId(), member, "198.51.100.63"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo(ErrorCode.RATE_LIMITED);
+
+        // 一个 IP 按 2 位访客计（校园网出口），匿名额度跟着翻倍；成员按账号，不受影响。
+        limits.update(Map.of(UploadLimit.SHARED_IP_VISITORS.name(), 2L), null);
+        service.download(file.publicId(), DocReader.ANONYMOUS, "198.51.100.64");
+        service.download(file.publicId(), DocReader.ANONYMOUS, "198.51.100.64");
+        assertThatThrownBy(() -> service.download(file.publicId(), DocReader.ANONYMOUS, "198.51.100.64"))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code").isEqualTo(ErrorCode.RATE_LIMITED);
     }

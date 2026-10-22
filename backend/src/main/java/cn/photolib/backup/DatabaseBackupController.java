@@ -1,5 +1,6 @@
 package cn.photolib.backup;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.auth.mfa.RequiresStepUp;
 import cn.photolib.common.api.ApiResponse;
@@ -28,6 +29,7 @@ import org.springframework.web.multipart.MultipartFile;
 public class DatabaseBackupController {
     private final DatabaseBackupService service;
 
+    @AuditAction("手动备份数据库")
     @PostMapping("/database-backups")
     @PreAuthorize("hasRole('ADMIN')")
     @RequiresStepUp
@@ -40,6 +42,7 @@ public class DatabaseBackupController {
      * 回滚仍走 {@code /database-backups/{id}/restore}，不在这里直接改数据库——
      * 上传和"用它覆盖整库"是两个决定，应该分两步确认。
      */
+    @AuditAction("上传数据库备份文件")
     @PostMapping(value = "/database-backups/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasRole('ADMIN')")
     @RequiresStepUp
@@ -66,6 +69,7 @@ public class DatabaseBackupController {
         return ApiResponse.ok(service.getBackup(id, user));
     }
 
+    @AuditAction("下载数据库备份")
     @GetMapping("/database-backups/{id}/download")
     @PreAuthorize("hasRole('ADMIN')")
     @RequiresStepUp
@@ -74,6 +78,7 @@ public class DatabaseBackupController {
         return ApiResponse.ok(service.downloadLink(id, user));
     }
 
+    @AuditAction("从备份恢复数据库")
     @PostMapping("/database-backups/{id}/restore")
     @PreAuthorize("hasRole('ADMIN')")
     @RequiresStepUp

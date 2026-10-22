@@ -1,5 +1,8 @@
 package cn.photolib.auth;
 
+import cn.photolib.audit.AuditAction;
+import cn.photolib.audit.AuditSkip;
+import cn.photolib.common.ratelimit.RateLimitAddress;
 import cn.photolib.audit.AuditInterceptor;
 import cn.photolib.auth.mfa.MfaService;
 import cn.photolib.auth.mfa.WebAuthnSupport;
@@ -53,12 +56,13 @@ public class AuthController {
      * failed login unwinds that method's transaction; a counter written inside it
      * would roll back with the failure and never accumulate.
      */
+    @AuditAction("登录")
     @PostMapping("/login")
     ApiResponse<LoginResponse> login(@Valid @RequestBody LoginRequest request,
                                      HttpServletRequest servletRequest,
                                      HttpServletResponse response) {
         String identifier = request.username();
-        String remoteAddress = servletRequest.getRemoteAddr();
+        String remoteAddress = RateLimitAddress.of(servletRequest);
         // The audit interceptor records this request's outcome; give it the account
         // that was targeted, so a guessing run is legible afterwards. Never the password.
         servletRequest.setAttribute(AuditInterceptor.DETAIL_ATTRIBUTE,
@@ -92,6 +96,7 @@ public class AuthController {
      * <p>和密码登录一样，失败计数放在事务外：校验失败会回滚 {@code completeMfaLogin}
      * 的事务，写在里面的计数会被一起撤销。
      */
+    @AuditAction("登录（两步验证）")
     @PostMapping("/login/mfa")
     ApiResponse<LoginResponse> verifyLogin(@RequestBody MfaLoginRequest request,
                                            HttpServletRequest servletRequest,
@@ -121,6 +126,7 @@ public class AuthController {
         return ApiResponse.ok(toResponse(pair));
     }
 
+    @AuditSkip("只签发一次性挑战，结果由下一步「登录（两步验证）」记录")
     @PostMapping("/login/mfa/webauthn-options")
     ApiResponse<Map<String, Object>> loginWebAuthnOptions(@RequestBody MfaTicketRequest request,
                                                           HttpServletRequest servletRequest) {
@@ -135,6 +141,7 @@ public class AuthController {
                 ? trimmed.substring(0, MAX_AUDITED_IDENTIFIER_LENGTH) : trimmed;
     }
 
+    @AuditSkip("每个在线会话都会定时刷新，记下来只会淹没真正的操作")
     @PostMapping("/refresh")
     ApiResponse<LoginResponse> refresh(
             @CookieValue(name = REFRESH_COOKIE, required = false) String refreshToken,
@@ -149,6 +156,7 @@ public class AuthController {
         return ApiResponse.ok(user);
     }
 
+    @AuditAction("首次登录设置密码")
     @PutMapping("/initial-password")
     ApiResponse<LoginResponse> initialPassword(
             @AuthenticationPrincipal AuthenticatedUser user,
@@ -163,6 +171,7 @@ public class AuthController {
         return ApiResponse.ok(toResponse(pair));
     }
 
+    @AuditAction("修改密码")
     @PutMapping("/password")
     ApiResponse<Void> password(
             @AuthenticationPrincipal AuthenticatedUser user,
@@ -173,6 +182,7 @@ public class AuthController {
         return ApiResponse.ok();
     }
 
+    @AuditAction("退出登录")
     @PostMapping("/logout")
     ApiResponse<Void> logout(
             @CookieValue(name = REFRESH_COOKIE, required = false) String refreshToken,

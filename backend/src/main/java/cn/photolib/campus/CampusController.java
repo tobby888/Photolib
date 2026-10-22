@@ -1,5 +1,6 @@
 package cn.photolib.campus;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.auth.mfa.RequiresStepUp;
 import cn.photolib.campus.model.CampusEntity;
 import cn.photolib.common.api.ApiResponse;
@@ -27,6 +28,7 @@ import java.util.List;
 public class CampusController {
     private final CampusService service;
 
+    @AuditAction("新建校区")
     @PostMapping
     @PreAuthorize("hasRole('ADMIN')")
     @RequiresStepUp
@@ -44,6 +46,7 @@ public class CampusController {
         return ApiResponse.ok(service.get(id));
     }
 
+    @AuditAction("修改校区")
     @PutMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     @RequiresStepUp
@@ -51,6 +54,7 @@ public class CampusController {
         return ApiResponse.ok(service.update(id, request.name(), request.enabled(), request.version()));
     }
 
+    @AuditAction("启用校区")
     @PostMapping("/{id}/enable")
     @PreAuthorize("hasRole('ADMIN')")
     @RequiresStepUp
@@ -59,6 +63,7 @@ public class CampusController {
         return ApiResponse.ok(service.update(id, campus.getName(), true, campus.getVersion()));
     }
 
+    @AuditAction("停用校区")
     @PostMapping("/{id}/disable")
     @PreAuthorize("hasRole('ADMIN')")
     @RequiresStepUp

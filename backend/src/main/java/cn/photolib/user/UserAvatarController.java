@@ -1,5 +1,6 @@
 package cn.photolib.user;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +29,7 @@ import java.time.Duration;
 public class UserAvatarController {
     private final UserAvatarService avatars;
 
+    @AuditAction("更换头像")
     @PutMapping(value = "/me/avatar", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("isAuthenticated()")
     ApiResponse<AvatarResponse> replace(@RequestPart("file") MultipartFile file,
@@ -35,6 +37,7 @@ public class UserAvatarController {
         return ApiResponse.ok(new AvatarResponse(avatars.replace(user.id(), file)));
     }
 
+    @AuditAction("删除头像")
     @DeleteMapping("/me/avatar")
     @PreAuthorize("isAuthenticated()")
     ApiResponse<AvatarResponse> delete(@AuthenticationPrincipal AuthenticatedUser user) {

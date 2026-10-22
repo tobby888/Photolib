@@ -1,5 +1,6 @@
 package cn.photolib.survey;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.api.PageResponse;
@@ -54,6 +55,7 @@ public class SurveyController {
         return ApiResponse.ok(surveys.audienceOptions(user));
     }
 
+    @AuditAction("新建问卷")
     @PostMapping
     @PreAuthorize("hasAuthority('SURVEY_CREATE')")
     ApiResponse<SurveyService.SurveyView> create(@Valid @RequestBody SurveyRequest request,
@@ -61,6 +63,7 @@ public class SurveyController {
         return ApiResponse.ok(surveys.create(request.toCommand(), user));
     }
 
+    @AuditAction("修改问卷")
     @PutMapping("/{id}")
     @PreAuthorize("hasAuthority('SURVEY_CREATE')")
     ApiResponse<SurveyService.SurveyView> update(@PathVariable long id,
@@ -69,6 +72,7 @@ public class SurveyController {
         return ApiResponse.ok(surveys.update(id, request.survey().toCommand(), request.version(), user));
     }
 
+    @AuditAction("发布问卷")
     @PostMapping("/{id}/publish")
     @PreAuthorize("hasAuthority('SURVEY_CREATE')")
     ApiResponse<SurveyService.SurveyView> publish(@PathVariable long id, @Valid @RequestBody VersionRequest request,
@@ -76,6 +80,7 @@ public class SurveyController {
         return ApiResponse.ok(surveys.publish(id, request.version(), user));
     }
 
+    @AuditAction("结束问卷")
     @PostMapping("/{id}/close")
     @PreAuthorize("hasAuthority('SURVEY_CREATE')")
     ApiResponse<SurveyService.SurveyView> close(@PathVariable long id, @Valid @RequestBody VersionRequest request,
@@ -83,6 +88,7 @@ public class SurveyController {
         return ApiResponse.ok(surveys.close(id, request.version(), user));
     }
 
+    @AuditAction("删除问卷")
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAuthority('SURVEY_CREATE')")
     ApiResponse<Void> delete(@PathVariable long id, @RequestParam @Min(1) int version,
@@ -138,6 +144,7 @@ public class SurveyController {
         return ApiResponse.ok(responses.summary(id, user));
     }
 
+    @AuditAction("导出问卷答卷")
     @GetMapping(value = "/{id}/responses/export", produces = SurveyResponseExport.CONTENT_TYPE)
     @PreAuthorize("hasAuthority('SURVEY_RESULT_VIEW')")
     ResponseEntity<byte[]> export(@PathVariable long id, @AuthenticationPrincipal AuthenticatedUser user) {
@@ -172,6 +179,7 @@ public class SurveyController {
         return ApiResponse.ok(responses.fillView(id, user));
     }
 
+    @AuditAction("上传问卷附件")
     @PostMapping("/{id}/files")
     @PreAuthorize("hasAuthority('SURVEY_ACCESS')")
     ApiResponse<FormFileService.UploadTicket> fileTicket(@PathVariable long id,
@@ -181,6 +189,7 @@ public class SurveyController {
                 request.fieldId(), request.fileName(), request.contentType(), request.size()), user));
     }
 
+    @AuditAction("提交问卷")
     @PostMapping("/{id}/responses")
     @PreAuthorize("hasAuthority('SURVEY_ACCESS')")
     ApiResponse<SurveyResponseService.Receipt> submit(@PathVariable long id,
@@ -190,6 +199,7 @@ public class SurveyController {
     }
 
     /** 修改自己已经交过的答卷；只在问卷还开着的时候可以，见 SurveyResponseService.revise。 */
+    @AuditAction("修改答卷")
     @PutMapping("/{id}/responses/mine")
     @PreAuthorize("hasAuthority('SURVEY_ACCESS')")
     ApiResponse<SurveyResponseService.Receipt> revise(@PathVariable long id,

@@ -1,5 +1,6 @@
 package cn.photolib.permission;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.auth.mfa.MfaPolicy;
 import cn.photolib.auth.mfa.RequiresStepUp;
 import cn.photolib.common.api.ApiResponse;
@@ -46,6 +47,7 @@ public class PermissionGroupController {
         return ApiResponse.ok(service.get(id));
     }
 
+    @AuditAction("新建权限组")
     @PostMapping
     ApiResponse<PermissionGroupService.GroupView> create(@Valid @RequestBody CreateRequest request) {
         return ApiResponse.ok(service.create(new PermissionGroupService.CreateCommand(
@@ -53,6 +55,7 @@ public class PermissionGroupController {
                 request.photoVisibility(), request.permissions(), request.mfaPolicy())));
     }
 
+    @AuditAction("修改权限组")
     @PutMapping("/{id}")
     ApiResponse<PermissionGroupService.GroupView> update(@PathVariable Long id,
                                                          @Valid @RequestBody UpdateRequest request) {
@@ -61,6 +64,7 @@ public class PermissionGroupController {
                 request.permissions(), request.version(), request.mfaPolicy())));
     }
 
+    @AuditAction("删除权限组")
     @DeleteMapping("/{id}")
     ApiResponse<Void> delete(@PathVariable Long id) {
         service.delete(id);

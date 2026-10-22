@@ -71,8 +71,8 @@ public enum UploadLimit {
             "文件库下载接口每秒最多签发多少个下载链接，超出的请求直接拒绝。按单个后端实例计。",
             1, 20, 1000),
     FILE_DOWNLOADS_PER_HOUR(Group.FILE, Unit.TIMES, "每人每小时下载次数",
-            "登录成员按账号计，未登录访客按 IP 计（反向代理后面拿不到真实 IP 时按 IP 的这条不生效，"
-                    + "由下面的全站流量上限兜底）。",
+            "登录成员按账号计；未登录访客按 IP 计，同一 IP 的额度再乘以「匿名访问限速 → 同一 IP 按多少位访客计」"
+                    + "（拿不到真实 IP 时按 IP 的这条不生效，由下面的全站流量上限兜底）。",
             1, 120, 10_000),
     FILE_ANONYMOUS_DAILY_BYTES(Group.FILE, Unit.BYTES, "未登录访客每日下载流量（全站）",
             "所有未登录访客当天（北京时间）下载文件的总大小，用完后当天只有登录成员能下载。"
@@ -91,6 +91,12 @@ public enum UploadLimit {
     PLACEHOLDER_IMAGE_MAX_BYTES(Group.SITE, Unit.BYTES, "缺图占位图",
             "页面定制里上传的缺图占位图，每张的大小。",
             256 * Sizes.KIB, 3 * Sizes.MIB, 10 * Sizes.MIB),
+
+    SHARED_IP_VISITORS(Group.RATE_LIMIT, Unit.PEOPLE, "同一 IP 按多少位访客计",
+            "校园网、宿舍和活动现场的 Wi-Fi 往往几十上百人共用一个出口 IP。未登录访客的接口（公开招募、"
+                    + "分享链接、注册申请、公开文档和文件下载）按 IP 限速时，每个 IP 的额度 = 单人额度 × 这个数。"
+                    + "有同一 Wi-Fi 下的人反映「请求过于频繁」就调大；调小则对单个来源刷接口限得更紧。",
+            1, 30, 1000),
 
     DATABASE_BACKUP_MAX_BYTES(Group.SYSTEM, Unit.BYTES, "数据库备份文件",
             "数据备份里上传导入的备份文件（压缩后）大小。",
@@ -153,6 +159,7 @@ public enum UploadLimit {
         FILES("个"),
         TIMES("次"),
         PER_SECOND("次/秒"),
+        PEOPLE("人"),
         SECONDS("秒");
 
         private final String label;
@@ -174,6 +181,7 @@ public enum UploadLimit {
         CONTENT("正文与资料"),
         FILE("文件库"),
         SITE("头像与站点外观"),
+        RATE_LIMIT("匿名访问限速"),
         SYSTEM("系统维护");
 
         private final String label;

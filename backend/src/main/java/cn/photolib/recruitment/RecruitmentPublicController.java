@@ -1,5 +1,7 @@
 package cn.photolib.recruitment;
 
+import cn.photolib.audit.AuditAction;
+import cn.photolib.common.ratelimit.RateLimitAddress;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.form.FormFileService;
 import jakarta.validation.Valid;
@@ -34,6 +36,7 @@ public class RecruitmentPublicController {
         return ApiResponse.ok(taskService.active());
     }
 
+    @AuditAction("创建报名草稿")
     @PostMapping("/{publicId}/drafts")
     ApiResponse<RecruitmentDraftService.DraftTicket> createDraft(
             @PathVariable String publicId,
@@ -41,10 +44,11 @@ public class RecruitmentPublicController {
             HttpServletRequest servletRequest) {
         String activePublicId = taskService.requireActivePublicId(publicId);
         rateLimiter.requireAllowed(AnonymousRecruitmentRateLimiter.Action.DRAFT_CREATE,
-                activePublicId, servletRequest.getRemoteAddr());
+                activePublicId, RateLimitAddress.of(servletRequest));
         return ApiResponse.ok(draftService.create(activePublicId, request.studentId()));
     }
 
+    @AuditAction("提交招募报名")
     @PostMapping("/{publicId}/drafts/{draftId}/submit")
     ApiResponse<RecruitmentApplicationService.SubmissionReceipt> submit(
             @PathVariable String publicId,
@@ -58,11 +62,12 @@ public class RecruitmentPublicController {
         // anonymous mutation on the chain without the limiter the others use.
         String activePublicId = taskService.requireActivePublicId(publicId);
         rateLimiter.requireAllowed(AnonymousRecruitmentRateLimiter.Action.SUBMIT,
-                activePublicId, servletRequest.getRemoteAddr());
+                activePublicId, RateLimitAddress.of(servletRequest));
         return ApiResponse.ok(applicationService.submit(activePublicId, draftId, draftToken,
                 request.studentId(), request.answers()));
     }
 
+    @AuditAction("上传报名表附件")
     @PostMapping("/{publicId}/drafts/{draftId}/files")
     ApiResponse<FormFileService.UploadTicket> createFileTicket(
             @PathVariable String publicId,
@@ -72,7 +77,7 @@ public class RecruitmentPublicController {
             HttpServletRequest servletRequest) {
         String activePublicId = taskService.requireActivePublicId(publicId);
         rateLimiter.requireAllowed(AnonymousRecruitmentRateLimiter.Action.FILE_UPLOAD_CREATE,
-                activePublicId, servletRequest.getRemoteAddr());
+                activePublicId, RateLimitAddress.of(servletRequest));
         return ApiResponse.ok(applicationService.createFileTicket(activePublicId, draftId, draftToken,
                 new FormFileService.TicketRequest(request.fieldId(), request.fileName(),
                         request.contentType(), request.size())));

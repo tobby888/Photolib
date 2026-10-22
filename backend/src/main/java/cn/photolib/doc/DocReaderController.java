@@ -1,5 +1,6 @@
 package cn.photolib.doc;
 
+import cn.photolib.common.ratelimit.RateLimitAddress;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.doc.model.DocAssetEntity;
@@ -93,6 +94,6 @@ public class DocReaderController {
     private void limit(DocRateLimiter.Action action, AuthenticatedUser user,
                        HttpServletRequest request) {
         if (user != null) return;
-        rateLimiter.requireAllowed(action, request.getRemoteAddr());
+        rateLimiter.requireAllowed(action, RateLimitAddress.of(request));
     }
 }

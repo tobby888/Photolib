@@ -1,5 +1,6 @@
 package cn.photolib.recruitment;
 
+import cn.photolib.common.ratelimit.SharedAddressAllowance;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
@@ -242,7 +243,7 @@ class RecruitmentCoreTests {
 
     @Test
     void anonymousLimiterReturns429AndSeparatesMutationActions() {
-        AnonymousRecruitmentRateLimiter limiter = new AnonymousRecruitmentRateLimiter(clock);
+        AnonymousRecruitmentRateLimiter limiter = new AnonymousRecruitmentRateLimiter(clock, SharedAddressAllowance.fixed(1));
         String publicId = "A".repeat(26);
         for (int i = 0; i < AnonymousRecruitmentRateLimiter.Action.DRAFT_CREATE.limit(); i++) {
             limiter.requireAllowed(AnonymousRecruitmentRateLimiter.Action.DRAFT_CREATE,
@@ -265,7 +266,7 @@ class RecruitmentCoreTests {
 
     @Test
     void anonymousLimiterIgnoresInvalidOrSharedProxyKeysAndFailsOpenAtCapacity() {
-        AnonymousRecruitmentRateLimiter limiter = new AnonymousRecruitmentRateLimiter(clock);
+        AnonymousRecruitmentRateLimiter limiter = new AnonymousRecruitmentRateLimiter(clock, SharedAddressAllowance.fixed(1));
         String publicId = "B".repeat(26);
         for (int i = 0; i < 100; i++) {
             limiter.requireAllowed(AnonymousRecruitmentRateLimiter.Action.DRAFT_CREATE,

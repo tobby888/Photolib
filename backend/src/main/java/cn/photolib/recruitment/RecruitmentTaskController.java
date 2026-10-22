@@ -1,5 +1,6 @@
 package cn.photolib.recruitment;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.api.PageResponse;
@@ -56,6 +57,7 @@ public class RecruitmentTaskController {
         return ApiResponse.ok(taskService.get(id, user));
     }
 
+    @AuditAction("新建招募")
     @PostMapping
     @PreAuthorize("hasAuthority('RECRUITMENT_PUBLISH')")
     ApiResponse<RecruitmentTaskService.TaskView> create(
@@ -64,6 +66,7 @@ public class RecruitmentTaskController {
         return ApiResponse.ok(taskService.create(request.toCommand(), user));
     }
 
+    @AuditAction("修改招募")
     @PutMapping("/{id}")
     @PreAuthorize("hasAuthority('RECRUITMENT_PUBLISH')")
     ApiResponse<RecruitmentTaskService.TaskView> update(
@@ -73,6 +76,7 @@ public class RecruitmentTaskController {
         return ApiResponse.ok(taskService.update(id, request.toCommand(), request.version(), user));
     }
 
+    @AuditAction("发布招募")
     @PostMapping("/{id}/publish")
     @PreAuthorize("hasAuthority('RECRUITMENT_PUBLISH')")
     ApiResponse<RecruitmentTaskService.TaskView> publish(
@@ -82,6 +86,7 @@ public class RecruitmentTaskController {
         return ApiResponse.ok(taskService.publish(id, request.version(), user));
     }
 
+    @AuditAction("结束招募")
     @PostMapping("/{id}/close")
     @PreAuthorize("hasAuthority('RECRUITMENT_PUBLISH')")
     ApiResponse<RecruitmentTaskService.TaskView> close(
@@ -102,6 +107,7 @@ public class RecruitmentTaskController {
         return ApiResponse.ok(applicationService.list(id, page, pageSize, studentId, user));
     }
 
+    @AuditAction("导出招募报名")
     @GetMapping(value = "/{id}/applications/export",
             produces = RecruitmentApplicationExport.CONTENT_TYPE)
     @PreAuthorize("hasAuthority('RECRUITMENT_VIEW')")

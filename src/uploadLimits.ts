@@ -33,6 +33,7 @@ export const UPLOAD_LIMIT_KEYS = [
   'AVATAR_MAX_BYTES',
   'BRAND_ICON_MAX_BYTES',
   'PLACEHOLDER_IMAGE_MAX_BYTES',
+  'SHARED_IP_VISITORS',
   'DATABASE_BACKUP_MAX_BYTES',
 ] as const
 
@@ -71,6 +72,7 @@ export const DEFAULT_UPLOAD_LIMITS: UploadLimits = {
   AVATAR_MAX_BYTES: MIB,
   BRAND_ICON_MAX_BYTES: 512 * KIB,
   PLACEHOLDER_IMAGE_MAX_BYTES: 3 * MIB,
+  SHARED_IP_VISITORS: 30,
   DATABASE_BACKUP_MAX_BYTES: 512 * MIB,
 }
 
@@ -85,11 +87,11 @@ export function normalizeUploadLimits(value: unknown): UploadLimits {
   return limits
 }
 
-/** 非字节类限额的单位：张（图片）、个（文件）、次、次/秒（QPS）、秒。 */
-export type UploadLimitUnit = 'BYTES' | 'COUNT' | 'FILES' | 'TIMES' | 'PER_SECOND' | 'SECONDS'
+/** 非字节类限额的单位：张（图片）、个（文件）、次、次/秒（QPS）、人、秒。 */
+export type UploadLimitUnit = 'BYTES' | 'COUNT' | 'FILES' | 'TIMES' | 'PER_SECOND' | 'PEOPLE' | 'SECONDS'
 
 const UNIT_LABELS: Record<Exclude<UploadLimitUnit, 'BYTES'>, string> = {
-  COUNT: '张', FILES: '个', TIMES: '次', PER_SECOND: '次/秒', SECONDS: '秒',
+  COUNT: '张', FILES: '个', TIMES: '次', PER_SECOND: '次/秒', PEOPLE: '人', SECONDS: '秒',
 }
 
 /** 管理页面上一项限额的完整信息（`GET /upload-limits/settings`）。 */

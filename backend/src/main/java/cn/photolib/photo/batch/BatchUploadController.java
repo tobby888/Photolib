@@ -1,5 +1,6 @@
 package cn.photolib.photo.batch;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
 import jakarta.validation.Valid;
@@ -18,6 +19,7 @@ import java.util.List;
 public class BatchUploadController {
     private final BatchUploadService service;
 
+    @AuditAction("开始批量上传")
     @PostMapping("/batch-upload-tickets")
     @PreAuthorize("hasAnyAuthority('PHOTO_UPLOAD','REQUEST_PHOTO_MANAGE')")
     ApiResponse<BatchUploadService.BatchTicket> create(@Valid @RequestBody CreateRequest request,
@@ -30,6 +32,7 @@ public class BatchUploadController {
                 request.archiveSize(), files), user));
     }
 
+    @AuditAction("完成批量上传")
     @PostMapping("/batches/{id}/complete-upload")
     @PreAuthorize("hasAnyAuthority('PHOTO_UPLOAD','REQUEST_PHOTO_MANAGE')")
     ApiResponse<BatchUploadService.BatchView> complete(@PathVariable String id,
@@ -44,6 +47,7 @@ public class BatchUploadController {
         return ApiResponse.ok(service.get(id, user));
     }
 
+    @AuditAction("修改批量上传的图片信息")
     @PutMapping("/batches/{batchId}/items/{itemId}/metadata")
     @PreAuthorize("hasAnyAuthority('PHOTO_UPLOAD','REQUEST_PHOTO_MANAGE')")
     ApiResponse<BatchUploadService.BatchView> metadata(
@@ -56,6 +60,7 @@ public class BatchUploadController {
                         request.takenAt(), request.tags()), user));
     }
 
+    @AuditAction("批量填写上传图片信息")
     @PutMapping("/batches/{batchId}/metadata")
     @PreAuthorize("hasAnyAuthority('PHOTO_UPLOAD','REQUEST_PHOTO_MANAGE')")
     ApiResponse<BatchUploadService.BatchView> batchMetadata(

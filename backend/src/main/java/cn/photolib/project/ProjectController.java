@@ -1,5 +1,6 @@
 package cn.photolib.project;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.audit.AuditInterceptor;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.auth.mfa.RequiresStepUp;
@@ -31,6 +32,7 @@ import java.util.Map;
 public class ProjectController {
     private final ProjectService service;
 
+    @AuditAction("新建选题")
     @PostMapping
     @PreAuthorize("hasAuthority('PROJECT_CREATE')")
     ApiResponse<ProjectEntity> create(@Valid @RequestBody CreateRequest request,
@@ -57,6 +59,7 @@ public class ProjectController {
         return ApiResponse.ok(service.getDetail(id, user));
     }
 
+    @AuditAction("向选题添加图片")
     @PostMapping("/{id}/photos")
     @PreAuthorize("hasAuthority('PROJECT_ADOPT')")
     ApiResponse<Void> addPhotos(@PathVariable Long id, @Valid @RequestBody PhotoIdsRequest request,
@@ -69,6 +72,7 @@ public class ProjectController {
      * 移出选题相册。不用 {@code DELETE} 带请求体：批量的 id 放进 URL 会撞长度上限，
      * 而带体的 DELETE 有代理会直接丢掉请求体。审计记下移了哪些图片——URL 里只有选题 id。
      */
+    @AuditAction("把图片移出选题")
     @PostMapping("/{id}/photos/remove")
     @PreAuthorize("hasAuthority('PROJECT_ADOPT')")
     ApiResponse<ProjectService.RemovePhotosResult> removePhotos(
@@ -85,6 +89,7 @@ public class ProjectController {
     }
 
     /** 置顶只影响当前账号自己的选题列表，凭据与查看选题一致。 */
+    @AuditAction("置顶选题")
     @PutMapping("/{id}/pin")
     @PreAuthorize("hasAnyAuthority('PROJECT_VIEW','PROJECT_VIEW_ALL')")
     ApiResponse<Void> pin(@PathVariable Long id, @AuthenticationPrincipal AuthenticatedUser user) {
@@ -92,6 +97,7 @@ public class ProjectController {
         return ApiResponse.ok();
     }
 
+    @AuditAction("取消置顶选题")
     @DeleteMapping("/{id}/pin")
     @PreAuthorize("hasAnyAuthority('PROJECT_VIEW','PROJECT_VIEW_ALL')")
     ApiResponse<Void> unpin(@PathVariable Long id, @AuthenticationPrincipal AuthenticatedUser user) {
@@ -99,6 +105,7 @@ public class ProjectController {
         return ApiResponse.ok();
     }
 
+    @AuditAction("修改选题")
     @PutMapping("/{id}")
     @PreAuthorize("hasAuthority('PROJECT_CREATE')")
     ApiResponse<ProjectEntity> update(@PathVariable Long id, @Valid @RequestBody UpdateRequest request,
@@ -107,6 +114,7 @@ public class ProjectController {
                 request.version(), user));
     }
 
+    @AuditAction("修改选题状态")
     @PostMapping("/{id}/status")
     @PreAuthorize("hasAnyAuthority('PROJECT_CREATE','PROJECT_COMPLETE')")
     ApiResponse<ProjectEntity> status(@PathVariable Long id, @Valid @RequestBody StatusRequest request,
@@ -114,12 +122,14 @@ public class ProjectController {
         return ApiResponse.ok(service.changeStatus(id, request.status(), request.version(), user));
     }
 
+    @AuditAction("重新开启选题")
     @PostMapping("/{id}/reopen")
     @PreAuthorize("hasRole('ADMIN')")
     ApiResponse<ProjectEntity> reopen(@PathVariable Long id, @Valid @RequestBody ReopenRequest request) {
         return ApiResponse.ok(service.reopen(id, request.version()));
     }
 
+    @AuditAction("删除选题")
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAuthority('PROJECT_DELETE')")
     @RequiresStepUp

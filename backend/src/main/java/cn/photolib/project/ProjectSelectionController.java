@@ -1,5 +1,7 @@
 package cn.photolib.project;
 
+import cn.photolib.audit.AuditAction;
+import cn.photolib.audit.AuditSkip;
 import cn.photolib.audit.AuditInterceptor;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
@@ -65,6 +67,7 @@ public class ProjectSelectionController {
     }
 
     /** 整组替换选片人；传空数组表示取消全部指派。 */
+    @AuditAction("设置选题挑图人")
     @PutMapping("/selectors")
     ApiResponse<List<ProjectService.Selector>> replaceSelectors(
             @PathVariable Long projectId, @Valid @RequestBody SelectorsRequest request,
@@ -88,6 +91,7 @@ public class ProjectSelectionController {
         return ApiResponse.ok(selection.imageUrl(projectId, photoId, user));
     }
 
+    @AuditAction("给选题图片打标签")
     @PostMapping("/selection/tags")
     ApiResponse<List<PhotoService.TaggedPhoto>> tag(@PathVariable Long projectId,
                                                     @Valid @RequestBody TagRequest request,
@@ -97,6 +101,7 @@ public class ProjectSelectionController {
     }
 
     /** 裁切/旋转结果的直传地址。 */
+    @AuditSkip("只签发修图上传票据，保存结果由「保存修图结果」记录")
     @PostMapping("/selection/photos/{photoId}/edit-tickets")
     ApiResponse<PhotoImageEditService.EditTicket> editTicket(
             @PathVariable Long projectId, @PathVariable Long photoId,
@@ -107,6 +112,7 @@ public class ProjectSelectionController {
     }
 
     /** 用已经直传上去的编辑结果替换成品图。 */
+    @AuditAction("保存修图结果")
     @PostMapping("/selection/photos/{photoId}/apply-edit")
     ApiResponse<PhotoService.PhotoView> applyEdit(
             @PathVariable Long projectId, @PathVariable Long photoId,
@@ -135,6 +141,7 @@ public class ProjectSelectionController {
      * 按筛选条件把图片从图库和 OSS 里删掉。不可撤销，前端必须先预演、再让人确认；
      * {@code planToken} 取自预演，结果变了就拒绝。不带请求体等于旧行为：只删「不可用」的。
      */
+    @AuditAction("按条件清理选题图片")
     @PostMapping("/selection/cleanup")
     ApiResponse<ProjectSelectionService.CleanupResult> cleanup(
             @PathVariable Long projectId, @Valid @RequestBody(required = false) CleanupRequest request,

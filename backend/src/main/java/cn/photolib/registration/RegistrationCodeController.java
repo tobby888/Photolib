@@ -1,5 +1,6 @@
 package cn.photolib.registration;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.auth.mfa.RequiresStepUp;
 import cn.photolib.common.api.ApiResponse;
@@ -45,6 +46,7 @@ public class RegistrationCodeController {
         return ApiResponse.ok(registrations.listCodes(page, pageSize, keyword));
     }
 
+    @AuditAction("新建注册码")
     @PostMapping
     ApiResponse<RegistrationService.CodeView> create(@Valid @RequestBody CreateRequest request,
                                                      @AuthenticationPrincipal AuthenticatedUser user) {
@@ -53,6 +55,7 @@ public class RegistrationCodeController {
                 request.validFrom(), request.validUntil()), user.id()));
     }
 
+    @AuditAction("修改注册码")
     @PutMapping("/{id}")
     ApiResponse<RegistrationService.CodeView> update(@PathVariable Long id,
                                                      @Valid @RequestBody UpdateRequest request) {
@@ -61,6 +64,7 @@ public class RegistrationCodeController {
                 request.version())));
     }
 
+    @AuditAction("删除注册码")
     @DeleteMapping("/{id}")
     ApiResponse<Void> delete(@PathVariable Long id) {
         registrations.deleteCode(id);

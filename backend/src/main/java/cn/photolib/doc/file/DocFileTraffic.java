@@ -4,6 +4,7 @@ import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.common.ratelimit.ClientAddress;
 import cn.photolib.common.ratelimit.FixedWindowRateLimiter;
+import cn.photolib.common.ratelimit.SharedAddressAllowance;
 import cn.photolib.doc.DocReader;
 import cn.photolib.uploadlimit.UploadLimit;
 import cn.photolib.uploadlimit.UploadLimitService;
@@ -25,9 +26,9 @@ import java.time.LocalDateTime;
  *   <li><b>全站 QPS</b>（{@link #tryAcquireUpload} / {@link #tryAcquireDownload}）——由
  *       {@link DocFileQpsFilter} 在 Servlet 过滤器里调用，早于 multipart 解析：超出的上传请求
  *       连文件内容都不读，不占带宽也不落临时文件。进程内计数，按单个后端实例计。</li>
- *   <li><b>每位读者每小时下载次数</b>——登录成员按账号，匿名访客按 IP。IP 取自
- *       {@code remoteAddr}，反向代理后面是代理地址，{@link ClientAddress} 对内网地址失败开放
- *       （否则全站访客共用一个计数，互相误伤）。</li>
+ *   <li><b>每位读者每小时下载次数</b>——登录成员按账号，匿名访客按 IP，IP 的额度由
+ *       {@link SharedAddressAllowance} 按"一个出口 IP 背后有多少人"放大。拿不到真实地址时
+ *       {@link ClientAddress} 失败开放（否则全站访客共用一个计数，互相误伤）。</li>
  *   <li><b>匿名访客每日总流量</b>——不看 IP，按业务日在库里条件扣减（{@code doc_file_download_usage}）。
  *       这是防盗刷的主闸：换多少代理都绕不过，重启和多实例也绕不过。</li>
  *   <li><b>下载链接有效期</b>——签名直链的寿命，在 {@code DocFileService.download} 里用。</li>
@@ -45,8 +46,12 @@ public class DocFileTraffic {
     private final FixedWindowRateLimiter global;
     private final FixedWindowRateLimiter perReader;
 
-    public DocFileTraffic(UploadLimitService limits, JdbcClient jdbc, Clock clock) {
+    private final SharedAddressAllowance allowance;
+
+    public DocFileTraffic(UploadLimitService limits, JdbcClient jdbc, Clock clock,
+                          SharedAddressAllowance allowance) {
         this.limits = limits;
+        this.allowance = allowance;
         this.jdbc = jdbc;
         this.clock = clock;
         this.global = new FixedWindowRateLimiter(clock, 8);
@@ -64,14 +69,16 @@ public class DocFileTraffic {
     /** 每位读者每小时的下载次数。匿名访客拿不到公网地址时让行，由每日总流量兜底。 */
     public void requireReaderAllowance(DocReader reader, String remoteAddress) {
         String key;
+        int perHour = limits.count(UploadLimit.FILE_DOWNLOADS_PER_HOUR);
         if (reader != null && reader.authenticated()) {
             key = "user:" + reader.userId();
         } else {
             String address = ClientAddress.normalize(remoteAddress);
             if (address == null) return;
             key = "ip:" + address;
+            perHour = allowance.perAddress(perHour);
         }
-        if (!perReader.tryAcquire(key, limits.count(UploadLimit.FILE_DOWNLOADS_PER_HOUR), HOUR)) {
+        if (!perReader.tryAcquire(key, perHour, HOUR)) {
             throw new BusinessException(ErrorCode.RATE_LIMITED,
                     "下载太频繁了：每小时最多 " + limits.describe(UploadLimit.FILE_DOWNLOADS_PER_HOUR) + "，请稍后再试");
         }

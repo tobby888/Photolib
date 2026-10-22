@@ -1,5 +1,6 @@
 package cn.photolib.doc;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.doc.model.DocNodeEntity;
@@ -60,6 +61,7 @@ public class DocController {
         return ApiResponse.ok(service.get(id));
     }
 
+    @AuditAction("新建文档")
     @PostMapping
     ApiResponse<DocService.TreeMutation> create(@Valid @RequestBody CreateRequest request,
                                                 @AuthenticationPrincipal AuthenticatedUser user) {
@@ -67,6 +69,7 @@ public class DocController {
                 request.title(), user));
     }
 
+    @AuditAction("重命名文档")
     @PutMapping("/{id}/title")
     ApiResponse<DocService.TreeMutation> rename(@PathVariable long id,
                                                 @Valid @RequestBody RenameRequest request,
@@ -74,6 +77,7 @@ public class DocController {
         return ApiResponse.ok(service.rename(id, request.title(), request.version(), user));
     }
 
+    @AuditAction("保存文档正文")
     @PutMapping("/{id}/content")
     ApiResponse<DocService.DocumentDetail> saveContent(@PathVariable long id,
                                                        @Valid @RequestBody ContentRequest request,
@@ -81,6 +85,7 @@ public class DocController {
         return ApiResponse.ok(service.saveContent(id, request.content(), request.version(), user));
     }
 
+    @AuditAction("发布或撤回文档")
     @PostMapping("/{id}/publication")
     @PreAuthorize("hasAuthority('DOC_PUBLISH')")
     ApiResponse<DocService.TreeMutation> setPublished(@PathVariable long id,
@@ -89,6 +94,7 @@ public class DocController {
         return ApiResponse.ok(service.setPublished(id, request.published(), request.version(), user));
     }
 
+    @AuditAction("修改文档读者范围")
     @PostMapping("/{id}/visibility")
     @PreAuthorize("hasAuthority('DOC_PUBLISH')")
     ApiResponse<DocService.TreeMutation> setVisibility(@PathVariable long id,
@@ -98,6 +104,7 @@ public class DocController {
                 request.userIds(), request.version(), user));
     }
 
+    @AuditAction("移动文档")
     @PostMapping("/{id}/move")
     ApiResponse<DocService.TreeMutation> move(@PathVariable long id,
                                               @Valid @RequestBody MoveRequest request,
@@ -106,6 +113,7 @@ public class DocController {
                 request.version(), user));
     }
 
+    @AuditAction("删除文档")
     @DeleteMapping("/{id}")
     ApiResponse<DocService.TreeMutation> delete(@PathVariable long id,
                                                 @RequestParam @Min(1) int version,
@@ -119,6 +127,7 @@ public class DocController {
      * 表单字段用 {@code @RequestParam}（multipart 的普通字段就是参数），
      * 只有文件本身是 {@code @RequestPart}。
      */
+    @AuditAction("上传 PDF 文档")
     @PostMapping(value = "/pdf", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     ApiResponse<DocService.TreeMutation> createPdf(@RequestParam(required = false) Long parentId,
                                                    @RequestParam @NotBlank @Size(max = 200) String title,
@@ -129,6 +138,7 @@ public class DocController {
     }
 
     /** 换掉一份 PDF 文档的文件。对象键跟着 publicId 走，所以读者手上的链接继续有效。 */
+    @AuditAction("替换 PDF 文档")
     @PutMapping(value = "/{id}/pdf", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     ApiResponse<DocService.TreeMutation> replacePdf(@PathVariable long id,
                                                     @RequestParam @Min(1) int version,
@@ -149,6 +159,7 @@ public class DocController {
         return DocPdfResponse.of(node, service.openNode(node));
     }
 
+    @AuditAction("上传文档插图")
     @PostMapping(value = "/{id}/assets", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     ApiResponse<DocService.AssetUploaded> uploadAsset(@PathVariable long id,
                                                       @RequestPart("file") MultipartFile file,

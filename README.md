@@ -423,14 +423,15 @@ curl "https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=<企业ID>&corpsecret=
 
 `/api/v1/public/recruitments/**` 完全匿名。应用内的 `AnonymousRecruitmentRateLimiter` 只是**有界的纵深防护，不能替代网关限流**：
 
-- 它按容器上报的 `remoteAddr` 计数，并刻意不信任客户端可伪造的 `X-Forwarded-For`。部署在反向代理后面时拿到的通常是代理 IP，会被判定为共享地址并**直接放行**，而不是把所有同学限流在一起。
+- 它按访客的真实 IP 计数：请求来自本机回环地址（同机 nginx）时取 nginx 用 `$remote_addr` 覆盖写入的 `X-Real-IP`，其余情况取容器上报的 `remoteAddr`；刻意不看客户端可以预填的 `X-Forwarded-For`。所以 nginx 必须带上 `proxy_set_header X-Real-IP $remote_addr;`。拿到的若是内网/回环地址（代理没传真实 IP），会被判定为共享地址并**直接放行**，而不是把所有同学限流在一起。IPv6 按 /64 归并。
+- 代码里写的额度是**一位访客**的量。校园网、宿舍、活动现场的 Wi-Fi 常常几十上百人共用一个出口 IP，按 IP 计数时额度会乘以「系统管理 → 上传限额 → 匿名访问限速 → 同一 IP 按多少位访客计」（默认 30，改完 30 秒内生效）。有同一 Wi-Fi 下的人反映「请求过于频繁」就调大它；按链接、按账号的计数器不受它影响。
 - 进程内最多跟踪 4096 个 key，超出后新出现的 key 同样放行，以避免把状态耗尽变成全站匿名不可用。
 
 因此**必须**在反向代理或网关上为这些路径配置独立的分布式限流，`/api/v1/auth/login` 同理。
 
-评估限流强度时请把额度换算成流量：每个草稿可申领的上传额度见上方 `photolib.recruitment.upload.*`（默认约 400 MiB），`DRAFT_CREATE` 是每 IP 每 10 分钟 8 个草稿，也就是单 IP 约 3 GiB / 10 分钟。限流规则没配到位时，这就是敞口的量级。
+评估限流强度时请把额度换算成流量：每个草稿可申领的上传额度见上方 `photolib.recruitment.upload.*`（默认约 400 MiB），`DRAFT_CREATE` 是每位访客每 10 分钟 8 个草稿，按默认的「每个 IP 30 位访客」就是单 IP 每 10 分钟 240 个草稿、约 94 GiB。限流规则没配到位时，这就是敞口的量级；不需要照顾共享 Wi-Fi 的部署可以把那个系数调小。
 
-同时注意：审计拦截器会为每一次匿名写操作写入一行 `audit_log`（`operator_id` 为空、`resource_type` 为 `RECRUITMENTS`），登录尝试也会写入（`resource_type` 为 `AUTH`），请为该表制定保留与清理策略。
+同时注意：审计拦截器会为每一次匿名写操作写入一行 `audit_log`（`operator_id` 为空、`resource_type` 为 `RECRUITMENTS`），登录尝试也会写入（`resource_type` 为 `AUTH`）。每行带打码后的请求参数（最多约 8 千字），请为该表制定保留与清理策略。
 
 ### 数据与隐私
 

@@ -1,5 +1,7 @@
 package cn.photolib.auth.mfa;
 
+import cn.photolib.audit.AuditAction;
+import cn.photolib.audit.AuditSkip;
 import cn.photolib.auth.AccessTokenFilter;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.auth.LoginThrottle;
@@ -41,12 +43,14 @@ public class MfaController {
         return ApiResponse.ok(mfa.overview(user));
     }
 
+    @AuditAction("开始绑定验证器 App")
     @PostMapping("/totp")
     @RequiresStepUp
     ApiResponse<MfaService.TotpSetup> beginTotp(@AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(mfa.beginTotp(user));
     }
 
+    @AuditAction("绑定验证器 App")
     @PostMapping("/totp/{id}/confirm")
     ApiResponse<MfaService.DeviceView> confirmTotp(@AuthenticationPrincipal AuthenticatedUser user,
                                                    @PathVariable Long id,
@@ -55,6 +59,7 @@ public class MfaController {
         return ApiResponse.ok(mfa.confirmTotp(user, sessionId(servletRequest), id, request.code(), request.name()));
     }
 
+    @AuditSkip("只签发一次性挑战，绑定结果由「绑定安全密钥」记录")
     @PostMapping("/webauthn/options")
     @RequiresStepUp
     ApiResponse<MfaService.WebAuthnChallenge> beginWebAuthn(@AuthenticationPrincipal AuthenticatedUser user,
@@ -63,6 +68,7 @@ public class MfaController {
                 webAuthn.relyingParty(request)));
     }
 
+    @AuditAction("绑定安全密钥")
     @PostMapping("/webauthn")
     ApiResponse<MfaService.DeviceView> finishWebAuthn(@AuthenticationPrincipal AuthenticatedUser user,
                                                       @Valid @RequestBody RegisterWebAuthnRequest body,
@@ -72,6 +78,7 @@ public class MfaController {
                         body.transports()), webAuthn.relyingParty(request)));
     }
 
+    @AuditAction("解绑两步验证设备")
     @DeleteMapping("/devices/{id}")
     @RequiresStepUp
     ApiResponse<Void> deleteDevice(@AuthenticationPrincipal AuthenticatedUser user, @PathVariable Long id) {
@@ -80,6 +87,7 @@ public class MfaController {
     }
 
     /** 撤销信任只会让人多验证一次，不需要先再验证。 */
+    @AuditAction("撤销受信任的浏览器")
     @DeleteMapping("/trusted-browsers/{id}")
     ApiResponse<Void> revokeTrustedBrowser(@AuthenticationPrincipal AuthenticatedUser user, @PathVariable Long id) {
         mfa.revokeTrustedBrowser(user.id(), id);
@@ -92,6 +100,7 @@ public class MfaController {
         return ApiResponse.ok(mfa.stepUpStatus(user, sessionId(request)));
     }
 
+    @AuditSkip("只签发一次性挑战，结果由「敏感操作再验证」记录")
     @PostMapping("/step-up/webauthn-options")
     ApiResponse<MfaService.WebAuthnChallenge> stepUpWebAuthnOptions(@AuthenticationPrincipal AuthenticatedUser user,
                                                                     HttpServletRequest request) {
@@ -99,6 +108,7 @@ public class MfaController {
     }
 
     /** 失败计数和登录第二步一样放在事务外记录，但两者分开计数，见 {@link LoginThrottle.MfaAttempt}。 */
+    @AuditAction("敏感操作再验证")
     @PostMapping("/step-up")
     ApiResponse<MfaService.StepUpStatus> stepUp(@AuthenticationPrincipal AuthenticatedUser user,
                                                 @RequestBody StepUpRequest body,

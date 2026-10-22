@@ -1,5 +1,6 @@
 package cn.photolib.statistics.analysis;
 
+import cn.photolib.audit.AuditSkip;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
 import jakarta.validation.constraints.NotNull;
@@ -24,6 +25,7 @@ import java.time.LocalDate;
 public class WorklogAnalysisController {
     private final WorklogAnalysisService service;
 
+    @AuditSkip("只读查询，条件树太长才用 POST；面板每改一次条件就重算一次")
     @PostMapping
     @PreAuthorize("hasAuthority('STATISTICS_DOWNLOAD')")
     ApiResponse<WorklogAnalysisService.AnalysisResult> analyze(

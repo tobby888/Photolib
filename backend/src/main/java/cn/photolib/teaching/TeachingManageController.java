@@ -1,5 +1,6 @@
 package cn.photolib.teaching;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
 import jakarta.validation.Valid;
@@ -51,6 +52,7 @@ public class TeachingManageController {
         return ApiResponse.ok(service.authorOptions());
     }
 
+    @AuditAction("新建教学资料")
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     ApiResponse<TeachingService.Material> create(
             @RequestParam @NotBlank @Size(max = 200) String title,
@@ -63,6 +65,7 @@ public class TeachingManageController {
     }
 
     /** 原地换文件：保留资料 id 与链接。 */
+    @AuditAction("替换教学资料文件")
     @PutMapping(value = "/{id}/file", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     ApiResponse<TeachingService.Material> replaceFile(
             @PathVariable long id,
@@ -72,6 +75,7 @@ public class TeachingManageController {
         return ApiResponse.ok(service.replaceFile(id, file, version, user));
     }
 
+    @AuditAction("修改教学资料")
     @PutMapping("/{id}")
     ApiResponse<TeachingService.Material> update(@PathVariable long id,
                                                  @Valid @RequestBody UpdateRequest request,
@@ -81,6 +85,7 @@ public class TeachingManageController {
     }
 
     /** 删除从 TEACHING_MANAGE 里拆了出来（V62）；方法上的注解覆盖类上的那一条。 */
+    @AuditAction("删除教学资料")
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAuthority('TEACHING_DELETE')")
     ApiResponse<Void> delete(@PathVariable long id, @RequestParam @Min(1) int version,
@@ -90,6 +95,7 @@ public class TeachingManageController {
     }
 
     /** 重命名分类：把这一类资料批量改到新名字。 */
+    @AuditAction("重命名教学资料分类")
     @PutMapping("/categories")
     ApiResponse<CategoryRenameResult> renameCategory(@Valid @RequestBody CategoryRenameRequest request) {
         return ApiResponse.ok(new CategoryRenameResult(
