@@ -24,7 +24,7 @@
         <aliyun-oss.version>3.18.3</aliyun-oss.version>
         <aliyun-dm.version>3.3.2</aliyun-dm.version>
         <poi.version>5.4.1</poi.version>
-        <jsoup.version>1.18.3</jsoup.version>
+        <jsoup.version>1.23.2</jsoup.version>
         <jna.version>5.18.1</jna.version>
         <webauthn4j.version>0.31.10.RELEASE</webauthn4j.version>
         <exec-maven-plugin.version>3.5.0</exec-maven-plugin.version>
