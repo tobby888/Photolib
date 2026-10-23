@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import {
-  MAX_WORKLOG_MINUTES, alreadyDeclaredOn, describeMinutes, describeWorklogStatus, rejectWorklogReason,
+  MAX_WORKLOG_MINUTES, declaredCountOn, describeMinutes, describeWorklogStatus, rejectWorklogReason,
 } from '../src/shareWorklog.ts'
 import type { ShareGuestWorklog } from '../src/types.ts'
 
@@ -33,13 +33,24 @@ test('申报前的校验与后端同一套规则', () => {
   assert.match(String(rejectWorklogReason({ ...ok, shootingMinutes: 1.5 }, TODAY)), /整数分钟/)
 })
 
-test('同一天已有在审或已确认的申报时提前说出来，被退回的不算', () => {
-  assert.equal(alreadyDeclaredOn([worklog({ status: 'SUBMITTED' })], TODAY), true)
-  assert.equal(alreadyDeclaredOn([worklog({ status: 'CONFIRMED' })], TODAY), true)
-  // 退回之后重新申报正是它该走的路。
-  assert.equal(alreadyDeclaredOn([worklog({ status: 'REJECTED' })], TODAY), false)
-  assert.equal(alreadyDeclaredOn([worklog({ workDate: '2026-10-11' })], TODAY), false)
-  assert.equal(alreadyDeclaredOn([], TODAY), false)
+test('同一天可以报多条：只数出已有几条在审或已确认的，用来提醒而不是拦', () => {
+  assert.equal(declaredCountOn([worklog({ status: 'SUBMITTED' })], TODAY), 1)
+  assert.equal(declaredCountOn([
+    worklog({ id: '1', status: 'SUBMITTED' }), worklog({ id: '2', status: 'CONFIRMED' }),
+  ], TODAY), 2)
+  // 被退回的不算：退回之后重新申报正是它该走的路。
+  assert.equal(declaredCountOn([worklog({ status: 'REJECTED' })], TODAY), 0)
+  assert.equal(declaredCountOn([worklog({ workDate: '2026-10-11' })], TODAY), 0)
+  assert.equal(declaredCountOn([], TODAY), 0)
+})
+
+test('后端不再按「同一天」拦链接申报的工时', async () => {
+  const service = await readBackend('worklog/WorklogService.java')
+  const createForShareLink = service.slice(service.indexOf('public WorklogEntity createForShareLink'),
+    service.indexOf('public List<WorklogEntity> listForShareLink'))
+  assert.doesNotMatch(createForShareLink, /getWorkDate,|已经申报过了/)
+  const page = await read('pages/SharedUploadPage.tsx')
+  assert.doesNotMatch(page, /已经申报过了/)
 })
 
 test('申报人看得到审核结果和退回原因', () => {

@@ -6,6 +6,7 @@ import cn.photolib.uploadlimit.UploadLimit;
 import cn.photolib.uploadlimit.UploadLimitService;
 import cn.photolib.photo.PhotoProcessingService;
 import cn.photolib.photo.PhotoService;
+import cn.photolib.photo.PhotoTags;
 import cn.photolib.photo.batch.BatchUploadService;
 import cn.photolib.photo.batch.PhotoUploadBatchEntity;
 import cn.photolib.photo.batch.PhotoUploadBatchMapper;
@@ -31,8 +32,10 @@ import org.springframework.util.StringUtils;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -49,7 +52,9 @@ import java.util.UUID;
  *   <li><b>拍摄者是会话上的身份快照，不是每次请求各报一次。</b> 站内的拍摄者强制来自
  *       通讯录（AGENTS §2.11），而上传链接的使用者按定义在通讯录之外，把通讯录摆给
  *       站外的人挑更是直接泄露姓名和学号。改为进门时自报一次，之后整场会话共用——
- *       逐次带身份的话，同一个人分两批传的图会落成两个拍摄者，而统计按学号归并。</li>
+ *       逐次带身份的话，同一个人分两批传的图会落成两个拍摄者，而统计按学号归并。
+ *       替两个人交图时可以中途切换（{@code ProjectShareService.switchUploader}），换的是
+ *       整份快照，之后的上传和申报一律用新身份。</li>
  *   <li><b>责任人记在 {@code uploaded_by}，口子记在 {@code share_link_id}。</b>
  *       {@code uploaded_by} 落的是链接创建者（站内唯一可追责的成员，与打包下载任务
  *       的 {@code created_by} 同一个道理），{@code share_link_id} 才是"这张图从哪条
@@ -66,6 +71,9 @@ import java.util.UUID;
  *       否则「传图的是张三、报工时的是李四」这种事就成了可能。日期、时长和「选题结束后
  *       不再收」的校验在 {@link WorklogService#createForShareLink}，与站内填报是同一段代码。
  *       申报落成「待确认」，由部长和管理员在工时面板里确认或退回。</li>
+ *   <li><b>上传者只能打选题的预设标签，只能动预设范围内的那部分。</b> 上传时整批选好，
+ *       或者传完之后逐张改（只限记在当前拍摄者名下、已经处理完的图）。选题没设预设就不能打，
+ *       保留标签 {@code deprecated} 也不能打——那是选片人的结论。见 {@link #guestTags}。</li>
  * </ol>
  */
 @Service
@@ -141,22 +149,24 @@ public class ProjectShareUploadService {
                 originalKey, command.contentType(), storageProperties.uploadUrlTtl());
         // 这条路不经过 PhotoService.createTicket，清理任务得自己捅（它内部节流）。
         abandonedUploads.nudge();
+        // 拍摄者回给页面：会话中途可以切换拍摄者，列表上每一张要写清楚它记在谁名下。
         return new UploadTicket(photo.getId(), signed.url().toString(), signed.method(),
-                command.contentType(), signed.expiresAt());
+                command.contentType(), signed.expiresAt(), uploader.name());
     }
 
     /**
      * 访客把字节 PUT 上去之后调这里：确认对象真的在、置 PROCESSING、交给压缩管线。
      *
-     * <p>标题和说明是选填的，标签一律为空——活动选题的标签由选片人按预设打（§2.23），
-     * 创作选题的由选题负责人在相册里补；把预设标签摆给站外的人挑既没有意义也会把预设泄露出去。</p>
+     * <p>标题和说明是选填的。标签也是选填的，但只能从选题的预设标签里挑
+     * （{@link #guestTags}）；选题没设预设就一个都不能打，留给选片人和选题负责人。</p>
      */
     @Transactional
     public UploadedPhoto complete(ProjectShareService.GuestContext context, Long photoId,
                                   CompleteCommand command) {
         ProjectShareLinkEntity link = shareService.requireUploadLink(context.link());
-        requireOpenProject(link);
+        ProjectEntity project = requireOpenProject(link);
         PhotoEntity photo = requireOwnUpload(link, photoId);
+        List<String> tags = guestTags(project, command.tags());
 
         ObjectStorageService.ObjectInfo info = storage.stat(photo.getOriginalObjectKey());
         if (info.size() <= 0 || info.size() > uploadLimits.value(UploadLimit.PHOTO_IMAGE_MAX_BYTES)) {
@@ -165,6 +175,7 @@ public class ProjectShareUploadService {
         }
         photo.setTitle(trimmedOrNull(command.title(), 200));
         photo.setDescription(trimmedOrNull(command.description(), 500));
+        if (!tags.isEmpty()) photo.setTagsJson(PhotoTags.toJson(tags));
         photo.setStatus(PhotoStatus.PROCESSING);
         photo.setFailureReason(null);
         // 这是一次新的处理，恢复任务的重提交次数从头算（Flyway V53）。
@@ -196,6 +207,99 @@ public class ProjectShareUploadService {
         PhotoEntity photo = requireOwnUpload(link, photoId, null);
         return new UploadedPhoto(photo.getId(), photo.getTitle(), photo.getStatus(),
                 photo.getFailureReason());
+    }
+
+    /**
+     * 上传者给自己传的一张图改标签，只能用选题的预设标签。
+     *
+     * <p>「自己的」= 通过这条链接传的 + 拍摄者学号就是会话当前的身份。会话中途切换过拍摄者的话，
+     * 要切回那个人才能改他名下的图——和申报工时按学号认人是同一条线。学号是自报的，所以这道
+     * 门挡的是「同一条链接上的别人顺手改了我的图」，不是冒名：链接和密码才是真正的凭据。</p>
+     *
+     * <p>只动预设范围内的那部分：图片上预设以外的标签（选片人打的 {@code deprecated}、
+     * 站内补的自定义标签、预设改过之后留下的旧标签）原样保留。上传者能删的只有他自己能加的那些，
+     * 否则一次「改标签」就能把选片人的结论抹掉。</p>
+     *
+     * <p>只在 {@code AVAILABLE} 时可改：压缩管线提交成品时按它读到的 version 做 CAS
+     * （{@code completeProcessingWithProfileGuard}），处理中途改一次标签会让那一步失败、
+     * 整张图被打成处理失败。处理失败的（{@code UPLOADING}）本来就没进相册，也不必打。
+     * 选题结束后不再收图，同样不再改标签。</p>
+     */
+    @Transactional
+    public TaggedPhoto updateTags(ProjectShareService.GuestContext context, Long photoId,
+                                  List<String> requested) {
+        ProjectShareLinkEntity link = shareService.requireUploadLink(context.link());
+        ProjectEntity project = requireOpenProject(link);
+        Uploader uploader = requireUploader(context);
+        PhotoEntity photo = requireOwnUpload(link, photoId, null);
+        if (!uploader.studentId().equals(photo.getPhotographerStudentId())) {
+            // 409 而不是 404：访客页把 403/404 一律当成会话失效、退回密码页，
+            // 而这里只是该先切换拍摄者，会话本身好好的。
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
+                    "只能给记在当前拍摄者名下的图片打标签，请先切换到这张图的拍摄者");
+        }
+        if (photo.getStatus() != PhotoStatus.AVAILABLE) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
+                    photo.getStatus() == PhotoStatus.PROCESSING
+                            ? "这张图片还在处理中，处理完再打标签" : "这张图片没有进入图库，不能打标签");
+        }
+        List<String> chosen = guestTags(project, requested);
+        List<String> presets = projectService.presetTags(project.getId());
+        List<String> existing = PhotoTags.parse(photo.getTagsJson());
+        Set<String> merged = new LinkedHashSet<>();
+        existing.stream().filter(tag -> !presets.contains(tag)).forEach(merged::add);
+        merged.addAll(chosen);
+        if (merged.size() > PhotoTags.MAX_TAGS) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                    "这张图片的标签将超过 " + PhotoTags.MAX_TAGS + " 个");
+        }
+        List<String> next = List.copyOf(merged);
+        if (next.equals(existing)) {
+            return new TaggedPhoto(photo.getId(), visibleTags(next, presets));
+        }
+        // 与 PhotoService.batchTags 同一个写法：走 mapper（同一事务里 MyBatis 的一级缓存
+        // 才不会读到旧标签），只写 tags_json，版本条件手写——实体参数为 null 时乐观锁拦截器不介入。
+        int updated = photoMapper.update(null, Wrappers.<PhotoEntity>lambdaUpdate()
+                .set(PhotoEntity::getTagsJson, PhotoTags.toJson(next))
+                .set(PhotoEntity::getUpdatedAt, LocalDateTime.now(clock))
+                .setSql("version = version + 1")
+                .eq(PhotoEntity::getId, photo.getId())
+                .eq(PhotoEntity::getVersion, photo.getVersion())
+                .eq(PhotoEntity::getStatus, PhotoStatus.AVAILABLE));
+        if (updated != 1) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "图片已被其他操作修改，请刷新后重试");
+        }
+        return new TaggedPhoto(photo.getId(), visibleTags(next, presets));
+    }
+
+    /**
+     * 访客交上来的标签：规范化之后必须全部是选题的预设标签。
+     *
+     * <p>比站内的 {@code ProjectService.requireAllowedPhotoTags} 更严，两处刻意不同：
+     * 没有预设时站内不限，这里一个都不收（站外的人不该往图库里造新标签）；
+     * 保留标签 {@code deprecated} 站内放行，这里不收——「这张图用不上」是选片人的结论，
+     * 不是上传者的。</p>
+     */
+    private List<String> guestTags(ProjectEntity project, List<String> requested) {
+        if (requested == null || requested.isEmpty()) return List.of();
+        List<String> tags = PhotoTags.normalize(requested);
+        if (tags.isEmpty()) return List.of();
+        List<String> presets = projectService.presetTags(project.getId());
+        if (presets.isEmpty()) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "这个选题没有设置预设标签，不能打标签");
+        }
+        List<String> rejected = tags.stream().filter(tag -> !presets.contains(tag)).toList();
+        if (!rejected.isEmpty()) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                    "只能使用这个选题的预设标签（" + String.join("、", presets) + "），不能添加："
+                            + String.join("、", rejected));
+        }
+        return tags;
+    }
+
+    /** 回给访客的只有预设范围内的那部分：别的标签他既改不了，也没有理由看到。 */
+    private static List<String> visibleTags(List<String> tags, List<String> presets) {
+        return tags.stream().filter(presets::contains).toList();
     }
 
     // ------------------------------------------------------------------ ZIP 批量
@@ -245,17 +349,19 @@ public class ProjectShareUploadService {
     /**
      * 解包完成后把这一批落成照片。
      *
-     * <p>站内这一步是人工填元数据（拍摄者、拍摄时间、标签），访客这边没有可填的：
-     * 拍摄者来自会话身份，标题取包内的原文件名（访客和选片人之间唯一的共同语言），
-     * 标签留空由选片人后续按预设打。所以前端轮到 WAITING_METADATA 就直接调这里。</p>
+     * <p>站内这一步是人工填元数据（拍摄者、拍摄时间、标签），访客这边几乎没有可填的：
+     * 拍摄者来自会话身份，标题取包内的原文件名（访客和选片人之间唯一的共同语言）。
+     * 标签可以在上传前选好，整包共用，只能是选题的预设标签（{@link #guestTags}）；
+     * 包里的图访客在页面上看不到，逐张打不了。前端轮到 WAITING_METADATA 就直接调这里。</p>
      */
     @Transactional
     public GuestBatch finishZip(ProjectShareService.GuestContext context, String batchId,
-                                LocalDateTime takenAt) {
+                                LocalDateTime takenAt, List<String> requestedTags) {
         ProjectShareLinkEntity link = shareService.requireUploadLink(context.link());
-        requireOpenProject(link);
+        ProjectEntity project = requireOpenProject(link);
         requireOwnBatch(link, batchId);
         Uploader uploader = requireUploader(context);
+        List<String> tags = guestTags(project, requestedTags);
         int waiting = batchService.waitingItems(batchId).size();
         requireCapacity(link, waiting);
 
@@ -263,7 +369,7 @@ public class ProjectShareUploadService {
                 new BatchUploadService.PhotoSnapshot(uploader.studentId(), uploader.name(),
                         // 选题不属于任何校区，访客也报不出，与单张上传一致地留空。
                         null, link.getCreatedBy(), link.getId(),
-                        takenAt == null ? LocalDateTime.now(clock) : takenAt, null, List.of()));
+                        takenAt == null ? LocalDateTime.now(clock) : takenAt, null, tags));
         // 与单张上传同一个口径：算进来的是"真的交给了压缩管线"的张数。
         jdbc.sql("UPDATE project_share_link SET upload_count = upload_count + :count WHERE id = :id")
                 .param("count", waiting).param("id", link.getId()).update();
@@ -427,7 +533,15 @@ public class ProjectShareUploadService {
     public record TicketCommand(String fileName, String contentType, long size, String sha256,
                                 LocalDateTime takenAt) {}
 
-    public record CompleteCommand(String title, String description) {}
+    /** {@code tags} 只能是选题的预设标签，可以为空，见 {@link #guestTags}。 */
+    public record CompleteCommand(String title, String description, List<String> tags) {
+        public CompleteCommand(String title, String description) {
+            this(title, description, List.of());
+        }
+    }
+
+    /** 改完之后这张图上预设范围内的标签。 */
+    public record TaggedPhoto(Long photoId, List<String> tags) {}
 
     /** ZIP 批量：{@code archiveSize} 的上限是管理员设的 {@link UploadLimit#PHOTO_ZIP_MAX_BYTES}。 */
     public record ZipCommand(String archiveFileName, Long archiveSize) {}
@@ -436,7 +550,7 @@ public class ProjectShareUploadService {
                              int failureCount, String failureReason) {}
 
     public record UploadTicket(Long photoId, String uploadUrl, String method, String contentType,
-                               java.time.Instant expiresAt) {}
+                               java.time.Instant expiresAt, String photographerName) {}
 
     public record UploadedPhoto(Long photoId, String title, PhotoStatus status, String failureReason) {}
 

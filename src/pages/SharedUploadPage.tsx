@@ -1,9 +1,10 @@
 import {
-  Alert, App, Button, Card, DatePicker, Empty, Form, Input, InputNumber, List, Progress, Result, Segmented,
-  Skeleton, Space, Tag, Typography, Upload,
+  Alert, App, Button, Card, DatePicker, Empty, Form, Input, InputNumber, List, Modal, Progress, Result, Segmented,
+  Skeleton, Space, Tag, Tooltip, Typography, Upload,
 } from 'antd'
+import type { FormRule } from 'antd'
 import {
-  ClockCircleOutlined, CloudUploadOutlined, FileZipOutlined, InboxOutlined, LockOutlined,
+  ClockCircleOutlined, CloudUploadOutlined, FileZipOutlined, InboxOutlined, LockOutlined, SwapOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -11,17 +12,20 @@ import { Navigate, useParams } from 'react-router-dom'
 import { ApiError } from '../api'
 import { BrandGlyph, useBranding } from '../branding'
 import SiteFooter from '../SiteFooter'
+import TagSelect from '../TagSelect'
 import {
   clearShareSession, readStoredShareSession, shareApi, shareUploadApi, storeShareSession,
 } from '../projectShare'
+import type { ShareUploaderIdentity } from '../projectShare'
 import { sha256Hex } from '../recruitmentUpload'
 import {
-  MAX_QUEUE_SIZE, addToQueue, createUploadPump, describeBatchOutcome,
-  isTerminalBatchStatus, markFailedForRetry, rejectArchiveReason, summarize,
+  MAX_QUEUE_SIZE, addToQueue, canRetag, createUploadPump, describeBatchOutcome,
+  isTerminalBatchStatus, markFailedForRetry, readRememberedUploaders, rejectArchiveReason,
+  rememberUploader, storeRememberedUploaders, summarize,
 } from '../shareUpload'
 import type { ShareUploadItem } from '../shareUpload'
 import {
-  MAX_WORKLOG_MINUTES, alreadyDeclaredOn, describeMinutes, describeWorklogStatus, rejectWorklogReason,
+  MAX_WORKLOG_MINUTES, declaredCountOn, describeMinutes, describeWorklogStatus, rejectWorklogReason,
 } from '../shareWorklog'
 import { uploadToObjectStorage } from '../storageUpload'
 import { describeBytes } from '../uploadLimits'
@@ -44,6 +48,14 @@ const ARCHIVE_PHASE_TEXT: Record<ArchivePhase, string> = {
   processing: '正在生成成品图和缩略图',
 }
 
+/** 进门和切换拍摄者共用的两条校验，与后端 `ProjectShareService.validatedIdentity` 对应。 */
+const UPLOADER_NAME_RULES: FormRule[] = [{ required: true, message: '请填写姓名' }, { max: 50 }]
+const UPLOADER_STUDENT_ID_RULES: FormRule[] = [{ required: true, message: '请填写学号' },
+  { pattern: /^[A-Za-z0-9_-]{2,64}$/, message: '学号只能是字母、数字、下划线或连字符' }]
+
+const describeUploader = (identity: ShareUploaderIdentity) =>
+  `${identity.uploaderName}（${identity.uploaderStudentId}）`
+
 /**
  * 上传链接的访客页，不需要登录。
  *
@@ -54,7 +66,11 @@ const ARCHIVE_PHASE_TEXT: Record<ArchivePhase, string> = {
  *
  * <p>身份（姓名 + 学号）和密码一起构成这次会话，之后这场会话传的每一张都用同一份
  * 拍摄者快照。站内的拍摄者强制来自通讯录，而拿着链接的人按定义在通讯录之外，把
- * 通讯录摆出来让站外的人挑更是直接泄露姓名和学号。</p>
+ * 通讯录摆出来让站外的人挑更是直接泄露姓名和学号。替两个人交图时可以中途「切换拍摄者」，
+ * 换的是会话上的整份快照；正在上传时不让切，免得一批图一半记在一个人名下。</p>
+ *
+ * <p>选题设了预设标签时，上传者可以给自己的图打标签，只能从预设里挑：上传前选好整批的，
+ * 传完之后还能在列表里逐张改（只限记在当前拍摄者名下、已经处理完的）。</p>
  *
  * <p>页面的最后一步是申报工时：传完图的人用同一份身份报这次拍了多久、修了多久，
  * 申报直接落成「待确认」进入部长和管理员的工时审核面板。姓名学号不再填一遍——
@@ -90,6 +106,30 @@ export default function SharedUploadPage() {
   const [worklogs, setWorklogs] = useState<ShareGuestWorklog[]>([])
   const [declaring, setDeclaring] = useState(false)
   const worklogDate = Form.useWatch('workDate', worklogForm)
+  /** 「这批照片的标签」：入队时抄到每一张上，ZIP 整包共用。只能是预设标签。 */
+  const [batchTags, setBatchTags] = useState<string[]>([])
+  const [switchForm] = Form.useForm<ShareUploaderIdentity>()
+  const [switchOpen, setSwitchOpen] = useState(false)
+  const [switching, setSwitching] = useState(false)
+  const [uploaders, setUploaders] = useState<ShareUploaderIdentity[]>(() => readRememberedUploaders(token))
+  // 签票据时要知道「现在记在谁名下」，而 worker 是常驻队列里的闭包，读 state 会读到旧的。
+  const accessRef = useRef(access)
+  useEffect(() => { accessRef.current = access }, [access])
+
+  const remember = useCallback((identity: ShareUploaderIdentity) => {
+    setUploaders(current => {
+      const next = rememberUploader(current, identity)
+      storeRememberedUploaders(token, next)
+      return next
+    })
+  }, [token])
+
+  // 刷新页面、换个标签页回来时会话还在，但进门那一刻填的身份只在服务端：从 access 里补记一次。
+  useEffect(() => {
+    if (access?.uploaderName && access.uploaderStudentId) {
+      remember({ uploaderName: access.uploaderName, uploaderStudentId: access.uploaderStudentId })
+    }
+  }, [access?.uploaderName, access?.uploaderStudentId, remember])
 
   const dropSession = useCallback((notice?: string) => {
     clearShareSession(token)
@@ -144,6 +184,8 @@ export default function SharedUploadPage() {
 
   // 申报记录要等确认了这是一条上传链接再取：浏览链接调这个接口一律 403，而这一页对
   // 403 的处理是清会话退回密码页——拿着相册会话误开到这里的人，会话会在跳走之前被清掉。
+  // 服务端按当前拍摄者的学号列，所以切换拍摄者之后要重取一次。
+  const currentStudentId = access?.uploaderStudentId
   useEffect(() => {
     if (!session || access?.purpose !== 'UPLOAD') return
     let cancelled = false
@@ -157,7 +199,7 @@ export default function SharedUploadPage() {
     }
     void load()
     return () => { cancelled = true }
-  }, [access?.purpose, handleGuestError, session, token])
+  }, [access?.purpose, currentStudentId, handleGuestError, session, token])
 
   const declareWorklog = async () => {
     if (!session) return
@@ -167,9 +209,8 @@ export default function SharedUploadPage() {
       shootingMinutes: values.shootingMinutes ?? 0,
       retouchingMinutes: values.retouchingMinutes ?? 0,
     }
+    // 同一天可以报多条（一天两场活动、上午拍下午修），这里不再拦，只在表单上提醒一句。
     const reason = rejectWorklogReason(draft, dayjs().format('YYYY-MM-DD'))
-      || (alreadyDeclaredOn(worklogs, draft.workDate)
-        ? '这一天的工时已经申报过了。如果填错了，请联系发给你链接的同学退回后重新申报' : null)
     if (reason) {
       message.error(reason)
       return
@@ -183,21 +224,69 @@ export default function SharedUploadPage() {
       worklogForm.resetFields()
       message.success('工时已提交，等待部长或管理员确认')
     } catch (reasonThrown) {
-      // 这里的 403/404 才是会话失效；409（还没交图、当天报过了、选题已结束）要原样说给人听。
+      // 这里的 403/404 才是会话失效；409（还没交图、选题已结束）要原样说给人听。
       handleGuestError(reasonThrown)
     } finally {
       setDeclaring(false)
     }
   }
 
+  /** 切换拍摄者。成功后 access 换成新身份，申报记录随之重取（见上面那个 effect）。 */
+  const applyUploader = async (identity: ShareUploaderIdentity) => {
+    if (!session) return
+    setSwitching(true)
+    try {
+      const next = await shareUploadApi.switchUploader(token, session, {
+        uploaderName: identity.uploaderName.trim(),
+        uploaderStudentId: identity.uploaderStudentId.trim(),
+      })
+      setAccess(next)
+      setSwitchOpen(false)
+      switchForm.resetFields()
+      message.success(`已切换拍摄者为「${next.uploaderName}」，之后上传的照片和申报的工时都记在 TA 名下`)
+    } catch (reason) {
+      handleGuestError(reason)
+    } finally {
+      setSwitching(false)
+    }
+  }
+
+  // 每张图的标签保存排成一条链：多选框里连点两个标签会连发两次，并发的话后一次会撞上
+  // 服务端的版本条件被拒。confirmed 是服务端最后一次确认的值，seq 用来只让最后一次改动落到界面上。
+  const tagSaves = useRef(new Map<string, { chain: Promise<void>; seq: number; confirmed: string[] }>())
+
+  /**
+   * 改列表里一张图的标签。先在列表上改掉，失败再换回服务端确认过的值：标签框是受控的，
+   * 等请求回来再改会让人以为点了没反应。
+   */
+  const retag = (item: ShareUploadItem, tags: string[]) => {
+    const guestSession = session
+    const photoId = item.photoId
+    if (!guestSession || !photoId) return
+    const state = tagSaves.current.get(item.key)
+      ?? { chain: Promise.resolve(), seq: 0, confirmed: item.tags }
+    tagSaves.current.set(item.key, state)
+    const seq = ++state.seq
+    patch(item.key, { tags })
+    state.chain = state.chain.then(async () => {
+      try {
+        state.confirmed = (await shareUploadApi.updateTags(token, guestSession, photoId, tags)).tags
+      } catch (reason) {
+        handleGuestError(reason)
+      }
+      if (seq === state.seq) patch(item.key, { tags: state.confirmed })
+    })
+  }
+
   const unlock = async () => {
     const values = await gateForm.validateFields()
     setUnlocking(true)
     try {
-      const opened = await shareApi.openSession(token, values.password, {
+      const identity = {
         uploaderName: values.uploaderName.trim(),
         uploaderStudentId: values.uploaderStudentId.trim(),
-      })
+      }
+      const opened = await shareApi.openSession(token, values.password, identity)
       storeShareSession(token, opened)
       setSession(opened.sessionToken)
       setAccess(opened.access)
@@ -240,7 +329,11 @@ export default function SharedUploadPage() {
   }
 
   const uploadOne = async (guestSession: string, item: ShareUploadItem) => {
-    patch(item.key, { stage: 'uploading', percent: 0, error: undefined })
+    // 失败重传会签一张新票据，记在当时的拍摄者名下：旧的那份先清掉，别让列表说错。
+    patch(item.key, {
+      stage: 'uploading', percent: 0, error: undefined,
+      photographerName: undefined, photographerStudentId: undefined,
+    })
     try {
       const ticket = await shareUploadApi.ticket(token, guestSession, {
         fileName: item.file.name,
@@ -251,13 +344,19 @@ export default function SharedUploadPage() {
         // 逐张问一次拍摄时间没人会填，而这个值恰恰就是相机写下的那个。
         takenAt: dayjs(item.file.lastModified).format('YYYY-MM-DDTHH:mm:ss'),
       })
-      patch(item.key, { photoId: ticket.photoId })
+      // 拍摄者在签票据这一刻定下来（服务端取会话上的身份），之后切换拍摄者也不会改这一张。
+      patch(item.key, {
+        photoId: ticket.photoId,
+        photographerName: ticket.photographerName ?? accessRef.current?.uploaderName ?? undefined,
+        photographerStudentId: accessRef.current?.uploaderStudentId ?? undefined,
+      })
       await uploadToObjectStorage(ticket, item.file,
         percent => patch(item.key, { percent }))
       patch(item.key, { stage: 'processing', percent: 100 })
       await shareUploadApi.complete(token, guestSession, ticket.photoId, {
         // 原始文件名是访客和选片人之间唯一的共同语言，留作标题好让人对得上。
         title: item.file.name.slice(0, 200),
+        tags: item.tags,
       })
       await waitForProcessing(guestSession, item, String(ticket.photoId))
     } catch (reason) {
@@ -331,6 +430,8 @@ export default function SharedUploadPage() {
       message.error(`${file.name}：${reason}`)
       return
     }
+    // 标签在拖进来这一刻定下：后面解压要好几分钟，期间改了标签框也不该影响这一包。
+    const archiveTags = [...batchTags]
     setRunning(true)
     setArchiveBatch(null)
     setArchivePercent(0)
@@ -356,7 +457,7 @@ export default function SharedUploadPage() {
       // 拍摄时间取压缩包自己的修改时间，与单张上传同一个道理：访客手上只有
       // 一堆相机导出来的文件，逐张问拍摄时间没人会填。
       setArchiveBatch(await shareUploadApi.finishBatch(token, session, ticket.batchId,
-        dayjs(file.lastModified).format('YYYY-MM-DDTHH:mm:ss')))
+        dayjs(file.lastModified).format('YYYY-MM-DDTHH:mm:ss'), archiveTags))
 
       setArchivePhase('processing')
       const finished = await pollBatch(session, ticket.batchId,
@@ -375,7 +476,7 @@ export default function SharedUploadPage() {
 
   /** 拖进来即开传，不再要访客另点一个按钮；正在传的时候再拖一批就排到后面。 */
   const enqueue = (files: File[]) => {
-    const added = addToQueue(itemsRef.current, files, uploadLimits)
+    const added = addToQueue(itemsRef.current, files, uploadLimits, batchTags)
     added.errors.forEach(error => message.error(error))
     if (added.dropped) message.warning(`一次最多 ${MAX_QUEUE_SIZE} 张，多出的 ${added.dropped} 张请分批上传`)
     updateItems(current => [...current, ...added.items])
@@ -396,7 +497,7 @@ export default function SharedUploadPage() {
       </div>
     </Space>
     {access && <Space wrap>
-      {access.uploaderName && <Tag color="blue">上传者 {access.uploaderName}</Tag>}
+      {access.uploaderName && <Tag color="blue">拍摄者 {access.uploaderName}</Tag>}
       {access.expiresAt && <Tag>有效期至 {dayjs(access.expiresAt).format('YYYY-MM-DD HH:mm')}</Tag>}
     </Space>}
   </header>
@@ -422,20 +523,18 @@ export default function SharedUploadPage() {
         <Typography.Title level={5}><LockOutlined /> 输入上传密码</Typography.Title>
         <Typography.Paragraph type="secondary">
           密码由发给你链接的同学提供。姓名和学号会作为你这次上传的每一张照片的拍摄者，
-          传完之后申报工时用的也是这一份，请填写本人的。
+          传完之后申报工时用的也是这一份，请填写本人的。替别的同学交图时，进去之后可以切换拍摄者。
         </Typography.Paragraph>
         <Form form={gateForm} layout="vertical" requiredMark={false} onFinish={() => void unlock()}>
           <Form.Item label="上传密码" name="password" rules={[{ required: true, message: '请输入上传密码' }]}>
             <Input.Password autoFocus placeholder="请输入上传密码" maxLength={64} />
           </Form.Item>
-          <Form.Item label="你的姓名" name="uploaderName"
-            rules={[{ required: true, message: '请填写姓名' }, { max: 50 }]}>
+          <Form.Item label="你的姓名" name="uploaderName" rules={UPLOADER_NAME_RULES}>
             <Input placeholder="例如：张三" maxLength={50} />
           </Form.Item>
           <Form.Item label="你的学号" name="uploaderStudentId"
             extra="用于统计照片归属和工时，请填写本人学号"
-            rules={[{ required: true, message: '请填写学号' },
-              { pattern: /^[A-Za-z0-9_-]{2,64}$/, message: '学号只能是字母、数字、下划线或连字符' }]}>
+            rules={UPLOADER_STUDENT_ID_RULES}>
             <Input placeholder="例如：20230001" maxLength={64} />
           </Form.Item>
           <Button type="primary" htmlType="submit" block loading={unlocking}>进入上传</Button>
@@ -448,7 +547,27 @@ export default function SharedUploadPage() {
   // 这一页上有没有真的交上去过图：只用来决定那句「别忘了申报工时」的提醒出不出现，
   // 能不能申报由服务端按「这条链接 + 这个学号」现查，换设备、隔天再来的人照样能报。
   const handedInHere = summary.done > 0 || (archiveBatch?.successCount ?? 0) > 0
-  const duplicateDay = !!worklogDate && alreadyDeclaredOn(worklogs, worklogDate.format('YYYY-MM-DD'))
+  const sameDayCount = worklogDate ? declaredCountOn(worklogs, worklogDate.format('YYYY-MM-DD')) : 0
+  const presetTags = access?.presetTags ?? []
+  // 正在传的时候不让切：队列里排着的那几张会在切换之后才签票据，一批图就分到了两个人名下。
+  const uploadBusy = queueRunning || running
+  const currentUploader = access?.uploaderName && access.uploaderStudentId
+    ? { uploaderName: access.uploaderName, uploaderStudentId: access.uploaderStudentId } : null
+  const otherUploaders = uploaders.filter(item => item.uploaderStudentId !== currentStudentId)
+
+  /** 列表里一张传完的图的标签框：只有记在当前拍摄者名下的才能改。 */
+  const renderItemTags = (item: ShareUploadItem) => {
+    const editable = canRetag(item, currentStudentId) && !!access?.allowUpload
+    const someoneElses = !!item.photographerStudentId && item.photographerStudentId !== currentStudentId
+    return <Space direction="vertical" size={2} style={{ width: '100%' }}>
+      <TagSelect presets={presetTags} restricted size="small" value={item.tags}
+        onChange={value => retag(item, value ?? [])} disabled={!editable}
+        placeholder="给这张打标签（可不选）" style={{ width: '100%', maxWidth: 420 }} />
+      {someoneElses && <Typography.Text type="secondary">
+        这张记在「{item.photographerName}」名下，切换回 TA 之后才能改标签
+      </Typography.Text>}
+    </Space>
+  }
 
   return <main className="share-page">{header}
     <div className="share-body">
@@ -473,6 +592,37 @@ export default function SharedUploadPage() {
           {access && !access.allowUpload && <Alert type="warning" showIcon
             message="这个选题已经不再接收上传"
             description="选题已经结束了。如果还需要补交照片，请联系发给你链接的同学。" />}
+
+          {/* 拍摄者放在拖拽区上面而不是只在页头：替两个人交图时，每拖一批之前都该看一眼现在记在谁名下。 */}
+          <Space wrap align="center">
+            <Typography.Text>
+              现在上传的照片记在{' '}
+              <Typography.Text strong>
+                {currentUploader ? describeUploader(currentUploader) : (access?.uploaderName || '—')}
+              </Typography.Text>{' '}名下
+            </Typography.Text>
+            <Tooltip title={uploadBusy ? '正在上传，传完这一批再切换' : '替别的同学交图时用'}>
+              <Button size="small" icon={<SwapOutlined />} disabled={uploadBusy || !access}
+                onClick={() => setSwitchOpen(true)}>
+                切换拍摄者
+              </Button>
+            </Tooltip>
+          </Space>
+
+          {/* 只有选题设了预设标签才给：上传者只能打预设标签，没有预设就没有可选的。 */}
+          {!!presetTags.length && <Space direction="vertical" size={4} style={{ width: '100%' }}>
+            <Typography.Text>这批照片的标签（可不选）</Typography.Text>
+            <TagSelect presets={presetTags} restricted value={batchTags}
+              onChange={value => setBatchTags(value ?? [])}
+              disabled={!access?.allowUpload || running}
+              placeholder="从选题预设标签中选，之后放进来的照片都会带上"
+              style={{ width: '100%' }} />
+            <Typography.Text type="secondary">
+              {mode === 'files'
+                ? '改了之后只影响接下来放进来的照片；传完的可以在下面的列表里逐张改。'
+                : '整个压缩包共用这一组标签。'}
+            </Typography.Text>
+          </Space>}
 
           {/* 几十上百张时打包传一次比逐张省事得多，所以两种方式都给，默认逐张。 */}
           <Segmented value={mode} disabled={running || queueRunning}
@@ -519,11 +669,16 @@ export default function SharedUploadPage() {
                     {item.stage === 'uploading' && <Tag color="processing">上传中</Tag>}
                     {item.stage === 'waiting' && <Tag>排队中</Tag>}
                     {item.stage === 'failed' && <Tag color="red">失败</Tag>}
+                    {item.photographerName && <Typography.Text type="secondary">
+                      拍摄者 {item.photographerName}
+                    </Typography.Text>}
                   </Space>}
                   description={item.stage === 'failed'
                     ? <Typography.Text type="danger">{item.error}</Typography.Text>
-                    : <Progress percent={item.percent} size="small"
-                        status={item.stage === 'processing' ? 'active' : undefined} />} />
+                    : item.stage === 'done' && presetTags.length
+                      ? renderItemTags(item)
+                      : <Progress percent={item.percent} size="small"
+                          status={item.stage === 'processing' ? 'active' : undefined} />} />
               </List.Item>} />
               : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有选择照片" />}
 
@@ -578,8 +733,9 @@ export default function SharedUploadPage() {
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
           <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
             照片传完之后，在这里申报这次拍摄和修图花的时间。提交后直接进入部长和管理员的工时审核，
-            确认或退回的结果会显示在下面。申报人就是进门时填写的
-            {access?.uploaderName ? `「${access.uploaderName}」` : '那位同学'}，需要先通过这条链接传成功至少一张照片。
+            确认或退回的结果会显示在下面。申报人是当前拍摄者
+            {access?.uploaderName ? `「${access.uploaderName}」` : ''}，需要先以这个身份通过这条链接传成功至少一张照片；
+            替别人报工时请先在上面切换拍摄者。同一天有几段工作可以分几条报。
           </Typography.Paragraph>
 
           {access && !access.allowWorklog && <Alert type="warning" showIcon
@@ -592,10 +748,12 @@ export default function SharedUploadPage() {
             disabled={!access?.allowWorklog || declaring}
             initialValues={{ workDate: dayjs(), shootingMinutes: 0, retouchingMinutes: 0 }}
             onFinish={() => void declareWorklog()}>
+            {/* 同一天可以报多条，这里只提醒一句，不拦：访客页一刷新表单就回到初始状态，手一抖就交两次。 */}
             <Form.Item label="工作日期" name="workDate"
               rules={[{ required: true, message: '请选择工作日期' }]}
-              validateStatus={duplicateDay ? 'warning' : undefined}
-              help={duplicateDay ? '这一天已经申报过了；如果填错了，请联系发给你链接的同学退回后再报' : undefined}>
+              extra={sameDayCount
+                ? `这一天你已经报过 ${sameDayCount} 条。是另一段工作就继续提交；同一段工作不要重复报。`
+                : undefined}>
               <DatePicker maxDate={dayjs()} allowClear={false} style={{ width: '100%' }} />
             </Form.Item>
             <Space size={16} align="start" wrap>
@@ -610,7 +768,7 @@ export default function SharedUploadPage() {
               <Input.TextArea rows={3} maxLength={1000} placeholder="简要说明完成的工作，例如：开幕式全程跟拍，精修 20 张" />
             </Form.Item>
             <Button type="primary" htmlType="submit" loading={declaring}
-              disabled={!access?.allowWorklog || duplicateDay}>提交工时</Button>
+              disabled={!access?.allowWorklog}>提交工时</Button>
           </Form>
 
           {!!worklogs.length && <List size="small" header="我在这条链接上申报过的工时"
@@ -638,6 +796,39 @@ export default function SharedUploadPage() {
       </Card>
       </Space>
     </div>
+
+    <Modal title="切换拍摄者" open={switchOpen} destroyOnHidden okText="切换" cancelText="取消"
+      confirmLoading={switching}
+      onCancel={() => setSwitchOpen(false)}
+      onOk={() => void switchForm.validateFields().then(applyUploader)}>
+      <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+          替别的同学交图时用。切换之后放进来的照片、打包上传的照片和申报的工时，都记在新拍摄者名下；
+          已经传上去的照片不受影响。
+        </Typography.Paragraph>
+        {currentUploader && <Typography.Text>当前：{describeUploader(currentUploader)}</Typography.Text>}
+        {/* 来回切的人最常用的就是这几个：一键切回，免得重敲学号敲错一位记到别人名下。 */}
+        {!!otherUploaders.length && <Space direction="vertical" size={4}>
+          <Typography.Text type="secondary">这台设备上用过的：</Typography.Text>
+          <Space wrap>
+            {otherUploaders.map(identity => <Button key={identity.uploaderStudentId} disabled={switching}
+              onClick={() => void applyUploader(identity)}>
+              {describeUploader(identity)}
+            </Button>)}
+          </Space>
+        </Space>}
+        <Form form={switchForm} layout="vertical" requiredMark={false} preserve={false}
+          onFinish={values => void applyUploader(values)}>
+          <Form.Item label="拍摄者姓名" name="uploaderName" rules={UPLOADER_NAME_RULES}>
+            <Input placeholder="例如：李四" maxLength={50} />
+          </Form.Item>
+          <Form.Item label="拍摄者学号" name="uploaderStudentId" rules={UPLOADER_STUDENT_ID_RULES}
+            style={{ marginBottom: 0 }}>
+            <Input placeholder="例如：20230002" maxLength={64} />
+          </Form.Item>
+        </Form>
+      </Space>
+    </Modal>
     <SiteFooter />
   </main>
 }

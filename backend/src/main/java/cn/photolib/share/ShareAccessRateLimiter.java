@@ -89,7 +89,12 @@ public class ShareAccessRateLimiter {
          * 申报工时。一个人一场活动报一两条，所以额度比上传紧得多：每一条都要部长或
          * 管理员逐条看过，这个入口被刷的代价是人的时间，不是存储。
          */
-        WORKLOG(300, 20, Duration.ofMinutes(10));
+        WORKLOG(300, 20, Duration.ofMinutes(10)),
+        /**
+         * 切换上传链接会话的拍摄者。一个人替两三个人交图，来回切几次就够了；
+         * 额度不必像上传那么宽，但也不能紧到让人在两个身份之间切换时撞上。
+         */
+        UPLOADER(300, 60, Duration.ofMinutes(10));
 
         private final int linkLimit;
         private final int addressLimit;

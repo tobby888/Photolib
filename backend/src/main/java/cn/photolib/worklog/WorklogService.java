@@ -82,29 +82,19 @@ public class WorklogService {
      * 日期不能晚于今天、两项时长不能同时为 0，所属选题结束后不再收
      * （{@link #requireProjectOpen(Long)}）。</p>
      *
-     * <p>和站内填报不同的三处，都是因为申报人没有账号：</p>
+     * <p>和站内填报不同的两处，都是因为申报人没有账号：</p>
      * <ul>
      *   <li>没有草稿——访客没有「回来接着改」的地方，交上来就是提交；</li>
-     *   <li>姓名学号是会话上的身份快照，不走通讯录（理由见 Flyway V48）；</li>
-     *   <li>同一条链接上同一个学号同一天只能有一条在审或已确认的工时。站内靠
-     *       「草稿 → 提交」这一步让人自己看见重复，这里没有那一步，而访客页一刷新
-     *       表单就回到初始状态，不拦的话手一抖就是两条一样的。被退回的不算，
-     *       退回之后重新申报正是它该走的路。</li>
+     *   <li>姓名学号是会话上的身份快照，不走通讯录（理由见 Flyway V48）。</li>
      * </ul>
+     *
+     * <p>同一天可以报多条：一天里跑两场活动、上午拍下午修，都是各报一条的正当情况。
+     * 早先「同一条链接 + 同一个学号 + 同一天只能一条」的限制已经去掉，重复提交由审核的人退回。</p>
      */
     @Transactional
     public WorklogEntity createForShareLink(ShareLinkWorklog command) {
         validate(command.workDate(), command.shootingMinutes(), command.retouchingMinutes());
         requireProjectOpen(command.projectId());
-        long duplicates = mapper.selectCount(Wrappers.<WorklogEntity>lambdaQuery()
-                .eq(WorklogEntity::getShareLinkId, command.shareLinkId())
-                .eq(WorklogEntity::getMemberStudentId, command.memberStudentId())
-                .eq(WorklogEntity::getWorkDate, command.workDate())
-                .in(WorklogEntity::getStatus, WorklogStatus.SUBMITTED, WorklogStatus.CONFIRMED));
-        if (duplicates > 0) {
-            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
-                    "这一天的工时已经申报过了。如果填错了，请联系发给你链接的同学退回后重新申报");
-        }
         WorklogEntity worklog = new WorklogEntity();
         worklog.setShareLinkId(command.shareLinkId());
         worklog.setUserId(command.responsibleUserId());

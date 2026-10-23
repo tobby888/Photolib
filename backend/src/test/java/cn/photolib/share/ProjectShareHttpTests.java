@@ -33,6 +33,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -260,6 +261,76 @@ class ProjectShareHttpTests {
         mvc.perform(anonymous(get("/api/v1/public/shares/" + uploadToken + "/photos"))
                         .header(ProjectSharePublicController.SESSION_HEADER, session))
                 .andExpect(status().isForbidden());
+    }
+
+    /**
+     * 切换拍摄者和改标签同样走不带令牌的访客通道：permitAll、会话头、请求体校验都在完整
+     * 过滤器链上过一遍。业务规则的细节在 {@code ProjectShareUploaderTests}。
+     */
+    @Test
+    void anAnonymousUploaderCanSwitchPhotographerAndTagWithPresets() throws Exception {
+        AuthenticatedUser minister = new AuthenticatedUser(MINISTER_ID, "share-http-minister",
+                "分享部长", UserRole.MINISTER, null, false);
+        ProjectEntity eventProject = projectService.create("HTTP 标签选题", "说明",
+                ProjectStatus.ACTIVE, List.of("舞台", "观众"), ProjectType.EVENT, minister);
+        ProjectShareService.ShareLinkView link = shareService.create(eventProject.getId(),
+                new ProjectShareService.CreateCommand(ShareLinkPurpose.UPLOAD, "摄影组",
+                        "share-pass", false, false, null), minister).link();
+        String base = "/api/v1/public/shares/" + link.token();
+
+        String body = mvc.perform(anonymous(post(base + "/sessions"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"password\":\"share-pass\",\"uploaderName\":\"张小拍\","
+                                + "\"uploaderStudentId\":\"20230001\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.access.presetTags[0]").value("舞台"))
+                .andExpect(jsonPath("$.data.access.uploaderStudentId").value("20230001"))
+                .andReturn().getResponse().getContentAsString();
+        String session = json.readTree(body).path("data").path("sessionToken").asText();
+
+        // 没带会话头一律 403，与其余访客接口同一条出口。
+        mvc.perform(anonymous(put(base + "/session/uploader"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"uploaderName\":\"李同学\",\"uploaderStudentId\":\"20230002\"}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(anonymous(put(base + "/session/uploader"))
+                        .header(ProjectSharePublicController.SESSION_HEADER, session)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"uploaderName\":\"李同学\",\"uploaderStudentId\":\"20230002\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.uploaderName").value("李同学"))
+                .andExpect(jsonPath("$.data.uploaderStudentId").value("20230002"));
+        mvc.perform(anonymous(post(base + "/upload-tickets"))
+                        .header(ProjectSharePublicController.SESSION_HEADER, session)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"fileName\":\"field.jpg\",\"contentType\":\"image/jpeg\","
+                                + "\"size\":2048,\"sha256\":\"" + "c".repeat(64) + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.photographerName").value("李同学"));
+
+        // 照处理完之后的形态直接落一张：这里验的是过滤器链，不是上传流水线。
+        jdbc.sql("""
+                INSERT INTO photo (id, project_id, photographer_student_id, photographer_name, uploaded_by,
+                    share_link_id, taken_at, size, content_type, object_key, sha256, status)
+                VALUES (:id, :project, '20230002', '李同学', :user, :link, CURRENT_TIMESTAMP, 2048,
+                    'image/jpeg', 'photos/2026/http-tags.jpg', :sha, 'AVAILABLE')
+                """).param("id", PHOTO_ID + 2).param("project", eventProject.getId())
+                .param("user", MINISTER_ID).param("link", link.id()).param("sha", "d".repeat(64)).update();
+
+        // tags 必填：缺了是 400 而不是把标签清空。
+        mvc.perform(anonymous(put(base + "/uploads/" + (PHOTO_ID + 2) + "/tags"))
+                        .header(ProjectSharePublicController.SESSION_HEADER, session)
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(anonymous(put(base + "/uploads/" + (PHOTO_ID + 2) + "/tags"))
+                        .header(ProjectSharePublicController.SESSION_HEADER, session)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"tags\":[\"自造\"]}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(anonymous(put(base + "/uploads/" + (PHOTO_ID + 2) + "/tags"))
+                        .header(ProjectSharePublicController.SESSION_HEADER, session)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"tags\":[\"观众\"]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.tags[0]").value("观众"));
     }
 
     /**

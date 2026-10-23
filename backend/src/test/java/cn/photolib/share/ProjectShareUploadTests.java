@@ -263,7 +263,7 @@ class ProjectShareUploadTests {
         ProjectShareService.GuestContext context = guest(created);
         String batchId = extractedBatch(created, 2);
 
-        uploadService.finishZip(context, batchId, LocalDateTime.now().minusDays(1));
+        uploadService.finishZip(context, batchId, LocalDateTime.now().minusDays(1), List.of());
 
         // 标题取包内原文件名——那是访客和选片人之间唯一的共同语言。
         assertThat(jdbc.sql("""
@@ -289,7 +289,7 @@ class ProjectShareUploadTests {
         assertThatThrownBy(() -> uploadService.batchStatus(second, batchId))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("不属于这条链接");
-        assertThatThrownBy(() -> uploadService.finishZip(second, batchId, null))
+        assertThatThrownBy(() -> uploadService.finishZip(second, batchId, null, List.of()))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("不属于这条链接");
     }
@@ -320,7 +320,7 @@ class ProjectShareUploadTests {
                 .param("id", created.link().id()).update();
 
         // 剩 2 张额度，这一批有 3 张：整批拒掉，而不是传一半。
-        assertThatThrownBy(() -> uploadService.finishZip(context, batchId, null))
+        assertThatThrownBy(() -> uploadService.finishZip(context, batchId, null, List.of()))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("装不下这一批");
     }
@@ -337,7 +337,7 @@ class ProjectShareUploadTests {
                 new ProjectShareUploadService.ZipCommand("活动.zip", 1024L)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("不再接收上传");
-        assertThatThrownBy(() -> uploadService.finishZip(context, batchId, null))
+        assertThatThrownBy(() -> uploadService.finishZip(context, batchId, null, List.of()))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("不再接收上传");
     }

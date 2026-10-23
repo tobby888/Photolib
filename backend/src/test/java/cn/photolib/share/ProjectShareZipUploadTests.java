@@ -178,7 +178,7 @@ class ProjectShareZipUploadTests {
         assertThat(extracted.status()).isEqualTo(BatchStatus.WAITING_METADATA);
         assertThat(extracted.totalCount()).isEqualTo(2);
 
-        uploadService.finishZip(context, ticket.batchId(), null);
+        uploadService.finishZip(context, ticket.batchId(), null, List.of());
 
         // 落成的照片：标题是包内原文件名，拍摄者是会话身份，口子指回这条链接。
         assertThat(jdbc.sql("""
@@ -218,7 +218,7 @@ class ProjectShareZipUploadTests {
         assertThat(failed.status()).isEqualTo(BatchStatus.FAILED);
         // 访客只知道"传完了"是不够的：这一包根本没进相册，必须把原因说出来。
         assertThat(failed.failureReason()).contains("没有 JPG/PNG 图片");
-        assertThatThrownBy(() -> uploadService.finishZip(context, ticket.batchId(), null))
+        assertThatThrownBy(() -> uploadService.finishZip(context, ticket.batchId(), null, List.of()))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("尚未完成解压");
     }

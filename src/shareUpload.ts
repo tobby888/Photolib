@@ -1,3 +1,4 @@
+import type { ShareUploaderIdentity } from './projectShare'
 import type { BatchUploadStatus, EntityId } from './types'
 import { DEFAULT_UPLOAD_LIMITS, describeBytes, type UploadLimits } from './uploadLimits.ts'
 
@@ -21,6 +22,21 @@ export interface ShareUploadItem {
   percent: number
   photoId?: EntityId
   error?: string
+  /** 预设标签：入队时取「这批照片的标签」，传完之后还可以逐张改。 */
+  tags: string[]
+  /** 这张记在谁名下。签票据时才定（会话中途可以切换拍摄者），之前为空。 */
+  photographerName?: string
+  photographerStudentId?: string
+}
+
+/**
+ * 列表里这一张现在能不能改标签：已经处理完，并且记在当前拍摄者名下。
+ * 与服务端 `ProjectShareUploadService.updateTags` 同一条线——处理中途改标签会让压缩管线的
+ * 提交失败；记在别人名下的要先切换回那个人。
+ */
+export function canRetag(item: ShareUploadItem, currentStudentId?: string | null): boolean {
+  return item.stage === 'done' && !!item.photoId && !!currentStudentId
+    && item.photographerStudentId === currentStudentId
 }
 
 /**
@@ -62,6 +78,7 @@ export function addToQueue(
   existing: ShareUploadItem[],
   files: File[],
   limits: ShareUploadLimits = DEFAULT_UPLOAD_LIMITS,
+  tags: readonly string[] = [],
 ): QueueAdditions {
   const seen = new Set(existing.map(item => signature(item.file)))
   const items: ShareUploadItem[] = []
@@ -84,6 +101,7 @@ export function addToQueue(
       file,
       stage: 'waiting',
       percent: 0,
+      tags: [...tags],
     })
   })
   return { items, errors, dropped }
@@ -227,5 +245,50 @@ export function createUploadPump<T>(
     get busy() {
       return active > 0 || queue.length > 0
     },
+  }
+}
+
+/** 每条链接最多记住几个用过的拍摄者，供「切换拍摄者」一键切回。 */
+export const MAX_REMEMBERED_UPLOADERS = 5
+
+const uploadersKey = (token: string) => `photolib_share_uploaders_${token}`
+
+/**
+ * 把一个用过的拍摄者记到最前面：同一个学号只留一份（以最新填的姓名为准），最多
+ * {@link MAX_REMEMBERED_UPLOADERS} 个。替两个人交图的人会在两个身份之间来回切，
+ * 每次都重敲一遍姓名学号既慢又容易敲错——敲错一位，照片和工时就记到了别人名下。
+ */
+export function rememberUploader(
+  list: readonly ShareUploaderIdentity[], identity: ShareUploaderIdentity,
+): ShareUploaderIdentity[] {
+  const studentId = identity.uploaderStudentId.trim()
+  const entry = { uploaderName: identity.uploaderName.trim(), uploaderStudentId: studentId }
+  if (!entry.uploaderName || !studentId) return [...list]
+  return [entry, ...list.filter(item => item.uploaderStudentId !== studentId)]
+    .slice(0, MAX_REMEMBERED_UPLOADERS)
+}
+
+/**
+ * 读这条链接上用过的拍摄者。只是本机的便利：存不下、读不出都当成没有，页面照常可用；
+ * 存的是访客自己填过的姓名学号，按 token 分键，和会话一样不跨链接。
+ */
+export function readRememberedUploaders(token: string): ShareUploaderIdentity[] {
+  try {
+    const raw = localStorage.getItem(uploadersKey(token))
+    const parsed: unknown = raw ? JSON.parse(raw) : []
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((item): item is ShareUploaderIdentity =>
+      typeof item?.uploaderName === 'string' && typeof item?.uploaderStudentId === 'string')
+      .slice(0, MAX_REMEMBERED_UPLOADERS)
+  } catch {
+    return []
+  }
+}
+
+export function storeRememberedUploaders(token: string, list: readonly ShareUploaderIdentity[]) {
+  try {
+    localStorage.setItem(uploadersKey(token), JSON.stringify(list))
+  } catch {
+    // 存不下只是下次要重新输一遍。
   }
 }
