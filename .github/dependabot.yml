@@ -1,0 +1,57 @@
+# Dependabot 每周一早上（上海时间）检查一次依赖更新。
+# 小版本和补丁合成一个 PR，大版本单独提，方便单独评估破坏性变更。
+# 安全告警触发的更新另需在仓库 Settings → Code security 里打开 "Dependabot security updates"，
+# 打开后同一生态的安全修复也会合成一个 PR。
+version: 2
+updates:
+  # 前端：package.json / package-lock.json 在仓库根目录
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      npm-security:
+        applies-to: security-updates
+        patterns: ["*"]
+      npm-minor-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+        patterns: ["*"]
+
+  # 后端：backend/pom.xml（版本号集中在 <properties> 里）
+  - package-ecosystem: maven
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      maven-security:
+        applies-to: security-updates
+        patterns: ["*"]
+      maven-minor-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+        patterns: ["*"]
+
+  # CI：.github/workflows 里引用的 actions
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+      timezone: Asia/Shanghai
+    commit-message:
+      prefix: "chore(ci)"
+    groups:
+      actions:
+        patterns: ["*"]
