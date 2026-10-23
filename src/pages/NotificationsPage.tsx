@@ -24,6 +24,7 @@ export default function NotificationsPage() {
   const [sending, setSending] = useState(false)
   const [broadcast, setBroadcast] = useState(true)
   const [contentHtml, setContentHtml] = useState('')
+  const [imageUploading, setImageUploading] = useState(false)
   const [form] = Form.useForm()
   const { data, loading, error, reload } = useLoad(
     () => api<Notification[]>({ url: '/notifications' }), [] as Notification[], [],
@@ -98,7 +99,7 @@ export default function NotificationsPage() {
       ]} />
     </Card>
     <Modal title="发送消息" open={open} width={760} confirmLoading={sending} onOk={() => void send()}
-      okText="发送" cancelText="取消" onCancel={() => setOpen(false)} destroyOnHidden>
+      okButtonProps={{ disabled: imageUploading }} okText="发送" cancelText="取消" onCancel={() => setOpen(false)} destroyOnHidden>
       <Form form={form} layout="vertical">
         <Form.Item label="发送范围">
           <Radio.Group value={broadcast} onChange={(event) => setBroadcast(event.target.value)}>
@@ -117,7 +118,7 @@ export default function NotificationsPage() {
         </Form.Item>
         <Form.Item label="消息正文" required
           extra="消息同时推送到收件人的企业微信（未绑定的成员只收站内信）。企业微信不支持图片，正文里的图片会显示成占位，收件人点「查看详情」回站内看完整内容。">
-          <RichTextEditor value={contentHtml} onChange={setContentHtml} />
+          <RichTextEditor value={contentHtml} onChange={setContentHtml} onUploadingChange={setImageUploading} />
         </Form.Item>
       </Form>
     </Modal>

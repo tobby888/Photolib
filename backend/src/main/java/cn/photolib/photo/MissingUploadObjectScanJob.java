@@ -153,7 +153,8 @@ public class MissingUploadObjectScanJob {
     }
 
     private ScanResult scanLocked() {
-        List<StuckUpload> candidates = loadCandidates();
+        LocalDateTime before = LocalDateTime.now(clock).minus(GRACE);
+        List<StuckUpload> candidates = loadCandidates(before);
         if (candidates.isEmpty()) {
             // 这一页空了说明已经扫到尾，下一轮从头再来。
             cursor.set(0);
@@ -202,7 +203,7 @@ public class MissingUploadObjectScanJob {
 
         int deleted = 0;
         for (StuckUpload upload : missing) {
-            if (softDelete(upload)) {
+            if (softDelete(upload, before)) {
                 deleted++;
                 releaseLeftoverObjects(upload);
             } else {
@@ -219,7 +220,7 @@ public class MissingUploadObjectScanJob {
      * 用 {@code updated_at} 判断。{@code original_object_key} 为空的行不进候选：没有 key
      * 就没有可以 HEAD 的东西，而"确认不存在"是这个任务唯一的删除凭据。</p>
      */
-    private List<StuckUpload> loadCandidates() {
+    private List<StuckUpload> loadCandidates(LocalDateTime before) {
         return jdbc.sql("""
                         SELECT id, original_object_key, object_key, thumbnail_object_key, version
                         FROM photo
@@ -231,7 +232,7 @@ public class MissingUploadObjectScanJob {
                         LIMIT :limit
                         """)
                 .param("cursor", cursor.get())
-                .param("before", LocalDateTime.now(clock).minus(GRACE))
+                .param("before", before)
                 .param("limit", LIMIT)
                 .query((rs, row) -> new StuckUpload(
                         rs.getLong("id"),
@@ -267,11 +268,15 @@ public class MissingUploadObjectScanJob {
     /**
      * 按观察到的 version/status 做 CAS 软删，并在同一事务里写审计行。
      *
+     * <p>CAS 里还要再判一次「到期时间仍在宽限之前」：上传者重传同一张图时会给这张票据
+     * 续期（issue #156，{@code PhotoService.resumeTicket}），续期不改 version，只看 version
+     * 会把一张刚续过、客户端正要 PUT 的票据删掉。</p>
+     *
      * <p>{@code status} 保持 {@code UPLOADING} 不动（与 {@code PhotoService.performDelete}
      * 和 §2.15 的既有语义一致），但 {@code failure_reason} 改写成人能看懂的原因——运维翻到
      * 这一行时要能看出它是被自动收走的，而不是谁手点了删除。</p>
      */
-    private boolean softDelete(StuckUpload upload) {
+    private boolean softDelete(StuckUpload upload, LocalDateTime before) {
         return Boolean.TRUE.equals(transactions.execute(status -> {
             int updated = jdbc.sql("""
                     UPDATE photo
@@ -279,10 +284,12 @@ public class MissingUploadObjectScanJob {
                         version = version + 1, updated_at = :now
                     WHERE id = :id AND deleted = 0 AND status = 'UPLOADING'
                       AND version = :version AND original_object_key = :objectKey
+                      AND COALESCE(upload_url_expires_at, updated_at) <= :before
                     """)
                     .param("id", upload.id())
                     .param("version", upload.version())
                     .param("objectKey", upload.originalObjectKey())
+                    .param("before", before)
                     .param("reason", "这张图片没有真正传到对象存储，记录已自动清理")
                     .param("now", LocalDateTime.now(clock))
                     .update();

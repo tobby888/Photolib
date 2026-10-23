@@ -135,11 +135,27 @@ export const shareUploadApi = {
       method: 'POST', url: `/public/shares/${token}/upload-tickets`, data: file, ...guest(session),
     }),
 
+  // tags 只能是选题的预设标签（access.presetTags），选题没设预设时只能不带。
   complete: (token: string, session: string, photoId: EntityId,
-             data: { title?: string | null; description?: string | null }) =>
+             data: { title?: string | null; description?: string | null; tags?: string[] }) =>
     api<ShareUploadedPhoto>({
       method: 'POST', url: `/public/shares/${token}/uploads/${photoId}/complete`,
       data, ...guest(session),
+    }),
+
+  // 给自己传的一张图改标签：只改预设范围内的那部分，预设以外的标签服务端原样保留。
+  // 只限记在当前拍摄者名下、已经处理完的图。
+  updateTags: (token: string, session: string, photoId: EntityId, tags: string[]) =>
+    api<{ photoId: EntityId; tags: string[] }>({
+      method: 'PUT', url: `/public/shares/${token}/uploads/${photoId}/tags`,
+      data: { tags }, ...guest(session),
+    }),
+
+  // 切换这场会话的拍摄者（一个人替两个人交图）。之后的上传和工时申报都记在新身份名下。
+  switchUploader: (token: string, session: string, identity: ShareUploaderIdentity) =>
+    api<ShareGuestAccess>({
+      method: 'PUT', url: `/public/shares/${token}/session/uploader`,
+      data: identity, ...guest(session),
     }),
 
   status: (token: string, session: string, photoId: EntityId) =>
@@ -165,10 +181,12 @@ export const shareUploadApi = {
       url: `/public/shares/${token}/upload-batches/${batchId}`, ...guest(session),
     }),
 
-  finishBatch: (token: string, session: string, batchId: string, takenAt?: string | null) =>
+  // 标签整包共用，只能是预设标签：包里的图访客在页面上看不到，逐张打不了。
+  finishBatch: (token: string, session: string, batchId: string, takenAt?: string | null,
+                tags: string[] = []) =>
     api<ShareUploadBatch>({
       method: 'POST', url: `/public/shares/${token}/upload-batches/${batchId}/finish`,
-      data: { takenAt: takenAt ?? null }, ...guest(session),
+      data: { takenAt: takenAt ?? null, tags }, ...guest(session),
     }),
 
   // 传完图之后申报这次的工时：直接落成「待确认」，进部长和管理员的审核面板。

@@ -194,7 +194,39 @@ public class ProjectSharePublicController {
                 RateLimitAddress.of(servletRequest));
         return ApiResponse.ok(uploadService.complete(service.resolveGuestContext(token, session),
                 photoId, new ProjectShareUploadService.CompleteCommand(
-                        request.title(), request.description())));
+                        request.title(), request.description(), request.tags())));
+    }
+
+    /**
+     * 给自己传的一张图改标签，只能用选题的预设标签；预设以外的标签原样保留。
+     * 规则见 {@link ProjectShareUploadService#updateTags}。
+     */
+    @AuditAction("通过上传链接修改图片标签")
+    @PutMapping("/uploads/{photoId}/tags")
+    ApiResponse<ProjectShareUploadService.TaggedPhoto> updateUploadTags(
+            @PathVariable String token, @PathVariable Long photoId,
+            @RequestHeader(value = SESSION_HEADER, required = false) String session,
+            @Valid @RequestBody UploadTagsRequest request, HttpServletRequest servletRequest) {
+        rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.UPLOAD, token,
+                RateLimitAddress.of(servletRequest));
+        return ApiResponse.ok(uploadService.updateTags(
+                service.resolveGuestContext(token, session), photoId, request.tags()));
+    }
+
+    /**
+     * 切换这场会话的拍摄者：一个人替两个人交图时用。之后的上传和工时申报都记在新身份名下，
+     * 已经签出的票据不受影响。见 {@link ProjectShareService#switchUploader}。
+     */
+    @AuditAction("通过上传链接切换拍摄者")
+    @PutMapping("/session/uploader")
+    ApiResponse<ProjectShareService.GuestAccess> switchUploader(
+            @PathVariable String token,
+            @RequestHeader(value = SESSION_HEADER, required = false) String session,
+            @Valid @RequestBody UploaderRequest request, HttpServletRequest servletRequest) {
+        rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.UPLOADER, token,
+                RateLimitAddress.of(servletRequest));
+        return ApiResponse.ok(service.switchUploader(
+                service.resolveGuestContext(token, session), request.identity()));
     }
 
     /** 轮询处理结果：压缩失败的图片会被打回 UPLOADING，访客必须能看到这件事。 */
@@ -262,7 +294,7 @@ public class ProjectSharePublicController {
         rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.UPLOAD, token,
                 RateLimitAddress.of(servletRequest));
         return ApiResponse.ok(uploadService.finishZip(
-                service.resolveGuestContext(token, session), batchId, request.takenAt()));
+                service.resolveGuestContext(token, session), batchId, request.takenAt(), request.tags()));
     }
 
     // ------------------------------------------------------------------ 申报工时
@@ -305,8 +337,21 @@ public class ProjectSharePublicController {
     record UploadBatchRequest(@NotBlank @Size(max = 255) String archiveFileName,
                               @NotNull @Min(1) Long archiveSize) {}
 
-    /** 拍摄时间留空按当前时间算，与单张上传同一条规则。 */
-    record UploadBatchFinishRequest(LocalDateTime takenAt) {}
+    /**
+     * 拍摄时间留空按当前时间算，与单张上传同一条规则。标签整包共用，只能是预设标签。
+     * 单个标签的 {@code @Size(max = 100)} 是 UTF-16 粗上限，真正的 50 字由 {@code PhotoTags.normalize} 按字计。
+     */
+    record UploadBatchFinishRequest(LocalDateTime takenAt,
+                                    @Size(max = PhotoTags.MAX_TAGS) List<@Size(max = 100) String> tags) {}
+
+    record UploadTagsRequest(@NotNull @Size(max = PhotoTags.MAX_TAGS) List<@Size(max = 100) String> tags) {}
+
+    record UploaderRequest(@Size(max = ProjectShareService.MAX_UPLOADER_NAME_LENGTH) String uploaderName,
+                           @Size(max = 64) String uploaderStudentId) {
+        ProjectShareService.GuestIdentity identity() {
+            return new ProjectShareService.GuestIdentity(uploaderName, uploaderStudentId);
+        }
+    }
 
     record PasswordRequest(@NotNull @Size(max = ProjectShareService.MAX_PASSWORD_LENGTH) String password,
                            @Size(max = ProjectShareService.MAX_UPLOADER_NAME_LENGTH) String uploaderName,
@@ -328,7 +373,8 @@ public class ProjectSharePublicController {
         }
     }
 
-    record UploadCompleteRequest(@Size(max = 200) String title, @Size(max = 500) String description) {}
+    record UploadCompleteRequest(@Size(max = 200) String title, @Size(max = 500) String description,
+                                 @Size(max = PhotoTags.MAX_TAGS) List<@Size(max = 100) String> tags) {}
 
     record BatchDownloadRequest(@NotEmpty @Size(max = 200) List<@NotNull Long> photoIds) {}
 }

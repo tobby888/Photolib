@@ -236,19 +236,21 @@ class ProjectShareWorklogTests {
     }
 
     @Test
-    void theSameDayCannotBeDeclaredTwiceUntilItIsRejected() {
+    void theSameDayCanBeDeclaredMoreThanOnce() {
+        // 一天里跑两场活动、上午拍下午修，都是各报一条的正当情况；早先的「一天一条」已经去掉。
         ProjectShareService.CreatedShareLink created = uploadLink(creation.getId());
         ProjectShareService.GuestContext context = guest(created);
         handInPhoto(context, "1");
         var first = uploadService.declareWorklog(context, declaration(LocalDate.now()));
+        var second = uploadService.declareWorklog(context, declaration(LocalDate.now()));
 
-        assertThatThrownBy(() -> uploadService.declareWorklog(context, declaration(LocalDate.now())))
-                .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("已经申报过了");
-        // 换一天不受影响。
-        uploadService.declareWorklog(context, declaration(LocalDate.now().minusDays(1)));
+        assertThat(second.id()).isNotEqualTo(first.id());
+        assertThat(second.status()).isEqualTo(WorklogStatus.SUBMITTED);
+        assertThat(uploadService.worklogs(context))
+                .filteredOn(worklog -> worklog.workDate().equals(LocalDate.now()))
+                .hasSize(2);
 
-        // 退回之后重新申报正是它该走的路，而且申报人自己看得到退回原因。
+        // 退回之后重新申报仍然是它该走的路，而且申报人自己看得到退回原因。
         worklogService.reject(first.id(), "时长填多了", 1, minister);
         assertThat(uploadService.worklogs(context))
                 .anyMatch(worklog -> worklog.id().equals(first.id())

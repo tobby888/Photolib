@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import {
-  MAX_QUEUE_SIZE, addToQueue,
+  MAX_QUEUE_SIZE, MAX_REMEMBERED_UPLOADERS, addToQueue, canRetag, rememberUploader,
   createUploadPump, describeBatchOutcome, isTerminalBatchStatus, markFailedForRetry,
   rejectArchiveReason, rejectReason, summarize,
 } from '../src/shareUpload.ts'
@@ -20,7 +20,7 @@ const fakeFile = (name: string, size = 1024, type = 'image/jpeg') =>
   ({ name, size, type }) as File
 
 const item = (key: string, stage: ShareUploadItem['stage']): ShareUploadItem =>
-  ({ key, file: fakeFile(`${key}.jpg`), stage, percent: 0 })
+  ({ key, file: fakeFile(`${key}.jpg`), stage, percent: 0, tags: [] })
 
 test('前端的文件校验与后端 validateUploadFile 是同一套规则', () => {
   assert.equal(rejectReason(fakeFile('a.jpg')), null)
@@ -350,4 +350,56 @@ test('生成上传链接的入口对进行中的选题出现，创作选题和�
   assert.match(modal, /uploadLinksAvailable && <Button icon=\{<CloudUploadOutlined \/>\}/)
   // 上传链接没有下载/标记被引这两项能力，界面上也就不该摆出点不动的勾选框。
   assert.match(modal, /link\.purpose === 'UPLOAD'\s*\n\s*\? <Typography\.Text type="secondary">仅上传/)
+})
+
+test('入队时把「这批照片的标签」抄到每一张上，之后改标签框不影响已经排上的', () => {
+  const batch = ['舞台']
+  const added = addToQueue([], [fakeFile('a.jpg'), fakeFile('b.jpg')], DEFAULT_UPLOAD_LIMITS, batch)
+  assert.deepEqual(added.items.map(entry => entry.tags), [['舞台'], ['舞台']])
+  batch.push('观众')
+  assert.deepEqual(added.items[0].tags, ['舞台'])
+  // 不带标签时是空数组而不是 undefined：complete 照样发得出去。
+  assert.deepEqual(addToQueue([], [fakeFile('c.jpg')]).items[0].tags, [])
+})
+
+test('只有处理完、记在当前拍摄者名下的那张才能改标签', () => {
+  const done = { ...item('a', 'done'), photoId: '1', photographerStudentId: '20230001' }
+  assert.equal(canRetag(done, '20230001'), true)
+  // 切换到别人之后，前一个人的图要切回去才能改——与服务端 updateTags 同一条线。
+  assert.equal(canRetag(done, '20230002'), false)
+  assert.equal(canRetag(done, null), false)
+  // 还在处理中：压缩管线提交成品时按 version 做 CAS，这时改标签会让那一步失败。
+  assert.equal(canRetag({ ...done, stage: 'processing' }, '20230001'), false)
+  assert.equal(canRetag({ ...done, photoId: undefined }, '20230001'), false)
+})
+
+test('用过的拍摄者按学号去重、最新的在前，最多记几个', () => {
+  const zhang = { uploaderName: '张三', uploaderStudentId: '20230001' }
+  const li = { uploaderName: '李四', uploaderStudentId: '20230002' }
+  let list = rememberUploader([], zhang)
+  list = rememberUploader(list, li)
+  assert.deepEqual(list.map(entry => entry.uploaderName), ['李四', '张三'])
+  // 同一个学号再来一次：挪到最前面，姓名以最新填的为准，不重复。
+  list = rememberUploader(list, { uploaderName: ' 张三丰 ', uploaderStudentId: '20230001 ' })
+  assert.deepEqual(list, [{ uploaderName: '张三丰', uploaderStudentId: '20230001' }, li])
+  // 空的不记。
+  assert.deepEqual(rememberUploader(list, { uploaderName: ' ', uploaderStudentId: '1' }), list)
+  for (let index = 0; index < 10; index += 1) {
+    list = rememberUploader(list, { uploaderName: `同学${index}`, uploaderStudentId: `2024${index}` })
+  }
+  assert.equal(list.length, MAX_REMEMBERED_UPLOADERS)
+  assert.equal(list[0].uploaderName, '同学9')
+})
+
+test('切换拍摄者和改标签都接到了后端的访客接口上', async () => {
+  const [client, controller, page] = await Promise.all([
+    read('projectShare.ts'), readBackend('share/ProjectSharePublicController.java'),
+    read('pages/SharedUploadPage.tsx'),
+  ])
+  assert.match(client, /\/session\/uploader/)
+  assert.match(controller, /@PutMapping\("\/session\/uploader"\)/)
+  assert.match(client, /\/uploads\/\$\{photoId\}\/tags/)
+  assert.match(controller, /@PutMapping\("\/uploads\/\{photoId\}\/tags"\)/)
+  // 正在传的时候不让切：排着的那几张会在切换之后才签票据，一批图就分到两个人名下。
+  assert.match(page, /disabled=\{uploadBusy \|\| !access\}/)
 })

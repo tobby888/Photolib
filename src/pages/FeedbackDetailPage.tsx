@@ -29,6 +29,7 @@ export default function FeedbackDetailPage() {
   )
   const [replyHtml, setReplyHtml] = useState('')
   const [sending, setSending] = useState(false)
+  const [imageUploading, setImageUploading] = useState(false)
 
   const reply = async () => {
     if (richTextIsEmpty(replyHtml)) { message.error('请填写回复内容'); return }
@@ -95,8 +96,10 @@ export default function FeedbackDetailPage() {
             {timeline}
           </div>
           <div style={{ marginTop: 20 }}>
-            <RichTextEditor value={replyHtml} onChange={setReplyHtml} placeholder="输入回复……" />
-            <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={() => void reply()}
+            <RichTextEditor value={replyHtml} onChange={setReplyHtml} placeholder="输入回复……"
+              onUploadingChange={setImageUploading} />
+            <Button type="primary" icon={<SendOutlined />} loading={sending} disabled={imageUploading}
+              onClick={() => void reply()}
               style={{ marginTop: 8 }}>回复</Button>
           </div>
         </>}

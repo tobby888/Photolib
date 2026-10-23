@@ -357,6 +357,7 @@ button, input, textarea, select { font-family: inherit; }
 .rich-editor:focus-within { border-color: #3f7b65; box-shadow: 0 0 0 2px rgba(40,89,79,.1); }
 .rich-editor-toolbar { width: 100%; padding: 6px 8px; border-bottom: 1px solid #ece9e3; background: #faf9f6; }
 .rich-editor-content { min-height: 240px; max-height: 440px; overflow: auto; padding: 16px; outline: none; line-height: 1.7; }
+.rich-editor-status { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; opacity: .7; }
 .rich-editor-content:empty::before { content: attr(data-placeholder); color: #aaa; pointer-events: none; }
 .rich-editor-content img, .message-content img { display: block; max-width: 100%; height: auto; margin: 14px auto; border-radius: 8px; }
 .markdown-editor { overflow: hidden; border: 1px solid #d9d9d9; border-radius: 8px; background: #fff; }

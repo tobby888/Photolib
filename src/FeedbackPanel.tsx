@@ -30,6 +30,7 @@ export default function FeedbackPanel() {
   const [title, setTitle] = useState('')
   const [category, setCategory] = useState<FeedbackCategory>('ISSUE')
   const [contentHtml, setContentHtml] = useState('')
+  const [imageUploading, setImageUploading] = useState(false)
 
   const { data, loading, error, reload } = useLoad(
     () => api<PageData<FeedbackSummary>>({
@@ -93,7 +94,7 @@ export default function FeedbackPanel() {
       )} />
     </DataState>
     <Modal title="我要反馈" open={open} width={720} confirmLoading={submitting} onOk={() => void submit()}
-      okText="提交" cancelText="取消" onCancel={() => setOpen(false)} destroyOnHidden>
+      okButtonProps={{ disabled: imageUploading }} okText="提交" cancelText="取消" onCancel={() => setOpen(false)} destroyOnHidden>
       <Space direction="vertical" style={{ width: '100%' }} size="middle">
         <div>
           <Typography.Text strong>标题</Typography.Text>
@@ -111,7 +112,8 @@ export default function FeedbackPanel() {
         </div>
         <div>
           <Typography.Text strong>正文</Typography.Text>
-          <RichTextEditor value={contentHtml} onChange={setContentHtml} placeholder="描述问题或建议……" />
+          <RichTextEditor value={contentHtml} onChange={setContentHtml} placeholder="描述问题或建议……"
+            onUploadingChange={setImageUploading} />
         </div>
       </Space>
     </Modal>

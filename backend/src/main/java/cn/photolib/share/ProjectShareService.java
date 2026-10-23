@@ -250,7 +250,9 @@ public class ProjectShareService {
                 UPDATE project_share_link SET view_count = view_count + 1, last_viewed_at = :now
                 WHERE id = :id
                 """).param("now", now).param("id", link.getId()).update();
-        return new GuestSession(sessionToken, session.getExpiresAt(), access(link));
+        // 带上刚建的会话：上传链接要把自报的身份回显出来，否则进门后头一屏是空的。
+        return new GuestSession(sessionToken, session.getExpiresAt(),
+                access(new GuestContext(link, session)));
     }
 
     /**
@@ -287,15 +289,53 @@ public class ProjectShareService {
         ProjectShareLinkEntity link = context.link();
         ProjectEntity project = projectService.get(link.getProjectId());
         ShareLinkPurpose purpose = purposeOf(link);
-        // 上传链接的访客看不到相册，所以这里连项目状态之外的东西都不需要多给；
-        // uploaderName 只是把他自己刚填的名字回显出来，好让他确认没填错人。
+        boolean upload = purpose == ShareLinkPurpose.UPLOAD;
+        ProjectShareSessionEntity session = context.session();
+        // 上传链接的访客看不到相册，所以这里连项目状态之外的东西都不需要多给。
+        // 姓名学号只是把他自己填的那份回显出来，好让他确认没填错人、切换拍摄者时看得清当前是谁；
+        // 预设标签是他给自己的图片打标签时唯一能选的那几个（AGENTS §2.21.3）。
         return new GuestAccess(project.getTitle(), project.getStatus(), link.getName(), purpose,
                 Boolean.TRUE.equals(link.getAllowDownload()),
                 Boolean.TRUE.equals(link.getAllowAdoption()),
-                purpose == ShareLinkPurpose.UPLOAD && canAcceptUploads(project),
-                purpose == ShareLinkPurpose.UPLOAD && canAcceptWorklogs(project),
-                context.session() == null ? null : context.session().getUploaderName(),
+                upload && canAcceptUploads(project),
+                upload && canAcceptWorklogs(project),
+                session == null ? null : session.getUploaderName(),
+                session == null ? null : session.getUploaderStudentId(),
+                upload ? projectService.presetTags(project.getId()) : List.of(),
                 link.getExpiresAt());
+    }
+
+    /**
+     * 切换这场会话的拍摄者。
+     *
+     * <p>一个人拿着上传链接替两个人交图时，进门只能报一个身份，另一个人的图就会挂错拍摄者，
+     * 而统计和工时都按学号归并。这里把会话上的身份快照整份换掉：之后签出的票据、导入的
+     * 压缩包、申报的工时都用新身份；已经签出的票据不受影响——拍摄者在签票据那一刻就写进了
+     * 照片行。仍然是会话级的一份快照而不是逐次请求带身份，理由见
+     * {@link ProjectShareUploadService} 第 2 条不变量。</p>
+     *
+     * <p>不再要密码：会话本身就证明了这个人过了这条链接的密码，换的只是「替谁传」。
+     * 校验与进门时自报身份是同一份（{@link #validatedIdentity}）。</p>
+     */
+    @Transactional
+    public GuestAccess switchUploader(GuestContext context, GuestIdentity identity) {
+        requireUploadLink(context.link());
+        GuestIdentity uploader = validatedIdentity(identity);
+        ProjectShareSessionEntity session = context.session();
+        int updated = jdbc.sql("""
+                        UPDATE project_share_session
+                        SET uploader_name = :name, uploader_student_id = :studentId
+                        WHERE id = :id AND link_id = :linkId
+                        """)
+                .param("name", uploader.name()).param("studentId", uploader.studentId())
+                .param("id", session.getId()).param("linkId", context.link().getId())
+                .update();
+        if (updated != 1) {
+            throw sessionExpired();
+        }
+        session.setUploaderName(uploader.name());
+        session.setUploaderStudentId(uploader.studentId());
+        return access(context);
     }
 
     /**
@@ -674,6 +714,7 @@ public class ProjectShareService {
     public record GuestAccess(String projectTitle, ProjectStatus projectStatus, String linkName,
                               ShareLinkPurpose purpose, boolean allowDownload, boolean allowAdoption,
                               boolean allowUpload, boolean allowWorklog, String uploaderName,
+                              String uploaderStudentId, List<String> presetTags,
                               LocalDateTime expiresAt) {}
 
     /** 一次访客请求解析出来的上下文：当前这一刻的链接行，加上发起请求的那个会话。 */

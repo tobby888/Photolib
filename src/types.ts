@@ -401,8 +401,12 @@ export interface ShareGuestAccess {
   allowUpload: boolean
   /** 上传链接：选题当下还收不收通过链接申报的工时（选题完成或取消后变 false）。 */
   allowWorklog: boolean
-  /** 上传链接：访客进门时自报的姓名，回显用。 */
+  /** 上传链接：当前拍摄者的姓名（进门时自报，可中途切换），回显用。 */
   uploaderName?: string | null
+  /** 上传链接：当前拍摄者的学号，回显用——切换拍摄者时要看得清现在记在谁名下。 */
+  uploaderStudentId?: string | null
+  /** 上传链接：选题的预设标签，上传者给自己的图片打标签时只能从这里挑。浏览链接为空。 */
+  presetTags?: string[]
   expiresAt?: string | null
 }
 
@@ -437,6 +441,8 @@ export interface ShareUploadTicket {
   method: string
   contentType: string
   expiresAt: string
+  /** 这张记在谁名下：会话中途可以切换拍摄者，列表里每一张要写清楚。 */
+  photographerName?: string | null
 }
 
 /**

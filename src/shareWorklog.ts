@@ -34,14 +34,15 @@ export function rejectWorklogReason(draft: WorklogDeclarationDraft, today: strin
 }
 
 /**
- * 这一天是不是已经有一条在审或已确认的申报。
+ * 这一天已经有几条在审或已确认的申报（被退回的不算）。
  *
- * <p>后端按「同一条链接 + 同一个学号 + 同一天」拦重复（被退回的不算——退回之后重新申报
- * 正是它该走的路）。这里提前说出来，免得人填完一整张表才吃到一个报错。</p>
+ * <p>同一天可以报多条——一天跑两场活动、上午拍下午修都是正当情况，后端不再拦。
+ * 这个数只用来给一句不拦人的提醒：访客页一刷新表单就回到初始状态，手一抖交两次
+ * 一样的，审核的人还得一条条退回。</p>
  */
-export function alreadyDeclaredOn(worklogs: readonly ShareGuestWorklog[], workDate: string): boolean {
-  return worklogs.some(worklog => worklog.workDate === workDate
-    && (worklog.status === 'SUBMITTED' || worklog.status === 'CONFIRMED'))
+export function declaredCountOn(worklogs: readonly ShareGuestWorklog[], workDate: string): number {
+  return worklogs.filter(worklog => worklog.workDate === workDate
+    && (worklog.status === 'SUBMITTED' || worklog.status === 'CONFIRMED')).length
 }
 
 export interface WorklogStatusCopy {
