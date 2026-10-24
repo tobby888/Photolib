@@ -995,6 +995,8 @@ DRAFT/PUBLISHED/ACCEPTED/SUBMITTED -> CANCELLED
 | `GET /photos/{id}` | A/M/C | — | `PhotoView` |
 | `PUT /photos/{id}` | 上传人或 A/M | `MetadataRequest` | `PhotoView` |
 | `PATCH /photos/{id}/campus` | A | `{ campusId, version }` | `PhotoView` |
+| `PUT /photos/{id}/admin-metadata` | A | `AdminMetadataRequest` | `PhotoView` |
+| `POST /photos/batch-metadata` | A | `BatchMetadataRequest` | `{ photoCount, changedCount, adoptionsUpdated }` |
 | `POST /photos/{id}/download-url` | 上传人或 A/M | 无请求体 | `DownloadUrl` |
 | `POST /photos/{id}/archive` | A/M | 无请求体 | `PhotoView` |
 | `POST /photos/{id}/restore` | A/M | 无请求体 | `PhotoView` |
@@ -1065,6 +1067,46 @@ GET /photos/photographers?favoritesOnly=false
 标题必填、最多 200；说明最多 5000；标签最多 30 个、每个最多 50；拍摄时间不能在未来。拍摄者必须是符合图片校区范围的启用通讯录成员。更新会覆盖照片上的姓名/学号快照，但不会追溯修改已有采用记录的作者快照。
 
 修改校区时 `campusId` 可为 `null`，用于清空旧数据校区；非空时校区必须存在。该操作使用乐观锁。
+
+管理员直接编辑（仅 A，`hasRole('ADMIN')`；有 `PHOTO_UPLOAD` 的全局账号也是 403）：
+
+```json
+PUT /photos/{id}/admin-metadata
+{
+  "title": "毕业典礼会场全景",
+  "description": "",
+  "photographerName": "张三",
+  "photographerStudentId": "20260001",
+  "takenAt": "2026-07-24T09:10:00",
+  "campusId": null,
+  "tags": ["毕业季"],
+  "version": 3,
+  "syncAdoptions": true
+}
+```
+
+- 拍摄者**直接填姓名/学号，不经通讯录**（迁移来的老图、上传链接进来的站外拍摄者不在通讯录里）。姓名必填、最多 100；学号可空、最多 64。其余上限同上面的元数据更新。
+- 整张覆盖写、带乐观锁；`description` 空串与 `campusId: null` 都会真正清空（不是「不改」）。
+- 新加的标签仍受来源选题预设约束。
+- 只能改 `AVAILABLE` / `ARCHIVED` 的图片：处理中的图片改了版本号会让处理流水线完成时落库失败，返回冲突。
+- `syncAdoptions`（缺省为 `true`）且拍摄者确有变化时，把这张图**未撤销**的被引记录上的拍摄者快照一起改掉——成员核算、被引排行按快照算。传 `false` 保留原快照。
+
+```json
+POST /photos/batch-metadata
+{
+  "photoIds": ["...", "..."],
+  "photographer": { "name": "张三", "studentId": "20260001" },
+  "campus": { "campusId": null },
+  "title": "开学典礼",
+  "description": "",
+  "syncAdoptions": true
+}
+```
+
+- 每次 1–200 张；`photographer` / `campus` / `title` / `description` 至少给一项，**缺省的项不改**。`campus` 包一层是为了区分「不改校区」（整个字段缺省）和「改成无校区」（`{ "campusId": null }`）；`description` 传空串表示清空。
+- 不提供批量改拍摄时间（一批图改成同一时刻会抹掉先后顺序）；批量改标签用 `batch-tags`。
+- 全部成功或全部回滚；任一张处理中即整批冲突。已经是目标值的图片不写库、不涨版本号，`changedCount` 只数真正改了的。
+- 审计日志记录改之前的标题、拍摄者、拍摄时间、校区（`previous`）和同步了几条被引记录。
 
 归档只允许 `AVAILABLE -> ARCHIVED`，恢复只允许 `ARCHIVED -> AVAILABLE`。M 删除已被采用图片时返回冲突，A 可删除；删除会逻辑删除数据库行，并 best-effort 清理成品、预览和原图对象。
 

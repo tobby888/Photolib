@@ -26,3 +26,10 @@ export function hasSystemAccess(user: User | null | undefined) {
  */
 export const canManageTwoFactor = (user: Pick<User, 'mfa'> | null | undefined) =>
   !!user?.mfa && user.mfa.policy !== 'OFF'
+
+/**
+ * 是不是管理员。只用来决定显不显示管理员专属的入口；真正的授权在后端
+ * （例如 `PUT /photos/{id}/admin-metadata` 的 `hasRole('ADMIN')`）。
+ */
+export const isAdministrator = (user: Pick<User, 'permissionGroupCode'> | null | undefined) =>
+  user?.permissionGroupCode === 'ADMIN'
