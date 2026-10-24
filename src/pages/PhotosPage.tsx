@@ -4,7 +4,8 @@ import {
 } from 'antd'
 import { useBatchDownloadProgress } from '../BatchDownloadModal'
 import {
-  CloudUploadOutlined, DeleteOutlined, DownloadOutlined, FolderAddOutlined, InboxOutlined, MinusCircleOutlined,
+  CloudUploadOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, FolderAddOutlined, InboxOutlined,
+  MinusCircleOutlined,
   EyeOutlined, SearchOutlined, StarFilled, StarOutlined, TagsOutlined,
 } from '@ant-design/icons'
 import { useEffect, useReducer, useRef, useState } from 'react'
@@ -24,7 +25,7 @@ import { useLoad, useRefreshOnResume } from '../hooks'
 import { useAuth } from '../auth'
 import { preparePhotoBatchDownload } from '../photoBatchDownload'
 import { photoTitleFromFileName } from '../photoTitle'
-import { hasPermission } from '../permissions'
+import { hasPermission, isAdministrator } from '../permissions'
 import PreviewPhoto from '../PreviewPhoto'
 import { refreshPhotoPreviewUrl } from '../previewRefresh'
 import { PhotoPlaceholder, pickPlaceholderImage, usePlaceholderImages } from '../photoPlaceholder'
@@ -40,6 +41,7 @@ import {
 import ListPagination from '../ListPagination'
 import { turnPage } from '../pagination'
 import { updateFavoritePage } from '../photoFavorites'
+import BatchMetadataModal from '../BatchMetadataModal'
 import BatchTagModal from '../BatchTagModal'
 import type { BatchTagMode } from '../BatchTagModal'
 import TagSelect from '../TagSelect'
@@ -69,6 +71,9 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
   // 与 POST /photos/batch-tags 的方法级授权一致；逐张的上传者/需求参与限制由后端判断。
   const canTag = hasPermission(user, 'PHOTO_UPLOAD') || hasPermission(user, 'REQUEST_PHOTO_MANAGE')
   const [tagMode, setTagMode] = useState<BatchTagMode | null>(null)
+  // 管理员可以按筛选勾选后批量改拍摄者、校区等（POST /photos/batch-metadata），授权在后端。
+  const canEditMetadata = isAdministrator(user)
+  const [metadataOpen, setMetadataOpen] = useState(false)
   const [uploadForm] = Form.useForm()
   const [uploadOpen, setUploadOpen] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -128,7 +133,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
   // 按拍摄者筛，不按上传账号：上传的人不一定是拍的人（负责人替同学传、上传链接进来的图片
   // 都记在别人名下）。候选由后端按可见范围算（GET /photos/photographers），不能拿通讯录凑：
   // 通讯录里有没拍过图的人，也没有上传链接进来的站外拍摄者，还会泄露本账号看不到的成员。
-  const { data: photographerNames, loading: photographerNamesLoading } = useLoad(
+  const { data: photographerNames, loading: photographerNamesLoading, reload: reloadPhotographerNames } = useLoad(
     () => api<string[]>({ url: '/photos/photographers', params: qs({ favoritesOnly: favoritesOnly || undefined }) }),
     [] as string[], [favoritesOnly],
   )
@@ -471,6 +476,10 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
           onClick={() => openProjectPicker(selectedPhotos)}>
           添加到项目{selectedIds.length ? `（${selectedIds.length}）` : ''}
         </Button>}
+        {canEditMetadata && <Button size="large" icon={<EditOutlined />} disabled={!selectedIds.length}
+          onClick={() => setMetadataOpen(true)}>
+          批量编辑信息{selectedIds.length ? `（${selectedIds.length}）` : ''}
+        </Button>}
         {canTag && <Button size="large" icon={<TagsOutlined />} disabled={!selectedIds.length}
           onClick={() => setTagMode('add')}>添加标签</Button>}
         {canTag && <Button size="large" icon={<MinusCircleOutlined />} disabled={!selectedIds.length}
@@ -694,6 +703,14 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
         </Typography.Text>
       </div>}
     </Modal>
+    {canEditMetadata && <BatchMetadataModal open={metadataOpen} photos={selectedPhotos}
+      onClose={() => setMetadataOpen(false)}
+      onDone={() => {
+        // 勾选保留：改完信息常常接着打标签或加入选题。拍摄者候选也要重取，新名字才筛得到。
+        setMetadataOpen(false)
+        void reload()
+        void reloadPhotographerNames()
+      }} />}
     <BatchTagModal mode={tagMode} photos={selectedPhotos}
       onClose={() => setTagMode(null)} onDone={applyTaggedPhotos} />
     <Modal title={projectPickerPhotos.length > 1 ? '批量添加图片到选题项目' : '添加图片到选题项目'}

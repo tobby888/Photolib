@@ -20,6 +20,7 @@ import cn.photolib.storage.ObjectStorageService;
 import cn.photolib.storage.StorageProperties;
 import cn.photolib.permission.PermissionCode;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import cn.photolib.uploadlimit.UploadLimit;
@@ -37,6 +38,7 @@ import java.text.Collator;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -547,6 +549,170 @@ public class PhotoService {
         photo.setCampusId(campusId);
         photo.setVersion(version + 1);
         return toView(photo, user);
+    }
+
+    /**
+     * 管理员直接改一张图片的基本信息。与 {@link #update} 不同：拍摄者是直接填的姓名/学号，
+     * 不要求出自通讯录——迁移来的老图、上传链接进来的站外拍摄者本来就不在通讯录里，
+     * 拍摄者记错时只有这条路能改回来。
+     *
+     * <p>{@code syncAdoptions} 为真且拍摄者确实变了时，把这张图未撤销的被引记录上的拍摄者快照
+     * 一并改掉：成员核算、被引排行按快照算，不改的话功劳仍记在原来那个人头上。</p>
+     */
+    @Transactional
+    public AdminEdit adminUpdate(Long id, AdminMetadata command, AuthenticatedUser user) {
+        requireAdministratorForMetadata(user);
+        PhotoEntity photo = require(id);
+        requireMetadataEditable(photo);
+        if (command.campusId() != null) campusService.get(command.campusId());
+        List<String> tags = PhotoTags.normalize(command.tags());
+        projectService.requireAllowedPhotoTags(photo.getProjectId(), newlyAdded(photo, tags));
+        String title = requireText(command.title(), "图片标题不能为空");
+        String name = requireText(command.photographerName(), "拍摄者姓名不能为空");
+        String studentId = Objects.requireNonNullElse(command.photographerStudentId(), "").strip();
+        Map<String, Object> previous = previousValues(photo);
+        boolean photographerChanged = !name.equals(photo.getPhotographerName())
+                || !studentId.equals(photo.getPhotographerStudentId());
+        // 走 lambdaUpdate 而不是 updateById：后者跳过 null 字段，清空说明、改成「无校区」都会悄悄不生效。
+        int updated = mapper.update(null, Wrappers.<PhotoEntity>lambdaUpdate()
+                .set(PhotoEntity::getTitle, title)
+                .set(PhotoEntity::getDescription, StringUtils.hasText(command.description())
+                        ? command.description() : null)
+                .set(PhotoEntity::getPhotographerName, name)
+                .set(PhotoEntity::getPhotographerStudentId, studentId)
+                .set(PhotoEntity::getTakenAt, command.takenAt())
+                .set(PhotoEntity::getCampusId, command.campusId())
+                .set(PhotoEntity::getTagsJson, PhotoTags.toJson(tags))
+                .set(PhotoEntity::getUpdatedAt, LocalDateTime.now())
+                .setSql("version = version + 1")
+                .eq(PhotoEntity::getId, id)
+                .eq(PhotoEntity::getVersion, command.version()));
+        if (updated != 1) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "图片已被其他操作修改，请刷新后重试");
+        }
+        int adoptions = command.syncAdoptions() && photographerChanged
+                ? syncAdoptionPhotographer(id, studentId, name) : 0;
+        return new AdminEdit(toView(require(id), user), previous, adoptions);
+    }
+
+    /**
+     * 管理员批量改基本信息：只改请求里给了的那几项，其余保持原样；全部成功或全部回滚。
+     * 「筛选后批量改」由前端按图库同一套筛选取回勾选，再按 200 张一批发过来。
+     *
+     * <p>不提供批量改拍摄时间：一批图改成同一个时刻会抹掉它们的先后顺序，几乎不会是想要的结果。</p>
+     */
+    @Transactional
+    public BatchMetadataResult adminBatchUpdate(BatchMetadata command, AuthenticatedUser user) {
+        requireAdministratorForMetadata(user);
+        List<Long> ids = command.photoIds() == null ? List.of()
+                : command.photoIds().stream().filter(Objects::nonNull).distinct().toList();
+        if (ids.isEmpty() || ids.size() > 200) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择 1 至 200 张图片");
+        }
+        if (command.title() == null && command.description() == null
+                && command.photographer() == null && command.campus() == null) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请至少选择一项要修改的信息");
+        }
+        String title = command.title() == null ? null : requireText(command.title(), "图片标题不能为空");
+        String description = command.description() == null ? null
+                : StringUtils.hasText(command.description()) ? command.description() : "";
+        String name = command.photographer() == null ? null
+                : requireText(command.photographer().name(), "拍摄者姓名不能为空");
+        String studentId = command.photographer() == null ? null
+                : Objects.requireNonNullElse(command.photographer().studentId(), "").strip();
+        Long campusId = command.campus() == null ? null : command.campus().campusId();
+        if (campusId != null) campusService.get(campusId);
+
+        List<PhotoEntity> photos = ids.stream().map(this::require).toList();
+        photos.forEach(this::requireMetadataEditable);
+        List<Map<String, Object>> previous = new ArrayList<>();
+        int changed = 0;
+        int adoptions = 0;
+        for (PhotoEntity photo : photos) {
+            var update = Wrappers.<PhotoEntity>lambdaUpdate();
+            boolean dirty = false;
+            if (title != null && !title.equals(photo.getTitle())) {
+                update.set(PhotoEntity::getTitle, title);
+                dirty = true;
+            }
+            if (description != null && !description.equals(Objects.requireNonNullElse(photo.getDescription(), ""))) {
+                update.set(PhotoEntity::getDescription, description.isEmpty() ? null : description);
+                dirty = true;
+            }
+            boolean photographerChanged = name != null && (!name.equals(photo.getPhotographerName())
+                    || !studentId.equals(photo.getPhotographerStudentId()));
+            if (photographerChanged) {
+                update.set(PhotoEntity::getPhotographerName, name)
+                        .set(PhotoEntity::getPhotographerStudentId, studentId);
+                dirty = true;
+            }
+            if (command.campus() != null && !Objects.equals(campusId, photo.getCampusId())) {
+                update.set(PhotoEntity::getCampusId, campusId);
+                dirty = true;
+            }
+            if (!dirty) continue;
+            int updated = mapper.update(null, update
+                    .set(PhotoEntity::getUpdatedAt, LocalDateTime.now())
+                    .setSql("version = version + 1")
+                    .eq(PhotoEntity::getId, photo.getId())
+                    .eq(PhotoEntity::getVersion, photo.getVersion()));
+            if (updated != 1) {
+                throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
+                        "图片「" + displayName(photo) + "」已被其他操作修改，请刷新后重试");
+            }
+            previous.add(previousValues(photo));
+            changed++;
+            if (photographerChanged && command.syncAdoptions()) {
+                adoptions += syncAdoptionPhotographer(photo.getId(), studentId, name);
+            }
+        }
+        return new BatchMetadataResult(ids.size(), changed, adoptions, previous);
+    }
+
+    private void requireAdministratorForMetadata(AuthenticatedUser user) {
+        if (!user.isAdministrator()) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "仅管理员可直接修改图片信息");
+        }
+    }
+
+    /**
+     * 上传中、处理中的图片不能改：处理流水线完成时按读到的 version 落库
+     * （{@code PhotoProcessingService.completeProcessing}），这里一改版本号，那张图就处理失败了。
+     */
+    private void requireMetadataEditable(PhotoEntity photo) {
+        if (photo.getStatus() != PhotoStatus.AVAILABLE && photo.getStatus() != PhotoStatus.ARCHIVED) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
+                    "图片「" + displayName(photo) + "」还在上传或处理中，处理完成后才能修改");
+        }
+    }
+
+    private int syncAdoptionPhotographer(Long photoId, String studentId, String name) {
+        return jdbc.sql("""
+                UPDATE adoption SET photographer_student_id=:sid, photographer_name=:name
+                WHERE photo_id=:photoId AND deleted=FALSE
+                  AND (photographer_student_id<>:sid OR photographer_name<>:name)
+                """).param("sid", studentId).param("name", name).param("photoId", photoId).update();
+    }
+
+    /** 审计用：改之前的样子，事后要回退时照着它改回去。 */
+    private static Map<String, Object> previousValues(PhotoEntity photo) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("id", photo.getId());
+        values.put("title", photo.getTitle());
+        values.put("photographerName", photo.getPhotographerName());
+        values.put("photographerStudentId", photo.getPhotographerStudentId());
+        values.put("takenAt", photo.getTakenAt() == null ? null : photo.getTakenAt().toString());
+        values.put("campusId", photo.getCampusId());
+        return values;
+    }
+
+    private static String requireText(String value, String message) {
+        if (!StringUtils.hasText(value)) throw new BusinessException(ErrorCode.VALIDATION_ERROR, message);
+        return value.strip();
+    }
+
+    private static String displayName(PhotoEntity photo) {
+        return StringUtils.hasText(photo.getTitle()) ? photo.getTitle() : "#" + photo.getId();
     }
 
     public DownloadUrl download(Long id, AuthenticatedUser user) {
@@ -1072,6 +1238,21 @@ public class PhotoService {
     public record BatchTags(List<Long> photoIds, List<String> addTags, List<String> removeTags,
                             Long projectId) {}
     public record TaggedPhoto(Long id, List<String> tags, Integer version) {}
+    /** 管理员单张编辑：整张表单覆盖写，带版本号。拍摄者直接给姓名/学号，不经通讯录。 */
+    public record AdminMetadata(String title, String description, String photographerName,
+                                String photographerStudentId, LocalDateTime takenAt, Long campusId,
+                                List<String> tags, int version, boolean syncAdoptions) {}
+    /** {@code previous} 只进审计日志，不回给前端。 */
+    public record AdminEdit(PhotoView photo, Map<String, Object> previous, int adoptionsUpdated) {}
+    public record PhotographerChange(String name, String studentId) {}
+    /** 包一层是为了区分「不改校区」（整个字段缺省）和「改成无校区」（{@code campusId: null}）。 */
+    public record CampusChange(Long campusId) {}
+    /** 管理员批量编辑：为 {@code null} 的项不改；{@code description} 传空串表示清空。 */
+    public record BatchMetadata(List<Long> photoIds, String title, String description,
+                                PhotographerChange photographer, CampusChange campus, boolean syncAdoptions) {}
+    public record BatchMetadataResult(int photoCount, int changedCount, int adoptionsUpdated,
+                                      @JsonIgnore
+                                      List<Map<String, Object>> previous) {}
 
     /**
      * 图库页额外的筛选条件，全部可空（不限）。
