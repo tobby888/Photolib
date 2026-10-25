@@ -2156,6 +2156,31 @@ operatorId? action? resourceType? keyword? from? to? page=1 pageSize=20
 - `PUT` 会写审计日志（资源类型 `UPLOAD-LIMITS`），详情里记录每一项的旧值和新值。
 - `/metadata/options` 里的 `singleImageMaxBytes`、`batchImageMaxCount`、`zipMaxBytes` 同样返回当前生效值。
 
+### 16.6 性能分析
+
+仅 A（需两步验证复核）。和数据备份一样刻意不对应任何权限码，不会出现在权限面板里。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/performance/live?windowSeconds=60` | 实时窗口：最近 N 秒（5～600）每次功能调用的明细与按功能汇总，分位数精确计算 |
+| GET | `/performance/weekly` | 最近 7 天各功能 P50 / P90 / P95 / P99、每天走势，以及缩略图与原图压缩耗时 |
+| GET | `/performance/snapshots/current` | 正在记录的快照（没有为 `null`）与上限：`maxDurationMinutes`、`sampleIntervalSeconds`、`maxEvents` |
+| GET | `/performance/snapshots?page&pageSize` | 快照记录，按开始时间倒序 |
+| GET | `/performance/snapshots/{id}` | 单条快照 |
+| POST | `/performance/snapshots` | `{ "durationMinutes": 60, "note": "可选" }` 开始记录，时长 1～4320 分钟（72 小时） |
+| POST | `/performance/snapshots/{id}/stop` | 手动停止，随后异步导出 |
+| POST | `/performance/snapshots/{id}/retry-export` | 导出失败（`FAILED`）的快照重新导出 |
+| GET | `/performance/snapshots/{id}/download?file=events\|samples` | 取 CSV 的短期签名下载地址 |
+
+统计对象（毫秒）：`{ "count", "errors", "avgMs", "p50Ms", "p90Ms", "p95Ms", "p99Ms", "maxMs" }`。`errors` 只算 5xx（图片处理算失败次数）。
+
+- **实时窗口**只在内存里（每实例最多保留 65536 次调用），重启清零；`truncated=true` 表示窗口内的调用多于容量，最早的已被挤掉。`features` 是接口按「方法 + 路由模板」汇总，`label` 取接口的操作名（「登录」「上传图片」…，没标的读接口为空），`module` 与操作日志的模块名一致；`images` 是 `THUMBNAIL`（生成缩略图）/ `COMPRESS`（压缩原图）；`recent` 是最新 300 条明细。`/performance/**` 自己的请求不计入。
+- **一周分位数**来自每小时一行的分桶直方图，误差不超过 8%（取所在区间上界，且不超过实测最大值）；时间范围是 `[from, to]`，`from` 为 7×24 小时前所在的整点。
+- **快照**：`status` 为 `RECORDING` → `EXPORTING` → `COMPLETED`，导出失败为 `FAILED`（库内明细保留，可重试）；`stopReason` 为 `MANUAL` / `TIMEOUT`（到达计划时长）/ `LIMIT`（事件数到上限）。同一时刻只能有一个 `RECORDING`，再开返回 `409`；时长越界返回 `400`。
+- 快照期间记录每次 HTTP 请求、SQL（只有 `?` 占位符，不含参数值）、对象存储操作、图片处理，并每 5 秒采集 CPU / 内存 / GC / 连接池 / 图片处理队列。停止后生成 `events.csv`、`samples.csv`、`session.csv`（UTF-8 BOM）写入对象存储 `performance-snapshots/<开始时间>-<id>/`，**永久保留**；随即删除库内明细。`downloadable=true` 时才能下载。
+- 应用重启：没到计划结束时间的快照继续记（CSV 里有一条 `MARK,RESUME`），已过点的直接收尾导出。
+- 开始、停止、重新导出、下载都写审计日志（资源类型 `PERFORMANCE`）。
+
 ## 17. 好图精选
 
 部长发布征集要求，被指派的校区负责人从图库选图并补充拍摄思路与地点；到达截止时间（或部长手动截止）后，服务端生成一份按校区分章的 Word 文档。

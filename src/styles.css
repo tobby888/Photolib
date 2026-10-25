@@ -3447,3 +3447,49 @@ body {
   .condition-leaf > .ant-select, .condition-leaf > .ant-picker { width: 100% !important; min-width: 0 !important; }
   .condition-group-head > .ant-select { width: 100% !important; }
 }
+/* 管理员面板「性能分析」。 */
+.perf-tab { width: 100%; }
+.perf-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.perf-stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; margin-top: 8px; }
+.perf-stat {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(176, 224, 230, .86);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .94);
+}
+.perf-stat-label { display: flex; align-items: center; gap: 4px; color: var(--sky-muted); font-size: 12px; }
+.perf-stat strong {
+  display: block;
+  margin-top: 2px;
+  color: var(--sky-ink);
+  font-size: 20px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.perf-stat-warn strong { color: var(--dashboard-warning, #d48806); }
+.perf-image-row, .perf-trend-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+/* 图表按容器宽度画 SVG；格子不设 min-width: 0 的话，SVG 自己的宽度会反过来撑住格子，缩不回去。 */
+.perf-image-row > *, .perf-trend-row > * { min-width: 0; }
+.perf-table-filters { margin-bottom: 12px; }
+.perf-feature-name { display: flex; flex-direction: column; min-width: 0; }
+.perf-feature-key { font-size: 12px; }
+.perf-footnote { display: block; font-size: 12px; }
+.perf-snapshot-intro { margin-bottom: 0; }
+.perf-recording .ant-card-head { background: rgba(230, 244, 255, .6); }
+.perf-recording-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f5222d;
+  animation: perf-pulse 1.4s ease-in-out infinite;
+}
+@keyframes perf-pulse { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .perf-recording-dot { animation: none; } }
+@media (max-width: 720px) {
+  .perf-image-row, .perf-trend-row { grid-template-columns: 1fr; }
+  .perf-stat strong { font-size: 18px; }
+}

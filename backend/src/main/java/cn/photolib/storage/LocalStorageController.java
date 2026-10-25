@@ -4,6 +4,7 @@ import cn.photolib.audit.AuditSkip;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.common.util.LimitedInputStream;
+import cn.photolib.performance.TimedObjectStorageService;
 import cn.photolib.uploadlimit.UploadLimit;
 import cn.photolib.uploadlimit.UploadLimitService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -91,7 +92,7 @@ public class LocalStorageController {
     }
 
     private LocalObjectStorageService local() {
-        if (storage instanceof LocalObjectStorageService local) return local;
+        if (TimedObjectStorageService.unwrap(storage) instanceof LocalObjectStorageService local) return local;
         throw new IllegalStateException("本地对象存储未启用");
     }
 }

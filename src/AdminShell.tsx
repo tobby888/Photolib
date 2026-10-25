@@ -32,6 +32,7 @@ const MfaSettingsPanel = lazy(() => import('./MfaSettingsPanel'))
 const AuditLogsPanel = lazy(() => import('./AuditLogsPanel'))
 const DatabaseBackupPanel = lazy(() => import('./DatabaseBackupPanel'))
 const UploadLimitsPanel = lazy(() => import('./UploadLimitsPanel'))
+const PerformancePage = lazy(() => import('./pages/admin/PerformancePage'))
 const StepUpHost = lazy(() => import('./StepUpHost'))
 
 const { Header, Sider, Content } = Layout
@@ -189,6 +190,7 @@ export default function AdminShell() {
             <Route path="audit-logs" element={<SectionPage section={section('audit-logs')}><AuditLogsPanel /></SectionPage>} />
             <Route path="backups" element={<SectionPage section={section('backups')}><DatabaseBackupPanel /></SectionPage>} />
             <Route path="upload-limits" element={<SectionPage section={section('upload-limits')}><UploadLimitsPanel /></SectionPage>} />
+            <Route path="performance" element={<SectionPage section={section('performance')}><PerformancePage /></SectionPage>} />
             <Route path="*" element={<NotFound />} />
           </Routes></Suspense></RouteErrorBoundary>
         </div></StepUpGate>

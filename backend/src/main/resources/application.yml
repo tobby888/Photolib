@@ -53,6 +53,15 @@ photolib:
     # 请求体上限对应，解压后的上限用于挡住压缩炸弹。
     max-upload-bytes: ${DATABASE_BACKUP_MAX_UPLOAD_BYTES:512MB}
     max-decompressed-bytes: ${DATABASE_BACKUP_MAX_DECOMPRESSED_BYTES:2GB}
+  performance:
+    # 管理员面板「性能分析」。每小时耗时直方图在库里保留多久（分位数只看最近 7 天）。
+    histogram-retention: ${PERFORMANCE_HISTOGRAM_RETENTION:35d}
+    # 性能快照最长记录时长，硬上限 72 小时，配置得再大也按 72 小时算。
+    snapshot-max-duration: ${PERFORMANCE_SNAPSHOT_MAX_DURATION:72h}
+    # 快照期间采集 CPU / 内存 / 连接池的间隔。
+    snapshot-sample-interval: ${PERFORMANCE_SNAPSHOT_SAMPLE_INTERVAL:5s}
+    # 一次快照最多记多少条事件，超过即自动停止并导出，防止把数据库磁盘写满。
+    snapshot-max-events: ${PERFORMANCE_SNAPSHOT_MAX_EVENTS:20000000}
   message-image-cleanup:
     # 每天凌晨收走上传超过宽限期、却没被任何管理消息或反馈引用的消息图片（行 + 对象）。
     # 宽限期留给还在编辑框里没发出去的图。
