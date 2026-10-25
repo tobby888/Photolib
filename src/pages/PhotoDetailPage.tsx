@@ -2,8 +2,8 @@ import {
   Alert, App, Button, Card, Col, Descriptions, Image, Input, Modal, Row, Skeleton, Space, Tag, Typography,
 } from 'antd'
 import {
-  ArrowLeftOutlined, DeleteOutlined, DownloadOutlined, FolderAddOutlined, LeftOutlined, RightOutlined,
-  StarFilled, StarOutlined,
+  ArrowLeftOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, FolderAddOutlined, LeftOutlined,
+  RightOutlined, StarFilled, StarOutlined,
 } from '@ant-design/icons'
 import { useCallback, useEffect, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
@@ -13,7 +13,8 @@ import { DataState, formatBytes, PageTitle, PhotoStatusTag } from '../components
 import { ContentFitTable } from '../ContentFitTable'
 import { useAuth } from '../auth'
 import { useLoad, useRefreshOnResume } from '../hooks'
-import { hasPermission } from '../permissions'
+import { hasPermission, isAdministrator } from '../permissions'
+import PhotoMetadataModal from '../PhotoMetadataModal'
 import PhotoHistogram from '../PhotoHistogram'
 import { useLocalImageUrl } from '../useLocalImageUrl'
 import { refreshPhotoPreviewUrl } from '../previewRefresh'
@@ -60,6 +61,9 @@ export default function PhotoDetailPage({ favoritesOnly = false }: { favoritesOn
   const canAddToProject = hasPermission(user, 'PROJECT_ADOPT')
   const canDelete = hasPermission(user, 'PHOTO_DELETE')
   const canDownload = hasPermission(user, 'PHOTO_DOWNLOAD')
+  // 管理员可以直接改拍摄者等信息（不经通讯录）；上传中 / 处理中的图片后端不让改。
+  const canEditMetadata = isAdministrator(user)
+  const [editingMetadata, setEditingMetadata] = useState(false)
   const [favoriteSaving, setFavoriteSaving] = useState(false)
   const [projectPickerOpen, setProjectPickerOpen] = useState(false)
   const [projectSaving, setProjectSaving] = useState(false)
@@ -292,6 +296,10 @@ export default function PhotoDetailPage({ favoritesOnly = false }: { favoritesOn
           disabled={photo.status !== 'AVAILABLE'}
           title={photo.status === 'AVAILABLE' ? undefined : '仅可用图片可以添加到项目'}
           onClick={openProjectPicker}>添加到项目</Button>}
+        {photo && canEditMetadata && <Button icon={<EditOutlined />}
+          disabled={photo.status !== 'AVAILABLE' && photo.status !== 'ARCHIVED'}
+          title={photo.status === 'AVAILABLE' || photo.status === 'ARCHIVED' ? undefined : '图片处理完成后才能修改信息'}
+          onClick={() => setEditingMetadata(true)}>编辑信息</Button>}
         {photo && canDelete && <Button danger icon={<DeleteOutlined />} onClick={remove}>删除图片</Button>}
         {photo && canDownload && <Button type="primary" icon={<DownloadOutlined />}
           onClick={() => void download()}>下载原图</Button>}
@@ -358,6 +366,13 @@ export default function PhotoDetailPage({ favoritesOnly = false }: { favoritesOn
         </Col>
       </Row>}
     </DataState>
+
+    {photo && canEditMetadata && <PhotoMetadataModal key={`${photo.id}:${photo.version}`} photo={photo}
+      open={editingMetadata} onClose={() => setEditingMetadata(false)}
+      onSaved={saved => {
+        setPhoto(saved)
+        setEditingMetadata(false)
+      }} />}
 
     <Modal title="添加图片到选题项目" width={760} open={projectPickerOpen}
       onCancel={() => { if (!projectSaving) closeProjectPicker() }}

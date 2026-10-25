@@ -150,6 +150,42 @@ public class PhotoController {
         return ApiResponse.ok(service.updateCampus(id, request.campusId(), request.version(), user));
     }
 
+    /**
+     * 管理员直接改图片基本信息，拍摄者不经通讯录。审计详情里另记改之前的值和同步了几条被引记录。
+     */
+    @AuditAction("管理员修改图片信息")
+    @PutMapping("/{id}/admin-metadata")
+    @PreAuthorize("hasRole('ADMIN')")
+    ApiResponse<PhotoService.PhotoView> adminUpdate(@PathVariable Long id,
+                                                    @Valid @RequestBody AdminMetadataRequest request,
+                                                    HttpServletRequest servletRequest,
+                                                    @AuthenticationPrincipal AuthenticatedUser user) {
+        PhotoService.AdminEdit result = service.adminUpdate(id, request.command(), user);
+        Map<String, Object> audit = new LinkedHashMap<>();
+        audit.put("previous", result.previous());
+        audit.put("adoptionsUpdated", result.adoptionsUpdated());
+        servletRequest.setAttribute(AuditInterceptor.DETAIL_ATTRIBUTE, audit);
+        return ApiResponse.ok(result.photo());
+    }
+
+    /** 管理员批量改基本信息（拍摄者、校区、标题、说明），只改请求里给了的项。 */
+    @AuditAction("管理员批量修改图片信息")
+    @PostMapping("/batch-metadata")
+    @PreAuthorize("hasRole('ADMIN')")
+    ApiResponse<PhotoService.BatchMetadataResult> adminBatchUpdate(
+            @Valid @RequestBody BatchMetadataRequest request,
+            HttpServletRequest servletRequest,
+            @AuthenticationPrincipal AuthenticatedUser user) {
+        PhotoService.BatchMetadataResult result = service.adminBatchUpdate(request.command(), user);
+        Map<String, Object> audit = new LinkedHashMap<>();
+        audit.put("photoCount", result.photoCount());
+        audit.put("changedCount", result.changedCount());
+        audit.put("adoptionsUpdated", result.adoptionsUpdated());
+        audit.put("previous", result.previous());
+        servletRequest.setAttribute(AuditInterceptor.DETAIL_ATTRIBUTE, audit);
+        return ApiResponse.ok(result);
+    }
+
     @AuditAction("下载原图")
     @PostMapping("/{id}/download-url")
     @PreAuthorize("hasAnyAuthority('PHOTO_DOWNLOAD','PROJECT_DOWNLOAD','REQUEST_PHOTO_MANAGE')")
@@ -219,6 +255,39 @@ public class PhotoController {
         PhotoService.Metadata command() {
             return new PhotoService.Metadata(title, description, photographerContactId,
                     takenAt, tags, version);
+        }
+    }
+
+    record AdminMetadataRequest(@NotBlank @Size(max = 200) String title,
+                                @Size(max = 5000) String description,
+                                @NotBlank @Size(max = 100) String photographerName,
+                                @Size(max = 64) String photographerStudentId,
+                                @NotNull @PastOrPresent LocalDateTime takenAt,
+                                Long campusId,
+                                @Size(max = 30) List<@Size(max = 100) String> tags,
+                                @NotNull @Min(1) Integer version,
+                                // 包装类型：Jackson 3 默认 null 不能落到基本类型上，缺省按「同步」处理。
+                                Boolean syncAdoptions) {
+        PhotoService.AdminMetadata command() {
+            return new PhotoService.AdminMetadata(title, description, photographerName, photographerStudentId,
+                    takenAt, campusId, tags, version, !Boolean.FALSE.equals(syncAdoptions));
+        }
+    }
+
+    record PhotographerChangeRequest(@NotBlank @Size(max = 100) String name,
+                                     @Size(max = 64) String studentId) {}
+
+    record BatchMetadataRequest(@NotEmpty @Size(max = 200) List<@NotNull Long> photoIds,
+                                @Size(max = 200) String title,
+                                @Size(max = 5000) String description,
+                                @Valid PhotographerChangeRequest photographer,
+                                PhotoService.CampusChange campus,
+                                Boolean syncAdoptions) {
+        PhotoService.BatchMetadata command() {
+            return new PhotoService.BatchMetadata(photoIds, title, description,
+                    photographer == null ? null
+                            : new PhotoService.PhotographerChange(photographer.name(), photographer.studentId()),
+                    campus, !Boolean.FALSE.equals(syncAdoptions));
         }
     }
 
