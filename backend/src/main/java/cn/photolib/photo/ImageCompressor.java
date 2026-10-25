@@ -1,5 +1,7 @@
 package cn.photolib.photo;
 
+import cn.photolib.performance.PerformanceMonitor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -19,6 +21,8 @@ public class ImageCompressor {
     static final long MAX_INPUT_BYTES = 100L * 1024 * 1024;
 
     private final NativeImageProcessor nativeProcessor;
+    /** 管理员面板「性能分析」：每次压缩 / 生成缩略图的耗时。单元测试里直接 new 出来时为空。 */
+    private volatile PerformanceMonitor performance;
 
     public ImageCompressor() {
         this(NativeImageProcessor.instance());
@@ -26,6 +30,11 @@ public class ImageCompressor {
 
     ImageCompressor(NativeImageProcessor nativeProcessor) {
         this.nativeProcessor = nativeProcessor;
+    }
+
+    @Autowired(required = false)
+    public void setPerformanceMonitor(PerformanceMonitor performance) {
+        this.performance = performance;
     }
 
     /**
@@ -44,6 +53,18 @@ public class ImageCompressor {
 
     public FileResult compress(Path source, Path destination, String contentType,
                                long targetBytes) throws IOException {
+        long started = System.nanoTime();
+        FileResult result = null;
+        try {
+            result = doCompress(source, destination, contentType, targetBytes);
+            return result;
+        } finally {
+            report(PerformanceMonitor.IMAGE_COMPRESS, started, source, contentType, result);
+        }
+    }
+
+    private FileResult doCompress(Path source, Path destination, String contentType,
+                                  long targetBytes) throws IOException {
         if (targetBytes <= 0) {
             throw new IllegalArgumentException("目标图片大小必须大于 0");
         }
@@ -75,6 +96,42 @@ public class ImageCompressor {
      */
     public FileResult thumbnail(Path source, Path destination, String contentType,
                                 int maxDimension, double compressionRatio) throws IOException {
+        long started = System.nanoTime();
+        FileResult result = null;
+        try {
+            result = doThumbnail(source, destination, contentType, maxDimension, compressionRatio);
+            return result;
+        } finally {
+            report(PerformanceMonitor.IMAGE_THUMBNAIL, started, source, contentType, result);
+        }
+    }
+
+    /**
+     * 记一次图片处理的耗时，附上源文件大小、格式和输出尺寸，方便判断慢是因为图大还是机器慢。
+     * 统计本身出任何问题都不能让图片处理失败。
+     */
+    private void report(String key, long started, Path source, String contentType, FileResult result) {
+        PerformanceMonitor monitor = performance;
+        if (monitor == null) return;
+        try {
+            long elapsed = System.nanoTime() - started;
+            long sourceBytes = -1;
+            try {
+                sourceBytes = Files.size(source);
+            } catch (IOException ignored) {
+                // 源文件已被清理时不影响记录。
+            }
+            String detail = "源 " + contentType + " " + sourceBytes + " B"
+                    + (result == null ? "，处理失败"
+                    : " → " + result.width() + "×" + result.height() + " " + result.size() + " B");
+            monitor.recordImage(key, elapsed, result != null, detail);
+        } catch (RuntimeException ignored) {
+            // 同上：只是统计。
+        }
+    }
+
+    private FileResult doThumbnail(Path source, Path destination, String contentType,
+                                   int maxDimension, double compressionRatio) throws IOException {
         if (compressionRatio <= 0 || compressionRatio > 1) {
             throw new IllegalArgumentException("预览图压缩比率必须大于 0 且不超过 1");
         }

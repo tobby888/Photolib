@@ -31,6 +31,7 @@ export const ADMIN_SECTIONS: readonly AdminSection[] = [
   { key: 'two-factor', label: '两步验证', group: '安全与运维', description: '全站两步验证开关与各组策略。' },
   { key: 'audit-logs', label: '操作日志', group: '安全与运维', description: '查询与导出写操作审计记录。' },
   { key: 'backups', label: '数据备份', group: '安全与运维', description: '数据库备份、导入与回滚。' },
+  { key: 'performance', label: '性能分析', group: '安全与运维', description: '各功能调用耗时、一周 P50～P99、缩略图处理耗时，以及可导出 CSV 的性能快照。' },
   { key: 'upload-limits', label: '上传限额', group: '安全与运维', description: '各类上传的大小与数量上限。' },
 ]
 

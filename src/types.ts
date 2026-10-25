@@ -1152,3 +1152,113 @@ export interface DashboardLayoutView {
   version: number | null
   updatedAt: string | null
 }
+
+// ------------------------------------------------------------------ 性能分析（管理员面板）
+
+/** 一组耗时统计，单位毫秒。 */
+export interface PerformanceStats {
+  count: number
+  errors: number
+  avgMs: number
+  p50Ms: number
+  p90Ms: number
+  p95Ms: number
+  p99Ms: number
+  maxMs: number
+}
+
+export type PerformanceKind = 'REQUEST' | 'IMAGE'
+
+export interface PerformanceFeature {
+  kind: PerformanceKind
+  /** 接口是「方法 + 路由模板」，图片处理是 THUMBNAIL / COMPRESS。 */
+  key: string
+  /** 功能名（接口上的操作名）；没有标操作名的读接口为空。 */
+  label?: string | null
+  module?: string | null
+  stats: PerformanceStats
+  lastAt?: number | null
+}
+
+export interface PerformanceCall {
+  at: number
+  kind: PerformanceKind
+  key: string
+  label?: string | null
+  module?: string | null
+  status: number
+  durationMs: number
+  detail?: string | null
+}
+
+export interface PerformanceLive {
+  generatedAt: number
+  windowSeconds: number
+  truncated: boolean
+  capacity: number
+  callsPerSecond: number
+  requests: PerformanceStats
+  thumbnails: PerformanceStats
+  compressions: PerformanceStats
+  features: PerformanceFeature[]
+  images: PerformanceFeature[]
+  recent: PerformanceCall[]
+}
+
+export interface PerformanceDailyPoint {
+  day: string
+  requests: PerformanceStats
+  thumbnails: PerformanceStats
+  compressions: PerformanceStats
+}
+
+export interface PerformanceWeekly {
+  from: string
+  to: string
+  requests: PerformanceStats
+  thumbnails: PerformanceStats
+  compressions: PerformanceStats
+  features: PerformanceFeature[]
+  images: PerformanceFeature[]
+  daily: PerformanceDailyPoint[]
+}
+
+export type PerformanceSnapshotStatus = 'RECORDING' | 'EXPORTING' | 'COMPLETED' | 'FAILED'
+export type PerformanceStopReason = 'MANUAL' | 'TIMEOUT' | 'LIMIT'
+
+export interface PerformanceSnapshot {
+  id: string
+  status: PerformanceSnapshotStatus
+  note?: string | null
+  startedBy?: EntityId | null
+  startedByName?: string | null
+  startedAt: string
+  plannedEndAt: string
+  endedAt?: string | null
+  stopReason?: PerformanceStopReason | null
+  stoppedBy?: EntityId | null
+  stoppedByName?: string | null
+  sampleIntervalSeconds: number
+  eventCount: number
+  sampleCount: number
+  droppedCount: number
+  queuedEvents: number
+  eventsSize?: number | null
+  samplesSize?: number | null
+  exportedAt?: string | null
+  errorMessage?: string | null
+  downloadable: boolean
+}
+
+export interface PerformanceSnapshotOverview {
+  current?: PerformanceSnapshot | null
+  maxDurationMinutes: number
+  sampleIntervalSeconds: number
+  maxEvents: number
+}
+
+export interface PerformanceDownload {
+  url: string
+  fileName: string
+  expiresAt: string
+}

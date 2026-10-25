@@ -7,7 +7,7 @@ import java.util.Map;
  * 操作日志里的「模块」：取 {@code /api/v1/} 后第一段（匿名接口取 {@code /public/} 后那段），
  * 大写后存进 {@code resource_type}。这个取法从第一版起没变过，旧记录照样能按模块筛。
  */
-final class AuditResources {
+public final class AuditResources {
     static final String UNKNOWN = "UNKNOWN";
 
     /** 模块的中文名。新增模块时在这里补一行，否则界面上显示的是英文代码。 */
@@ -30,6 +30,7 @@ final class AuditResources {
             Map.entry("MFA-SETTINGS", "两步验证设置"),
             Map.entry("NOTIFICATION-LOGS", "通知投递"),
             Map.entry("NOTIFICATIONS", "消息中心"),
+            Map.entry("PERFORMANCE", "性能分析"),
             Map.entry("PERMISSION-GROUPS", "权限组"),
             Map.entry("PHOTOS", "图片库"),
             Map.entry("PROJECTS", "选题项目"),
@@ -52,7 +53,7 @@ final class AuditResources {
     }
 
     /** {@code path} 可以是实际的请求路径，也可以是 {@code /api/v1/projects/{id}} 这样的映射模式。 */
-    static String typeOf(String path) {
+    public static String typeOf(String path) {
         if (path == null) return UNKNOWN;
         String[] segments = path.split("/");
         // 匿名接口多一层（/api/v1/public/<模块>/<id>/…），不跳过的话所有公开写操作都会记成 PUBLIC。
@@ -61,7 +62,7 @@ final class AuditResources {
         return segments[typeIndex].toUpperCase(Locale.ROOT);
     }
 
-    static String label(String type) {
+    public static String label(String type) {
         if (type == null) return null;
         return LABELS.getOrDefault(type, type);
     }

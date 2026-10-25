@@ -1,5 +1,7 @@
 package cn.photolib.dashboard;
 
+import cn.photolib.performance.PerformanceContext;
+import cn.photolib.performance.PerformanceMonitor;
 import jakarta.servlet.AsyncEvent;
 import jakarta.servlet.AsyncListener;
 import jakarta.servlet.FilterChain;
@@ -9,7 +11,7 @@ import jakarta.servlet.WriteListener;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpServletResponseWrapper;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
@@ -33,12 +35,26 @@ import java.util.concurrent.atomic.AtomicLong;
  * <p>响应字节靠包一层计数的输出流 / Writer 数出来，写入原样交给容器，不缓存正文，下载
  * 大文件时不多占内存。异步请求（{@code startAsync}）在异步完成时才记，耗时和字节数都是
  * 全程的。</p>
+ *
+ * <p>同一份耗时也交给 {@link PerformanceMonitor}（管理员面板的「性能分析」），并在请求期间把请求挂到
+ * {@link PerformanceContext} 上，性能快照里的每条 SQL / 存储操作才知道自己属于哪个接口。</p>
  */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 20)
-@RequiredArgsConstructor
 public class RequestMetricsFilter extends OncePerRequestFilter {
     private final RequestMetrics metrics;
+    private final PerformanceMonitor performance;
+
+    @Autowired
+    public RequestMetricsFilter(RequestMetrics metrics, PerformanceMonitor performance) {
+        this.metrics = metrics;
+        this.performance = performance;
+    }
+
+    /** 只测流量计数的单元测试用：不接性能分析。 */
+    RequestMetricsFilter(RequestMetrics metrics) {
+        this(metrics, null);
+    }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
@@ -46,9 +62,11 @@ public class RequestMetricsFilter extends OncePerRequestFilter {
         long started = System.nanoTime();
         CountingResponse counting = new CountingResponse(response);
         AtomicBoolean recorded = new AtomicBoolean();
+        PerformanceContext.enter(request);
         try {
             chain.doFilter(request, counting);
         } finally {
+            PerformanceContext.exit();
             if (request.isAsyncStarted()) {
                 request.getAsyncContext().addListener(new AsyncListener() {
                     @Override public void onComplete(AsyncEvent event) { record(request, counting, started, recorded); }
@@ -64,9 +82,17 @@ public class RequestMetricsFilter extends OncePerRequestFilter {
 
     private void record(HttpServletRequest request, CountingResponse response, long started, AtomicBoolean recorded) {
         if (!recorded.compareAndSet(false, true)) return;
-        long latencyMs = (System.nanoTime() - started) / 1_000_000;
-        metrics.record(endpointOf(request), response.getStatus(), latencyMs,
+        long nanos = System.nanoTime() - started;
+        String endpoint = endpointOf(request);
+        metrics.record(endpoint, response.getStatus(), nanos / 1_000_000,
                 Math.max(0, request.getContentLengthLong()), response.bytesWritten());
+        if (performance != null) {
+            try {
+                performance.recordRequest(request, endpoint, response.getStatus(), nanos);
+            } catch (RuntimeException ignored) {
+                // 性能统计出问题不能影响请求本身。
+            }
+        }
     }
 
     static String endpointOf(HttpServletRequest request) {

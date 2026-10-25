@@ -28,7 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-public class AliyunObjectStorageService implements ObjectStorageService {
+public class AliyunObjectStorageService implements ObjectStorageService, AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(AliyunObjectStorageService.class);
     private static final List<String> DIRECT_UPLOAD_METHODS = List.of("PUT", "GET", "HEAD");
 
@@ -220,8 +220,14 @@ public class AliyunObjectStorageService implements ObjectStorageService {
         client.deleteObject(properties.bucket(), objectKey);
     }
 
+    /**
+     * 关掉 OSS 客户端的连接池和后台线程。Bean 外面套着 {@code TimedObjectStorageService}，
+     * 这个类本身已经不是 Spring 管理的 Bean，{@code @PreDestroy} 不会被调到——由包装层的
+     * {@code close()} 转交过来；直接 new 出来用的地方（集成测试）仍可靠 {@code @PreDestroy} 或手动调用。
+     */
     @PreDestroy
-    void close() {
+    @Override
+    public void close() {
         if (signingClient != client) {
             signingClient.shutdown();
         }

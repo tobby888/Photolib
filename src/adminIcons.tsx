@@ -1,6 +1,6 @@
 import {
   AuditOutlined, BgColorsOutlined, CloudUploadOutlined, DashboardOutlined, DatabaseOutlined, EnvironmentOutlined,
-  FileTextOutlined, IdcardOutlined, LayoutOutlined, SafetyCertificateOutlined, SafetyOutlined, TeamOutlined,
+  FileTextOutlined, IdcardOutlined, LayoutOutlined, LineChartOutlined, SafetyCertificateOutlined, SafetyOutlined, TeamOutlined,
 } from '@ant-design/icons'
 import type { ReactNode } from 'react'
 
@@ -18,5 +18,7 @@ export const ADMIN_SECTION_ICONS: Record<string, ReactNode> = {
   'audit-logs': <FileTextOutlined />,
   // 数据库备份/回滚只对系统管理员开放，刻意没有对应的权限项，因此不出现在权限面板里。
   backups: <DatabaseOutlined />,
+  // 性能分析同样只对系统管理员开放，没有权限项。
+  performance: <LineChartOutlined />,
   'upload-limits': <CloudUploadOutlined />,
 }
