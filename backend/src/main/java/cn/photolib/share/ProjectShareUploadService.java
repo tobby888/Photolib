@@ -157,16 +157,16 @@ public class ProjectShareUploadService {
     /**
      * 访客把字节 PUT 上去之后调这里：确认对象真的在、置 PROCESSING、交给压缩管线。
      *
-     * <p>标题和说明是选填的。标签也是选填的，但只能从选题的预设标签里挑
-     * （{@link #guestTags}）；选题没设预设就一个都不能打，留给选片人和选题负责人。</p>
+     * <p>标题和说明是选填的。标签也是选填的，可以是预设、相册里已有的，也可以自己造
+     * （{@link #guestTags}，保留标签除外）。</p>
      */
     @Transactional
     public UploadedPhoto complete(ProjectShareService.GuestContext context, Long photoId,
                                   CompleteCommand command) {
         ProjectShareLinkEntity link = shareService.requireUploadLink(context.link());
-        ProjectEntity project = requireOpenProject(link);
+        requireOpenProject(link);
         PhotoEntity photo = requireOwnUpload(link, photoId);
-        List<String> tags = guestTags(project, command.tags());
+        List<String> tags = guestTags(command.tags());
 
         ObjectStorageService.ObjectInfo info = storage.stat(photo.getOriginalObjectKey());
         if (info.size() <= 0 || info.size() > uploadLimits.value(UploadLimit.PHOTO_IMAGE_MAX_BYTES)) {
@@ -229,7 +229,7 @@ public class ProjectShareUploadService {
     public TaggedPhoto updateTags(ProjectShareService.GuestContext context, Long photoId,
                                   List<String> requested) {
         ProjectShareLinkEntity link = shareService.requireUploadLink(context.link());
-        ProjectEntity project = requireOpenProject(link);
+        requireOpenProject(link);
         Uploader uploader = requireUploader(context);
         PhotoEntity photo = requireOwnUpload(link, photoId, null);
         if (!uploader.studentId().equals(photo.getPhotographerStudentId())) {
@@ -243,11 +243,11 @@ public class ProjectShareUploadService {
                     photo.getStatus() == PhotoStatus.PROCESSING
                             ? "这张图片还在处理中，处理完再打标签" : "这张图片没有进入图库，不能打标签");
         }
-        List<String> chosen = guestTags(project, requested);
-        List<String> presets = projectService.presetTags(project.getId());
+        List<String> chosen = guestTags(requested);
         List<String> existing = PhotoTags.parse(photo.getTagsJson());
         Set<String> merged = new LinkedHashSet<>();
-        existing.stream().filter(tag -> !presets.contains(tag)).forEach(merged::add);
+        // 保留标签是选片人的结论，上传者改标签时原样留着；其余标签以他提交的为准。
+        existing.stream().filter(PhotoTags::isReserved).forEach(merged::add);
         merged.addAll(chosen);
         if (merged.size() > PhotoTags.MAX_TAGS) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR,
@@ -255,7 +255,7 @@ public class ProjectShareUploadService {
         }
         List<String> next = List.copyOf(merged);
         if (next.equals(existing)) {
-            return new TaggedPhoto(photo.getId(), visibleTags(next, presets));
+            return new TaggedPhoto(photo.getId(), visibleTags(next));
         }
         // 与 PhotoService.batchTags 同一个写法：走 mapper（同一事务里 MyBatis 的一级缓存
         // 才不会读到旧标签），只写 tags_json，版本条件手写——实体参数为 null 时乐观锁拦截器不介入。
@@ -269,37 +269,29 @@ public class ProjectShareUploadService {
         if (updated != 1) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "图片已被其他操作修改，请刷新后重试");
         }
-        return new TaggedPhoto(photo.getId(), visibleTags(next, presets));
+        return new TaggedPhoto(photo.getId(), visibleTags(next));
     }
 
     /**
-     * 访客交上来的标签：规范化之后必须全部是选题的预设标签。
+     * 访客交上来的标签：规范化之后除保留标签外都收，预设只是页面上的候选，上传者可以自己造新标签。
      *
-     * <p>比站内的 {@code ProjectService.requireAllowedPhotoTags} 更严，两处刻意不同：
-     * 没有预设时站内不限，这里一个都不收（站外的人不该往图库里造新标签）；
-     * 保留标签 {@code deprecated} 站内放行，这里不收——「这张图用不上」是选片人的结论，
-     * 不是上传者的。</p>
+     * <p>保留标签 {@code deprecated} 不收——「这张图用不上」是选片人的结论，不是上传者的。
+     * 数量与长度仍由 {@link PhotoTags#normalize} 兜住。</p>
      */
-    private List<String> guestTags(ProjectEntity project, List<String> requested) {
+    private List<String> guestTags(List<String> requested) {
         if (requested == null || requested.isEmpty()) return List.of();
         List<String> tags = PhotoTags.normalize(requested);
-        if (tags.isEmpty()) return List.of();
-        List<String> presets = projectService.presetTags(project.getId());
-        if (presets.isEmpty()) {
-            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "这个选题没有设置预设标签，不能打标签");
-        }
-        List<String> rejected = tags.stream().filter(tag -> !presets.contains(tag)).toList();
-        if (!rejected.isEmpty()) {
+        List<String> reserved = tags.stream().filter(PhotoTags::isReserved).toList();
+        if (!reserved.isEmpty()) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR,
-                    "只能使用这个选题的预设标签（" + String.join("、", presets) + "），不能添加："
-                            + String.join("、", rejected));
+                    "不能使用保留标签：" + String.join("、", reserved));
         }
         return tags;
     }
 
-    /** 回给访客的只有预设范围内的那部分：别的标签他既改不了，也没有理由看到。 */
-    private static List<String> visibleTags(List<String> tags, List<String> presets) {
-        return tags.stream().filter(presets::contains).toList();
+    /** 回给访客的是除保留标签之外的全部：保留标签是选片人的结论，他既改不了，也没有理由看到。 */
+    private static List<String> visibleTags(List<String> tags) {
+        return tags.stream().filter(tag -> !PhotoTags.isReserved(tag)).toList();
     }
 
     // ------------------------------------------------------------------ ZIP 批量
@@ -358,10 +350,10 @@ public class ProjectShareUploadService {
     public GuestBatch finishZip(ProjectShareService.GuestContext context, String batchId,
                                 LocalDateTime takenAt, List<String> requestedTags) {
         ProjectShareLinkEntity link = shareService.requireUploadLink(context.link());
-        ProjectEntity project = requireOpenProject(link);
+        requireOpenProject(link);
         requireOwnBatch(link, batchId);
         Uploader uploader = requireUploader(context);
-        List<String> tags = guestTags(project, requestedTags);
+        List<String> tags = guestTags(requestedTags);
         int waiting = batchService.waitingItems(batchId).size();
         requireCapacity(link, waiting);
 

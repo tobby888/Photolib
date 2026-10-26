@@ -337,21 +337,30 @@ export default function WorklogsPage() {
               keepSelectedRows(keys, [selectedItems, data.items], item => item.id)),
           } : undefined}
           columns={[
-            { title: '日期', dataIndex: 'workDate', render: value => dayjs(value).format('YYYY-MM-DD') },
+            // 每列给定宽度并禁止折行：之前全靠内容撑开，「需求」里的标签和标题、姓名和学号会
+            // 各自乱换行，同一行高低不齐，看起来参差。
+            { title: '日期', dataIndex: 'workDate', width: 112,
+              render: value => <span className="worklog-nowrap">{dayjs(value).format('YYYY-MM-DD')}</span> },
             // 通过上传链接申报的工时没有需求：标出来源和所属选题，审核的人才知道该对着哪批照片看。
-            { title: '需求', dataIndex: 'requestTitle', render: (value, item: Worklog) => item.shareLinkId
-              ? <Space size={4} wrap>
-                <Tag color="purple">上传链接</Tag>
-                <span>{item.projectTitle || '已删除的选题'}{item.shareLinkName ? ` · ${item.shareLinkName}` : ''}</span>
-              </Space>
-              : value || '—' },
-            { title: '姓名', dataIndex: 'memberName', render: value => value || '—' },
-            { title: '学号', dataIndex: 'memberStudentId', render: value => value || '—' },
-            { title: '拍摄', dataIndex: 'shootingMinutes', render: formatMinutes },
-            { title: '修图', dataIndex: 'retouchingMinutes', render: formatMinutes },
-            { title: '说明', dataIndex: 'remark', minWidth: 320,
-              render: value => <TableEllipsisText value={value} maxWidth={288} /> },
-            { title: '状态', dataIndex: 'status', render: value => <StatusTag value={value} /> },
+            { title: '需求 / 来源', dataIndex: 'requestTitle', width: 280, render: (value, item: Worklog) => item.shareLinkId
+              ? <div className="worklog-source">
+                <Tag color="purple" variant="filled">上传链接</Tag>
+                <TableEllipsisText maxWidth={250}
+                  value={`${item.projectTitle || '已删除的选题'}${item.shareLinkName ? ` · ${item.shareLinkName}` : ''}`} />
+              </div>
+              : <TableEllipsisText value={value} maxWidth={250} /> },
+            { title: '成员', dataIndex: 'memberName', width: 130, render: (value, item: Worklog) =>
+              <div className="worklog-member">
+                <span className="worklog-nowrap">{value || '—'}</span>
+                <span className="worklog-student-id">{item.memberStudentId || '—'}</span>
+              </div> },
+            { title: '拍摄', dataIndex: 'shootingMinutes', width: 100,
+              render: value => <span className="worklog-nowrap">{formatMinutes(value)}</span> },
+            { title: '修图', dataIndex: 'retouchingMinutes', width: 100,
+              render: value => <span className="worklog-nowrap">{formatMinutes(value)}</span> },
+            { title: '说明', dataIndex: 'remark', width: 260,
+              render: value => <TableEllipsisText value={value} maxWidth={230} /> },
+            { title: '状态', dataIndex: 'status', width: 96, render: value => <StatusTag value={value} /> },
             { title: '操作', fixed: 'right' as const, minWidth: reviewer ? WORKLOG_REVIEW_ACTION_MIN_WIDTH : WORKLOG_OWNER_ACTION_MIN_WIDTH,
               className: 'table-action-cell', render: (_, item: Worklog) => <Space>
               {/* 链接申报的工时记在开链接的成员名下，但他不是干活的人：被退回的由申报人在上传页重新申报。 */}

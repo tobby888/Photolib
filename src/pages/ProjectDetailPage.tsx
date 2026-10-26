@@ -1030,7 +1030,7 @@ export default function ProjectDetailPage() {
             <MarkdownEditor placeholder="使用 Markdown 说明选题方向、内容范围和交付目标；可上传说明图片" />
           </Form.Item>
           <Form.Item label="预设标签" name="tags" rules={tagRules}
-            extra="需求上传图片和在选题里给图片加标签时只能从这些标签中选择；清空则允许自定义。修改不会改动图片上已有的标签。">
+            extra="需求上传图片时只能从这些标签中选择（清空则允许自定义）；在选题里给图片加标签和上传链接的上传者打标签时，预设只是候选，也可以自己输入。修改不会改动图片上已有的标签。">
             <TagSelect placeholder="输入后回车添加预设标签" />
           </Form.Item>
         </Form>
@@ -1074,7 +1074,7 @@ export default function ProjectDetailPage() {
       </Modal>
 
       <BatchTagModal mode={tagMode} photos={selectedAlbumPhotos} projectId={projectId}
-        presets={presetTags} onClose={() => setTagMode(null)} onDone={applyTaggedPhotos} />
+        presets={tagFilterOptions} onClose={() => setTagMode(null)} onDone={applyTaggedPhotos} />
       {shareOpen && <Suspense fallback={null}>
         <ProjectShareLinksModal projectId={projectId} open onClose={() => setShareOpen(false)}
           uploadLinksAvailable={project.status === 'ACTIVE'} />

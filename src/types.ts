@@ -405,8 +405,10 @@ export interface ShareGuestAccess {
   uploaderName?: string | null
   /** 上传链接：当前拍摄者的学号，回显用——切换拍摄者时要看得清现在记在谁名下。 */
   uploaderStudentId?: string | null
-  /** 上传链接：选题的预设标签，上传者给自己的图片打标签时只能从这里挑。浏览链接为空。 */
+  /** 上传链接：选题的预设标签，上传者打标签时的首选候选。浏览链接为空。 */
   presetTags?: string[]
+  /** 上传链接：相册里已经用过的其他标签（不含预设和 deprecated），同样只是候选，上传者也可以自己造。 */
+  existingTags?: string[]
   expiresAt?: string | null
 }
 

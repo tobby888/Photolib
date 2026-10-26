@@ -100,7 +100,7 @@ test('需求上传入口按选题预设切换成只选模式', async () => {
 test('选题详情页的批量改标签带上选题 id，筛选只作用于已取回的项目图片', async () => {
   const detail = await read('pages/ProjectDetailPage.tsx')
   assert.match(detail, /<BatchTagModal mode=\{tagMode\} photos=\{selectedAlbumPhotos\} projectId=\{projectId\}/)
-  assert.match(detail, /presets=\{presetTags\}/)
+  assert.match(detail, /presets=\{tagFilterOptions\}/)
   assert.match(detail, /filterPhotos\(data\.photos, photoFilters, isAdoptedHere\)/)
   // 被引是本选题里的状态，按本选题的采用记录判断，不能用图片上跨选题的 adoptionCount。
   assert.match(detail, /const isAdoptedHere = useCallback\(\(photo: Photo\) => adoptedPhotoIds\.has\(/)

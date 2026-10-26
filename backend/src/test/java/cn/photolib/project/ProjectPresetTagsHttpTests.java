@@ -123,11 +123,12 @@ class ProjectPresetTagsHttpTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].tags.length()").value(1))
                 .andExpect(jsonPath("$.data[0].tags[0]").value("合影"));
+        // 选题相册里加标签不受预设限制：自定义标签照常写入（也就进了下面的审计详情）。
         mvc.perform(as("admin", post("/api/v1/photos/batch-tags").contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"photoIds":[%d],"addTags":["自定义"],"projectId":%d}
                                 """.formatted(PHOTO_ID, projectId))))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isOk());
 
         String detail = jdbc.sql("""
                 SELECT detail_json FROM audit_log

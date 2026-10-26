@@ -302,6 +302,7 @@ public class ProjectShareService {
                 session == null ? null : session.getUploaderName(),
                 session == null ? null : session.getUploaderStudentId(),
                 upload ? projectService.presetTags(project.getId()) : List.of(),
+                upload ? existingTags(project.getId()) : List.of(),
                 link.getExpiresAt());
     }
 
@@ -418,6 +419,24 @@ public class ProjectShareService {
                 .forEach(entry -> tags.add(entry.getKey()));
         return new FilterOptions(List.copyOf(tags),
                 photographers.stream().sorted(chinese).toList());
+    }
+
+    /**
+     * 上传页给上传者的「相册里已有的标签」候选：只有标签名，按出现次数、再按中文排序，
+     * 不含预设（预设单独给）和保留标签。上传者本来就能自己造标签，看到名字不多给任何权限。
+     */
+    private List<String> existingTags(Long projectId) {
+        Collator chinese = Collator.getInstance(Locale.CHINA);
+        List<String> presets = projectService.presetTags(projectId);
+        Map<String, Integer> counts = new HashMap<>();
+        for (SharedPhotoFacets facets : sharedPhotoFacets(projectId)) {
+            for (String tag : facets.tags()) counts.merge(tag, 1, Integer::sum);
+        }
+        return counts.entrySet().stream()
+                .filter(entry -> !presets.contains(entry.getKey()) && !PhotoTags.isReserved(entry.getKey()))
+                .sorted(Map.Entry.<String, Integer>comparingByValue().reversed()
+                        .thenComparing(Map.Entry::getKey, chinese))
+                .map(Map.Entry::getKey).toList();
     }
 
     private Set<Long> photoIdsWithAllTags(Long projectId, List<String> tags) {
@@ -715,6 +734,7 @@ public class ProjectShareService {
                               ShareLinkPurpose purpose, boolean allowDownload, boolean allowAdoption,
                               boolean allowUpload, boolean allowWorklog, String uploaderName,
                               String uploaderStudentId, List<String> presetTags,
+                              List<String> existingTags,
                               LocalDateTime expiresAt) {}
 
     /** 一次访客请求解析出来的上下文：当前这一刻的链接行，加上发起请求的那个会话。 */

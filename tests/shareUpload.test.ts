@@ -4,7 +4,7 @@ import test from 'node:test'
 import {
   MAX_QUEUE_SIZE, MAX_REMEMBERED_UPLOADERS, addToQueue, canRetag, rememberUploader,
   createUploadPump, describeBatchOutcome, isTerminalBatchStatus, markFailedForRetry,
-  rejectArchiveReason, rejectReason, summarize,
+  progressOf, rejectArchiveReason, rejectReason, summarize,
 } from '../src/shareUpload.ts'
 import type { ShareUploadItem } from '../src/shareUpload.ts'
 import { DEFAULT_UPLOAD_LIMITS } from '../src/uploadLimits.ts'
@@ -402,4 +402,18 @@ test('切换拍摄者和改标签都接到了后端的访客接口上', async ()
   assert.match(controller, /@PutMapping\("\/uploads\/\{photoId\}\/tags"\)/)
   // 正在传的时候不让切：排着的那几张会在切换之后才签票据，一批图就分到两个人名下。
   assert.match(page, /disabled=\{uploadBusy \|\| !access\}/)
+})
+
+test('整批进度：上传算一半、后台压缩算一半，压缩中的图不会让整体停在 100%', () => {
+  const at = (key: string, stage: ShareUploadItem['stage'], percent = 0): ShareUploadItem =>
+    ({ ...item(key, stage), percent })
+  assert.equal(progressOf([]).percent, 0)
+  const progress = progressOf([
+    at('a', 'done', 100), at('b', 'processing', 100), at('c', 'uploading', 40), at('d', 'waiting'),
+  ])
+  assert.deepEqual(progress, {
+    total: 4, settled: 1, uploading: 1, processing: 1, waiting: 1, percent: Math.floor((100 + 50 + 20) / 4),
+  })
+  // 失败的也算落定，否则一张坏图会让进度条永远走不到头。
+  assert.equal(progressOf([at('a', 'failed'), at('b', 'done', 100)]).percent, 100)
 })
