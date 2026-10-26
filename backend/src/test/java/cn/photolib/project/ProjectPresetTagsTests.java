@@ -197,10 +197,10 @@ class ProjectPresetTagsTests {
         assertThat(photoService.get(first, admin).tags()).containsExactly("合影");
         assertThat(photoService.get(first, admin).version()).isEqualTo(2);
 
-        assertThatThrownBy(() -> photoService.batchTags(new PhotoService.BatchTags(List.of(second),
-                List.of("自定义"), List.of(), presetProject.getId()), admin))
-                .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("只允许使用预设标签");
+        // 在选题相册里加标签不受预设限制：预设只是候选。
+        var custom = photoService.batchTags(new PhotoService.BatchTags(List.of(second),
+                List.of("自定义"), List.of(), presetProject.getId()), admin);
+        assertThat(custom.getFirst().tags()).containsExactly("合影", "自定义");
     }
 
     @Test

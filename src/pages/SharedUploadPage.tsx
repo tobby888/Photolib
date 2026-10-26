@@ -20,7 +20,7 @@ import type { ShareUploaderIdentity } from '../projectShare'
 import { sha256Hex } from '../recruitmentUpload'
 import {
   MAX_QUEUE_SIZE, addToQueue, canRetag, createUploadPump, describeBatchOutcome,
-  isTerminalBatchStatus, markFailedForRetry, readRememberedUploaders, rejectArchiveReason,
+  isTerminalBatchStatus, markFailedForRetry, progressOf, readRememberedUploaders, rejectArchiveReason,
   rememberUploader, storeRememberedUploaders, summarize,
 } from '../shareUpload'
 import type { ShareUploadItem } from '../shareUpload'
@@ -69,8 +69,9 @@ const describeUploader = (identity: ShareUploaderIdentity) =>
  * 通讯录摆出来让站外的人挑更是直接泄露姓名和学号。替两个人交图时可以中途「切换拍摄者」，
  * 换的是会话上的整份快照；正在上传时不让切，免得一批图一半记在一个人名下。</p>
  *
- * <p>选题设了预设标签时，上传者可以给自己的图打标签，只能从预设里挑：上传前选好整批的，
- * 传完之后还能在列表里逐张改（只限记在当前拍摄者名下、已经处理完的）。</p>
+ * <p>上传者可以给自己的图打标签：候选是选题的预设标签加相册里已有的标签，也可以自己输入新标签
+ * （保留标签 deprecated 除外）。上传前选好整批的（ZIP 整包共用一个），传完之后还能在列表里
+ * 逐张改（只限记在当前拍摄者名下、已经处理完的）。</p>
  *
  * <p>页面的最后一步是申报工时：传完图的人用同一份身份报这次拍了多久、修了多久，
  * 申报直接落成「待确认」进入部长和管理员的工时审核面板。姓名学号不再填一遍——
@@ -106,7 +107,7 @@ export default function SharedUploadPage() {
   const [worklogs, setWorklogs] = useState<ShareGuestWorklog[]>([])
   const [declaring, setDeclaring] = useState(false)
   const worklogDate = Form.useWatch('workDate', worklogForm)
-  /** 「这批照片的标签」：入队时抄到每一张上，ZIP 整包共用。只能是预设标签。 */
+  /** 「这批照片的标签」：入队时抄到每一张上，ZIP 整包共用。 */
   const [batchTags, setBatchTags] = useState<string[]>([])
   const [switchForm] = Form.useForm<ShareUploaderIdentity>()
   const [switchOpen, setSwitchOpen] = useState(false)
@@ -548,7 +549,12 @@ export default function SharedUploadPage() {
   // 能不能申报由服务端按「这条链接 + 这个学号」现查，换设备、隔天再来的人照样能报。
   const handedInHere = summary.done > 0 || (archiveBatch?.successCount ?? 0) > 0
   const sameDayCount = worklogDate ? declaredCountOn(worklogs, worklogDate.format('YYYY-MM-DD')) : 0
-  const presetTags = access?.presetTags ?? []
+  // 候选：预设在前，其次是相册里已有的，再其次是这一页上刚造出来的（还没出现在相册里）。
+  const tagCandidates = [...new Set([
+    ...(access?.presetTags ?? []), ...(access?.existingTags ?? []),
+    ...batchTags, ...items.flatMap(item => item.tags),
+  ])]
+  const progress = progressOf(items)
   // 正在传的时候不让切：队列里排着的那几张会在切换之后才签票据，一批图就分到了两个人名下。
   const uploadBusy = queueRunning || running
   const currentUploader = access?.uploaderName && access.uploaderStudentId
@@ -560,7 +566,7 @@ export default function SharedUploadPage() {
     const editable = canRetag(item, currentStudentId) && !!access?.allowUpload
     const someoneElses = !!item.photographerStudentId && item.photographerStudentId !== currentStudentId
     return <Space direction="vertical" size={2} style={{ width: '100%' }}>
-      <TagSelect presets={presetTags} restricted size="small" value={item.tags}
+      <TagSelect presets={tagCandidates} size="small" value={item.tags}
         onChange={value => retag(item, value ?? [])} disabled={!editable}
         placeholder="给这张打标签（可不选）" style={{ width: '100%', maxWidth: 420 }} />
       {someoneElses && <Typography.Text type="secondary">
@@ -609,20 +615,20 @@ export default function SharedUploadPage() {
             </Tooltip>
           </Space>
 
-          {/* 只有选题设了预设标签才给：上传者只能打预设标签，没有预设就没有可选的。 */}
-          {!!presetTags.length && <Space direction="vertical" size={4} style={{ width: '100%' }}>
+          {/* 候选是预设加相册里已有的标签，也可以直接输入新标签，回车添加。 */}
+          <Space direction="vertical" size={4} style={{ width: '100%' }}>
             <Typography.Text>这批照片的标签（可不选）</Typography.Text>
-            <TagSelect presets={presetTags} restricted value={batchTags}
+            <TagSelect presets={tagCandidates} value={batchTags}
               onChange={value => setBatchTags(value ?? [])}
               disabled={!access?.allowUpload || running}
-              placeholder="从选题预设标签中选，之后放进来的照片都会带上"
+              placeholder="选择预设或已有标签，也可以输入新标签后回车；之后放进来的照片都会带上"
               style={{ width: '100%' }} />
             <Typography.Text type="secondary">
               {mode === 'files'
                 ? '改了之后只影响接下来放进来的照片；传完的可以在下面的列表里逐张改。'
                 : '整个压缩包共用这一组标签。'}
             </Typography.Text>
-          </Space>}
+          </Space>
 
           {/* 几十上百张时打包传一次比逐张省事得多，所以两种方式都给，默认逐张。 */}
           <Segmented value={mode} disabled={running || queueRunning}
@@ -659,6 +665,19 @@ export default function SharedUploadPage() {
               </p>
             </Upload.Dragger>
 
+            {/* 整批的进度：逐张的条只管自己，一次拖几十张时这一条才回答「还要多久」。 */}
+            {!!progress.total && (progress.settled < progress.total || queueRunning) && (
+              <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                <Progress percent={progress.percent} status="active" />
+                <Typography.Text type="secondary">
+                  图片处理进度：已完成 {progress.settled} / {progress.total} 张
+                  {!!progress.uploading && `，上传中 ${progress.uploading} 张`}
+                  {!!progress.processing && `，后台压缩中 ${progress.processing} 张`}
+                  {!!progress.waiting && `，排队 ${progress.waiting} 张`}
+                </Typography.Text>
+              </Space>
+            )}
+
             {items.length ? <List size="small" dataSource={items} rowKey="key"
               renderItem={item => <List.Item>
                 <List.Item.Meta
@@ -675,10 +694,11 @@ export default function SharedUploadPage() {
                   </Space>}
                   description={item.stage === 'failed'
                     ? <Typography.Text type="danger">{item.error}</Typography.Text>
-                    : item.stage === 'done' && presetTags.length
+                    : item.stage === 'done'
                       ? renderItemTags(item)
                       : <Progress percent={item.percent} size="small"
-                          status={item.stage === 'processing' ? 'active' : undefined} />} />
+                          status={item.stage === 'processing' ? 'active' : undefined}
+                          format={item.stage === 'processing' ? () => '处理中' : undefined} />} />
               </List.Item>} />
               : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有选择照片" />}
 
@@ -706,7 +726,10 @@ export default function SharedUploadPage() {
 
             {archivePhase && <Space direction="vertical" style={{ width: '100%' }}>
               <Progress status="active"
-                percent={archivePhase === 'uploading' ? archivePercent : 100} />
+                percent={archivePhase === 'uploading' ? archivePercent
+                  : archivePhase === 'processing' && archiveBatch?.totalCount
+                    ? Math.floor((archiveBatch.successCount + archiveBatch.failureCount) * 100 / archiveBatch.totalCount)
+                    : 100} />
               <Typography.Text type="secondary">
                 {ARCHIVE_PHASE_TEXT[archivePhase]}
                 {archivePhase === 'uploading' && `… ${archivePercent}%`}

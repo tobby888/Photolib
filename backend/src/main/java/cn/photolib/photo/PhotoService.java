@@ -445,8 +445,9 @@ public class PhotoService {
     /**
      * 批量给图片添加/删除标签，全部成功或全部回滚。
      *
-     * <p>新增标签要同时满足两道预设限制：{@code projectId}（在选题详情页里操作时传入）的预设，
-     * 以及每张图片来源选题（{@code photo.project_id}，即通过需求或选题上传进来的那个选题）的预设。
+     * <p>在选题相册里操作（传了 {@code projectId}）时标签不受预设限制：预设只是候选，负责人可以随手
+     * 补自定义标签。不带 {@code projectId} 的图库入口，新增标签仍要满足每张图片来源选题
+     * （{@code photo.project_id}，即通过需求或选题上传进来的那个选题）的预设。
      * 删除标签不受预设限制。权限与单张编辑 {@link #update} 相同，逐张校验。</p>
      */
     @Transactional
@@ -467,7 +468,6 @@ public class PhotoService {
                 throw new BusinessException(ErrorCode.FORBIDDEN, "无权执行该选题操作");
             }
             projectService.getVisible(contextProjectId, user);
-            projectService.requireAllowedPhotoTags(contextProjectId, add);
         }
         List<PhotoEntity> photos = ids.stream().map(this::require).toList();
         for (PhotoEntity photo : photos) {
@@ -475,7 +475,7 @@ public class PhotoService {
             if (contextProjectId != null && !inProject(photo.getId(), contextProjectId)) {
                 throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "所选图片不在该选题中，请刷新后重试");
             }
-            if (!Objects.equals(photo.getProjectId(), contextProjectId)) {
+            if (contextProjectId == null) {
                 projectService.requireAllowedPhotoTags(photo.getProjectId(), newlyAdded(photo, add));
             }
         }

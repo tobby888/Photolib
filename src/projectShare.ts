@@ -135,7 +135,7 @@ export const shareUploadApi = {
       method: 'POST', url: `/public/shares/${token}/upload-tickets`, data: file, ...guest(session),
     }),
 
-  // tags 只能是选题的预设标签（access.presetTags），选题没设预设时只能不带。
+  // tags 可以是预设（access.presetTags）、相册里已有的（access.existingTags）或自己造的；保留标签 deprecated 除外。
   complete: (token: string, session: string, photoId: EntityId,
              data: { title?: string | null; description?: string | null; tags?: string[] }) =>
     api<ShareUploadedPhoto>({

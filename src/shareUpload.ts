@@ -126,6 +126,37 @@ export function summarize(items: ShareUploadItem[]): ShareUploadSummary {
   }
 }
 
+export interface ShareUploadProgress {
+  total: number
+  /** 已经落定（传完处理完，或失败）的张数。 */
+  settled: number
+  uploading: number
+  /** 字节已经上传完、正在后台压缩的张数。 */
+  processing: number
+  waiting: number
+  /** 0–100，上传算一半、后台处理算另一半，所以一张图正在压缩时整体不会停在 100%。 */
+  percent: number
+}
+
+/**
+ * 整个队列的图片处理进度。逐张的进度条只回答「这一张到哪了」，而一次拖几十张时
+ * 访客真正想知道的是「整批还要多久」：把每张图按阶段折算成 0–100 再取平均。
+ */
+export function progressOf(items: readonly ShareUploadItem[]): ShareUploadProgress {
+  let sum = 0
+  const progress = { total: items.length, settled: 0, uploading: 0, processing: 0, waiting: 0, percent: 0 }
+  for (const item of items) {
+    switch (item.stage) {
+      case 'done': case 'failed': sum += 100; progress.settled += 1; break
+      case 'processing': sum += 50; progress.processing += 1; break
+      case 'uploading': sum += Math.min(Math.max(item.percent, 0), 100) / 2; progress.uploading += 1; break
+      default: progress.waiting += 1
+    }
+  }
+  progress.percent = items.length ? Math.floor(sum / items.length) : 0
+  return progress
+}
+
 /**
  * 把失败的那几张放回「等待上传」，返回新的列表和需要重新入队的条目。
  * 已完成和正在跑的不动——重试只该重传没传上去的，不该把传成功的再传一次。

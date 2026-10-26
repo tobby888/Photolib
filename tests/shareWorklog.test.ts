@@ -108,7 +108,7 @@ test('申报记录只在确认是上传链接之后才去取', async () => {
 test('审核面板把链接申报的工时标出来，并且不给开链接的人「提交」按钮', async () => {
   const page = await read('pages/WorklogsPage.tsx')
 
-  assert.match(page, /item\.shareLinkId\s*\n\s*\? <Space size=\{4\} wrap>\s*\n\s*<Tag color="purple">上传链接<\/Tag>/)
+  assert.match(page, /item\.shareLinkId\s*\n\s*\? <div className="worklog-source">\s*\n\s*<Tag color="purple" variant="filled">上传链接<\/Tag>/)
   assert.match(page, /item\.projectTitle \|\| '已删除的选题'/)
   // 记在名下的账号是开链接的成员，他不是干活的人；后端同样拒绝（requireInAppWorklog）。
   assert.match(page, /canSubmit && !item\.shareLinkId && item\.userId === user\?\.id/)

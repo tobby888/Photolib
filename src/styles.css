@@ -3493,3 +3493,10 @@ body {
   .perf-image-row, .perf-trend-row { grid-template-columns: 1fr; }
   .perf-stat strong { font-size: 18px; }
 }
+
+/* 工时记录表：单元格内容不折行，成员的姓名和学号上下两行。 */
+.worklog-nowrap { white-space: nowrap; }
+.worklog-source { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.worklog-source .ant-tag { margin-inline-end: 0; }
+.worklog-member { display: flex; flex-direction: column; gap: 2px; }
+.worklog-student-id { color: #8a8f8c; font-size: 12px; white-space: nowrap; }

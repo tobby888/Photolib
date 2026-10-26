@@ -324,7 +324,7 @@ class ProjectShareHttpTests {
                 .andExpect(status().isBadRequest());
         mvc.perform(anonymous(put(base + "/uploads/" + (PHOTO_ID + 2) + "/tags"))
                         .header(ProjectSharePublicController.SESSION_HEADER, session)
-                        .contentType(MediaType.APPLICATION_JSON).content("{\"tags\":[\"自造\"]}"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"tags\":[\"deprecated\"]}"))
                 .andExpect(status().isBadRequest());
         mvc.perform(anonymous(put(base + "/uploads/" + (PHOTO_ID + 2) + "/tags"))
                         .header(ProjectSharePublicController.SESSION_HEADER, session)

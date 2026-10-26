@@ -213,6 +213,19 @@ class ProjectShareUploaderTests {
     // ------------------------------------------------------------------ 标签
 
     @Test
+    void theUploadPageGetsTheTagsAlreadyUsedInTheAlbumAsCandidates() {
+        ProjectShareService.GuestContext context = guest(uploadLink(event.getId()));
+        Long photoId = handIn(context, "9", List.of("舞台", "自造标签"));
+        markAvailable(photoId);
+        jdbc.sql("UPDATE photo SET tags_json = :tags WHERE id = :id")
+                .param("tags", PhotoTags.toJson(List.of("舞台", "自造标签", PhotoTags.DEPRECATED)))
+                .param("id", photoId).update();
+
+        // 预设单独给，保留标签不外露。
+        assertThat(shareService.access(context).existingTags()).containsExactly("自造标签");
+    }
+
+    @Test
     void theUploadPageGetsTheProjectPresetTags() {
         ProjectShareService.GuestContext context = guest(uploadLink(event.getId()));
 
@@ -230,12 +243,11 @@ class ProjectShareUploaderTests {
     }
 
     @Test
-    void onlyPresetTagsAreAccepted() {
+    void uploadersMayCoinTheirOwnTagsBesidesThePresets() {
         ProjectShareService.GuestContext context = guest(uploadLink(event.getId()));
 
-        assertThatThrownBy(() -> handIn(context, "f", List.of("舞台", "自造标签")))
-                .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("自造标签");
+        Long photoId = handIn(context, "f", List.of("舞台", "自造标签"));
+        assertThat(tagsOf(photoId)).containsExactly("舞台", "自造标签");
         // 保留标签是选片人的结论，上传者不能打。
         assertThatThrownBy(() -> handIn(context, "1", List.of(PhotoTags.DEPRECATED)))
                 .isInstanceOf(BusinessException.class)
@@ -243,20 +255,18 @@ class ProjectShareUploaderTests {
     }
 
     @Test
-    void aProjectWithoutPresetsTakesNoTagsFromUploaders() {
+    void aProjectWithoutPresetsStillTakesCustomTagsFromUploaders() {
         ProjectEntity bare = projectService.create("无预设", "活动选题", ProjectStatus.ACTIVE,
                 List.of(), ProjectType.EVENT, minister);
         ProjectShareService.GuestContext context = guest(uploadLink(bare.getId()));
 
-        assertThatThrownBy(() -> handIn(context, "2", List.of("舞台")))
-                .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("没有设置预设标签");
+        assertThat(tagsOf(handIn(context, "2", List.of("舞台")))).containsExactly("舞台");
         // 不带标签照常能传。
         assertThat(handIn(context, "3", List.of())).isNotNull();
     }
 
     @Test
-    void theUploaderRetagsTheirOwnPhotoWithoutTouchingTagsOutsideThePresets() {
+    void theUploaderRetagsTheirOwnPhotoButNeverErasesTheReservedTag() {
         ProjectShareService.GuestContext context = guest(uploadLink(event.getId()));
         Long photoId = handIn(context, "4", List.of("舞台"));
         markAvailable(photoId);
@@ -331,14 +341,14 @@ class ProjectShareUploaderTests {
     }
 
     @Test
-    void aZipTakesOneSetOfPresetTagsForTheWholeBatch() {
+    void aZipTakesOneSetOfTagsForTheWholeBatch() {
         ProjectShareService.CreatedShareLink created = uploadLink(event.getId());
         ProjectShareService.GuestContext context = guest(created);
         String batchId = extractedBatch(created, 2);
 
-        assertThatThrownBy(() -> uploadService.finishZip(context, batchId, null, List.of("自造标签")))
+        assertThatThrownBy(() -> uploadService.finishZip(context, batchId, null, List.of(PhotoTags.DEPRECATED)))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("自造标签");
+                .hasMessageContaining(PhotoTags.DEPRECATED);
         // 校验在任何状态迁移之前：批次还停在待整理，可以带对的标签再来一次。
         assertThat(jdbc.sql("SELECT status FROM photo_upload_batch WHERE id=:id")
                 .param("id", batchId).query(String.class).single()).isEqualTo("WAITING_METADATA");
