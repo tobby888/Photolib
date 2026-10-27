@@ -18,16 +18,21 @@ public class NativeImageTaskPool {
         this.compressor = compressor;
     }
 
+    /** 按 {@link ProcessingPriority#INTERACTIVE} 排队：调用方通常有人在等结果。 */
     public <T> CompletableFuture<T> submit(Task<T> task) {
+        return submit(task, ProcessingPriority.INTERACTIVE);
+    }
+
+    public <T> CompletableFuture<T> submit(Task<T> task, ProcessingPriority priority) {
         CompletableFuture<T> result = new CompletableFuture<>();
         try {
-            executor.execute(() -> {
+            executor.execute(new PrioritizedTaskQueue.Task(priority, () -> {
                 try {
                     result.complete(task.run(compressor));
                 } catch (Throwable throwable) {
                     result.completeExceptionally(throwable);
                 }
-            });
+            }));
         } catch (RuntimeException exception) {
             result.completeExceptionally(exception);
         }

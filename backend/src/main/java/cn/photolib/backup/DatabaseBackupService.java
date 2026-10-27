@@ -8,6 +8,7 @@ import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.common.upload.ImageUploadPolicy;
 import cn.photolib.common.util.PublicId;
+import cn.photolib.permission.PermissionGroupCache;
 import cn.photolib.storage.ObjectStorageService;
 import cn.photolib.storage.StorageProperties;
 import cn.photolib.uploadlimit.UploadLimit;
@@ -82,6 +83,7 @@ public class DatabaseBackupService {
     private final BackupProperties properties;
     private final ApplicationEventPublisher events;
     private final UploadLimitService uploadLimits;
+    private final PermissionGroupCache permissionGroupCache;
 
     private final ReentrantLock lock = new ReentrantLock();
 
@@ -416,6 +418,9 @@ public class DatabaseBackupService {
                 try (InputStream file = Files.newInputStream(temp);
                      GZIPInputStream gzip = new GZIPInputStream(file)) {
                     result = dump.restore(gzip);
+                } finally {
+                    // 整库被替换（或替换到一半失败），权限组可能已经变了，认证缓存不能再用。
+                    permissionGroupCache.invalidateAll();
                 }
                 // database_restore 不在备份范围内，所以这条记录在库被整体替换后依然存在。
                 restore.setStatus(STATUS_SUCCEEDED);

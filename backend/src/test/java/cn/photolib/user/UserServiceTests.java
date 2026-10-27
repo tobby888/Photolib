@@ -39,6 +39,8 @@ class UserServiceTests {
     private JdbcClient jdbc;
     @Autowired
     private DataSource dataSource;
+    @Autowired
+    private cn.photolib.permission.PermissionGroupService permissionGroups;
 
     private CampusEntity testCampus;
 
@@ -66,6 +68,48 @@ class UserServiceTests {
         // 验证密码可以登录
         assertThatNoException().isThrownBy(() ->
                 authService.login("newuser", result.initialPassword()));
+    }
+
+    @Test
+    void listViewsCarryEachUsersOwnGroupAndCampusesWhenLoadedInBulk() {
+        CampusEntity second = campusService.create("TEST2", "测试二校区");
+        var campusGroup = permissionGroups.create(new cn.photolib.permission.PermissionGroupService.CreateCommand(
+                "BULK_CAMPUS", "批量校区组", null, cn.photolib.permission.DataScope.CAMPUS,
+                cn.photolib.permission.PhotoVisibility.SELF,
+                java.util.Set.of(cn.photolib.permission.PermissionCode.PHOTO_VIEW)));
+        var globalGroup = permissionGroups.create(new cn.photolib.permission.PermissionGroupService.CreateCommand(
+                "BULK_GLOBAL", "批量全局组", null, cn.photolib.permission.DataScope.GLOBAL,
+                cn.photolib.permission.PhotoVisibility.GLOBAL,
+                java.util.Set.of(cn.photolib.permission.PermissionCode.PHOTO_VIEW)));
+        var twoCampuses = userService.create(new UserService.CreateUser(
+                "bulk-two", "批量两校区", null, null, null, null, null,
+                campusGroup.id(), java.util.Set.of(testCampus.getId(), second.getId()))).user();
+        var oneCampus = userService.create(new UserService.CreateUser(
+                "bulk-one", "批量一校区", null, null, null, null, null,
+                campusGroup.id(), java.util.Set.of(second.getId()))).user();
+        var global = userService.create(new UserService.CreateUser(
+                "bulk-global", "批量全局", null, null, null, null, null,
+                globalGroup.id(), java.util.Set.of())).user();
+
+        var listed = userService.list(1, 100, "bulk-", null, null, null).items().stream()
+                .collect(java.util.stream.Collectors.toMap(UserService.UserView::id, view -> view));
+        assertThat(listed.get(twoCampuses.id()).permissionGroupCode()).isEqualTo("BULK_CAMPUS");
+        assertThat(listed.get(twoCampuses.id()).campusIds())
+                .containsExactly(Math.min(testCampus.getId(), second.getId()),
+                        Math.max(testCampus.getId(), second.getId()));
+        assertThat(listed.get(oneCampus.id()).campusIds()).containsExactly(second.getId());
+        assertThat(listed.get(global.id()).permissionGroupName()).isEqualTo("批量全局组");
+        assertThat(listed.get(global.id()).dataScope()).isEqualTo(cn.photolib.permission.DataScope.GLOBAL);
+        assertThat(listed.get(global.id()).campusIds()).isEmpty();
+
+        assertThat(userService.messageRecipients()).filteredOn(r -> r.id().equals(global.id()))
+                .singleElement().extracting(UserService.RecipientView::permissionGroupName).isEqualTo("批量全局组");
+        var assignable = userService.campusAssignableUsers();
+        assertThat(assignable).extracting(UserService.CampusAssignmentView::id)
+                .contains(twoCampuses.id(), oneCampus.id()).doesNotContain(global.id());
+        assertThat(assignable).filteredOn(view -> view.id().equals(oneCampus.id())).singleElement()
+                .extracting(UserService.CampusAssignmentView::campusIds)
+                .isEqualTo(java.util.Set.of(second.getId()));
     }
 
     @Test

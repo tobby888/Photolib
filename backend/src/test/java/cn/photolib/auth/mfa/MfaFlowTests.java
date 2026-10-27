@@ -87,6 +87,7 @@ class MfaFlowTests {
     @Autowired private Clock clock;
     @Autowired private UserService userService;
     @Autowired private MfaService mfaService;
+    @Autowired private cn.photolib.permission.PermissionGroupCache permissionGroupCache;
     @Autowired private PermissionGroupService permissionGroups;
 
     @BeforeEach
@@ -532,11 +533,14 @@ class MfaFlowTests {
     private void setMinisterPolicy(String policy) {
         jdbc.sql("UPDATE permission_group SET mfa_policy = :policy WHERE code = 'MINISTER'")
                 .param("policy", policy).update();
+        // 直接改库绕过了 PermissionGroupService，认证缓存要手动清。
+        permissionGroupCache.invalidateAll();
     }
 
     private void setViewerPolicy(String policy) {
         jdbc.sql("UPDATE permission_group SET mfa_policy = :policy WHERE code = 'MFA_VIEWER'")
                 .param("policy", policy).update();
+        permissionGroupCache.invalidateAll();
     }
 
     private long count(String table, long userId) {

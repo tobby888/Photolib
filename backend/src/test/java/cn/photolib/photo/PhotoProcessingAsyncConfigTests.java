@@ -62,6 +62,45 @@ class PhotoProcessingAsyncConfigTests {
                 .hasMessageContaining("1 到 32");
     }
 
+    @Test
+    void interactiveUploadsJumpAheadOfQueuedBatchItemsButKeepTheirOwnOrder() throws Exception {
+        ThreadPoolTaskExecutor executor = new PhotoProcessingAsyncConfig()
+                .photoProcessingExecutor(new PhotoProcessingProperties(1, "build/test-processing"));
+        executor.initialize();
+        try {
+            NativeImageTaskPool pool = new NativeImageTaskPool(executor, new ImageCompressor());
+            CountDownLatch started = new CountDownLatch(1);
+            CountDownLatch release = new CountDownLatch(1);
+            java.util.List<String> order = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+            // 先占住唯一的处理线程，后面的任务都进队列。
+            var blocker = pool.submit(compressor -> awaitRelease(started, release));
+            assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+
+            var futures = java.util.List.of(
+                    pool.submit(compressor -> order.add("batch-1"), ProcessingPriority.BATCH),
+                    pool.submit(compressor -> order.add("batch-2"), ProcessingPriority.BATCH),
+                    pool.submit(compressor -> order.add("single-1"), ProcessingPriority.INTERACTIVE),
+                    pool.submit(compressor -> order.add("batch-3"), ProcessingPriority.BATCH),
+                    pool.submit(compressor -> order.add("single-2")));
+            release.countDown();
+            blocker.get(5, TimeUnit.SECONDS);
+            for (var future : futures) future.get(5, TimeUnit.SECONDS);
+
+            assertThat(order).containsExactly("single-1", "single-2", "batch-1", "batch-2", "batch-3");
+        } finally {
+            executor.shutdown();
+        }
+    }
+
+    @Test
+    void priorityQueueStillRejectsTasksBeyondItsCapacity() {
+        PrioritizedTaskQueue queue = new PrioritizedTaskQueue(2);
+        assertThat(queue.offer(new PrioritizedTaskQueue.Task(ProcessingPriority.BATCH, () -> { }))).isTrue();
+        assertThat(queue.offer(new PrioritizedTaskQueue.Task(ProcessingPriority.INTERACTIVE, () -> { }))).isTrue();
+        assertThat(queue.remainingCapacity()).isZero();
+        assertThat(queue.offer(new PrioritizedTaskQueue.Task(ProcessingPriority.INTERACTIVE, () -> { }))).isFalse();
+    }
+
     private String awaitRelease(CountDownLatch started, CountDownLatch release) throws Exception {
         started.countDown();
         if (!release.await(5, TimeUnit.SECONDS)) {

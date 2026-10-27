@@ -70,6 +70,14 @@ photolib:
   photo-processing:
     threads: ${PHOTO_PROCESSING_THREADS:1}
     temporary-directory: ${PHOTO_PROCESSING_TEMPORARY_DIRECTORY:./data/photo-processing}
+  storage-reconciliation:
+    # 对象存储对账（逐张精确 HEAD 成品图和预览图）。跑在独立线程上，不占定时任务线程。
+    # 每天一次全量；白天每小时只查上次以来有变化的照片。进程刚启动时第一次增量会做全量。
+    full-cron: ${STORAGE_RECONCILIATION_FULL_CRON:0 10 4 * * *}
+    incremental-delay-ms: ${STORAGE_RECONCILIATION_INCREMENTAL_DELAY_MS:3600000}
+    initial-delay-ms: ${STORAGE_RECONCILIATION_INITIAL_DELAY_MS:600000}
+    # 同时在途的 HEAD 请求数（1～64）。1 即退回串行。
+    concurrency: ${STORAGE_RECONCILIATION_CONCURRENCY:8}
   photo:
     missing-upload-scan:
       # 定时扫描停在「上传中」、但原图在对象存储里确认不存在的照片记录，把它们软删掉。

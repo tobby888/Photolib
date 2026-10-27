@@ -128,6 +128,48 @@ class SiteCustomizationTests {
         assertThat(controller.get().data().placeholderImageUrls()).isEmpty();
     }
 
+    @Test
+    void placeholderAtItsCurrentVersionedUrlIsCachedLongTerm() throws IOException {
+        var stored = controller.uploadPlaceholderImages(List.of(placeholder("cached.png"))).data().getFirst();
+        long id = Long.parseLong(stored.id());
+        String version = stored.imageUrl().substring(stored.imageUrl().indexOf("?v=") + 3);
+
+        var response = controller.placeholderImage(id, version, null);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        assertThat(response.getBody()).isNotEmpty();
+        assertThat(response.getHeaders().getCacheControl())
+                .contains("max-age=31536000").contains("public").contains("immutable");
+        assertThat(response.getHeaders().getETag()).isEqualTo("\"" + id + "-" + version + "\"");
+    }
+
+    @Test
+    void placeholderRequestedWithAStaleVersionIsNotPinnedInTheBrowserCache() throws IOException {
+        var stored = controller.uploadPlaceholderImages(List.of(placeholder("stale.png"))).data().getFirst();
+
+        var response = controller.placeholderImage(Long.parseLong(stored.id()), "not-the-version", null);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        assertThat(response.getHeaders().getCacheControl()).isEqualTo("no-cache");
+    }
+
+    @Test
+    void conditionalPlaceholderRequestReturnsNotModifiedWithoutABody() throws IOException {
+        var stored = controller.uploadPlaceholderImages(List.of(placeholder("etag.png"))).data().getFirst();
+        long id = Long.parseLong(stored.id());
+        String version = stored.imageUrl().substring(stored.imageUrl().indexOf("?v=") + 3);
+        String etag = controller.placeholderImage(id, version, null).getHeaders().getETag();
+
+        var notModified = controller.placeholderImage(id, version, "W/\"other\", " + etag);
+        var changed = controller.placeholderImage(id, version, "\"" + id + "-old\"");
+
+        assertThat(notModified.getStatusCode().value()).isEqualTo(304);
+        assertThat(notModified.getBody()).isNull();
+        assertThat(changed.getStatusCode().value()).isEqualTo(200);
+        assertThat(controller.placeholderImage(Long.MAX_VALUE, version, null).getStatusCode().value())
+                .isEqualTo(404);
+    }
+
     private MockMultipartFile placeholder(String name) throws IOException {
         BufferedImage image = new BufferedImage(16, 16, BufferedImage.TYPE_INT_RGB);
         ByteArrayOutputStream encoded = new ByteArrayOutputStream();

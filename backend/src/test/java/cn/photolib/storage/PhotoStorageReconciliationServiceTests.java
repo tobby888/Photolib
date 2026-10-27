@@ -391,6 +391,103 @@ class PhotoStorageReconciliationServiceTests {
         verifyNoInteractions(publisher);
     }
 
+    @Test
+    void concurrentHeadsReachTheSameVerdictsAsTheSerialPass() {
+        String healthyMain = "photos/reconciliation/concurrent-healthy.jpg";
+        String healthyPreview = "thumbnails/reconciliation/concurrent-healthy.webp";
+        String missingMain = "photos/reconciliation/concurrent-missing.jpg";
+        String staleMain = "photos/reconciliation/concurrent-stale.jpg";
+        String stalePreview = "thumbnails/reconciliation/concurrent-stale.webp";
+        insertPhoto(91011L, healthyMain, 10, "image/jpeg", healthyPreview, 4L);
+        insertPhoto(91012L, missingMain, 10, "image/jpeg", null, null);
+        insertPhoto(91013L, staleMain, 10, "image/jpeg", stalePreview, 4L);
+        var metadata = previewProfiles.requireRunningProfile().objectMetadata(
+                PreviewProfile.PREVIEW_CONTENT_TYPE, "a".repeat(64));
+        java.util.Set<String> headThreads = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        ObjectStorageService observedStorage = mock(ObjectStorageService.class);
+        when(observedStorage.find(org.mockito.ArgumentMatchers.anyString())).thenAnswer(invocation -> {
+            headThreads.add(Thread.currentThread().getName());
+            String key = invocation.getArgument(0);
+            if (key.equals(missingMain)) return Optional.empty();
+            if (key.equals(stalePreview)) return Optional.empty();
+            if (key.startsWith("thumbnails/")) {
+                return Optional.of(new ObjectStorageService.ObjectInfo(
+                        4, PreviewProfile.PREVIEW_CONTENT_TYPE, metadata));
+            }
+            return Optional.of(new ObjectStorageService.ObjectInfo(10, "image/jpeg"));
+        });
+        ApplicationEventPublisher publisher = mock(ApplicationEventPublisher.class);
+        PhotoStorageReconciliationService concurrent = new PhotoStorageReconciliationService(
+                observedStorage, jdbc, publisher, previewProfiles, previewMaintenanceLock, 4);
+
+        var result = concurrent.reconcile();
+
+        assertThat(headThreads).isNotEmpty().allMatch(name -> name.startsWith("storage-reconcile-"));
+        assertThat(result.missing()).isGreaterThanOrEqualTo(1);
+        assertThat(thumbnail(91011L)).isEqualTo(healthyPreview);
+        assertThat(thumbnail(91013L)).isNull();
+        assertThat(jdbc.sql("""
+                SELECT COUNT(*) FROM admin_alert
+                WHERE type='PHOTO_STORAGE_OBJECT_MISSING' AND resolved=0 AND message LIKE '%91012%'
+                """).query(Long.class).single()).isOne();
+        org.mockito.Mockito.verify(publisher).publishEvent(
+                org.mockito.ArgumentMatchers.<Object>argThat(event ->
+                        event instanceof PreviewRepairRequestedEvent repair
+                                && repair.photoIds().contains(91013L)
+                                && !repair.photoIds().contains(91011L)));
+    }
+
+    @Test
+    void incrementalPassOnlyChecksPhotosChangedSinceTheWatermark() {
+        String oldKey = "photos/reconciliation/incremental-old.jpg";
+        String newKey = "photos/reconciliation/incremental-new.jpg";
+        insertPhoto(91014L, oldKey, 10, "image/jpeg", null, null);
+        insertPhoto(91015L, newKey, 10, "image/jpeg", null, null);
+        jdbc.sql("UPDATE photo SET updated_at=TIMESTAMP '2020-01-01 00:00:00' WHERE id=91014").update();
+        jdbc.sql("UPDATE photo SET updated_at=CURRENT_TIMESTAMP WHERE id=91015").update();
+        ObjectStorageService observedStorage = mock(ObjectStorageService.class);
+        when(observedStorage.find(org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(Optional.of(new ObjectStorageService.ObjectInfo(10, "image/jpeg")));
+        PhotoStorageReconciliationService isolated = new PhotoStorageReconciliationService(
+                observedStorage, jdbc, mock(ApplicationEventPublisher.class), previewProfiles,
+                previewMaintenanceLock);
+
+        isolated.reconcileChangedSince(isolated.databaseNow().minusHours(1));
+
+        org.mockito.Mockito.verify(observedStorage, org.mockito.Mockito.never()).find(oldKey);
+        org.mockito.Mockito.verify(observedStorage).find(newKey);
+    }
+
+    @Test
+    void incrementalPassNeverResolvesAlertsItCannotFullyConfirm() {
+        jdbc.sql("""
+                INSERT INTO admin_alert (type, message, resource_type, resolved, created_at)
+                VALUES ('PHOTO_STORAGE_OBJECT_MISSING', 'full-pass missing', 'STORAGE', false, CURRENT_TIMESTAMP),
+                       ('PHOTO_STORAGE_HEAD_FAILED', 'full-pass head failure', 'STORAGE', false, CURRENT_TIMESTAMP)
+                """).update();
+        String key = "photos/reconciliation/incremental-healthy.jpg";
+        insertPhoto(91016L, key, 10, "image/jpeg", null, null);
+        ObjectStorageService observedStorage = mock(ObjectStorageService.class);
+        when(observedStorage.find(org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(Optional.of(new ObjectStorageService.ObjectInfo(10, "image/jpeg")));
+        PhotoStorageReconciliationService isolated = new PhotoStorageReconciliationService(
+                observedStorage, jdbc, mock(ApplicationEventPublisher.class), previewProfiles,
+                previewMaintenanceLock);
+
+        isolated.reconcileChangedSince(isolated.databaseNow().minusHours(1));
+
+        // 没查到的照片状态未知：全量巡检写下的告警既不能被标为已解决，内容也不能被改写。
+        assertThat(jdbc.sql("""
+                SELECT COUNT(*) FROM admin_alert
+                WHERE resolved=0 AND message IN ('full-pass missing', 'full-pass head failure')
+                """).query(Long.class).single()).isEqualTo(2L);
+    }
+
+    private String thumbnail(long photoId) {
+        return jdbc.sql("SELECT thumbnail_object_key FROM photo WHERE id=:id").param("id", photoId)
+                .query(String.class).list().getFirst();
+    }
+
     private void insertPhoto(long id, String key, long size, String contentType,
                              String thumbnailKey, Long thumbnailSize) {
         jdbc.sql("""
