@@ -60,7 +60,7 @@ public class AccessTokenFilter extends OncePerRequestFilter {
                 // 其余路径照旧在下面被 403 挡住）。
                 if (!user.hasSystemAccess() && isAnonymousReadableDocs(request)) {
                     authenticate(user, List.of());
-                    authService.touch(authenticated.sessionId());
+                    if (authenticated.renewalDue()) authService.touch(authenticated.sessionId());
                     chain.doFilter(request, response);
                     return;
                 }
@@ -96,7 +96,7 @@ public class AccessTokenFilter extends OncePerRequestFilter {
                 user.permissions().forEach(permission ->
                         authorities.add(new SimpleGrantedAuthority(permission.name())));
                 authenticate(user, authorities);
-                authService.touch(authenticated.sessionId());
+                if (authenticated.renewalDue()) authService.touch(authenticated.sessionId());
             }
         }
         chain.doFilter(request, response);

@@ -22,10 +22,15 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Comparator;
+import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -39,6 +44,7 @@ public class PermissionGroupService {
     private final CampusMapper campusMapper;
     private final JdbcClient jdbc;
     private final MfaService mfa;
+    private final PermissionGroupCache cache;
 
     public List<CategoryDefinition> definitions() {
         return Arrays.stream(PermissionCategory.values())
@@ -107,6 +113,57 @@ public class PermissionGroupService {
         return group == null ? resolveLegacyRole(user.getRole()) : group;
     }
 
+    /**
+     * {@link #resolveForUser} 的批量版：一条 SQL 取回所有用到的权限组，按用户 id 返回。
+     * 账号列表、消息收件人列表以前逐个用户查，一页 20 人就是上百条 SQL。
+     */
+    public Map<Long, PermissionGroupEntity> resolveForUsers(Collection<UserEntity> users) {
+        List<Long> groupIds = users.stream().map(UserEntity::getPermissionGroupId)
+                .filter(Objects::nonNull).distinct().toList();
+        Map<Long, PermissionGroupEntity> groups = new HashMap<>();
+        if (!groupIds.isEmpty()) {
+            mapper.selectList(Wrappers.<PermissionGroupEntity>lambdaQuery()
+                            .in(PermissionGroupEntity::getId, groupIds))
+                    .forEach(group -> groups.put(group.getId(), group));
+        }
+        Map<UserRole, PermissionGroupEntity> legacy = new EnumMap<>(UserRole.class);
+        PermissionGroupEntity[] noRole = new PermissionGroupEntity[1];
+        Map<Long, PermissionGroupEntity> result = new HashMap<>();
+        for (UserEntity user : users) {
+            PermissionGroupEntity group = user.getPermissionGroupId() == null
+                    ? null : groups.get(user.getPermissionGroupId());
+            if (group == null) {
+                if (user.getRole() == null) {
+                    if (noRole[0] == null) noRole[0] = resolveLegacyRole(null);
+                    group = noRole[0];
+                } else {
+                    group = legacy.computeIfAbsent(user.getRole(), this::resolveLegacyRole);
+                }
+            }
+            result.put(user.getId(), group);
+        }
+        return result;
+    }
+
+    /** {@link #campusIds} 的批量版：一条 SQL，按用户 id 返回各自的授权校区（升序）。没有授权的用户得到空集合。 */
+    public Map<Long, Set<Long>> campusIdsByUser(Collection<Long> userIds) {
+        Map<Long, Set<Long>> result = new HashMap<>();
+        if (userIds.isEmpty()) return result;
+        List<Long> distinct = userIds.stream().filter(Objects::nonNull).distinct().toList();
+        for (Long userId : distinct) result.put(userId, new LinkedHashSet<>());
+        for (int from = 0; from < distinct.size(); from += 500) {
+            jdbc.sql("""
+                    SELECT user_id, campus_id FROM user_campus_permission
+                    WHERE user_id IN (:userIds) ORDER BY user_id, campus_id
+                    """).param("userIds", distinct.subList(from, Math.min(distinct.size(), from + 500)))
+                    .query((rs, rowNum) -> {
+                        result.get(rs.getLong("user_id")).add(rs.getLong("campus_id"));
+                        return null;
+                    }).list();
+        }
+        return result;
+    }
+
     @Transactional
     public GroupView create(CreateCommand command) {
         String code = normalizeCode(command.code());
@@ -124,6 +181,7 @@ public class PermissionGroupService {
         try {
             mapper.insert(group);
             replacePermissions(group.getId(), command.permissions());
+            cache.invalidateAll();
         } catch (DuplicateKeyException exception) {
             throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE, "权限组代码已存在");
         }
@@ -173,6 +231,7 @@ public class PermissionGroupService {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "权限组已被其他操作修改");
         }
         replacePermissions(id, permissions);
+        cache.invalidateAll();
         return get(id);
     }
 
@@ -201,11 +260,13 @@ public class PermissionGroupService {
         if (mapper.deletePhysically(id) != 1) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "权限组删除失败");
         }
+        cache.invalidateAll();
     }
 
     public AuthenticatedUser toPrincipal(UserEntity user) {
-        PermissionGroupEntity group = resolveForUser(user);
-        Set<PermissionCode> permissions = permissionCodes(group.getId());
+        PermissionGroupCache.Snapshot snapshot = principalGroup(user);
+        PermissionGroupEntity group = snapshot.group();
+        Set<PermissionCode> permissions = snapshot.permissions();
         Set<Long> campusIds = new LinkedHashSet<>(jdbc.sql("""
                 SELECT campus_id FROM user_campus_permission WHERE user_id = :userId ORDER BY campus_id
                 """).param("userId", user.getId()).query(Long.class).list());
@@ -224,6 +285,23 @@ public class PermissionGroupService {
                 photoVisibility(group), permissions, campusIds, UserAvatarService.avatarUrl(user),
                 mfa.summarize(user.getId(), group.getCode(),
                         effectiveMfaPolicy(group.getCode(), group.getMfaPolicy(), permissions)));
+    }
+
+    /**
+     * 认证路径上的权限组和权限码走 {@link PermissionGroupCache}：每个请求都要用，而它们几乎不变。
+     * 管理页的读写（{@link #get}、{@link #list}）仍然直接读库，编辑后立刻看到新值。
+     * 账号没挂权限组、或挂的组已被删时按旧角色兜底，这条少见的路径不缓存。
+     */
+    private PermissionGroupCache.Snapshot principalGroup(UserEntity user) {
+        if (user.getPermissionGroupId() != null) {
+            PermissionGroupCache.Snapshot cached = cache.get(user.getPermissionGroupId(), id -> {
+                PermissionGroupEntity group = mapper.selectById(id);
+                return group == null ? null : new PermissionGroupCache.Snapshot(group, permissionCodes(id));
+            });
+            if (cached != null) return cached;
+        }
+        PermissionGroupEntity legacy = resolveLegacyRole(user.getRole());
+        return new PermissionGroupCache.Snapshot(legacy, permissionCodes(legacy.getId()));
     }
 
     public Set<Long> campusIds(Long userId) {

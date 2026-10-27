@@ -7,6 +7,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 
 @Configuration(proxyBeanMethods = false)
@@ -28,10 +29,17 @@ public class PhotoProcessingAsyncConfig {
      * Every production call into the Zig image processor is dispatched through
      * this shared pool. Operators choose its fixed concurrency from .env so the
      * server can trade throughput for a bounded native-memory budget.
+     *
+     * <p>队列按 {@link ProcessingPriority} 出队（{@link PrioritizedTaskQueue}），容量仍是 1000。
      */
     @Bean(name = "photoProcessingExecutor")
     ThreadPoolTaskExecutor photoProcessingExecutor(PhotoProcessingProperties properties) {
-        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor() {
+            @Override
+            protected BlockingQueue<Runnable> createQueue(int queueCapacity) {
+                return new PrioritizedTaskQueue(queueCapacity);
+            }
+        };
         executor.setCorePoolSize(properties.threads());
         executor.setMaxPoolSize(properties.threads());
         executor.setQueueCapacity(1000);

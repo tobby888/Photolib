@@ -39,6 +39,23 @@ public class PlaceholderImageService {
         return mapper.selectById(id);
     }
 
+    /** 只取 id、类型和更新时间，不读图片 BLOB——回应条件请求（304）时用不到图片字节。 */
+    PlaceholderImageEntity getMetadata(long id) {
+        return mapper.selectOne(Wrappers.<PlaceholderImageEntity>lambdaQuery()
+                .select(PlaceholderImageEntity::getId, PlaceholderImageEntity::getImageContentType,
+                        PlaceholderImageEntity::getUpdatedAt)
+                .eq(PlaceholderImageEntity::getId, id));
+    }
+
+    /**
+     * 地址里 {@code ?v=} 的取值。占位图只能新增和删除、不能原地替换，同一个 id 的内容不会变；
+     * 版本号仍然带上更新时间，万一将来支持替换，旧地址也会自然失效。
+     */
+    static String version(PlaceholderImageEntity entity) {
+        LocalDateTime updatedAt = entity.getUpdatedAt();
+        return updatedAt == null ? "0" : String.valueOf(updatedAt.hashCode());
+    }
+
     @Transactional
     public List<PlaceholderImageView> add(List<MultipartFile> files) throws IOException {
         List<MultipartFile> uploaded = files == null ? List.of() : files.stream().filter(file -> file != null && !file.isEmpty()).toList();
@@ -89,9 +106,7 @@ public class PlaceholderImageService {
     }
 
     private String url(PlaceholderImageEntity entity) {
-        LocalDateTime updatedAt = entity.getUpdatedAt();
-        String version = updatedAt == null ? "0" : String.valueOf(updatedAt.hashCode());
-        return "/api/v1/branding/placeholder-images/" + entity.getId() + "/image?v=" + version;
+        return "/api/v1/branding/placeholder-images/" + entity.getId() + "/image?v=" + version(entity);
     }
 
     private PlaceholderImageView toView(PlaceholderImageEntity entity) {

@@ -12,6 +12,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.CacheControl;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -19,6 +20,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -199,15 +201,46 @@ public class BrandingController {
         return ApiResponse.ok(placeholderImageService.remove(id));
     }
 
+    /**
+     * 占位图。以前每次都 {@code no-cache} 并从库里读整张 BLOB，10·26 活动当天 113 次请求 P95 393.7 ms，
+     * 是 13:14 那次集体卡顿里最多的一类请求。
+     *
+     * <p>{@code GET /branding} 下发的地址带着内容版本号 {@code ?v=}，版本号对得上时内容不会再变，
+     * 直接让浏览器长缓存；对不上（旧页面拿着过期地址）就不长缓存，以免把别的内容钉在这个地址上。
+     * 带 {@code If-None-Match} 的条件请求只查元数据，命中直接 304，不把 BLOB 读进堆。
+     */
     @GetMapping("/branding/placeholder-images/{id}/image")
-    ResponseEntity<byte[]> placeholderImage(@PathVariable long id) {
+    ResponseEntity<byte[]> placeholderImage(@PathVariable long id,
+                                            @RequestParam(name = "v", required = false) String requestedVersion,
+                                            @RequestHeader(name = "If-None-Match", required = false) String ifNoneMatch) {
+        PlaceholderImageEntity metadata = placeholderImageService.getMetadata(id);
+        if (metadata == null) return ResponseEntity.notFound().build();
+        String version = PlaceholderImageService.version(metadata);
+        String etag = "\"" + id + "-" + version + "\"";
+        CacheControl cacheControl = version.equals(requestedVersion)
+                ? CacheControl.maxAge(Duration.ofDays(365)).cachePublic().immutable()
+                : CacheControl.noCache();
+        if (etagMatches(ifNoneMatch, etag)) {
+            return ResponseEntity.status(HttpStatus.NOT_MODIFIED).eTag(etag).cacheControl(cacheControl).build();
+        }
         PlaceholderImageEntity image = placeholderImageService.getImage(id);
         if (image == null) return ResponseEntity.notFound().build();
         return ResponseEntity.ok()
-                .cacheControl(CacheControl.noCache())
+                .cacheControl(cacheControl)
+                .eTag(etag)
                 .header("X-Content-Type-Options", "nosniff")
                 .contentType(MediaType.parseMediaType(image.getImageContentType()))
                 .body(image.getImage());
+    }
+
+    private static boolean etagMatches(String ifNoneMatch, String etag) {
+        if (ifNoneMatch == null || ifNoneMatch.isBlank()) return false;
+        for (String candidate : ifNoneMatch.split(",")) {
+            String trimmed = candidate.trim();
+            if (trimmed.startsWith("W/")) trimmed = trimmed.substring(2);
+            if (trimmed.equals("*") || trimmed.equals(etag)) return true;
+        }
+        return false;
     }
 
     private BrandingResponse toResponse(BrandingSettingEntity setting) {

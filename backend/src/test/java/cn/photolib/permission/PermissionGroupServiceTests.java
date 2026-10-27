@@ -108,6 +108,30 @@ class PermissionGroupServiceTests {
                 .containsExactlyInAnyOrder(PermissionCode.PHOTO_VIEW, PermissionCode.PHOTO_DOWNLOAD);
     }
 
+    @Test
+    void revokingAPermissionTakesEffectOnTheNextRequestDespiteTheAuthenticationCache() {
+        var campus = campuses.create("PERM-R", "权限收回测试校区");
+        var group = groups.create(new PermissionGroupService.CreateCommand(
+                "REVOKE_TEST", "收回测试组", null, DataScope.CAMPUS, PhotoVisibility.SELF,
+                Set.of(PermissionCode.PHOTO_VIEW, PermissionCode.PHOTO_DOWNLOAD)));
+        var created = users.create(new UserService.CreateUser(
+                "permission-revoked", "权限收回账号", null, null, null, null, null,
+                group.id(), Set.of(campus.getId())));
+        var login = auth.login("permission-revoked", created.initialPassword());
+        // 连续认证几次，权限组已经进了认证缓存。
+        auth.authenticate(login.accessToken());
+        assertThat(auth.authenticate(login.accessToken()).user().permissions())
+                .contains(PermissionCode.PHOTO_DOWNLOAD);
+
+        var current = groups.get(group.id());
+        groups.update(group.id(), new PermissionGroupService.UpdateCommand(
+                current.name(), current.description(), DataScope.CAMPUS, PhotoVisibility.SELF,
+                Set.of(PermissionCode.PHOTO_VIEW), current.version()));
+
+        assertThat(auth.authenticate(login.accessToken()).user().permissions())
+                .containsExactly(PermissionCode.PHOTO_VIEW);
+    }
+
 
     @Test
     void photoVisibilityIsStoredPerGroupAndReachesTheAuthenticatedPrincipal() {

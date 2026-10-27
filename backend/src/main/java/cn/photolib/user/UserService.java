@@ -30,6 +30,7 @@ import java.security.SecureRandom;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -140,7 +141,7 @@ public class UserService {
                 .eq(enabled != null, UserEntity::getEnabled, enabled)
                 .orderByDesc(UserEntity::getCreatedAt);
         Page<UserEntity> result = userMapper.selectPage(Page.of(page, pageSize), query);
-        return new PageResponse<>(result.getRecords().stream().map(this::toView).toList(),
+        return new PageResponse<>(toViews(result.getRecords()),
                 result.getCurrent(), result.getSize(), result.getTotal(), result.getPages());
     }
 
@@ -149,13 +150,14 @@ public class UserService {
     }
 
     public List<RecipientView> messageRecipients() {
-        return userMapper.selectList(Wrappers.<UserEntity>lambdaQuery()
-                        .eq(UserEntity::getEnabled, true)
-                        .orderByAsc(UserEntity::getDisplayName))
-                .stream().map(user -> {
-                    PermissionGroupEntity group = permissionGroups.resolveForUser(user);
-                    return new RecipientView(user.getId(), user.getDisplayName(), group.getName());
-                }).toList();
+        List<UserEntity> users = userMapper.selectList(Wrappers.<UserEntity>lambdaQuery()
+                .eq(UserEntity::getEnabled, true)
+                .orderByAsc(UserEntity::getDisplayName));
+        Map<Long, PermissionGroupEntity> groups = permissionGroups.resolveForUsers(users);
+        return users.stream()
+                .map(user -> new RecipientView(user.getId(), user.getDisplayName(),
+                        groups.get(user.getId()).getName()))
+                .toList();
     }
 
     public List<CampusAssignmentView> campusAssignableUsers() {
@@ -163,15 +165,21 @@ public class UserService {
     }
 
     public List<CampusAssignmentView> campusAssignableUsers(AuthenticatedUser principal) {
-        return userMapper.selectList(Wrappers.<UserEntity>lambdaQuery()
-                        .eq(UserEntity::getEnabled, true)
-                        .orderByAsc(UserEntity::getDisplayName))
-                .stream().filter(user -> permissionGroups.resolveForUser(user).getDataScope() == DataScope.CAMPUS)
+        List<UserEntity> users = userMapper.selectList(Wrappers.<UserEntity>lambdaQuery()
+                .eq(UserEntity::getEnabled, true)
+                .orderByAsc(UserEntity::getDisplayName));
+        Map<Long, PermissionGroupEntity> groups = permissionGroups.resolveForUsers(users);
+        List<UserEntity> campusScoped = users.stream()
+                .filter(user -> groups.get(user.getId()).getDataScope() == DataScope.CAMPUS)
+                .toList();
+        Map<Long, Set<Long>> campuses = permissionGroups.campusIdsByUser(
+                campusScoped.stream().map(UserEntity::getId).toList());
+        return campusScoped.stream()
                 .filter(user -> principal == null || !principal.isCampusScoped()
-                        || principal.campusIds().containsAll(permissionGroups.campusIds(user.getId())))
+                        || principal.campusIds().containsAll(campuses.get(user.getId())))
                 .map(user -> new CampusAssignmentView(user.getId(), user.getDisplayName(),
-                        permissionGroups.resolveForUser(user).getName(),
-                        permissionGroups.campusIds(user.getId()), user.getVersion()))
+                        groups.get(user.getId()).getName(),
+                        campuses.get(user.getId()), user.getVersion()))
                 .toList();
     }
 
@@ -406,15 +414,29 @@ public class UserService {
     }
 
     private UserView toView(UserEntity user) {
-        PermissionGroupEntity resolvedGroup = permissionGroups.resolveForUser(user);
-        PermissionGroupService.GroupView group = permissionGroups.get(resolvedGroup.getId());
-        Set<Long> campusIds = permissionGroups.campusIds(user.getId());
-        return new UserView(user.getId(), user.getUsername(), user.getDisplayName(), user.getRole(),
-                user.getCampusId(), user.getPhone(), user.getEmail(), user.getWecomUserid(),
-                user.getEnabled(),
-                user.getMustChangePassword(), user.getCreatedAt(), user.getUpdatedAt(), user.getVersion(),
-                group.id(), group.code(), group.name(), group.dataScope(), campusIds,
-                UserAvatarService.avatarUrl(user));
+        return toViews(List.of(user)).getFirst();
+    }
+
+    /**
+     * 账号视图只用到权限组的 id、代码、名称和数据范围。以前每个用户都走一遍
+     * {@code permissionGroups.get()}（再查一次组、两次权限码、一次成员数）加上校区，
+     * 一页 20 人要 120 条 SQL；现在整页共 2 条。
+     */
+    private List<UserView> toViews(List<UserEntity> users) {
+        if (users.isEmpty()) return List.of();
+        Map<Long, PermissionGroupEntity> groups = permissionGroups.resolveForUsers(users);
+        Map<Long, Set<Long>> campuses = permissionGroups.campusIdsByUser(
+                users.stream().map(UserEntity::getId).toList());
+        return users.stream().map(user -> {
+            PermissionGroupEntity group = groups.get(user.getId());
+            return new UserView(user.getId(), user.getUsername(), user.getDisplayName(), user.getRole(),
+                    user.getCampusId(), user.getPhone(), user.getEmail(), user.getWecomUserid(),
+                    user.getEnabled(),
+                    user.getMustChangePassword(), user.getCreatedAt(), user.getUpdatedAt(), user.getVersion(),
+                    group.getId(), group.getCode(), group.getName(), group.getDataScope(),
+                    campuses.getOrDefault(user.getId(), new LinkedHashSet<>()),
+                    UserAvatarService.avatarUrl(user));
+        }).toList();
     }
 
     public record CreateUser(String username, String displayName, UserRole role, Long campusId,

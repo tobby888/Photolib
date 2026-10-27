@@ -17,6 +17,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -26,6 +27,8 @@ import java.util.function.Function;
 
 @Service
 public class AuthService {
+    /** 会话空闲期续期的最小间隔，见 {@link #renewalDue}。 */
+    static final Duration RENEWAL_INTERVAL = Duration.ofMinutes(1);
     private static final String DUMMY_PASSWORD_HASH =
             "$2a$12$wHhY5zYDsMdG2mvvEJPi7eM6FBfXwLwqEyqfL7IGRBxV6JrxEzk3q";
     private final UserMapper userMapper;
@@ -199,7 +202,25 @@ public class AuthService {
         UserEntity user = requireEnabledUser(session.getUserId());
         AuthenticatedUser principal = toPrincipal(user);
         if (!secondFactorSatisfied(principal, session)) return null;
-        return new SessionAuthentication(session.getId(), principal);
+        return new SessionAuthentication(session.getId(), principal, renewalDue(session.getIdleExpiresAt(), now));
+    }
+
+    /**
+     * 空闲期续期要不要写库。会话行刚才已经读出来了，比较一下即可，不多查一次。
+     *
+     * <p>以前每个请求都 UPDATE 一次 {@code auth_session}，10·26 活动当天 2,526 次、合计 27.5 秒，
+     * 是全站最耗时的一条 SQL。30 分钟的空闲期只需要分钟级精度：上次续期不到
+     * {@link #renewalInterval()} 就跳过，空闲过期时间最多比逐请求续期早这么一点。
+     */
+    boolean renewalDue(LocalDateTime idleExpiresAt, LocalDateTime now) {
+        if (idleExpiresAt == null) return true;
+        return idleExpiresAt.isBefore(now.plus(properties.idleTtl()).minus(renewalInterval()));
+    }
+
+    /** 默认 1 分钟；空闲期配得很短时（测试）按它的 1/30 算，免得节流比空闲期还长、会话续不上。 */
+    Duration renewalInterval() {
+        Duration fraction = properties.idleTtl().dividedBy(30);
+        return fraction.compareTo(RENEWAL_INTERVAL) < 0 ? fraction : RENEWAL_INTERVAL;
     }
 
     public void touch(Long sessionId) {
@@ -318,7 +339,13 @@ public class AuthService {
                             AuthenticatedUser user) {
     }
 
-    public record SessionAuthentication(Long sessionId, AuthenticatedUser user) {
+    /**
+     * @param renewalDue 这次请求是否需要把空闲过期时间往后推（写一次 {@code auth_session}）
+     */
+    public record SessionAuthentication(Long sessionId, AuthenticatedUser user, boolean renewalDue) {
+        public SessionAuthentication(Long sessionId, AuthenticatedUser user) {
+            this(sessionId, user, true);
+        }
     }
 
     /**

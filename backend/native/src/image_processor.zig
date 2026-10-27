@@ -270,7 +270,7 @@ fn compress(source: []const u8, format: i32, target_bytes: u64) NativeError!Proc
     const encoded = if (format == FORMAT_JPEG)
         try compressJpeg(&pixels, target_bytes)
     else
-        try compressPng(&pixels, target_bytes);
+        try compressPng(&pixels, target_bytes, source.len);
     return .{ .encoded = encoded, .width = pixels.width, .height = pixels.height };
 }
 
@@ -505,27 +505,48 @@ fn jpegAtLastResort(pixels: Pixels, target_bytes: u64) NativeError!Encoded {
     return best;
 }
 
-fn compressPng(pixels: *Pixels, target_bytes: u64) NativeError!Encoded {
+fn compressPng(pixels: *Pixels, target_bytes: u64, source_length: usize) NativeError!Encoded {
+    // 源文件远大于目标时，先按"源字节数 / 目标字节数"一次缩到估计尺寸，不再先按原尺寸整幅
+    // 编码一遍——boundedScale 每轮最多缩到 75%，30–40 MB 的 PNG 以前要整幅 deflate 四遍左右
+    // （10·26 活动 PNG 压缩中位 10.8 秒）。与 vips_bridge.c 大图路径的 initial_scale 同一策略。
+    // stb 的 PNG 编码比常见导出器的体积大，按源字节数估出的尺寸只会偏大、不会缩过头；
+    // 没压到目标时照旧进入下面的逐轮缩小。
+    if (initialPngScale(target_bytes, source_length)) |scale| {
+        try resizeByScale(pixels, scale);
+    }
     var output = try encodePng(pixels.*);
     if (output.length <= target_bytes) return output;
     while (pixels.width > MIN_DIMENSION and pixels.height > MIN_DIMENSION) {
         const scale = boundedScale(target_bytes, output.length);
         output.deinit();
-        const dimensions = if (scaledBelowMinimum(pixels.*, scale))
-            dimensionsAtMinimum(pixels.*)
-        else
-            Dimensions{
-                .width = @max(1, @as(i32, @intFromFloat(@round(@as(f64, @floatFromInt(pixels.width)) * scale)))),
-                .height = @max(1, @as(i32, @intFromFloat(@round(@as(f64, @floatFromInt(pixels.height)) * scale)))),
-                .channels = pixels.channels,
-            };
-        const resized = try resizePixels(pixels.*, dimensions.width, dimensions.height);
-        pixels.deinit();
-        pixels.* = resized;
+        try resizeByScale(pixels, scale);
         output = try encodePng(pixels.*);
         if (output.length <= target_bytes) return output;
     }
     return output;
+}
+
+/// 源 PNG 字节数明显超过目标（目标不到源的 85%）时的首轮缩放比例，否则不预缩放。
+fn initialPngScale(target_bytes: u64, source_length: usize) ?f64 {
+    if (source_length == 0 or source_length <= target_bytes) return null;
+    const ratio = @as(f64, @floatFromInt(target_bytes)) / @as(f64, @floatFromInt(source_length));
+    if (ratio >= 0.85) return null;
+    return @max(0.25, @min(0.95, @sqrt(ratio) * 0.98));
+}
+
+fn resizeByScale(pixels: *Pixels, scale: f64) NativeError!void {
+    const dimensions = if (scaledBelowMinimum(pixels.*, scale))
+        dimensionsAtMinimum(pixels.*)
+    else
+        Dimensions{
+            .width = @max(1, @as(i32, @intFromFloat(@round(@as(f64, @floatFromInt(pixels.width)) * scale)))),
+            .height = @max(1, @as(i32, @intFromFloat(@round(@as(f64, @floatFromInt(pixels.height)) * scale)))),
+            .channels = pixels.channels,
+        };
+    if (dimensions.width == pixels.width and dimensions.height == pixels.height) return;
+    const resized = try resizePixels(pixels.*, dimensions.width, dimensions.height);
+    pixels.deinit();
+    pixels.* = resized;
 }
 
 fn encodeJpeg(pixels: Pixels, quality: i32) NativeError!Encoded {

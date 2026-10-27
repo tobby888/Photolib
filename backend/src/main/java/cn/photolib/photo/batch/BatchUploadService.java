@@ -10,6 +10,7 @@ import cn.photolib.common.util.PublicId;
 import cn.photolib.photo.PhotoProcessingService;
 import cn.photolib.photo.PhotoProcessingWorkspace;
 import cn.photolib.photo.PhotoTags;
+import cn.photolib.photo.ProcessingPriority;
 import cn.photolib.photo.mapper.PhotoMapper;
 import cn.photolib.photo.model.PhotoEntity;
 import cn.photolib.photo.model.PhotoStatus;
@@ -34,6 +35,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -170,7 +172,8 @@ public class BatchUploadService {
                 : requestService.get(batch.getRequestId()).getCampusId();
         var photographer = campusMemberService.resolvePhotographer(metadata.photographerContactId(), campusId);
         createPhoto(batch, item, metadata.title(), metadata.description(), metadata.takenAt(),
-                tags, photographer.getStudentId(), photographer.getName(), campusId, user.id(), null);
+                tags, photographer.getStudentId(), photographer.getName(), campusId, user.id(), null,
+                null);
         refreshBatch(batchId);
         return view(batchMapper.selectById(batchId));
     }
@@ -278,13 +281,19 @@ public class BatchUploadService {
         if (waitingItems.isEmpty()) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "批次中没有可整理的图片");
         }
+        // 整批一起做的三件事，以前每张各一条 SQL（68 张的包一次 354 条）：
+        // 条目状态迁移、全库查重、写 photo_project。照片本身和条目明细仍逐张写。
+        List<Long> itemIds = waitingItems.stream().map(PhotoUploadItemEntity::getId).toList();
+        transitionItems(itemIds, BatchItemStatus.WAITING_METADATA, BatchItemStatus.PROCESSING);
+        BatchWrite write = new BatchWrite(existingPhotos(waitingItems.stream()
+                .map(item -> normalizedSha256(item.getSha256())).toList()));
         for (PhotoUploadItemEntity item : waitingItems) {
-            transitionItem(item.getId(), BatchItemStatus.WAITING_METADATA, BatchItemStatus.PROCESSING);
             createPhoto(batch, item, titleFromFileName(item.getOriginalFileName()),
                     snapshot.description(), snapshot.takenAt(), tags,
                     snapshot.photographerStudentId(), snapshot.photographerName(),
-                    snapshot.campusId(), snapshot.uploadedBy(), snapshot.shareLinkId());
+                    snapshot.campusId(), snapshot.uploadedBy(), snapshot.shareLinkId(), write);
         }
+        insertProjectLinks(write.projectLinks());
         refreshBatch(batchId);
         return view(batchMapper.selectById(batchId));
     }
@@ -301,13 +310,17 @@ public class BatchUploadService {
         return view(batch);
     }
 
+    /**
+     * @param write 整批落库时的共享状态（预取的查重结果、待写的 photo_project）；
+     *              单张填写元数据时为 null，逐张查重、立即写归属。
+     */
     private void createPhoto(PhotoUploadBatchEntity batch, PhotoUploadItemEntity item, String title,
                              String description, LocalDateTime takenAt, List<String> tags,
                              String photographerStudentId, String photographerName, Long campusId,
-                             Long uploadedBy, Long shareLinkId) {
+                             Long uploadedBy, Long shareLinkId, BatchWrite write) {
         String sha256 = normalizedSha256(item.getSha256());
         if (sha256 != null) item.setSha256(sha256);
-        ExistingPhoto duplicate = findExistingPhoto(sha256);
+        ExistingPhoto duplicate = write == null ? findExistingPhoto(sha256) : write.existing(sha256);
         if (duplicate != null) {
             markDuplicate(item, duplicate);
             return;
@@ -334,11 +347,14 @@ public class BatchUploadService {
         photoMapper.insert(photo);
         // 归属链接：项目相册/计数以 photo_project 为准。新照片 id 全新，不会撞主键。
         if (photo.getProjectId() != null) {
-            jdbc.sql("INSERT INTO photo_project (photo_id, project_id) VALUES (:photoId, :projectId)")
-                    .param("photoId", photo.getId())
-                    .param("projectId", photo.getProjectId())
-                    .update();
+            if (write != null) {
+                write.projectLinks().add(new ProjectLink(photo.getId(), photo.getProjectId()));
+            } else {
+                insertProjectLinks(List.of(new ProjectLink(photo.getId(), photo.getProjectId())));
+            }
         }
+        // 同一批里后面再出现同一张图时，要认出它是重复项（与逐张查库时看到刚插入的行一致）。
+        if (write != null) write.remember(sha256, title);
         item.setTitle(title);
         item.setDescription(description);
         item.setPhotographerStudentId(photographerStudentId);
@@ -348,7 +364,8 @@ public class BatchUploadService {
         item.setPhotoId(photo.getId());
         item.setStatus(BatchItemStatus.PROCESSING);
         itemMapper.updateById(item);
-        events.publishEvent(new PhotoProcessingService.PhotoProcessRequested(photo.getId()));
+        events.publishEvent(new PhotoProcessingService.PhotoProcessRequested(
+                photo.getId(), ProcessingPriority.BATCH));
     }
 
     private String normalizedSha256(String value) {
@@ -523,6 +540,82 @@ public class BatchUploadService {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "批次图片已被其他操作修改");
         }
     }
+
+    /** 一条 SQL 迁移多个条目；只要有一条不在预期状态就整体冲突（事务回滚）。 */
+    private void transitionItems(List<Long> ids, BatchItemStatus expected, BatchItemStatus next) {
+        if (ids.isEmpty()) return;
+        int updated = itemMapper.update(null, Wrappers.<PhotoUploadItemEntity>lambdaUpdate()
+                .set(PhotoUploadItemEntity::getStatus, next)
+                .set(PhotoUploadItemEntity::getUpdatedAt, LocalDateTime.now())
+                .in(PhotoUploadItemEntity::getId, ids)
+                .eq(PhotoUploadItemEntity::getStatus, expected));
+        if (updated != ids.size()) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "批次图片已被其他操作修改");
+        }
+    }
+
+    /**
+     * 一次查出这些 SHA-256 在库里已有的照片（规则同 {@link #findExistingPhoto}），
+     * 每个 hash 取 id 最小的那张，与逐张 {@code ORDER BY id LIMIT 1} 一致。
+     */
+    private Map<String, ExistingPhoto> existingPhotos(List<String> sha256s) {
+        List<String> distinct = sha256s.stream().filter(java.util.Objects::nonNull).distinct().toList();
+        Map<String, ExistingPhoto> found = new java.util.HashMap<>();
+        for (int from = 0; from < distinct.size(); from += 500) {
+            List<String> chunk = distinct.subList(from, Math.min(distinct.size(), from + 500));
+            jdbc.sql("""
+                    SELECT sha256, title FROM photo
+                    WHERE sha256 IN (:sha256s) AND deleted=0
+                      AND NOT (status='UPLOADING' AND failure_reason IS NOT NULL)
+                    ORDER BY id
+                    """).param("sha256s", chunk)
+                    .query((rs, rowNum) -> {
+                        found.putIfAbsent(rs.getString("sha256").toLowerCase(Locale.ROOT),
+                                new ExistingPhoto(rs.getString("title")));
+                        return null;
+                    }).list();
+        }
+        return found;
+    }
+
+    private void insertProjectLinks(List<ProjectLink> links) {
+        for (int from = 0; from < links.size(); from += 500) {
+            List<ProjectLink> chunk = links.subList(from, Math.min(links.size(), from + 500));
+            StringBuilder sql = new StringBuilder("INSERT INTO photo_project (photo_id, project_id) VALUES ");
+            Map<String, Object> params = new java.util.HashMap<>();
+            for (int i = 0; i < chunk.size(); i++) {
+                if (i > 0) sql.append(", ");
+                sql.append("(:photo").append(i).append(", :project").append(i).append(')');
+                params.put("photo" + i, chunk.get(i).photoId());
+                params.put("project" + i, chunk.get(i).projectId());
+            }
+            jdbc.sql(sql.toString()).params(params).update();
+        }
+    }
+
+    /** 整批落库的共享状态。 */
+    private static final class BatchWrite {
+        private final Map<String, ExistingPhoto> existing;
+        private final List<ProjectLink> projectLinks = new ArrayList<>();
+
+        BatchWrite(Map<String, ExistingPhoto> existing) {
+            this.existing = existing;
+        }
+
+        ExistingPhoto existing(String sha256) {
+            return sha256 == null ? null : existing.get(sha256);
+        }
+
+        void remember(String sha256, String title) {
+            if (sha256 != null) existing.putIfAbsent(sha256, new ExistingPhoto(title));
+        }
+
+        List<ProjectLink> projectLinks() {
+            return projectLinks;
+        }
+    }
+
+    private record ProjectLink(Long photoId, Long projectId) {}
 
     private BatchView view(PhotoUploadBatchEntity batch) {
         return new BatchView(batch, items(batch.getId()));

@@ -48,7 +48,7 @@ public class PhotoProcessingService {
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onRequested(PhotoProcessRequested event) {
-        submit(event.photoId()).exceptionally(exception -> {
+        submit(event.photoId(), event.priority()).exceptionally(exception -> {
             log.error("提交的图片处理任务异常结束: photoId={}", event.photoId(), exception);
             return null;
         });
@@ -65,12 +65,18 @@ public class PhotoProcessingService {
      */
     private final Set<Long> inFlight = ConcurrentHashMap.newKeySet();
 
+    /** 不知道来源时（恢复任务重提交）：属于某个批次就按批量排队，否则按单张。 */
     CompletableFuture<Void> submit(Long photoId) {
+        return submit(photoId, findBatchItem(photoId) == null
+                ? ProcessingPriority.INTERACTIVE : ProcessingPriority.BATCH);
+    }
+
+    CompletableFuture<Void> submit(Long photoId, ProcessingPriority priority) {
         inFlight.add(photoId);
         CompletableFuture<Void> task = nativeTasks.submit(compressor -> {
             process(photoId, compressor);
             return null;
-        });
+        }, priority);
         // 被执行器拒绝（队列满）时 future 立刻以异常结束，同样要放掉，让恢复任务之后接手。
         return task.whenComplete((ignored, failure) -> inFlight.remove(photoId));
     }
@@ -363,6 +369,14 @@ public class PhotoProcessingService {
         return "image/png".equals(contentType) ? ".png" : ".jpg";
     }
 
-    public record PhotoProcessRequested(Long photoId) {
+    /** @param priority 在处理池里的排队优先级，见 {@link ProcessingPriority} */
+    public record PhotoProcessRequested(Long photoId, ProcessingPriority priority) {
+        public PhotoProcessRequested(Long photoId) {
+            this(photoId, ProcessingPriority.INTERACTIVE);
+        }
+
+        public PhotoProcessRequested {
+            if (priority == null) priority = ProcessingPriority.INTERACTIVE;
+        }
     }
 }
