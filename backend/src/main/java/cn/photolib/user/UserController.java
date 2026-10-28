@@ -1,11 +1,13 @@
 package cn.photolib.user;
 
 import cn.photolib.audit.AuditAction;
+import cn.photolib.audit.AuditInterceptor;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.auth.mfa.RequiresStepUp;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.api.PageResponse;
 import cn.photolib.user.model.UserRole;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.Max;
@@ -28,6 +30,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 @RestController
@@ -90,11 +93,18 @@ public class UserController {
     @PutMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     @RequiresStepUp
-    ApiResponse<UserService.UserView> update(@PathVariable Long id, @Valid @RequestBody UpdateRequest request) {
-        return ApiResponse.ok(userService.update(id, new UserService.UpdateUser(
+    ApiResponse<UserService.UserView> update(@PathVariable Long id, @Valid @RequestBody UpdateRequest request,
+                                             HttpServletRequest http) {
+        UserService.Updated updated = userService.updateTracked(id, new UserService.UpdateUser(
                 request.displayName(), request.role(), request.campusId(), request.phone(),
                 request.email(), request.wecomUserid(), request.enabled(), request.version(),
-                request.permissionGroupId(), request.campusIds())));
+                request.permissionGroupId(), request.campusIds(), request.username()));
+        // 审计日志按 operator_id 现查用户名，改名后就看不出原来叫什么，所以在详情里留一份。
+        if (updated.previousUsername() != null) {
+            http.setAttribute(AuditInterceptor.DETAIL_ATTRIBUTE, Map.of("username", Map.of(
+                    "from", updated.previousUsername(), "to", updated.user().username())));
+        }
+        return ApiResponse.ok(updated.user());
     }
 
     @AuditAction("修改账号权限")
@@ -150,7 +160,7 @@ public class UserController {
     }
 
     record CreateRequest(
-            @NotBlank @Pattern(regexp = "^[A-Za-z0-9_.-]{3,64}$") String username,
+            @NotBlank @Pattern(regexp = UserService.USERNAME_PATTERN) String username,
             @NotBlank @Size(max = 100) String displayName,
             UserRole role,
             Long campusId,
@@ -163,6 +173,9 @@ public class UserController {
     }
 
     record UpdateRequest(
+            /* 不传表示不改登录账号。 */
+            @Pattern(regexp = UserService.USERNAME_PATTERN, message = "登录账号须为 3-64 位字母、数字或 ._-")
+            String username,
             @NotBlank @Size(max = 100) String displayName,
             UserRole role,
             Long campusId,

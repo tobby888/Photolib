@@ -13,7 +13,7 @@ import type { Campus, CampusMember, EntityId, PageData, PhotoRequest, Project, W
 import { DataState, formatMinutes, PageTitle, StatusTag } from '../components'
 import { ContentFitTable, TableEllipsisText } from '../ContentFitTable'
 import { useLoad } from '../hooks'
-import { hasPermission } from '../permissions'
+import { canViewProjects, hasPermission } from '../permissions'
 import { campusNameOf, membersForRequest, requestSelectOptions } from '../worklogForm'
 import {
   WORKLOG_OWNER_ACTION_MIN_WIDTH,
@@ -27,6 +27,45 @@ import { keepSelectedRows } from '../rowSelection'
 interface ExportJobView {
   job: { status: 'PENDING' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED'; errorMessage?: string }
   downloadUrl?: string
+}
+
+interface WorklogFilters {
+  page: number
+  pageSize: number
+  status: '' | Worklog['status']
+  source: '' | 'IN_APP' | 'SHARE_LINK'
+  keyword: string
+  campusId: string
+  /** 工作日期区间，YYYY-MM-DD，两端都含。 */
+  from: string
+  to: string
+}
+
+const EMPTY_FILTERS: WorklogFilters = {
+  page: 1, pageSize: 20, status: '', source: '', keyword: '', campusId: '', from: '', to: '',
+}
+
+const STATUS_OPTIONS = [
+  { value: 'DRAFT', label: '草稿' },
+  { value: 'SUBMITTED', label: '待确认' },
+  { value: 'CONFIRMED', label: '已确认' },
+  { value: 'REJECTED', label: '已退回' },
+]
+
+const SOURCE_OPTIONS = [
+  { value: 'IN_APP', label: '站内填报' },
+  { value: 'SHARE_LINK', label: '上传链接' },
+]
+
+const datePresets = (): { label: string; value: [dayjs.Dayjs, dayjs.Dayjs] }[] => {
+  const today = dayjs()
+  const lastMonth = today.subtract(1, 'month')
+  return [
+    { label: '最近 7 天', value: [today.subtract(6, 'day'), today] },
+    { label: '本月', value: [today.startOf('month'), today] },
+    { label: '上个月', value: [lastMonth.startOf('month'), lastMonth.endOf('month')] },
+    { label: '今年', value: [today.startOf('year'), today] },
+  ]
 }
 
 const wait = (milliseconds: number) => new Promise(resolve => window.setTimeout(resolve, milliseconds))
@@ -48,7 +87,11 @@ export default function WorklogsPage() {
   // 勾选跨页累加，存的是整行而不只是 id：批量批准要读状态和版本号，而翻到第 2 页之后
   // 第 1 页的那几行已经不在 data.items 里了（见 src/rowSelection.ts）。
   const [selectedItems, setSelectedItems] = useState<Worklog[]>([])
-  const [filters, setFilters] = useState({ page: 1, pageSize: 20, status: '' })
+  const [filters, setFilters] = useState<WorklogFilters>(EMPTY_FILTERS)
+  // 关键词输入框单独存：边打字边查太吵，回车或点搜索才生效。
+  const [keywordText, setKeywordText] = useState('')
+  const [projectSearch, setProjectSearch] = useState('')
+  const [projectKeyword, setProjectKeyword] = useState('')
   // 从选题详情页「本选题工时」跳过来时带着 ?projectId=，只看这个选题的工时；清掉就回到全部。
   const [searchParams, setSearchParams] = useSearchParams()
   const projectFilter = /^\d+$/.test(searchParams.get('projectId') || '') ? searchParams.get('projectId')! : ''
@@ -58,15 +101,59 @@ export default function WorklogsPage() {
     setSearchParams(next, { replace: true })
     setFilters(current => ({ ...current, page: 1 }))
   }
+  // 选题筛选仍放在地址栏里：选题详情页「本选题工时」靠它跳过来，刷新、转发链接也还在。
+  const setProjectFilter = (projectId?: string) => {
+    if (!projectId) {
+      clearProjectFilter()
+      return
+    }
+    const next = new URLSearchParams(searchParams)
+    next.set('projectId', projectId)
+    setSearchParams(next, { replace: true })
+    setFilters(current => ({ ...current, page: 1 }))
+  }
+  const updateFilters = (changes: Partial<WorklogFilters>) =>
+    setFilters(current => ({ ...current, ...changes, page: 1 }))
+  const filtered = !!(projectFilter || filters.status || filters.source || filters.keyword
+    || filters.campusId || filters.from || filters.to)
+  const resetFilters = () => {
+    setKeywordText('')
+    setFilters(current => ({ ...EMPTY_FILTERS, pageSize: current.pageSize }))
+    if (projectFilter) clearProjectFilter()
+  }
   const reviewer = hasPermission(user, 'WORKLOG_CONFIRM')
   const canExport = hasPermission(user, 'WORKLOG_EXPORT')
   const canSubmit = hasPermission(user, 'WORKLOG_SUBMIT')
   const canSubmitAny = hasPermission(user, 'WORKLOG_SUBMIT_ANY')
   const isAdmin = user?.permissionGroupCode === 'ADMIN'
+  // /projects 要选题查看权限；没有的人（只管报工时的账号）就不显示选题下拉，免得一打开就报错。
+  const canPickProject = canViewProjects(user)
   const { data, loading, error, reload } = useLoad(
     () => api<PageData<Worklog>>({ url: '/worklogs', params: qs({ ...filters, projectId: projectFilter }) }),
-    emptyPage<Worklog>(), [filters.page, filters.pageSize, filters.status, projectFilter],
+    emptyPage<Worklog>(), [filters.page, filters.pageSize, filters.status, filters.source, filters.keyword,
+      filters.campusId, filters.from, filters.to, projectFilter],
   )
+  useEffect(() => {
+    const timer = window.setTimeout(() => setProjectKeyword(projectSearch.trim()), 300)
+    return () => window.clearTimeout(timer)
+  }, [projectSearch])
+  const { data: projectOptions, loading: projectsLoading } = useLoad(
+    () => canPickProject
+      ? api<PageData<Project>>({ url: '/projects', params: qs({ page: 1, pageSize: 20, keyword: projectKeyword }) })
+      : Promise.resolve(emptyPage<Project>()),
+    emptyPage<Project>(), [canPickProject, projectKeyword],
+  )
+  // 从选题详情页带 ?projectId= 跳来时，候选里未必有它：单独取一次标题，下拉才显示名字而不是一串数字。
+  const { data: pickedProject } = useLoad(
+    () => canPickProject && projectFilter
+      ? api<Project>({ url: `/projects/${projectFilter}` }).catch(() => null)
+      : Promise.resolve(null),
+    null as Project | null, [canPickProject, projectFilter],
+  )
+  const projectSelectOptions = [
+    ...(pickedProject && !projectOptions.items.some(item => item.id === pickedProject.id) ? [pickedProject] : []),
+    ...projectOptions.items,
+  ].map(project => ({ value: String(project.id), label: project.title }))
   const selectedIds = selectedItems.map(item => item.id)
   // 列表重取之后把勾着的行换成新数据：批准和删除都带版本号，拿着旧快照去提交会被乐观锁拒掉。
   useEffect(() => {
@@ -111,10 +198,16 @@ export default function WorklogsPage() {
     [] as CampusMember[], [user?.id, canSubmit],
   )
   // 不带 enabled 过滤：只是拿来显示需求所属校区的名字，已停用校区也要叫得出名字。
+  // 审核的人还拿它做校区筛选。
   const { data: campuses } = useLoad(
-    () => canSubmit ? api<Campus[]>({ url: '/campuses' }) : Promise.resolve([]),
-    [] as Campus[], [canSubmit],
+    () => canSubmit || reviewer ? api<Campus[]>({ url: '/campuses' }) : Promise.resolve([]),
+    [] as Campus[], [canSubmit, reviewer],
   )
+  // 校区范围的账号只列授权校区：后端照样按授权裁剪，这里只是别让人选到注定为空的校区。
+  const campusFilterOptions = campuses
+    .filter(campus => user?.dataScope !== 'CAMPUS'
+      || (user.campusIds || []).some(id => String(id) === String(campus.id)))
+    .map(campus => ({ value: String(campus.id), label: campus.enabled ? campus.name : `${campus.name}（已停用）` }))
   const selectedRequestId = Form.useWatch('requestId', form) as EntityId | undefined
   const selectedRequest = requestOptions.find(item => item.id === selectedRequestId)
   const selectedCampusName = selectedRequest ? campusNameOf(campuses, selectedRequest.campusId) : ''
@@ -280,16 +373,39 @@ export default function WorklogsPage() {
         )}
       </Space>}
     />
-    <Card className="filter-card">
+    <Card className="filter-card worklog-filter-card">
       <Space wrap>
-        <Select allowClear placeholder="全部状态" style={{ width: 160 }} options={[
-          { value: 'DRAFT', label: '草稿' },
-          { value: 'SUBMITTED', label: '待确认' },
-          { value: 'CONFIRMED', label: '已确认' },
-          { value: 'REJECTED', label: '已退回' },
-        ]} onChange={(status = '') => setFilters({ ...filters, page: 1, status })} />
-        {projectFilter && <Tag closable color="blue" onClose={event => { event.preventDefault(); clearProjectFilter() }}>
-          只看选题 #{projectFilter} 的工时</Tag>}
+        <Input.Search allowClear placeholder="搜索成员姓名、学号、说明或需求" style={{ width: 260 }}
+          value={keywordText}
+          onChange={event => {
+            setKeywordText(event.target.value)
+            if (!event.target.value) updateFilters({ keyword: '' })
+          }}
+          onSearch={value => updateFilters({ keyword: value.trim() })} />
+        <Select allowClear placeholder="全部状态" style={{ width: 120 }} value={filters.status || undefined}
+          options={STATUS_OPTIONS} onChange={(status?: Worklog['status']) => updateFilters({ status: status ?? '' })} />
+        <Select allowClear placeholder="全部来源" style={{ width: 120 }} value={filters.source || undefined}
+          options={SOURCE_OPTIONS} onChange={(source?: WorklogFilters['source']) => updateFilters({ source: source ?? '' })} />
+        <DatePicker.RangePicker allowEmpty={[true, true]} placeholder={['开始日期', '结束日期']} style={{ width: 250 }}
+          value={[filters.from ? dayjs(filters.from) : null, filters.to ? dayjs(filters.to) : null]}
+          presets={datePresets()}
+          onChange={values => updateFilters({
+            from: values?.[0]?.format('YYYY-MM-DD') || '',
+            to: values?.[1]?.format('YYYY-MM-DD') || '',
+          })} />
+        {canPickProject && <Select allowClear showSearch placeholder="全部选题" style={{ width: 200 }}
+          value={projectFilter || undefined} options={projectSelectOptions} loading={projectsLoading}
+          filterOption={false} onSearch={setProjectSearch}
+          notFoundContent={projectsLoading ? '加载中…' : '没有匹配的选题'}
+          onChange={(projectId?: string) => { setProjectSearch(''); setProjectFilter(projectId) }} />}
+        {!canPickProject && projectFilter && <Tag closable color="blue"
+          onClose={event => { event.preventDefault(); clearProjectFilter() }}>只看选题 #{projectFilter} 的工时</Tag>}
+        {reviewer && campusFilterOptions.length > 1 && <Select allowClear showSearch optionFilterProp="label"
+          placeholder="全部校区" style={{ width: 140 }} value={filters.campusId || undefined}
+          options={campusFilterOptions} onChange={(campusId = '') => updateFilters({ campusId })} />}
+        {filtered && <Button type="link" onClick={resetFilters}>清空筛选</Button>}
+      </Space>
+      <Space wrap>
         {reviewer && <>
           <span>已选择 {selectedItems.length} 条{
             selectedItems.some(item => !data.items.some(row => row.id === item.id)) ? '（含其他页）' : ''}</span>
@@ -318,9 +434,9 @@ export default function WorklogsPage() {
     </Card>
     <Card>
       <DataState loading={loading} error={error} empty={!data.items.length} onRetry={reload}
-        emptyText={filters.status ? '没有这个状态的工时记录' : reviewer ? '还没有待审核的工时' : '还没有工时记录'}
-        emptyHint={filters.status
-          ? '清掉状态筛选就能看到全部。'
+        emptyText={filtered ? '没有符合筛选条件的工时记录' : reviewer ? '还没有待审核的工时' : '还没有工时记录'}
+        emptyHint={filtered
+          ? '换个条件，或点「清空筛选」看全部。'
           : reviewer
             ? '成员提交工时、或有人通过上传链接申报工时后，会出现在这里等你确认或退回。'
             : '拍完、修完就来填一笔，导出统计时用的就是这些记录。'}>
