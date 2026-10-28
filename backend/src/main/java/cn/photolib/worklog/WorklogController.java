@@ -6,6 +6,7 @@ import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.api.PageResponse;
 import cn.photolib.worklog.model.WorklogEntity;
+import cn.photolib.worklog.model.WorklogSource;
 import cn.photolib.worklog.model.WorklogStatus;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -43,8 +44,12 @@ public class WorklogController {
             @RequestParam(required = false) WorklogStatus status,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) Long campusId,
+            @RequestParam(required = false) @Size(max = 100) String keyword,
+            @RequestParam(required = false) WorklogSource source,
             @AuthenticationPrincipal AuthenticatedUser user) {
-        return ApiResponse.ok(service.list(page, pageSize, requestId, projectId, userId, status, from, to, user));
+        return ApiResponse.ok(service.list(page, pageSize, new WorklogService.ListFilter(
+                requestId, projectId, campusId, userId, status, from, to, keyword, source), user));
     }
 
     @AuditAction("修改工时")

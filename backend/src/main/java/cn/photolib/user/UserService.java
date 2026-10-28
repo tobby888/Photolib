@@ -17,6 +17,8 @@ import cn.photolib.user.model.UserRole;
 import cn.photolib.permission.DataScope;
 import cn.photolib.permission.PermissionGroupEntity;
 import cn.photolib.permission.PermissionGroupService;
+import cn.photolib.registration.mapper.RegistrationApplicationMapper;
+import cn.photolib.registration.model.RegistrationApplicationEntity;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.RequiredArgsConstructor;
@@ -37,6 +39,8 @@ import java.util.Map;
 public class UserService {
     private static final char[] PASSWORD_CHARS =
             "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789".toCharArray();
+    /** 登录账号的写法，与 {@code UserController} 建号时的校验一致。 */
+    public static final String USERNAME_PATTERN = "^[A-Za-z0-9_.-]{3,64}$";
     private final UserMapper userMapper;
     private final CampusMapper campusMapper;
     private final PasswordEncoder passwordEncoder;
@@ -45,6 +49,7 @@ public class UserService {
     private final PermissionGroupService permissionGroups;
     private final UserAvatarService avatars;
     private final MfaService mfa;
+    private final RegistrationApplicationMapper registrationApplications;
     private final SecureRandom random = new SecureRandom();
 
     @Transactional
@@ -185,6 +190,15 @@ public class UserService {
 
     @Transactional
     public UserView update(Long id, UpdateUser command) {
+        return updateTracked(id, command).user();
+    }
+
+    /**
+     * 同 {@link #update}，另外告诉调用方登录账号有没有改、原来是什么，供审计详情留底：
+     * 审计日志按 operator_id 现查用户名，改名之后从日志里就看不出它以前叫什么了。
+     */
+    @Transactional
+    public Updated updateTracked(Long id, UpdateUser command) {
         UserEntity user = require(id);
         PermissionGroupEntity group = resolveGroup(command.permissionGroupId(), command.role());
         Set<Long> campusIds = resolveCampusIds(command.campusIds(), command.campusId());
@@ -194,6 +208,14 @@ public class UserService {
         validateEmailAvailable(email, id);
         String wecomUserid = normalizeWecomUserid(command.wecomUserid());
         validateWecomUseridAvailable(wecomUserid, id);
+        String previousUsername = user.getUsername();
+        // 不传 username 表示不改（老调用方、只改邮箱的表单）。
+        String username = command.username() == null ? previousUsername : LoginIdentifiers.clean(command.username());
+        boolean renamed = !username.equals(previousUsername);
+        if (renamed) {
+            validateUsernameAvailable(username, id);
+            user.setUsername(username);
+        }
         user.setDisplayName(command.displayName());
         user.setRole(permissionGroups.compatibleRole(group));
         user.setPermissionGroupId(group.getId());
@@ -210,12 +232,41 @@ public class UserService {
             permissionGroups.replaceUserCampuses(id, group.getDataScope(), campusIds);
         } catch (DuplicateKeyException exception) {
             throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE,
-                    "邮箱或企业微信 UserID 已被其他用户使用");
+                    "登录账号、邮箱或企业微信 UserID 已被其他用户使用");
         }
         if (!command.enabled()) {
             authService.revokeAll(id);
         }
-        return toView(require(id));
+        // 会话按用户 id 记、每次请求都从库里重读账号，所以改名不用踢下线；
+        // 但本人得知道下次该用什么登录，不然只能来问管理员。
+        if (renamed && command.enabled()) {
+            notifications.notifyUser(id, "ACCOUNT_USERNAME_CHANGED", "PhotoLib 登录账号已修改",
+                    NotificationService.paragraphs("管理员已把您的登录账号从「" + previousUsername
+                            + "」改为「" + username + "」，下次请用新账号登录，密码不变。"));
+        }
+        return new Updated(toView(require(id)), renamed ? previousUsername : null);
+    }
+
+    /**
+     * 新登录账号不能和别的账号重复，也不能抢正在审核的注册申请占着的名字（否则那份申请
+     * 批准时才失败）。{@code del.} 开头的是删除账号时腾出来的名字（见 {@link #delete}），不许手动取。
+     */
+    private void validateUsernameAvailable(String username, Long excludedUserId) {
+        if (!username.matches(USERNAME_PATTERN)) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "登录账号须为 3-64 位字母、数字或 ._-");
+        }
+        if (username.regionMatches(true, 0, "del.", 0, 4)) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "登录账号不能以 del. 开头，这是删除账号时保留的前缀");
+        }
+        long existing = userMapper.selectCount(Wrappers.<UserEntity>lambdaQuery()
+                .eq(UserEntity::getUsername, username)
+                .ne(UserEntity::getId, excludedUserId));
+        if (existing > 0 || registrationApplications.selectCount(
+                Wrappers.<RegistrationApplicationEntity>lambdaQuery()
+                        .eq(RegistrationApplicationEntity::getPendingUsername, username)) > 0) {
+            throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE,
+                    "登录账号「" + username + "」已被其他用户或待审核的注册申请使用");
+        }
     }
 
     @Transactional
@@ -448,13 +499,25 @@ public class UserService {
         }
     }
 
+    /** @param username 新的登录账号；{@code null} 表示不改 */
     public record UpdateUser(String displayName, UserRole role, Long campusId, String phone,
                              String email, String wecomUserid, boolean enabled, int version,
-                             Long permissionGroupId, Set<Long> campusIds) {
+                             Long permissionGroupId, Set<Long> campusIds, String username) {
+        public UpdateUser(String displayName, UserRole role, Long campusId, String phone,
+                          String email, String wecomUserid, boolean enabled, int version,
+                          Long permissionGroupId, Set<Long> campusIds) {
+            this(displayName, role, campusId, phone, email, wecomUserid, enabled, version,
+                    permissionGroupId, campusIds, null);
+        }
+
         public UpdateUser(String displayName, UserRole role, Long campusId, String phone,
                           String email, boolean enabled, int version) {
-            this(displayName, role, campusId, phone, email, null, enabled, version, null, null);
+            this(displayName, role, campusId, phone, email, null, enabled, version, null, null, null);
         }
+    }
+
+    /** @param previousUsername 本次改了登录账号时是原来的账号，没改为 {@code null} */
+    public record Updated(UserView user, String previousUsername) {
     }
 
     public record CreatedUser(UserView user, String initialPassword) {

@@ -8,21 +8,33 @@ import type { Campus, PageData, PermissionGroup, User } from '../../types'
 import { DataState } from '../../components'
 import { ContentFitTable } from '../../ContentFitTable'
 import { useLoad } from '../../hooks'
+import { useAuth } from '../../auth'
 import UserAvatar from '../../UserAvatar'
 import { USER_ACTION_MIN_WIDTH } from '../../tableActionWidths'
 import { GRID_PAGE_SIZES, clientTablePagination } from '../../pagination'
 
 interface AccountFormValues {
+  username: string
   email?: string
   wecomUserid?: string
 }
 
 /** 企业微信通讯录对 userid 的约束：数字、字母和 _-@. 四种半角符号，1~64 字节。 */
 const WECOM_USERID_PATTERN = /^[A-Za-z0-9_@.-]{1,64}$/
+/** 登录账号的写法，与后端 UserService.USERNAME_PATTERN 一致。 */
+const USERNAME_PATTERN = /^[A-Za-z0-9_.-]{3,64}$/
+const USERNAME_RULES = [
+  { required: true, whitespace: true, message: '请填写登录账号' },
+  { pattern: USERNAME_PATTERN, message: '3-64 位字母、数字或 ._-' },
+  // del. 开头是删除账号时腾名字用的前缀，后端会拒绝，这里先拦住。
+  { validator: (_: unknown, value?: string) => value?.trim().toLowerCase().startsWith('del.')
+    ? Promise.reject(new Error('不能以 del. 开头')) : Promise.resolve() },
+]
 
-/** 管理员面板 · 账号管理：创建、启停、改邮箱 / 企业微信、重置密码和删除成员账号。 */
+/** 管理员面板 · 账号管理：创建、启停、改登录账号 / 邮箱 / 企业微信、重置密码和删除成员账号。 */
 export default function UsersPage() {
   const { message, modal } = App.useApp()
+  const { user: currentUser, refreshUser } = useAuth()
   const [userForm] = Form.useForm()
   const [accountForm] = Form.useForm<AccountFormValues>()
   const [userOpen, setUserOpen] = useState(false)
@@ -56,16 +68,36 @@ export default function UsersPage() {
   }
   const openAccountEditor = (user: User) => {
     setEditingUser(user)
-    accountForm.setFieldsValue({ email: user.email, wecomUserid: user.wecomUserid ?? undefined })
+    accountForm.setFieldsValue({
+      username: user.username, email: user.email, wecomUserid: user.wecomUserid ?? undefined,
+    })
   }
   const updateUserAccount = async () => {
     if (!editingUser || editingUser.version == null) return
+    let values: AccountFormValues
     try {
-      const values = await accountForm.validateFields()
+      values = await accountForm.validateFields()
+    } catch {
+      return
+    }
+    const username = values.username.trim()
+    const renamed = username !== editingUser.username
+    // 改登录账号会让本人用旧账号登不上，多问一句，免得手滑。
+    if (renamed && !await modal.confirm({
+      title: '修改登录账号？',
+      content: <span>
+        <strong>{editingUser.displayName}</strong> 以后要用 <Typography.Text code>{username}</Typography.Text> 登录，
+        旧账号 <Typography.Text code>{editingUser.username}</Typography.Text> 将不能再用；密码不变，已登录的设备不受影响。
+        系统会给本人发一条通知。
+      </span>,
+      okText: '确认修改', cancelText: '取消',
+    })) return
+    try {
       await api<User>({
         method: 'PUT',
         url: `/users/${editingUser.id}`,
         data: {
+          username,
           displayName: editingUser.displayName,
           permissionGroupId: editingUser.permissionGroupId,
           campusIds: editingUser.campusIds || [],
@@ -78,7 +110,9 @@ export default function UsersPage() {
           version: editingUser.version,
         },
       })
-      message.success('账号信息已更新')
+      message.success(renamed ? `账号信息已更新，登录账号已改为 ${username}` : '账号信息已更新')
+      // 改的是自己：右上角等处用的是本地缓存的用户快照，重新取一次。
+      if (renamed && currentUser?.id === editingUser.id) void refreshUser()
       setEditingUser(null)
       accountForm.resetFields()
       await reload()
@@ -141,7 +175,7 @@ export default function UsersPage() {
     </DataState>
     <Modal title="创建成员账号" open={userOpen} onCancel={() => setUserOpen(false)} onOk={createUser} okText="创建账号">
       <Form form={userForm} layout="vertical" requiredMark={false}>
-        <Form.Item label="登录账号" name="username" rules={[{ required: true }, { pattern: /^[A-Za-z0-9_.-]{3,64}$/, message: '3-64 位字母、数字或 ._-' }]}><Input /></Form.Item>
+        <Form.Item label="登录账号" name="username" rules={USERNAME_RULES}><Input /></Form.Item>
         <Form.Item label="显示姓名" name="displayName" rules={[{ required: true }]}><Input /></Form.Item>
         <Form.Item label="权限组" name="permissionGroupId" rules={[{ required: true }]}>
           <Select options={permissionGroups.map(group => ({ value: group.id, label: group.name }))} />
@@ -169,8 +203,12 @@ export default function UsersPage() {
       onOk={() => void updateUserAccount()}
       okText="保存"
     >
-      <Typography.Paragraph type="secondary">邮箱用于登录，不区分大小写，留空则取消邮箱登录；企业微信 UserID 用于接收通知，留空则该成员只收站内信。</Typography.Paragraph>
+      <Typography.Paragraph type="secondary">登录账号和邮箱都能用来登录；邮箱不区分大小写，留空则取消邮箱登录。企业微信 UserID 用于接收通知，留空则该成员只收站内信。</Typography.Paragraph>
       <Form form={accountForm} layout="vertical" requiredMark={false}>
+        <Form.Item label="登录账号" name="username" rules={USERNAME_RULES}
+          extra="改完后旧账号不能再登录，密码不变。">
+          <Input autoComplete="off" />
+        </Form.Item>
         <Form.Item label="邮箱" name="email" rules={[{ type: 'email', message: '请输入有效的邮箱地址' }, { max: 255, message: '邮箱不能超过 255 个字符' }]}>
           <Input placeholder="例如 name@example.com" autoComplete="email" />
         </Form.Item>

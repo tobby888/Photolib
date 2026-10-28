@@ -4,6 +4,7 @@ import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.PageResponse;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
+import cn.photolib.common.util.LikeFilter;
 import cn.photolib.directory.CampusMemberEntity;
 import cn.photolib.directory.CampusMemberService;
 import cn.photolib.project.ProjectService;
@@ -21,6 +22,7 @@ import cn.photolib.permission.PermissionCode;
 import cn.photolib.recruitment.RecruitmentStudentId;
 import cn.photolib.worklog.mapper.WorklogMapper;
 import cn.photolib.worklog.model.WorklogEntity;
+import cn.photolib.worklog.model.WorklogSource;
 import cn.photolib.worklog.model.WorklogStatus;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -132,12 +134,40 @@ public class WorklogService {
     public PageResponse<WorklogEntity> list(int page, int pageSize, Long requestId, Long projectId, Long userId,
                                             WorklogStatus status, LocalDate from, LocalDate to,
                                             AuthenticatedUser principal) {
+        return list(page, pageSize, new ListFilter(requestId, projectId, null, userId, status, from, to,
+                null, null), principal);
+    }
+
+    /**
+     * 工时列表。筛选条件只会收窄结果，可见范围（本人 / 校区）照旧由权限决定。
+     *
+     * @see ListFilter
+     */
+    public PageResponse<WorklogEntity> list(int page, int pageSize, ListFilter filter, AuthenticatedUser principal) {
         boolean reviewer = principal.hasAnyPermission(
                 PermissionCode.WORKLOG_CONFIRM, PermissionCode.WORKLOG_EXPORT);
-        Long effectiveUser = reviewer ? userId : principal.id();
+        Long effectiveUser = reviewer ? filter.userId() : principal.id();
+        Long requestId = filter.requestId();
+        Long projectId = filter.projectId();
+        Long campusId = filter.campusId();
+        String keyword = StringUtils.hasText(filter.keyword()) ? filter.keyword().strip() : null;
+        String likeKeyword = LikeFilter.escape(keyword);
+        WorklogSource source = filter.source();
         Page<WorklogEntity> result = mapper.selectPage(Page.of(page, pageSize),
                 Wrappers.<WorklogEntity>lambdaQuery()
                         .eq(requestId != null, WorklogEntity::getRequestId, requestId)
+                        // 关键词查成员姓名、学号、说明和需求标题——审核时最常拿来找人的就是这几样。
+                        .and(keyword != null, q -> q
+                                .apply(LikeFilter.contains("member_name"), likeKeyword)
+                                .or().apply(LikeFilter.contains("member_student_id"), likeKeyword)
+                                .or().apply(LikeFilter.contains("remark"), likeKeyword)
+                                .or().apply("request_id IN (SELECT id FROM photo_request WHERE "
+                                        + LikeFilter.contains("title") + ")", likeKeyword))
+                        // 按需求所属校区筛；链接申报的工时没有校区，选了校区就不会出现。
+                        .apply(campusId != null,
+                                "request_id IN (SELECT id FROM photo_request WHERE campus_id = {0})", campusId)
+                        .isNull(source == WorklogSource.IN_APP, WorklogEntity::getShareLinkId)
+                        .isNotNull(source == WorklogSource.SHARE_LINK, WorklogEntity::getShareLinkId)
                         // {0} 由 MyBatis-Plus 绑定成参数，不拼进 SQL 文本。链接是软删的，撤销之后
                         // 申报的工时仍属于这个选题，所以链接那一侧不看 deleted。
                         .and(projectId != null, q -> q
@@ -151,10 +181,13 @@ public class WorklogService {
                                 "SELECT id FROM photo_request WHERE deleted=0 AND campus_id IN ("
                                         + campusIdList(principal) + ")")
                         .eq(effectiveUser != null, WorklogEntity::getUserId, effectiveUser)
-                        .eq(status != null, WorklogEntity::getStatus, status)
-                        .ge(from != null, WorklogEntity::getWorkDate, from)
-                        .le(to != null, WorklogEntity::getWorkDate, to)
-                        .orderByDesc(WorklogEntity::getWorkDate));
+                        .eq(filter.status() != null, WorklogEntity::getStatus, filter.status())
+                        // 两端都含：to 是那一天本身（work_date 是 DATE，没有时分）。
+                        .ge(filter.from() != null, WorklogEntity::getWorkDate, filter.from())
+                        .le(filter.to() != null, WorklogEntity::getWorkDate, filter.to())
+                        // 同一天的工时很多，再按 id 排一次，翻页时才不会重复或漏行。
+                        .orderByDesc(WorklogEntity::getWorkDate)
+                        .orderByDesc(WorklogEntity::getId));
         populateDisplayNames(result.getRecords());
         return PageResponse.from(result);
     }
@@ -517,6 +550,22 @@ public class WorklogService {
         if (!user.hasPermission(permission)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权执行该工时操作");
         }
+    }
+
+    /**
+     * 工时列表的筛选条件，全部可空（空 = 不按这一项筛）。
+     *
+     * @param projectId 站内填报的按需求所属选题，链接申报的按链接所属选题，与统计里
+     *                  {@code COALESCE(需求的选题, 链接的选题)} 同一口径
+     * @param campusId  需求所属校区；链接申报的工时没有校区，选了校区就筛不到它们
+     * @param userId    填报账号，只对审核 / 导出权限生效，其他人永远只看自己的
+     * @param from      工作日期下限（含）
+     * @param to        工作日期上限（含）
+     * @param keyword   成员姓名、学号、说明或需求标题包含它
+     * @param source    站内填报 / 上传链接申报
+     */
+    public record ListFilter(Long requestId, Long projectId, Long campusId, Long userId, WorklogStatus status,
+                             LocalDate from, LocalDate to, String keyword, WorklogSource source) {
     }
 
     public record WorklogCommand(LocalDate workDate, Long memberContactId,

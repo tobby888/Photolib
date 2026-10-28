@@ -3495,6 +3495,9 @@ body {
 }
 
 /* 工时记录表：单元格内容不折行，成员的姓名和学号上下两行。 */
+/* 工时筛选条件多，独占第一行；批量操作和本页合计挪到第二行，宽屏也不和筛选挤在一起。 */
+.worklog-filter-card .ant-card-body { flex-wrap: wrap; row-gap: 12px; }
+.worklog-filter-card .ant-card-body > .ant-space:first-child { flex: 1 1 100%; }
 .worklog-nowrap { white-space: nowrap; }
 .worklog-source { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .worklog-source .ant-tag { margin-inline-end: 0; }
