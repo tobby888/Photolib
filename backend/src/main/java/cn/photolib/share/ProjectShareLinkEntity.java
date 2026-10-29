@@ -18,6 +18,11 @@ public class ProjectShareLinkEntity extends BaseEntity {
     private ShareLinkPurpose purpose;
     private Boolean allowDownload;
     private Boolean allowAdoption;
+    /**
+     * 只开放相册里指定的那几张（{@code project_share_link_photo}），建立后不可改。
+     * 范围与相册取交集，不是图片的副本，见 V70。
+     */
+    private Boolean selectedPhotosOnly;
     private LocalDateTime expiresAt;
     private Long viewCount;
     private LocalDateTime lastViewedAt;

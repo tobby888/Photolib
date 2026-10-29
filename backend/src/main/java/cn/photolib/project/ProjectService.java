@@ -621,14 +621,7 @@ public class ProjectService {
                 skippedUploadedHere++;
                 continue;
             }
-            long adopted = jdbc.sql("""
-                    SELECT COUNT(*) FROM adoption
-                    WHERE photo_id=:photoId AND project_id=:projectId AND deleted=0
-                    """)
-                    .param("photoId", photoId)
-                    .param("projectId", projectId)
-                    .query(Long.class).single();
-            if (adopted > 0) {
+            if (adoptedIn(photoId, projectId)) {
                 skippedAdopted++;
                 continue;
             }
@@ -641,6 +634,105 @@ public class ProjectService {
     }
 
     public record RemovePhotosResult(int removed, int skippedAdopted, int skippedUploadedHere) {
+    }
+
+    /**
+     * 把本选题相册里勾选的图片复制或移动到另一个选题。
+     *
+     * <p>复制 = 往目标相册加归属（与 {@link #addPhotos} 同一条规则：目标选题可见且进行中、
+     * 校区负责人只能动本人上传的图片），不复制图片本身、不带走采用记录——进了目标选题默认未被引。
+     * 移动 = 复制之后再按 {@link #removePhotos} 的规则从本选题移出，移不了的（本选题已采用、
+     * 或本来就是在本选题上传的）留在原处并计数，它们在目标选题里仍然有一份。</p>
+     *
+     * <p>和「从图库添加」不同，这里每张都必须此刻就在来源相册里：入口是来源选题的相册，
+     * 不在里面的只能是一屏过期的勾选，按跳过计数。还没处理完的图片同样跳过，而不是像
+     * {@code addPhotos} 那样整批失败——相册里本来就会混着几张处理中的图。</p>
+     */
+    @Transactional
+    public TransferPhotosResult transferPhotos(Long sourceId, Long targetId, List<Long> photoIds,
+                                               TransferMode mode, AuthenticatedUser user) {
+        requirePermission(user, PermissionCode.PROJECT_ADOPT);
+        if (photoIds == null || photoIds.isEmpty() || photoIds.size() > 200) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择 1 至 200 张图片");
+        }
+        if (targetId == null || targetId.equals(sourceId)) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择另一个选题");
+        }
+        boolean move = mode == TransferMode.MOVE;
+        ProjectEntity source = getVisible(sourceId, user);
+        if (move && source.getStatus() != ProjectStatus.ACTIVE) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "仅进行中项目可移出图片，可以改用复制");
+        }
+        if (getVisible(targetId, user).getStatus() != ProjectStatus.ACTIVE) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "只能复制或移动到进行中的选题");
+        }
+
+        int copied = 0;
+        int alreadyInTarget = 0;
+        int skipped = 0;
+        int removed = 0;
+        int keptAdopted = 0;
+        int keptUploadedHere = 0;
+        for (Long photoId : photoIds.stream().distinct().toList()) {
+            PhotoEntity photo = photoMapper.selectById(photoId);
+            if (photo == null || photo.getStatus() != PhotoStatus.AVAILABLE || !inAlbum(photoId, sourceId)) {
+                skipped++;
+                continue;
+            }
+            if (user.isCampusScoped() && !photo.getUploadedBy().equals(user.id())) {
+                throw new BusinessException(ErrorCode.FORBIDDEN, "只能复制或移动本人上传的图片");
+            }
+            int inserted = jdbc.sql("INSERT IGNORE INTO photo_project (photo_id, project_id) VALUES (:photoId, :projectId)")
+                    .param("photoId", photoId)
+                    .param("projectId", targetId)
+                    .update();
+            if (inserted > 0) copied++;
+            else alreadyInTarget++;
+            if (!move) continue;
+
+            if (sourceId.equals(photo.getProjectId())) {
+                keptUploadedHere++;
+            } else if (adoptedIn(photoId, sourceId)) {
+                keptAdopted++;
+            } else {
+                removed += jdbc.sql("DELETE FROM photo_project WHERE photo_id=:photoId AND project_id=:projectId")
+                        .param("photoId", photoId)
+                        .param("projectId", sourceId)
+                        .update();
+            }
+        }
+        return new TransferPhotosResult(copied, alreadyInTarget, skipped, removed, keptAdopted, keptUploadedHere);
+    }
+
+    private boolean inAlbum(Long photoId, Long projectId) {
+        return jdbc.sql("SELECT COUNT(*) FROM photo_project WHERE photo_id=:photoId AND project_id=:projectId")
+                .param("photoId", photoId)
+                .param("projectId", projectId)
+                .query(Long.class).single() > 0;
+    }
+
+    private boolean adoptedIn(Long photoId, Long projectId) {
+        return jdbc.sql("""
+                SELECT COUNT(*) FROM adoption
+                WHERE photo_id=:photoId AND project_id=:projectId AND deleted=0
+                """)
+                .param("photoId", photoId)
+                .param("projectId", projectId)
+                .query(Long.class).single() > 0;
+    }
+
+    public enum TransferMode { COPY, MOVE }
+
+    /**
+     * @param copied           新加进目标相册的张数
+     * @param alreadyInTarget  本来就在目标相册里的张数（不算失败）
+     * @param skipped          已不在本选题相册里、已删除或还没处理完，没有动
+     * @param removed          移动时从本选题移出的张数
+     * @param keptAdopted      移动时因在本选题已被采用而留在本选题的张数（目标里也有一份）
+     * @param keptUploadedHere 移动时因本来就是在本选题上传的而留在本选题的张数（目标里也有一份）
+     */
+    public record TransferPhotosResult(int copied, int alreadyInTarget, int skipped, int removed,
+                                       int keptAdopted, int keptUploadedHere) {
     }
 
     /**

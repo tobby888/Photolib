@@ -155,6 +155,40 @@ class ProjectDetailAccessHttpTests {
     }
 
     /**
+     * 复制/移动到其他选题与加入相册同一道门槛；URL 里只有来源选题，目标、方式和
+     * 张数要靠审计详情补上。省略 {@code mode} 时按复制处理，不会让图片离开本选题。
+     */
+    @Test
+    void transferringPhotosToAnotherProjectIsAuditedAndDefaultsToCopy() throws Exception {
+        AuthenticatedUser admin = new AuthenticatedUser(ADMIN_ID, "detail-http-admin",
+                "详情管理员", UserRole.ADMIN, null, false);
+        Long targetId = projectService.create("目标选题", "说明", ProjectStatus.ACTIVE, admin).getId();
+
+        mvc.perform(authenticated(post("/api/v1/projects/" + projectId + "/photos/transfer")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"targetProjectId\":" + targetId + ",\"photoIds\":[" + PHOTO_ID + "]}")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.copied").value(1))
+                .andExpect(jsonPath("$.data.removed").value(0));
+        mvc.perform(authenticated(post("/api/v1/projects/" + projectId + "/photos/transfer")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"photoIds\":[" + PHOTO_ID + "]}")))
+                .andExpect(status().isBadRequest());
+
+        assertThat(jdbc.sql("SELECT project_id FROM photo_project WHERE photo_id=:photoId ORDER BY project_id")
+                .param("photoId", PHOTO_ID).query(Long.class).list()).containsExactly(projectId, targetId);
+        var details = jdbc.sql("""
+                SELECT detail_json FROM audit_log
+                WHERE resource_type = 'PROJECTS' AND resource_id = :projectId AND operator_id = :operator
+                """).param("projectId", String.valueOf(projectId)).param("operator", VIEWER_ID)
+                .query(String.class).list();
+        // 被参数校验挡下的那次同样留了一行（只有 status 400），成功那次带着完整详情。
+        assertThat(details).hasSize(2);
+        assertThat(details).anySatisfy(detail -> assertThat(detail).contains("targetProjectId")
+                .contains(String.valueOf(targetId)).contains("COPY").contains("copied"));
+    }
+
+    /**
      * DispatcherServlet 映射在 `/` 上，线上 {@code getServletPath()} 就是完整路径；
      * MockMvc 不会替我们填，而 {@code AccessTokenFilter} 正是按它判断路径的。
      */
