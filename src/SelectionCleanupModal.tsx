@@ -7,7 +7,7 @@ import type { Photo, Project, SelectionCleanupPlan, SelectionCleanupResult } fro
 import ProjectPhotoFilterBar from './ProjectPhotoFilterBar'
 import { PreviewPhotoImg } from './PreviewPhoto'
 import {
-  DEPRECATED_TAG, DEPRECATED_TAG_LABEL, collectPhotographers, collectTagOptions, emptyProjectPhotoFilters,
+  DEPRECATED_TAG, DEPRECATED_TAG_LABEL, collectPhotographers, tagDisplayName, collectTagOptions, emptyProjectPhotoFilters,
   hasActiveFilters,
 } from './photoTags'
 import type { ProjectPhotoFilters } from './photoTags'
@@ -31,7 +31,7 @@ interface SelectionCleanupModalProps {
   onFinished: () => Promise<void> | void
 }
 
-const tagLabel = (tag: string) => tag.toLowerCase() === DEPRECATED_TAG ? DEPRECATED_TAG_LABEL : tag
+const tagLabel = tagDisplayName
 
 /** 筛选条件原样发给后端；多选发成 `tags=a&tags=b`，空条件不发。 */
 const filterParams = (filters: ProjectPhotoFilters) => qs({

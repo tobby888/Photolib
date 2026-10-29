@@ -438,6 +438,8 @@ export interface SharePhoto {
   storedFileName: string
   thumbnailUrl?: string
   adopted: boolean
+  /** 图片上的标签；卡片上点一下就按它筛选，与选题详情页一致。 */
+  tags?: string[]
 }
 
 /** 上传链接签出来的一次性上传票据，与站内单张上传同一条流水线。 */

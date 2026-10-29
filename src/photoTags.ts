@@ -15,6 +15,11 @@ export const DEPRECATED_TAG = 'deprecated'
 /** 界面上不直接显示 `deprecated` 这个英文串，但存的确实是它。 */
 export const DEPRECATED_TAG_LABEL = '不可用'
 
+/** 标签在界面上的显示名：保留标签换成中文，其余原样。 */
+export function tagDisplayName(tag: string): string {
+  return tag.toLowerCase() === DEPRECATED_TAG ? DEPRECATED_TAG_LABEL : tag
+}
+
 export function isDeprecated(tags: readonly string[] | null | undefined): boolean {
   return (tags || []).some(tag => tag.toLowerCase() === DEPRECATED_TAG)
 }

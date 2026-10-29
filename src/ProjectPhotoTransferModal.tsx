@@ -81,7 +81,7 @@ export default function ProjectPhotoTransferModal({
   return <Modal title={`把 ${photos.length} 张图片复制或移动到其他选题`} open={open} width={560}
     onCancel={() => { if (!saving) onClose() }} onOk={() => void submit()} confirmLoading={saving}
     okText={mode === 'MOVE' ? '确认移动' : '确认复制'} okButtonProps={{ disabled: !target }} destroyOnHidden>
-    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+    <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
       <div>
         <Typography.Text strong>目标选题</Typography.Text>
         <Select style={{ width: '100%', marginTop: 8 }} showSearch filterOption={false} allowClear
@@ -112,7 +112,7 @@ export default function ProjectPhotoTransferModal({
         只改变图片属于哪些选题，不会复制图片文件；采纳记录不会带过去，图片进入目标选题后默认未被引。
       </Typography.Paragraph>
       {mode === 'MOVE' && keptCount > 0 && <Alert type="info" showIcon
-        message={`其中 ${[
+        title={`其中 ${[
           plan.adopted.length ? `${plan.adopted.length} 张在本选题已采纳` : '',
           plan.uploadedHere.length ? `${plan.uploadedHere.length} 张是在本选题上传的` : '',
         ].filter(Boolean).join('、')}`}

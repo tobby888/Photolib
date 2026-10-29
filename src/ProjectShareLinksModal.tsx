@@ -192,18 +192,17 @@ export default function ProjectShareLinksModal({
             </div>,
           },
           {
-            title: '用途', dataIndex: 'purpose', render: (purpose: ShareLinkPurpose) =>
+            // 限定了范围的链接要一眼认得出来：同样是「查看相册」，一条给了整个相册、一条只给了几张。
+            // 和用途放在同一格里，单独占一列会把操作列挤出弹窗。
+            title: '用途', dataIndex: 'purpose', render: (purpose: ShareLinkPurpose, link) =>
               purpose === 'UPLOAD'
                 ? <Tag color="purple">上传图片</Tag>
-                : <Tag color="blue">查看相册</Tag>,
-          },
-          {
-            // 限定了范围的链接要一眼认得出来：同样是「查看相册」，一条给了整个相册、一条只给了几张。
-            title: '可查看', render: (_, link) => link.purpose === 'UPLOAD'
-              ? <Typography.Text type="secondary">—</Typography.Text>
-              : link.selectedPhotosOnly
-                ? <Tag color="gold">仅指定的 {link.selectedPhotoCount} 张</Tag>
-                : <Tag>整个相册</Tag>,
+                : <Space orientation="vertical" size={2}>
+                  <Tag color="blue">查看相册</Tag>
+                  {link.selectedPhotosOnly
+                    ? <Tag color="gold">仅指定的 {link.selectedPhotoCount} 张</Tag>
+                    : <Typography.Text type="secondary">整个相册</Typography.Text>}
+                </Space>,
           },
           {
             // 上传链接没有这两项能力，服务端一律按 false 算，所以这里不给可点的开关——

@@ -100,3 +100,19 @@ test('密码只显示一次：管理面板不从任何接口回读明文密码',
   assert.match(modal, /密码只显示这一次/)
   assert.match(modal, /share-links\/\$\{link\.id\}\/password/)
 })
+
+test('分享页的筛选与选题详情页对齐：卡片标签可点、清空连关键字一起清、保留标签显示中文', async () => {
+  const [page, service] = await Promise.all([
+    read('pages/SharedProjectPage.tsx'),
+    readBackend('share/ProjectShareService.java'),
+  ])
+  // 访客视图带标签，卡片上点一下就加进标签筛选。
+  assert.match(service, /boolean adopted,\s+List<String> tags\) \{\}/)
+  assert.match(page, /onClick=\{\(\) => filterByTag\(tag\)\}/)
+  // 搜索框受控，「清空」同时清掉筛选和关键字；只有关键字时也能清。
+  assert.match(page, /value=\{searchText\}/)
+  assert.match(page, /const clearAllFilters = \(\) => \{[\s\S]*?setKeyword\(''\)[\s\S]*?setSearchText\(''\)/)
+  assert.match(page, /const searching = hasActiveFilters\(filters\) \|\| !!keyword/)
+  // deprecated 不以英文原文出现在访客的下拉和卡片上。
+  assert.match(page, /tagLabel=\{tagDisplayName\}/)
+})

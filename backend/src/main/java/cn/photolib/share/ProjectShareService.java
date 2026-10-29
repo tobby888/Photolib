@@ -437,7 +437,7 @@ public class ProjectShareService {
                 .map(photo -> new SharePhotoView(photo.getId(), photo.getTitle(), photo.getDescription(),
                         photo.getPhotographerName(), photo.getTakenAt(), photo.getWidth(), photo.getHeight(),
                         photo.getSize(), photo.getStoredFileName(), photoService.previewUrl(photo),
-                        adopted.contains(photo.getId())))
+                        adopted.contains(photo.getId()), PhotoTags.parse(photo.getTagsJson())))
                 .toList(),
                 result.getCurrent(), result.getSize(), result.getTotal(), result.getPages());
     }
@@ -827,9 +827,14 @@ public class ProjectShareService {
     /** 上传链接的访客进门时自报的身份，作为照片上的拍摄者快照。 */
     public record GuestIdentity(String name, String studentId) {}
 
+    /**
+     * @param tags 图片上的标签。访客页把它们画在卡片上、点一下就按它筛选，与选题详情页一致；
+     *             标签名本来就出现在筛选候选和关键字搜索里，多给这一列不多泄露什么。
+     */
     public record SharePhotoView(Long id, String title, String description, String photographerName,
                                  LocalDateTime takenAt, Integer width, Integer height, Long size,
-                                 String storedFileName, String thumbnailUrl, boolean adopted) {}
+                                 String storedFileName, String thumbnailUrl, boolean adopted,
+                                 List<String> tags) {}
 
     public record SharePhotoAdoption(Long photoId, boolean adopted) {}
 

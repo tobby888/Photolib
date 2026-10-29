@@ -478,6 +478,10 @@ class ProjectShareServiceTests {
                 .extracting(ProjectShareService.SharePhotoView::id).containsExactly(PHOTO_A);
         assertThat(service.photos(link, 1, 30, filter(List.of("闭幕式"), null, null, null, null)).items())
                 .extracting(ProjectShareService.SharePhotoView::id).containsExactly(PHOTO_B);
+        // 卡片上要画标签、点一下就按它筛，所以访客视图带着每张图的标签。
+        assertThat(service.photos(link, 1, 25, null).items())
+                .extracting(ProjectShareService.SharePhotoView::tags)
+                .containsExactlyInAnyOrder(List.of("开幕式"), List.of("闭幕式"));
 
         // 移出相册就从链接里消失；范围里的图全走光了，链接是空的，而不是退回成整个相册。
         // 整个用例在一个事务里，MyBatis 的一级缓存会把同参数的查询原样返回（JdbcClient 的改动
