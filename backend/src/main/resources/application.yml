@@ -72,8 +72,11 @@ photolib:
     temporary-directory: ${PHOTO_PROCESSING_TEMPORARY_DIRECTORY:./data/photo-processing}
   storage-reconciliation:
     # 对象存储对账（逐张精确 HEAD 成品图和预览图）。跑在独立线程上，不占定时任务线程。
-    # 每天一次全量；白天每小时只查上次以来有变化的照片。进程刚启动时第一次增量会做全量。
+    # 每天一次全量（没新图可跳过，见 full-max-skip-days）；白天每小时只查上次以来有变化的照片。进程刚启动时第一次增量会做全量。
     full-cron: ${STORAGE_RECONCILIATION_FULL_CRON:0 10 4 * * *}
+    # 自上次全量以来没有新增图片就跳过当天全量，但最多连续跳过这么多天（0～30，0 表示从不跳过）。
+    # 有未解决的成品图缺失 / HEAD 失败告警、或进程重启后还没做过全量时不跳过。
+    full-max-skip-days: ${STORAGE_RECONCILIATION_FULL_MAX_SKIP_DAYS:7}
     incremental-delay-ms: ${STORAGE_RECONCILIATION_INCREMENTAL_DELAY_MS:3600000}
     initial-delay-ms: ${STORAGE_RECONCILIATION_INITIAL_DELAY_MS:600000}
     # 同时在途的 HEAD 请求数（1～64）。1 即退回串行。

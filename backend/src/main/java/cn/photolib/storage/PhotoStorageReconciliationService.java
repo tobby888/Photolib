@@ -98,6 +98,33 @@ public class PhotoStorageReconciliationService {
         return jdbc.sql("SELECT CURRENT_TIMESTAMP").query(LocalDateTime.class).single();
     }
 
+    /**
+     * {@code since} 以来有没有新增、且全量巡检会去查的照片（与 {@link #snapshot} 同一个范围）。
+     * 走 {@code idx_photo_status_created}，只问有没有，不数有多少。
+     */
+    public boolean hasNewPhotosSince(LocalDateTime since) {
+        if (since == null) throw new IllegalArgumentException("since 不能为空");
+        return !jdbc.sql("""
+                        SELECT id FROM photo
+                        WHERE deleted=0 AND status IN ('AVAILABLE', 'ARCHIVED') AND created_at >= :since
+                        LIMIT 1
+                        """)
+                .param("since", since)
+                .query(Long.class).list().isEmpty();
+    }
+
+    /**
+     * 还有没有未解决的成品图缺失 / HEAD 失败告警。这两类只有全量巡检能标为已解决
+     * （增量没查到的照片状态未知），所以有它们在，全量就不能跳过。
+     */
+    public boolean hasOpenStorageAlerts() {
+        return jdbc.sql("""
+                        SELECT COUNT(*) FROM admin_alert
+                        WHERE resolved=0 AND type IN ('PHOTO_STORAGE_OBJECT_MISSING', 'PHOTO_STORAGE_HEAD_FAILED')
+                        """)
+                .query(Long.class).single() > 0;
+    }
+
     private ReconciliationResult run(LocalDateTime changedSince) {
         boolean full = changedSince == null;
         Snapshot snapshot = maintenanceLock.exclusively(() -> snapshot(changedSince));
