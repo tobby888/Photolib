@@ -15,6 +15,7 @@ import org.springframework.test.context.event.RecordApplicationEvents;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.io.ByteArrayInputStream;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -481,6 +482,51 @@ class PhotoStorageReconciliationServiceTests {
                 SELECT COUNT(*) FROM admin_alert
                 WHERE resolved=0 AND message IN ('full-pass missing', 'full-pass head failure')
                 """).query(Long.class).single()).isEqualTo(2L);
+    }
+
+    /**
+     * 「有没有新图」只认全量会去查的那批（未删除、AVAILABLE/ARCHIVED）。用远在未来的时间点，
+     * 免得被共用 H2 库里别的测试留下的照片干扰。
+     */
+    @Test
+    void newPhotosAreOnlyThoseAFullPassWouldCheck() {
+        LocalDateTime future = LocalDateTime.of(2099, 1, 1, 12, 0);
+        insertPhoto(91201, "photos/new.jpg", 10, "image/jpeg", null, null);
+        jdbc.sql("UPDATE photo SET created_at=:at WHERE id=91201").param("at", future).update();
+
+        assertThat(reconciliation.hasNewPhotosSince(future.minusHours(1))).isTrue();
+        assertThat(reconciliation.hasNewPhotosSince(future.plusSeconds(1))).isFalse();
+
+        jdbc.sql("UPDATE photo SET status='PROCESSING' WHERE id=91201").update();
+        assertThat(reconciliation.hasNewPhotosSince(future.minusHours(1))).isFalse();
+        jdbc.sql("UPDATE photo SET status='ARCHIVED' WHERE id=91201").update();
+        assertThat(reconciliation.hasNewPhotosSince(future.minusHours(1))).isTrue();
+        jdbc.sql("UPDATE photo SET deleted=true WHERE id=91201").update();
+        assertThat(reconciliation.hasNewPhotosSince(future.minusHours(1))).isFalse();
+    }
+
+    @Test
+    void onlyUnresolvedMissingOrHeadFailureAlertsBlockSkipping() {
+        // 先在本测试事务里把库里已有的同类告警都标掉，结束时回滚。
+        jdbc.sql("""
+                UPDATE admin_alert SET resolved=1
+                WHERE type IN ('PHOTO_STORAGE_OBJECT_MISSING', 'PHOTO_STORAGE_HEAD_FAILED')
+                """).update();
+        assertThat(reconciliation.hasOpenStorageAlerts()).isFalse();
+
+        insertAlert("PREVIEW_PROFILE_INVALID", false);
+        insertAlert("PHOTO_STORAGE_OBJECT_MISSING", true);
+        assertThat(reconciliation.hasOpenStorageAlerts()).isFalse();
+
+        insertAlert("PHOTO_STORAGE_HEAD_FAILED", false);
+        assertThat(reconciliation.hasOpenStorageAlerts()).isTrue();
+    }
+
+    private void insertAlert(String type, boolean resolved) {
+        jdbc.sql("""
+                INSERT INTO admin_alert (type, message, resource_type, resolved, created_at)
+                VALUES (:type, 'test', 'PHOTO', :resolved, CURRENT_TIMESTAMP)
+                """).param("type", type).param("resolved", resolved).update();
     }
 
     private String thumbnail(long photoId) {
