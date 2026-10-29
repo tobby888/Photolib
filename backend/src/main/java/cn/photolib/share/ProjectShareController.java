@@ -5,6 +5,7 @@ import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -65,15 +66,19 @@ public class ProjectShareController {
         return ApiResponse.ok();
     }
 
-    /** {@code purpose} 省略时是浏览链接，与 V48 之前的请求体等价。 */
+    /**
+     * {@code purpose} 省略时是浏览链接，与 V48 之前的请求体等价。
+     * {@code photoIds} 省略或为空时开放整个相册；给了就只开放这几张（V70，仅浏览链接）。
+     */
     record CreateRequest(ShareLinkPurpose purpose,
                          @Size(max = 100) String name,
                          @Size(max = ProjectShareService.MAX_PASSWORD_LENGTH) String password,
                          boolean allowDownload, boolean allowAdoption,
-                         LocalDateTime expiresAt) {
+                         LocalDateTime expiresAt,
+                         @Size(max = ProjectShareService.MAX_SELECTED_PHOTOS) List<@NotNull Long> photoIds) {
         ProjectShareService.CreateCommand command() {
             return new ProjectShareService.CreateCommand(purpose, name, password, allowDownload,
-                    allowAdoption, expiresAt);
+                    allowAdoption, expiresAt, photoIds);
         }
     }
 

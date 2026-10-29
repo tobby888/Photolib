@@ -6,7 +6,7 @@ import { useBatchDownloadProgress } from '../BatchDownloadModal'
 import {
   ArrowLeftOutlined, CameraOutlined, CheckCircleOutlined, ClockCircleOutlined, DeleteOutlined, DisconnectOutlined,
   DownloadOutlined, EditOutlined, EyeOutlined,
-  FileImageOutlined, LinkOutlined, MinusCircleOutlined, PlusOutlined, PushpinFilled, PushpinOutlined,
+  FileImageOutlined, LinkOutlined, MinusCircleOutlined, PlusOutlined, PushpinFilled, PushpinOutlined, SwapOutlined,
   RocketOutlined, ScissorOutlined, ShareAltOutlined, StopOutlined, TagsOutlined, TeamOutlined, UnorderedListOutlined,
 } from '@ant-design/icons'
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -47,6 +47,7 @@ import type { ProjectPhotoFilters } from '../photoTags'
 import ProjectPhotoFilterBar from '../ProjectPhotoFilterBar'
 import { describeRemovalResult, planPhotoRemoval } from '../projectPhotoRemoval'
 import type { RemovePhotosResult } from '../projectPhotoRemoval'
+import type { TransferMode } from '../projectPhotoTransfer'
 import ListPagination from '../ListPagination'
 import {
   PROJECT_ALBUM_PAGE_SIZE, PROJECT_ALBUM_PAGE_SIZES, loadProjectAlbumView, pageContaining,
@@ -58,6 +59,7 @@ const ProjectShareLinksModal = lazy(() => import('../ProjectShareLinksModal'))
 const SelectionCleanupModal = lazy(() => import('../SelectionCleanupModal'))
 const AdoptedPhotographersModal = lazy(() => import('../AdoptedPhotographersModal'))
 const LibraryPickerModal = lazy(() => import('../LibraryPickerModal'))
+const ProjectPhotoTransferModal = lazy(() => import('../ProjectPhotoTransferModal'))
 const ProjectWorklogsDrawer = lazy(() => import('../ProjectWorklogsDrawer'))
 
 const projectStateCopy = {
@@ -294,6 +296,9 @@ export default function ProjectDetailPage() {
   const [editOpen, setEditOpen] = useState(false)
   const [galleryOpen, setGalleryOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
+  // 「分享所选」直接打开生成分享链接的表单，并默认只开放勾选的这几张。
+  const [shareSelectedOnOpen, setShareSelectedOnOpen] = useState(false)
+  const [transferOpen, setTransferOpen] = useState(false)
   // 被引图片的作者名单。名单由后端现算，这里只记弹窗开没开——选题详情页自己那份 adoptions
   // 对校区范围账号是空的（见下面的 useLoad），拿它凑名单会漏人。
   const [photographersOpen, setPhotographersOpen] = useState(false)
@@ -743,6 +748,13 @@ export default function ProjectDetailPage() {
     })
   }
 
+  /** 复制/移动做完之后。移动会让本选题少几张，要重取；复制不改本选题的相册，不必重取。 */
+  const finishTransfer = (mode: TransferMode) => {
+    setTransferOpen(false)
+    setSelectedAlbumPhotoIds([])
+    if (mode === 'MOVE') refresh()
+  }
+
   const saveSelectors = async () => {
     setSaving(true)
     try {
@@ -793,7 +805,9 @@ export default function ProjectDetailPage() {
   const canTag = hasPermission(user, 'PHOTO_UPLOAD') || hasPermission(user, 'REQUEST_PHOTO_MANAGE')
   // 与 POST /projects/{id}/photos/remove 一致：和「从图库添加图片」同一条权限，且只在进行中的选题里。
   const canRemovePhotos = canAdopt && project?.status === 'ACTIVE'
-  const canSelectPhotos = canBatchDownload || canTag || canRemovePhotos
+  // 与 POST /projects/{id}/photos/transfer 一致：同一条权限；本选题结束后仍可复制出去，只是不能移动。
+  const canTransferPhotos = canAdopt
+  const canSelectPhotos = canBatchDownload || canTag || canRemovePhotos || canTransferPhotos || canShare
   const presetTags = project?.tags || []
   const selectedAlbumPhotos = useMemo(
     () => data.photos.filter(photo => selectedAlbumIdSet.has(photo.id)), [data.photos, selectedAlbumIdSet])
@@ -853,7 +867,8 @@ export default function ProjectDetailPage() {
             <Button icon={<TeamOutlined />} onClick={() => setPhotographersOpen(true)}>被引图片作者</Button>
             {canViewWorklogs && <Button icon={<ClockCircleOutlined />} onClick={() => setWorklogsOpen(true)}>
               本选题工时</Button>}
-            {canShare && <Button icon={<ShareAltOutlined />} onClick={() => setShareOpen(true)}>分享链接</Button>}
+            {canShare && <Button icon={<ShareAltOutlined />}
+              onClick={() => { setShareSelectedOnOpen(false); setShareOpen(true) }}>分享链接</Button>}
             {canEdit && <>
             {project.status !== 'COMPLETED' && project.status !== 'CANCELLED' &&
               <Button icon={<EditOutlined />} onClick={() => {
@@ -932,6 +947,12 @@ export default function ProjectDetailPage() {
             <Button icon={<MinusCircleOutlined />} disabled={!selectedAlbumPhotoIds.length}
               onClick={() => setTagMode('remove')}>移除标签</Button>
           </>}
+          {canTransferPhotos &&
+            <Button icon={<SwapOutlined />} disabled={!selectedAlbumPhotoIds.length || batchDownloading}
+              onClick={() => setTransferOpen(true)}>复制/移动到选题</Button>}
+          {canShare &&
+            <Button icon={<ShareAltOutlined />} disabled={!selectedAlbumPhotoIds.length}
+              onClick={() => { setShareSelectedOnOpen(true); setShareOpen(true) }}>分享所选</Button>}
           {canRemovePhotos &&
             <Button danger icon={<DisconnectOutlined />} loading={removingPhotos}
               disabled={!selectedAlbumPhotoIds.length || batchDownloading}
@@ -1077,7 +1098,14 @@ export default function ProjectDetailPage() {
         presets={tagFilterOptions} onClose={() => setTagMode(null)} onDone={applyTaggedPhotos} />
       {shareOpen && <Suspense fallback={null}>
         <ProjectShareLinksModal projectId={projectId} open onClose={() => setShareOpen(false)}
-          uploadLinksAvailable={project.status === 'ACTIVE'} />
+          uploadLinksAvailable={project.status === 'ACTIVE'}
+          selectedPhotoIds={selectedAlbumPhotoIds}
+          startWithSelected={shareSelectedOnOpen} />
+      </Suspense>}
+      {transferOpen && <Suspense fallback={null}>
+        <ProjectPhotoTransferModal open projectId={projectId} projectActive={project.status === 'ACTIVE'}
+          photos={selectedAlbumPhotos} adoptedIds={adoptedPhotoIds}
+          onClose={() => setTransferOpen(false)} onDone={finishTransfer} />
       </Suspense>}
       {photographersOpen && <Suspense fallback={null}>
         <AdoptedPhotographersModal projectId={projectId} open

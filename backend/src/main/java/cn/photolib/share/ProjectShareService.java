@@ -81,6 +81,8 @@ public class ProjectShareService {
     static final int MIN_PASSWORD_LENGTH = 6;
     static final int MAX_PASSWORD_LENGTH = 64;
     static final int MAX_LINKS_PER_PROJECT = 20;
+    /** 一条链接最多限定多少张。相册勾选一次最多 200 张，这里留出余量给以后的入口。 */
+    static final int MAX_SELECTED_PHOTOS = 1000;
     static final int MAX_UPLOADER_NAME_LENGTH = 50;
     private static final int GENERATED_PASSWORD_LENGTH = 10;
     /** 去掉了 I/L/O/U 的 Crockford 字母表，念给人听、抄在纸上都不会认错。 */
@@ -117,6 +119,7 @@ public class ProjectShareService {
         String password = StringUtils.hasText(command.password())
                 ? validatedPassword(command.password()) : generatePassword();
         LocalDateTime expiresAt = validatedExpiry(command.expiresAt());
+        List<Long> selectedPhotoIds = validatedSelection(project.getId(), purpose, command.photoIds());
 
         ProjectShareLinkEntity link = new ProjectShareLinkEntity();
         link.setToken(PublicId.next());
@@ -128,11 +131,16 @@ public class ProjectShareService {
         // 否则「开一条只上传的链接」会因为前端漏传一个字段而变成开放整个相册。
         link.setAllowDownload(purpose == ShareLinkPurpose.BROWSE && command.allowDownload());
         link.setAllowAdoption(purpose == ShareLinkPurpose.BROWSE && command.allowAdoption());
+        link.setSelectedPhotosOnly(!selectedPhotoIds.isEmpty());
         link.setExpiresAt(expiresAt);
         link.setViewCount(0L);
         link.setUploadCount(0L);
         link.setCreatedBy(user.id());
         mapper.insert(link);
+        for (Long photoId : selectedPhotoIds) {
+            jdbc.sql("INSERT INTO project_share_link_photo (link_id, photo_id) VALUES (:linkId, :photoId)")
+                    .param("linkId", link.getId()).param("photoId", photoId).update();
+        }
         // 明文只在这里回一次，数据库里只有哈希。要"再看一眼密码"只能重置。
         return new CreatedShareLink(view(mapper.selectById(link.getId())), password);
     }
@@ -208,6 +216,40 @@ public class ProjectShareService {
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "分享链接不存在");
         }
         return link;
+    }
+
+    /**
+     * 「只开放指定图片」的范围。空表示整个相册。
+     *
+     * <p>只有浏览链接能限定范围：上传链接本来就看不到相册，带着图片 id 来多半是前端把
+     * 相册里的勾选误带了进来，静默忽略会让人以为限定生效了。每张都必须此刻就在这个选题的
+     * 相册里——范围是相册的子集，拿它把相册外的图片塞给访客是这条入口绝不能有的用法。</p>
+     */
+    private List<Long> validatedSelection(Long projectId, ShareLinkPurpose purpose, List<Long> photoIds) {
+        if (photoIds == null || photoIds.isEmpty()) return List.of();
+        if (purpose != ShareLinkPurpose.BROWSE) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "上传链接看不到相册，不能限定可查看的图片");
+        }
+        List<Long> distinct = photoIds.stream().filter(java.util.Objects::nonNull).distinct().toList();
+        if (distinct.isEmpty() || distinct.size() > MAX_SELECTED_PHOTOS) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                    "指定图片需在 1 至 " + MAX_SELECTED_PHOTOS + " 张之间");
+        }
+        long inAlbum = jdbc.sql("""
+                        SELECT COUNT(*) FROM photo_project pp JOIN photo p ON p.id = pp.photo_id
+                        WHERE pp.project_id = :projectId AND p.deleted = 0 AND pp.photo_id IN (:photoIds)
+                        """)
+                .param("projectId", projectId).param("photoIds", distinct)
+                .query(Long.class).single();
+        if (inAlbum != distinct.size()) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "所选图片有的已不在这个选题的相册里，请刷新后重新选择");
+        }
+        return distinct;
+    }
+
+    /** 限定了范围的链接返回自己的 id（用来和 {@code project_share_link_photo} 取交集），否则 null。 */
+    private static Long scopeOf(ProjectShareLinkEntity link) {
+        return Boolean.TRUE.equals(link.getSelectedPhotosOnly()) ? link.getId() : null;
     }
 
     // ---------------------------------------------------------------- 访客端
@@ -362,7 +404,8 @@ public class ProjectShareService {
         LocalDate takenTo = filter.takenTo();
         // 标签存成 JSON 数组（有的驱动还会再包成 JSON 字符串），用 LIKE 拼不出"恰好是这个标签"，
         // 所以和站内一样按 PhotoTags.parse 的结果比，先算出命中的 id。
-        Set<Long> tagMatches = tags.isEmpty() ? null : photoIdsWithAllTags(projectId, tags);
+        Long scope = scopeOf(link);
+        Set<Long> tagMatches = tags.isEmpty() ? null : photoIdsWithAllTags(projectId, scope, tags);
         if (tagMatches != null && tagMatches.isEmpty()) {
             return new PageResponse<>(List.of(), page, pageSize, 0, 0);
         }
@@ -371,6 +414,9 @@ public class ProjectShareService {
                 Wrappers.<PhotoEntity>lambdaQuery()
                         .inSql(PhotoEntity::getId,
                                 "SELECT photo_id FROM photo_project WHERE project_id = " + projectId)
+                        // 限定了范围的链接：相册与指定图片取交集，见 V70。
+                        .inSql(scope != null, PhotoEntity::getId,
+                                "SELECT photo_id FROM project_share_link_photo WHERE link_id = " + scope)
                         .eq(PhotoEntity::getStatus, PhotoStatus.AVAILABLE)
                         .and(StringUtils.hasText(keyword), q -> q
                                 .apply(LikeFilter.contains("title"), likeKeyword)
@@ -391,7 +437,7 @@ public class ProjectShareService {
                 .map(photo -> new SharePhotoView(photo.getId(), photo.getTitle(), photo.getDescription(),
                         photo.getPhotographerName(), photo.getTakenAt(), photo.getWidth(), photo.getHeight(),
                         photo.getSize(), photo.getStoredFileName(), photoService.previewUrl(photo),
-                        adopted.contains(photo.getId())))
+                        adopted.contains(photo.getId()), PhotoTags.parse(photo.getTagsJson())))
                 .toList(),
                 result.getCurrent(), result.getSize(), result.getTotal(), result.getPages());
     }
@@ -406,11 +452,15 @@ public class ProjectShareService {
         Collator chinese = Collator.getInstance(Locale.CHINA);
         Map<String, Integer> tagCounts = new HashMap<>();
         Set<String> photographers = new HashSet<>();
-        for (SharedPhotoFacets facets : sharedPhotoFacets(link.getProjectId())) {
+        Long scope = scopeOf(link);
+        for (SharedPhotoFacets facets : sharedPhotoFacets(link.getProjectId(), scope)) {
             for (String tag : facets.tags()) tagCounts.merge(tag, 1, Integer::sum);
             if (StringUtils.hasText(facets.photographerName())) photographers.add(facets.photographerName());
         }
-        List<String> presets = projectService.presetTags(link.getProjectId());
+        // 限定范围的链接只给范围里真正用到的标签：把预设整排摆出来，等于告诉访客
+        // 这个选题还有哪些类别的图没给他看。
+        List<String> presets = scope == null ? projectService.presetTags(link.getProjectId())
+                : projectService.presetTags(link.getProjectId()).stream().filter(tagCounts::containsKey).toList();
         List<String> tags = new ArrayList<>(presets);
         tagCounts.entrySet().stream()
                 .filter(entry -> !presets.contains(entry.getKey()))
@@ -429,7 +479,7 @@ public class ProjectShareService {
         Collator chinese = Collator.getInstance(Locale.CHINA);
         List<String> presets = projectService.presetTags(projectId);
         Map<String, Integer> counts = new HashMap<>();
-        for (SharedPhotoFacets facets : sharedPhotoFacets(projectId)) {
+        for (SharedPhotoFacets facets : sharedPhotoFacets(projectId, null)) {
             for (String tag : facets.tags()) counts.merge(tag, 1, Integer::sum);
         }
         return counts.entrySet().stream()
@@ -439,20 +489,24 @@ public class ProjectShareService {
                 .map(Map.Entry::getKey).toList();
     }
 
-    private Set<Long> photoIdsWithAllTags(Long projectId, List<String> tags) {
-        return sharedPhotoFacets(projectId).stream()
+    private Set<Long> photoIdsWithAllTags(Long projectId, Long scope, List<String> tags) {
+        return sharedPhotoFacets(projectId, scope).stream()
                 .filter(facets -> facets.tags().containsAll(tags))
                 .map(SharedPhotoFacets::id)
                 .collect(Collectors.toSet());
     }
 
-    private List<SharedPhotoFacets> sharedPhotoFacets(Long projectId) {
+    /** @param scope 限定范围的链接 id（{@link #scopeOf}）；null 表示整个相册。 */
+    private List<SharedPhotoFacets> sharedPhotoFacets(Long projectId, Long scope) {
         return jdbc.sql("""
                         SELECT p.id, p.tags_json, p.photographer_name
                         FROM photo p JOIN photo_project pp ON pp.photo_id = p.id
                         WHERE pp.project_id = :projectId AND p.deleted = 0 AND p.status = 'AVAILABLE'
-                        """)
+                        """ + (scope == null ? "" : """
+                          AND p.id IN (SELECT photo_id FROM project_share_link_photo WHERE link_id = :scope)
+                        """))
                 .param("projectId", projectId)
+                .params(scope == null ? Map.of() : Map.of("scope", scope))
                 .query((rs, row) -> new SharedPhotoFacets(rs.getLong("id"),
                         PhotoTags.parse(rs.getString("tags_json")), rs.getString("photographer_name")))
                 .list();
@@ -544,6 +598,14 @@ public class ProjectShareService {
                 .param("photoId", photo.getId()).param("projectId", link.getProjectId())
                 .query(Long.class).single();
         if (membership == 0) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "图片不属于这条分享链接的项目");
+        }
+        // 下载、打包和标记被引都经过这里，限定范围在这一处收口就覆盖了全部写路径。
+        Long scope = scopeOf(link);
+        if (scope != null && jdbc.sql(
+                        "SELECT COUNT(*) FROM project_share_link_photo WHERE link_id=:linkId AND photo_id=:photoId")
+                .param("linkId", scope).param("photoId", photo.getId())
+                .query(Long.class).single() == 0) {
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "图片不属于这条分享链接的项目");
         }
         return photo;
@@ -660,9 +722,20 @@ public class ProjectShareService {
     private ShareLinkView view(ProjectShareLinkEntity link) {
         boolean expired = link.getExpiresAt() != null
                 && !link.getExpiresAt().isAfter(LocalDateTime.now(clock));
+        Long scope = scopeOf(link);
+        // 范围里此刻访客还看得到的张数（移出相册、删除、处理中的不算），与访客页一致。
+        long selectedPhotoCount = scope == null ? 0 : jdbc.sql("""
+                        SELECT COUNT(*) FROM project_share_link_photo s
+                        JOIN photo_project pp ON pp.photo_id = s.photo_id AND pp.project_id = :projectId
+                        JOIN photo p ON p.id = s.photo_id
+                        WHERE s.link_id = :linkId AND p.deleted = 0 AND p.status = 'AVAILABLE'
+                        """)
+                .param("projectId", link.getProjectId()).param("linkId", scope)
+                .query(Long.class).single();
         return new ShareLinkView(link.getId(), link.getToken(), link.getProjectId(), link.getName(),
                 purposeOf(link),
                 Boolean.TRUE.equals(link.getAllowDownload()), Boolean.TRUE.equals(link.getAllowAdoption()),
+                scope != null, selectedPhotoCount,
                 link.getExpiresAt(), expired, link.getViewCount() == null ? 0 : link.getViewCount(),
                 link.getLastViewedAt(), link.getUploadCount() == null ? 0 : link.getUploadCount(),
                 link.getCreatedBy(), link.getCreatedAt(), link.getVersion());
@@ -708,15 +781,26 @@ public class ProjectShareService {
         }
     }
 
+    /** @param photoIds 只开放这几张；null 或空表示整个相册。仅浏览链接可用。 */
     public record CreateCommand(ShareLinkPurpose purpose, String name, String password,
                                 boolean allowDownload, boolean allowAdoption,
-                                LocalDateTime expiresAt) {}
+                                LocalDateTime expiresAt, List<Long> photoIds) {
+        public CreateCommand(ShareLinkPurpose purpose, String name, String password,
+                             boolean allowDownload, boolean allowAdoption, LocalDateTime expiresAt) {
+            this(purpose, name, password, allowDownload, allowAdoption, expiresAt, null);
+        }
+    }
 
     public record UpdateCommand(String name, boolean allowDownload, boolean allowAdoption,
                                 LocalDateTime expiresAt, int version) {}
 
+    /**
+     * @param selectedPhotosOnly 只开放建链接时指定的那几张
+     * @param selectedPhotoCount 范围里访客此刻看得到的张数；整个相册的链接恒为 0
+     */
     public record ShareLinkView(Long id, String token, Long projectId, String name,
                                 ShareLinkPurpose purpose, boolean allowDownload, boolean allowAdoption,
+                                boolean selectedPhotosOnly, long selectedPhotoCount,
                                 LocalDateTime expiresAt, boolean expired, long viewCount,
                                 LocalDateTime lastViewedAt, long uploadCount, Long createdBy,
                                 LocalDateTime createdAt, Integer version) {}
@@ -743,9 +827,14 @@ public class ProjectShareService {
     /** 上传链接的访客进门时自报的身份，作为照片上的拍摄者快照。 */
     public record GuestIdentity(String name, String studentId) {}
 
+    /**
+     * @param tags 图片上的标签。访客页把它们画在卡片上、点一下就按它筛选，与选题详情页一致；
+     *             标签名本来就出现在筛选候选和关键字搜索里，多给这一列不多泄露什么。
+     */
     public record SharePhotoView(Long id, String title, String description, String photographerName,
                                  LocalDateTime takenAt, Integer width, Integer height, Long size,
-                                 String storedFileName, String thumbnailUrl, boolean adopted) {}
+                                 String storedFileName, String thumbnailUrl, boolean adopted,
+                                 List<String> tags) {}
 
     public record SharePhotoAdoption(Long photoId, boolean adopted) {}
 

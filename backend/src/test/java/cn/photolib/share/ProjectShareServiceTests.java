@@ -434,4 +434,91 @@ class ProjectShareServiceTests {
 
         assertThat(service.greet(created.link().token()).requiresPassword()).isTrue();
     }
+
+    // ---------------------------------------------------------------- 只开放指定图片（V70）
+
+    private ProjectShareService.CreatedShareLink selectedLink(List<Long> photoIds) {
+        return service.create(project.getId(), new ProjectShareService.CreateCommand(ShareLinkPurpose.BROWSE,
+                "只看开幕式", "share-pass", true, true, null, photoIds), minister);
+    }
+
+    @Test
+    void aLinkLimitedToSelectedPhotosShowsOnlyThoseAndNothingElseIsReachable() {
+        ProjectShareService.CreatedShareLink created = selectedLink(List.of(PHOTO_A, PHOTO_A));
+        ProjectShareLinkEntity link = guest(created);
+
+        assertThat(created.link().selectedPhotosOnly()).isTrue();
+        assertThat(created.link().selectedPhotoCount()).isEqualTo(1);
+        assertThat(service.photos(link, 1, 30, null).items())
+                .extracting(ProjectShareService.SharePhotoView::id).containsExactly(PHOTO_A);
+        // 同一个相册里没被选中的那张，在下载、打包和标记被引上都碰不到。
+        assertThatThrownBy(() -> service.download(link, PHOTO_B))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("不属于这条分享链接");
+        assertThatThrownBy(() -> service.batchDownload(link, List.of(PHOTO_A, PHOTO_B)))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("不属于这条分享链接");
+        assertThatThrownBy(() -> service.adopt(link, PHOTO_B))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("不属于这条分享链接");
+        assertThat(service.download(link, PHOTO_A).fileName()).isEqualTo("a.jpg");
+
+        // 同一个项目里不限范围的链接照旧看整个相册。
+        assertThat(service.photos(guest(service.create(project.getId(), command(false, false), minister)),
+                1, 30, null).items()).hasSize(2);
+    }
+
+    @Test
+    void theSelectionIsAScopeOverTheLiveAlbumNotACopy() {
+        ProjectShareLinkEntity link = guest(selectedLink(List.of(PHOTO_A, PHOTO_B)));
+        jdbc.sql("UPDATE photo SET tags_json = '[\"开幕式\"]' WHERE id = :id").param("id", PHOTO_A).update();
+        jdbc.sql("UPDATE photo SET tags_json = '[\"闭幕式\"]' WHERE id = :id").param("id", PHOTO_B).update();
+
+        // 被引仍是项目的被引：站内标的访客立刻看得到。
+        adoptionService.adopt(project.getId(), List.of(PHOTO_A), null, minister);
+        assertThat(service.photos(link, 1, 30, null).items())
+                .filteredOn(ProjectShareService.SharePhotoView::adopted)
+                .extracting(ProjectShareService.SharePhotoView::id).containsExactly(PHOTO_A);
+        assertThat(service.photos(link, 1, 30, filter(List.of("闭幕式"), null, null, null, null)).items())
+                .extracting(ProjectShareService.SharePhotoView::id).containsExactly(PHOTO_B);
+        // 卡片上要画标签、点一下就按它筛，所以访客视图带着每张图的标签。
+        assertThat(service.photos(link, 1, 25, null).items())
+                .extracting(ProjectShareService.SharePhotoView::tags)
+                .containsExactlyInAnyOrder(List.of("开幕式"), List.of("闭幕式"));
+
+        // 移出相册就从链接里消失；范围里的图全走光了，链接是空的，而不是退回成整个相册。
+        // 整个用例在一个事务里，MyBatis 的一级缓存会把同参数的查询原样返回（JdbcClient 的改动
+        // 不会清它），所以下面每次换一个每页条数，让它真的再查一次。线上每个请求各是一个事务。
+        projectService.removePhotos(project.getId(), List.of(PHOTO_B), minister);
+        assertThat(service.photos(link, 1, 20, null).items())
+                .extracting(ProjectShareService.SharePhotoView::id).containsExactly(PHOTO_A);
+        assertThat(service.list(project.getId(), minister))
+                .extracting(ProjectShareService.ShareLinkView::selectedPhotoCount).containsExactly(1L);
+        jdbc.sql("UPDATE photo SET status = 'PROCESSING' WHERE id = :id").param("id", PHOTO_A).update();
+        assertThat(service.photos(link, 1, 10, null).items()).isEmpty();
+    }
+
+    @Test
+    void filterOptionsOfALimitedLinkOnlyComeFromItsOwnPhotos() {
+        jdbc.sql("UPDATE project SET tags_json = '[\"颁奖\",\"合影\"]' WHERE id = :id")
+                .param("id", project.getId()).update();
+        jdbc.sql("UPDATE photo SET tags_json = '[\"合影\"]' WHERE id = :id").param("id", PHOTO_A).update();
+        jdbc.sql("UPDATE photo SET tags_json = '[\"颁奖\",\"后台\"]' WHERE id = :id").param("id", PHOTO_B).update();
+
+        ProjectShareService.FilterOptions options = service.filterOptions(guest(selectedLink(List.of(PHOTO_A))));
+
+        // 没被选中的那张的标签、拍摄者，以及范围里没用到的预设，都不出现。
+        assertThat(options.tags()).containsExactly("合影");
+        assertThat(options.photographers()).containsExactly("张三");
+    }
+
+    @Test
+    void theSelectionMustComeFromThisAlbumAndOnlyBrowseLinksCanHaveOne() {
+        assertThatThrownBy(() -> selectedLink(List.of(PHOTO_A, PHOTO_OUTSIDE)))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("不在这个选题的相册里");
+        assertThatThrownBy(() -> service.create(project.getId(), new ProjectShareService.CreateCommand(
+                        ShareLinkPurpose.UPLOAD, null, "share-pass", false, false, null, List.of(PHOTO_A)), minister))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("上传链接");
+        // 被拒的请求不留下链接。
+        assertThat(service.list(project.getId(), minister)).isEmpty();
+        // 空列表就是整个相册。
+        assertThat(selectedLink(List.of()).link().selectedPhotosOnly()).isFalse();
+    }
 }

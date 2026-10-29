@@ -1,5 +1,5 @@
 import {
-  Alert, App, Button, Checkbox, DatePicker, Form, Input, Modal, Popconfirm, Space, Tag, Typography,
+  Alert, App, Button, Checkbox, DatePicker, Form, Input, Modal, Popconfirm, Radio, Space, Tag, Typography,
 } from 'antd'
 import { CloudUploadOutlined, CopyOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
@@ -33,16 +33,28 @@ const linkUrl = (link: Pick<ProjectShareLink, 'token' | 'purpose'>) =>
  * 完全不同的东西，不写清楚就会有人把上传链接当相册发出去。上传链接只有进行中的
  * 选题能开（{@code uploadLinksAvailable}，创作选题和活动选题都可以），与服务端同一条规则。</p>
  */
-export default function ProjectShareLinksModal({ projectId, open, onClose, uploadLinksAvailable }: {
+export default function ProjectShareLinksModal({
+  projectId, open, onClose, uploadLinksAvailable, selectedPhotoIds = [], startWithSelected,
+}: {
   projectId: string
   open: boolean
   onClose: () => void
   /** 进行中的选题才能开上传链接；其余状态只显示分享链接的入口。 */
   uploadLinksAvailable?: boolean
+  /** 相册里此刻勾选的图片。生成分享链接时可以只开放这几张。 */
+  selectedPhotoIds?: string[]
+  /** 从相册工具栏「分享所选」进来：直接打开生成表单，并默认只开放所选图片。 */
+  startWithSelected?: boolean
 }) {
   const { message } = App.useApp()
   const [createForm] = Form.useForm()
-  const [createPurpose, setCreatePurpose] = useState<ShareLinkPurpose | null>(null)
+  const [createPurpose, setCreatePurpose] = useState<ShareLinkPurpose | null>(
+    startWithSelected && selectedPhotoIds.length ? 'BROWSE' : null)
+  // 表单的默认范围跟着入口走：从「分享所选」进来默认只开放所选；在弹窗里点「生成分享链接」默认整个相册。
+  // 生成表单是 destroyOnHidden 的，每次打开都按 initialValues 重新挂载，所以在打开前定好即可。
+  const [defaultScope, setDefaultScope] = useState<'ALL' | 'SELECTED'>(
+    startWithSelected && selectedPhotoIds.length ? 'SELECTED' : 'ALL')
+  const photoScope = Form.useWatch('photoScope', createForm) as 'ALL' | 'SELECTED' | undefined
   const [saving, setSaving] = useState(false)
   const [secret, setSecret] = useState<IssuedSecret | null>(null)
   const { data: links, loading, error, reload } = useLoad(
@@ -79,6 +91,8 @@ export default function ProjectShareLinksModal({ projectId, open, onClose, uploa
           // 上传链接没有这两项能力，服务端也会强制落成 false，这里不发出去以免看着像可选的。
           allowDownload: purpose === 'BROWSE' && !!values.allowDownload,
           allowAdoption: purpose === 'BROWSE' && !!values.allowAdoption,
+          // 只开放所选：发的是此刻的勾选。范围建立后不可改，要换一批图就另开一条链接。
+          photoIds: purpose === 'BROWSE' && values.photoScope === 'SELECTED' ? selectedPhotoIds : null,
           expiresAt: values.expiresAt ? values.expiresAt.format('YYYY-MM-DDTHH:mm:ss') : null,
         },
       })
@@ -163,7 +177,7 @@ export default function ProjectShareLinksModal({ projectId, open, onClose, uploa
 
       <Space wrap>
         <Button type="primary" icon={<PlusOutlined />}
-          onClick={() => setCreatePurpose('BROWSE')}>生成分享链接</Button>
+          onClick={() => { setDefaultScope('ALL'); setCreatePurpose('BROWSE') }}>生成分享链接</Button>
         {uploadLinksAvailable && <Button icon={<CloudUploadOutlined />}
           onClick={() => setCreatePurpose('UPLOAD')}>生成上传链接</Button>}
       </Space>
@@ -178,10 +192,17 @@ export default function ProjectShareLinksModal({ projectId, open, onClose, uploa
             </div>,
           },
           {
-            title: '用途', dataIndex: 'purpose', render: (purpose: ShareLinkPurpose) =>
+            // 限定了范围的链接要一眼认得出来：同样是「查看相册」，一条给了整个相册、一条只给了几张。
+            // 和用途放在同一格里，单独占一列会把操作列挤出弹窗。
+            title: '用途', dataIndex: 'purpose', render: (purpose: ShareLinkPurpose, link) =>
               purpose === 'UPLOAD'
                 ? <Tag color="purple">上传图片</Tag>
-                : <Tag color="blue">查看相册</Tag>,
+                : <Space orientation="vertical" size={2}>
+                  <Tag color="blue">查看相册</Tag>
+                  {link.selectedPhotosOnly
+                    ? <Tag color="gold">仅指定的 {link.selectedPhotoCount} 张</Tag>
+                    : <Typography.Text type="secondary">整个相册</Typography.Text>}
+                </Space>,
           },
           {
             // 上传链接没有这两项能力，服务端一律按 false 算，所以这里不给可点的开关——
@@ -232,7 +253,7 @@ export default function ProjectShareLinksModal({ projectId, open, onClose, uploa
       open={!!createPurpose} onCancel={() => setCreatePurpose(null)} onOk={create}
       okText="生成链接" confirmLoading={saving} destroyOnHidden>
       <Form form={createForm} layout="vertical" requiredMark={false}
-        initialValues={{ allowDownload: true, allowAdoption: false }}>
+        initialValues={{ allowDownload: true, allowAdoption: false, photoScope: defaultScope }}>
         {createPurpose === 'UPLOAD' && <Typography.Paragraph type="secondary">
           拿到链接和密码的人可以直接把照片传进这个选题的图库。他们进门时要填写本人姓名和学号，
           作为所传照片的拍摄者；这条链接看不到选题里已有的任何图片。传完之后他们可以用同一份姓名学号
@@ -256,6 +277,21 @@ export default function ProjectShareLinksModal({ projectId, open, onClose, uploa
             disabledDate={date => date.isBefore(dayjs(), 'day')} />
         </Form.Item>
         {createPurpose === 'BROWSE' && <>
+          {/* preserve={false}：表单仓库默认留着上次的值，而它比 initialValues 优先，
+              取消后再从另一个入口打开就会带着上一次的范围。 */}
+          <Form.Item label="可查看的图片" name="photoScope" preserve={false}
+            extra={photoScope === 'SELECTED'
+              ? '访客只看得到这几张；之后新加进相册的图片不会出现在这条链接里。图片被移出选题后，访客也看不到了。'
+              : selectedPhotoIds.length
+                ? '访客看到的与选题相册同步，之后新加的图片也会出现'
+                : '想只分享其中几张？先在相册里勾选图片，再点「分享所选」'}>
+            <Radio.Group>
+              <Radio value="ALL">整个相册</Radio>
+              <Radio value="SELECTED" disabled={!selectedPhotoIds.length}>
+                仅已勾选的 {selectedPhotoIds.length} 张
+              </Radio>
+            </Radio.Group>
+          </Form.Item>
           <Form.Item name="allowDownload" valuePropName="checked">
             <Checkbox>允许访客下载图片（含批量打包下载）</Checkbox>
           </Form.Item>

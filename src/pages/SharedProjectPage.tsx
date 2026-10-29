@@ -16,7 +16,7 @@ import {
   clearShareSession, prepareSharedBatchDownload, readStoredShareSession, shareApi, storeShareSession,
 } from '../projectShare'
 import type { ShareFilterOptions } from '../projectShare'
-import { emptyProjectPhotoFilters, hasActiveFilters } from '../photoTags'
+import { emptyProjectPhotoFilters, hasActiveFilters, tagDisplayName } from '../photoTags'
 import type { ProjectPhotoFilters } from '../photoTags'
 import ProjectPhotoFilterBar from '../ProjectPhotoFilterBar'
 import { shareTagHistoryScope } from '../photoTagHistory'
@@ -67,6 +67,8 @@ export default function SharedProjectPage() {
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [keyword, setKeyword] = useState('')
+  // 搜索框受控：「清空筛选」要连关键字一起清，否则清完了框里还留着字、结果却变了。
+  const [searchText, setSearchText] = useState('')
   const [filters, setFilters] = useState<ProjectPhotoFilters>(emptyProjectPhotoFilters)
   const [filterOptions, setFilterOptions] = useState<ShareFilterOptions>({ tags: [], photographers: [] })
   const [loadingPhotos, setLoadingPhotos] = useState(false)
@@ -169,6 +171,17 @@ export default function SharedProjectPage() {
   const changeFilters = (next: ProjectPhotoFilters) => {
     setFilters(next)
     setPage(1)
+  }
+  const searching = hasActiveFilters(filters) || !!keyword
+  const clearAllFilters = () => {
+    setFilters(emptyProjectPhotoFilters)
+    setKeyword('')
+    setSearchText('')
+    setPage(1)
+  }
+  // 与选题详情页一样：点卡片上的标签就把它加进标签筛选（同时包含）。
+  const filterByTag = (tag: string) => {
+    if (!filters.tags.includes(tag)) changeFilters({ ...filters, tags: [...filters.tags, tag] })
   }
 
   useEffect(() => { void loadPhotos() }, [loadPhotos])
@@ -398,10 +411,12 @@ export default function SharedProjectPage() {
   return <main className="share-page">{header}
     <div className="share-body">
       <Card
-        title={`项目图片（${total}）`}
+        title={searching ? `项目图片（符合筛选 ${total} 张）` : `项目图片（${total}）`}
         extra={<Space wrap>
           <Input.Search allowClear placeholder="搜索图片标题、描述或标签" style={{ maxWidth: 260 }}
-            onSearch={value => { setKeyword(value); setPage(1) }} />
+            value={searchText} onChange={event => setSearchText(event.target.value)}
+            onSearch={value => { setKeyword(value.trim()); setPage(1) }} />
+          {searching && <Button type="link" onClick={clearAllFilters}>清空筛选和搜索</Button>}
           {access?.allowDownload && <>
             {/* 访客没有账号菜单，快捷键设置从这里进。 */}
             <Button type="link" icon={<KeyOutlined />} onClick={() => setShortcutSettingsOpen(true)}>快捷键</Button>
@@ -421,7 +436,7 @@ export default function SharedProjectPage() {
       >
         <ProjectPhotoFilterBar value={filters} onChange={changeFilters}
           tagOptions={filterOptions.tags} photographerOptions={filterOptions.photographers}
-          historyScope={shareTagHistoryScope(token)} />
+          historyScope={shareTagHistoryScope(token)} tagLabel={tagDisplayName} />
         {loadingPhotos ? <Skeleton active paragraph={{ rows: 6 }} />
           : photos.length ? <Row gutter={[16, 20]} className="photo-grid">
             {photos.map(photo => <Col xs={24} sm={12} lg={8} xxl={6} key={photo.id}>
@@ -491,6 +506,14 @@ export default function SharedProjectPage() {
                 </div>}
               >
                 <Typography.Title level={5} ellipsis>{photo.title || '未命名图片'}</Typography.Title>
+                <div className="photo-card-tags">
+                  {photo.tags?.length
+                    ? photo.tags.map(tag => <Tag key={tag} variant="filled" className="clickable-tag"
+                        color={filters.tags.includes(tag) ? 'blue' : undefined}
+                        onClick={() => filterByTag(tag)}>
+                        {tagDisplayName(tag)}</Tag>)
+                    : <Typography.Text type="secondary">无标签</Typography.Text>}
+                </div>
                 <div className="photo-meta">
                   <span>{photo.photographerName}</span>
                   <span>{dayjs(photo.takenAt).format('YYYY.MM.DD')}</span>
@@ -502,10 +525,9 @@ export default function SharedProjectPage() {
                 </Button>}
               </Card>
             </Col>)}
-          </Row> : hasActiveFilters(filters) || keyword
+          </Row> : searching
             ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有符合筛选条件的图片">
-              {hasActiveFilters(filters) && <Button type="link" onClick={() => changeFilters(emptyProjectPhotoFilters)}>
-                清空筛选</Button>}
+              <Button type="link" onClick={clearAllFilters}>清空筛选和搜索</Button>
             </Empty>
             : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="这个项目还没有可查看的图片" />}
         {total > PAGE_SIZE && <div className="share-pager">

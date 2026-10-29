@@ -378,6 +378,10 @@ export interface ProjectShareLink {
   purpose: ShareLinkPurpose
   allowDownload: boolean
   allowAdoption: boolean
+  /** 只开放建链接时在相册里勾选的那几张（V70），建立后不可改。 */
+  selectedPhotosOnly: boolean
+  /** 限定范围里访客此刻看得到的张数（移出相册、删除、处理中的不算）；整个相册的链接恒为 0。 */
+  selectedPhotoCount: number
   expiresAt?: string | null
   expired: boolean
   viewCount: number
@@ -434,6 +438,8 @@ export interface SharePhoto {
   storedFileName: string
   thumbnailUrl?: string
   adopted: boolean
+  /** 图片上的标签；卡片上点一下就按它筛选，与选题详情页一致。 */
+  tags?: string[]
 }
 
 /** 上传链接签出来的一次性上传票据，与站内单张上传同一条流水线。 */

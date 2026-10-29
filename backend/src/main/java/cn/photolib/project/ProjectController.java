@@ -88,6 +88,28 @@ public class ProjectController {
         return ApiResponse.ok(result);
     }
 
+    /**
+     * 把本选题相册里勾选的图片复制或移动到另一个选题。只动相册归属，不复制图片文件、
+     * 不带走采用记录。URL 里只有来源选题，所以目标、方式和结果计数都写进审计详情。
+     */
+    @AuditAction("复制或移动图片到其他选题")
+    @PostMapping("/{id}/photos/transfer")
+    @PreAuthorize("hasAuthority('PROJECT_ADOPT')")
+    ApiResponse<ProjectService.TransferPhotosResult> transferPhotos(
+            @PathVariable Long id, @Valid @RequestBody TransferPhotosRequest request,
+            @AuthenticationPrincipal AuthenticatedUser user, HttpServletRequest http) {
+        ProjectService.TransferMode mode = request.mode() == null ? ProjectService.TransferMode.COPY : request.mode();
+        ProjectService.TransferPhotosResult result = service.transferPhotos(
+                id, request.targetProjectId(), request.photoIds(), mode, user);
+        Map<String, Object> audit = new LinkedHashMap<>();
+        audit.put("targetProjectId", request.targetProjectId());
+        audit.put("mode", mode);
+        audit.put("photoIds", request.photoIds());
+        audit.put("result", result);
+        http.setAttribute(AuditInterceptor.DETAIL_ATTRIBUTE, audit);
+        return ApiResponse.ok(result);
+    }
+
     /** 置顶只影响当前账号自己的选题列表，凭据与查看选题一致。 */
     @AuditAction("置顶选题")
     @PutMapping("/{id}/pin")
@@ -157,5 +179,10 @@ public class ProjectController {
     }
 
     record PhotoIdsRequest(@NotEmpty @Size(max = 200) List<@NotNull Long> photoIds) {
+    }
+
+    /** {@code mode} 省略时按复制处理——它不会让任何图片离开本选题。 */
+    record TransferPhotosRequest(@NotNull Long targetProjectId, ProjectService.TransferMode mode,
+                                 @NotEmpty @Size(max = 200) List<@NotNull Long> photoIds) {
     }
 }

@@ -406,6 +406,136 @@ class ProjectServiceTests {
         assertThat(projectService.removePhotos(project.getId(), List.of(2221L), adminUser).removed()).isZero();
     }
 
+    /** 2251 图库加进来的、2252 已在目标里、2253 在本选题被采用、2254 在本选题上传、2255 还在处理、2256 不在本相册。 */
+    private void insertTransferFixture(Long sourceId, Long targetId) {
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, project_id, title, photographer_student_id, photographer_name, uploaded_by, campus_id,
+                     taken_at, size, content_type, object_key, sha256, status)
+                VALUES
+                    (2251, NULL, '图库加进来的', '20230001', '张三', 100, 901,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/t1.jpg', :sha1, 'AVAILABLE'),
+                    (2252, NULL, '目标里已有', '20230001', '张三', 100, 901,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/t2.jpg', :sha2, 'AVAILABLE'),
+                    (2253, NULL, '本选题已采用', '20230001', '张三', 100, 901,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/t3.jpg', :sha3, 'AVAILABLE'),
+                    (2254, :sourceId, '本选题上传的', '20230001', '张三', 102, 901,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/t4.jpg', :sha4, 'AVAILABLE'),
+                    (2255, NULL, '还在处理', '20230001', '张三', 100, 901,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/t5.jpg', :sha5, 'PROCESSING'),
+                    (2256, NULL, '不在本相册', '20230001', '张三', 100, 901,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/t6.jpg', :sha6, 'AVAILABLE')
+                """)
+                .param("sourceId", sourceId)
+                .param("sha1", "a1".repeat(32)).param("sha2", "a2".repeat(32)).param("sha3", "a3".repeat(32))
+                .param("sha4", "a4".repeat(32)).param("sha5", "a5".repeat(32)).param("sha6", "a6".repeat(32))
+                .update();
+        jdbc.sql("""
+                INSERT INTO photo_project (photo_id, project_id) VALUES
+                    (2251, :sourceId), (2252, :sourceId), (2253, :sourceId), (2254, :sourceId), (2255, :sourceId),
+                    (2252, :targetId)
+                """)
+                .param("sourceId", sourceId).param("targetId", targetId)
+                .update();
+        jdbc.sql("""
+                INSERT INTO adoption
+                    (project_id, photo_id, photographer_student_id, photographer_name, adopted_by, adopted_at)
+                VALUES (:sourceId, 2253, '20230001', '张三', 100, NOW())
+                """)
+                .param("sourceId", sourceId)
+                .update();
+    }
+
+    private List<Long> album(Long projectId) {
+        return jdbc.sql("SELECT photo_id FROM photo_project WHERE project_id=:projectId ORDER BY photo_id")
+                .param("projectId", projectId).query(Long.class).list();
+    }
+
+    private static final List<Long> TRANSFER_IDS = List.of(2251L, 2252L, 2253L, 2254L, 2255L, 2256L, 2251L, 2299L);
+
+    @Test
+    void copyPhotos_shouldAddToTargetAndLeaveSourceUntouched() {
+        var source = projectService.create("来源选题", "描述", ProjectStatus.ACTIVE, adminUser);
+        var target = projectService.create("目标选题", "描述", ProjectStatus.ACTIVE, adminUser);
+        insertTransferFixture(source.getId(), target.getId());
+
+        var result = projectService.transferPhotos(source.getId(), target.getId(), TRANSFER_IDS,
+                ProjectService.TransferMode.COPY, adminUser);
+
+        assertThat(result.copied()).isEqualTo(3);
+        assertThat(result.alreadyInTarget()).isEqualTo(1);
+        // 处理中、不在本相册、不存在的三张都跳过，不让整批失败。
+        assertThat(result.skipped()).isEqualTo(3);
+        assertThat(result.removed()).isZero();
+        assertThat(album(target.getId())).containsExactly(2251L, 2252L, 2253L, 2254L);
+        assertThat(album(source.getId())).containsExactly(2251L, 2252L, 2253L, 2254L, 2255L);
+        // 只复制归属，不带走采用记录，也不改图片的来源选题。
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM adoption WHERE project_id=:targetId")
+                .param("targetId", target.getId()).query(Long.class).single()).isZero();
+        assertThat(jdbc.sql("SELECT project_id FROM photo WHERE id=2254").query(Long.class).single())
+                .isEqualTo(source.getId());
+    }
+
+    @Test
+    void movePhotos_shouldRemoveFromSourceExceptAdoptedOrUploadedHere() {
+        var source = projectService.create("来源选题", "描述", ProjectStatus.ACTIVE, adminUser);
+        var target = projectService.create("目标选题", "描述", ProjectStatus.ACTIVE, adminUser);
+        insertTransferFixture(source.getId(), target.getId());
+
+        var result = projectService.transferPhotos(source.getId(), target.getId(), TRANSFER_IDS,
+                ProjectService.TransferMode.MOVE, adminUser);
+
+        assertThat(result.copied()).isEqualTo(3);
+        assertThat(result.alreadyInTarget()).isEqualTo(1);
+        assertThat(result.removed()).isEqualTo(2);
+        assertThat(result.keptAdopted()).isEqualTo(1);
+        assertThat(result.keptUploadedHere()).isEqualTo(1);
+        assertThat(album(target.getId())).containsExactly(2251L, 2252L, 2253L, 2254L);
+        assertThat(album(source.getId())).containsExactly(2253L, 2254L, 2255L);
+        assertThat(projectService.getDetail(target.getId(), adminUser).photoCount()).isEqualTo(4L);
+    }
+
+    @Test
+    void transferPhotos_shouldRejectInvalidTargetsAndClosedProjects() {
+        var source = projectService.create("来源选题", "描述", ProjectStatus.ACTIVE, adminUser);
+        var draft = projectService.create("草稿选题", "描述", ProjectStatus.DRAFT, adminUser);
+        insertTransferFixture(source.getId(), draft.getId());
+
+        assertThatThrownBy(() -> projectService.transferPhotos(source.getId(), source.getId(), List.of(2251L),
+                ProjectService.TransferMode.COPY, adminUser))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("另一个选题");
+        assertThatThrownBy(() -> projectService.transferPhotos(source.getId(), draft.getId(), List.of(2251L),
+                ProjectService.TransferMode.COPY, adminUser))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("进行中的选题");
+        // 来源选题结束了还能复制出去，但不能移动。
+        var other = projectService.create("另一个进行中", "描述", ProjectStatus.ACTIVE, adminUser);
+        var closed = projectService.changeStatus(source.getId(), ProjectStatus.COMPLETED,
+                projectService.get(source.getId()).getVersion(), adminUser);
+        assertThatThrownBy(() -> projectService.transferPhotos(closed.getId(), other.getId(), List.of(2251L),
+                ProjectService.TransferMode.MOVE, adminUser))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("仅进行中项目");
+        assertThat(projectService.transferPhotos(closed.getId(), other.getId(), List.of(2251L),
+                ProjectService.TransferMode.COPY, adminUser).copied()).isEqualTo(1);
+    }
+
+    @Test
+    void campusManager_shouldOnlyTransferOwnUploadedPhotos() {
+        var source = projectService.create("负责人来源", "描述", ProjectStatus.ACTIVE, adminUser);
+        var target = projectService.create("负责人目标", "描述", ProjectStatus.ACTIVE, adminUser);
+        insertTransferFixture(source.getId(), target.getId());
+        // 负责人在两个选题里都接过需求，才看得到它们。
+        for (var entry : List.of(List.of(9121L, source.getId()), List.of(9122L, target.getId()))) {
+            assignRequest(entry.get(0), entry.get(1), 901L, 102L);
+        }
+
+        assertThatThrownBy(() -> projectService.transferPhotos(source.getId(), target.getId(), List.of(2251L),
+                ProjectService.TransferMode.COPY, managerUser))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("本人上传");
+        assertThat(album(target.getId())).containsExactly(2252L);
+        assertThat(projectService.transferPhotos(source.getId(), target.getId(), List.of(2254L),
+                ProjectService.TransferMode.COPY, managerUser).copied()).isEqualTo(1);
+    }
+
     @Test
     void removePhotos_shouldRejectProjectsThatAreNotActive() {
         var project = projectService.create("草稿项目", "描述", ProjectStatus.DRAFT, adminUser);
