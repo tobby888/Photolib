@@ -1,6 +1,6 @@
 import { App, Button, Card, Empty, Form, Input, Modal, Select, Space, Tag } from 'antd'
-import { EditOutlined, PlusOutlined, StopOutlined, CheckCircleOutlined, DeleteOutlined } from '@ant-design/icons'
-import { useState } from 'react'
+import { EditOutlined, PlusOutlined, StopOutlined, CheckCircleOutlined, DeleteOutlined, SearchOutlined } from '@ant-design/icons'
+import { useMemo, useState } from 'react'
 import { api, qs } from '../api'
 import { useAuth } from '../auth'
 import type { Campus, CampusMember, EntityId } from '../types'
@@ -10,6 +10,7 @@ import { useLoad } from '../hooks'
 import { hasPermission } from '../permissions'
 import { DIRECTORY_ACTION_MIN_WIDTH } from '../tableActionWidths'
 import { GRID_PAGE_SIZES, clientTablePagination } from '../pagination'
+import { type DirectorySearchHit, filterMembers, normalizeKeyword, searchAcrossCampuses } from '../directorySearch'
 
 export default function DirectoryPage() {
   const { user } = useAuth()
@@ -20,6 +21,8 @@ export default function DirectoryPage() {
   const [editing, setEditing] = useState<CampusMember | null>(null)
   const [selectedCampus, setSelectedCampus] = useState<EntityId | undefined>(
     user?.campusIds?.length === 1 ? user.campusIds[0] : undefined)
+  const [keyword, setKeyword] = useState('')
+  const searching = normalizeKeyword(keyword) !== ''
 
   const campusScoped = user?.dataScope === 'CAMPUS'
   const canManage = hasPermission(user, 'DIRECTORY_MANAGE')
@@ -29,17 +32,32 @@ export default function DirectoryPage() {
     () => showCampusPicker ? api<Campus[]>({ url: '/campuses', params: { enabled: true } }) : Promise.resolve([]),
     [] as Campus[], [showCampusPicker],
   )
-  const visibleCampuses = campusScoped
+  const visibleCampuses = useMemo(() => campusScoped
     ? campuses.filter(campus => user?.campusIds?.includes(campus.id))
-    : campuses
+    : campuses, [campusScoped, campuses, user?.campusIds])
+  // 能选校区却没选校区时输入关键词，就是在全部可见校区里搜：一次拉回后端允许的全部成员，
+  // 之后每次按键只在本地筛，不再请求。
+  const globalSearch = showCampusPicker && !selectedCampus && searching
   const { data: members, loading, error, reload } = useLoad(
-    () => !showCampusPicker
+    () => !showCampusPicker || globalSearch
       ? api<CampusMember[]>({ url: '/campus-members' })
       : selectedCampus
         ? api<CampusMember[]>({ url: '/campus-members', params: { campusId: selectedCampus } })
         : Promise.resolve([] as CampusMember[]),
-    [] as CampusMember[], [showCampusPicker, selectedCampus],
+    [] as CampusMember[], [showCampusPicker, selectedCampus, globalSearch],
   )
+  const filteredMembers = useMemo(() => filterMembers(members, keyword), [members, keyword])
+  const globalHits = useMemo(
+    () => globalSearch ? searchAcrossCampuses(members, visibleCampuses, keyword) : [],
+    [globalSearch, members, visibleCampuses, keyword],
+  )
+
+  // 从全局结果跳到某个校区：关键词换成这个人的学号。各校区录的姓名可能写法不同，
+  // 留着原来的姓名关键词，跳过去可能一个人都筛不出来。
+  const openInCampus = (campusId: EntityId, studentId: string) => {
+    setSelectedCampus(campusId)
+    setKeyword(studentId)
+  }
 
   const openCreate = () => { setEditing(null); form.resetFields(); form.setFieldsValue({ enabled: true }); setOpen(true) }
   const openEdit = (member: CampusMember) => {
@@ -129,32 +147,77 @@ export default function DirectoryPage() {
     <PageTitle eyebrow="DIRECTORY" title="通讯录" description={description} extra={manageExtra} />
 
     <>
-      {showCampusPicker && (
-        <Card className="filter-card">
-          <Space wrap>
+      <Card className="filter-card">
+        <Space wrap>
+          {showCampusPicker && <>
             <span>校区</span>
             <Select
               showSearch
+              allowClear
               optionFilterProp="label"
               style={{ width: 240 }}
-              placeholder="请选择要维护的校区"
+              placeholder="全部校区"
               value={selectedCampus}
               options={visibleCampuses.map(campus => ({ value: campus.id, label: campus.name }))}
               onChange={(value) => setSelectedCampus(value)}
             />
-          </Space>
-        </Card>
-      )}
+          </>}
+          <Input
+            allowClear
+            prefix={<SearchOutlined />}
+            style={{ width: 280 }}
+            placeholder={showCampusPicker && !selectedCampus ? '在全部校区中搜索姓名或学号' : '搜索姓名或学号'}
+            value={keyword}
+            onChange={event => setKeyword(event.target.value)}
+          />
+        </Space>
+      </Card>
       <Card>
         {showCampusPicker && !selectedCampus
-          ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="请先选择要查看的校区" />
-          : <DataState loading={loading} error={error} empty={!members.length} onRetry={reload}
-              emptyText="这个校区的通讯录还是空的"
-              emptyHint="先把摄影人员加进来，上传图片选拍摄者、填报工时选成员时才有人可选。">
+          ? !searching
+            ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="选择校区查看通讯录，或直接输入姓名、学号在全部校区中搜索" />
+            : <DataState loading={loading} error={error} empty={!globalHits.length} onRetry={reload}
+                emptyText="全部校区里都没有找到匹配的成员"
+                emptyHint="换个关键词试试，姓名和学号都支持只输入一部分。">
+                <ContentFitTable<DirectorySearchHit>
+                  key={normalizeKeyword(keyword)}
+                  rowKey="key"
+                  dataSource={globalHits}
+                  pagination={clientTablePagination(globalHits.length,
+                    { defaultPageSize: 12, sizes: GRID_PAGE_SIZES, showTotal: total => `共找到 ${total} 人` })}
+                  columns={[
+                    { title: '姓名', key: 'name', render: (_, hit) => hit.names.join(' / ') },
+                    { title: '学号', dataIndex: 'studentId' },
+                    { title: '所在校区', key: 'campuses', render: (_, hit) => <Space size={[4, 4]} wrap>
+                      {hit.campuses.map(entry => <Tag
+                        key={entry.memberId}
+                        color={entry.enabled ? 'blue' : undefined}
+                        role="button"
+                        tabIndex={0}
+                        title={`在${entry.campusName}通讯录中查看`}
+                        style={{ cursor: 'pointer', marginInlineEnd: 0 }}
+                        onClick={() => openInCampus(entry.campusId, hit.studentId)}
+                        onKeyDown={event => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault()
+                            openInCampus(entry.campusId, hit.studentId)
+                          }
+                        }}
+                      >{entry.campusName}{entry.enabled ? '' : '（停用）'}</Tag>)}
+                    </Space> },
+                  ]}
+                />
+              </DataState>
+          : <DataState loading={loading} error={error} empty={!filteredMembers.length} onRetry={reload}
+              emptyText={searching && members.length ? '这个校区里没有找到匹配的成员' : '这个校区的通讯录还是空的'}
+              emptyHint={searching && members.length
+                ? (showCampusPicker ? '换个关键词试试，或清空校区选择、在全部校区中搜索。' : '换个关键词试试，姓名和学号都支持只输入一部分。')
+                : '先把摄影人员加进来，上传图片选拍摄者、填报工时选成员时才有人可选。'}>
               <ContentFitTable
+                key={normalizeKeyword(keyword)}
                 rowKey="id"
-                dataSource={members}
-                pagination={clientTablePagination(members.length,
+                dataSource={filteredMembers}
+                pagination={clientTablePagination(filteredMembers.length,
                   { defaultPageSize: 12, sizes: GRID_PAGE_SIZES, showTotal: total => `共 ${total} 人` })}
                 columns={[
                   { title: '姓名', dataIndex: 'name' },
