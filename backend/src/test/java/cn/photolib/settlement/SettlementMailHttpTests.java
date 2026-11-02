@@ -108,6 +108,33 @@ class SettlementMailHttpTests {
                 .andExpect(jsonPath("$.data.variables.recipientName").exists());
     }
 
+    @Test
+    void aStatementInTheInboxIsVisibleToItsRecipientAndSendersOnly() throws Exception {
+        jdbc.sql("""
+                INSERT INTO settlement_mail_batch(status, from_date, to_date, created_by, created_by_name, total_count)
+                VALUES ('COMPLETED', '2026-10-01', '2026-10-31', :m, 'minister', 1)
+                """).param("m", MINISTER_ID).update();
+        long batchId = jdbc.sql("SELECT MAX(id) FROM settlement_mail_batch WHERE created_by=:m")
+                .param("m", MINISTER_ID).query(Long.class).single();
+        jdbc.sql("""
+                INSERT INTO settlement_statement(batch_id, user_id, recipient_name, from_date, to_date, subject,
+                                                 html_body, created_by_name)
+                VALUES (:b, :u, 'admin', '2026-10-01', '2026-10-31', 'subject-x',
+                        '<img src="cid:brand-logo"><p>body-x</p>', 'minister')
+                """).param("b", batchId).param("u", ADMIN_ID).update();
+        long id = jdbc.sql("SELECT id FROM settlement_statement WHERE batch_id=:b").param("b", batchId)
+                .query(Long.class).single();
+
+        // 收件人本人能看，图标换成了可显示的 data: URI；能发清算单的部长也能看；别人当作不存在。
+        mvc.perform(as("admin", get("/api/v1/settlement-statements/" + id)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.subject").value("subject-x"))
+                .andExpect(jsonPath("$.data.html").value(containsString("src=\"data:image/png;base64,")));
+        mvc.perform(as("minister", get("/api/v1/settlement-statements/" + id))).andExpect(status().isOk());
+        mvc.perform(as("member", get("/api/v1/settlement-statements/" + id))).andExpect(status().isNotFound());
+        mvc.perform(as("admin", get("/api/v1/settlement-statements/" + (id + 1000)))).andExpect(status().isNotFound());
+    }
+
     private MockHttpServletRequestBuilder as(String token, MockHttpServletRequestBuilder builder) {
         return builder.header("Authorization", "Bearer " + token).with(request -> {
             request.setServletPath(request.getRequestURI());

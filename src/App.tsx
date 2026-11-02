@@ -43,6 +43,7 @@ const StatisticsPage = lazy(() => import('./pages/StatisticsPage'))
 const ManagerCampusesPage = lazy(() => import('./pages/ManagerCampusesPage'))
 const NotificationsPage = lazy(() => import('./pages/NotificationsPage'))
 const NotificationDetailPage = lazy(() => import('./pages/NotificationDetailPage'))
+const SettlementStatementPage = lazy(() => import('./pages/SettlementStatementPage'))
 const FeedbackDetailPage = lazy(() => import('./pages/FeedbackDetailPage'))
 const PublicRecruitmentPage = lazy(() => import('./pages/PublicRecruitmentPage'))
 const SharedProjectPage = lazy(() => import('./pages/SharedProjectPage'))
@@ -408,6 +409,7 @@ function Shell() {
             <Route path="/notifications" element={<NotificationsPage />} />
             <Route path="/notifications/feedback/:feedbackId" element={<FeedbackDetailPage />} />
             <Route path="/notifications/:notificationId" element={<NotificationDetailPage />} />
+            <Route path="/settlements/:statementId" element={<SettlementStatementPage />} />
             <Route path="/statistics" element={hasPermission(user, 'STATISTICS_DOWNLOAD') ? <StatisticsPage /> : <Navigate to="/" />} />
             <Route path="/manager-campuses" element={hasPermission(user, 'MANAGER_CAMPUS_ASSIGN') ? <ManagerCampusesPage /> : <Navigate to="/" />} />
             <Route path="/recruitments" element={hasPermission(user, 'RECRUITMENT_VIEW') ? <RecruitmentsPage /> : <Navigate to="/" />} />

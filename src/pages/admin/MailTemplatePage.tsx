@@ -20,7 +20,7 @@ const lastMonth = (): [string, string] => [
 ]
 
 /**
- * 管理员面板「邮件模板」：自定义清算单邮件的主题和 HTML 正文，右边用真实数据实时预览。
+ * 管理员面板「邮件模板」：自定义清算单的主题和 HTML 正文（邮件、站内信和导出的 PDF 用的是同一份），右边用真实数据实时预览。
  * 没保存过就是内置模板；「恢复默认」删掉自定义，以后内置模板改版会自动跟上。
  */
 export default function MailTemplatePage() {
@@ -48,7 +48,8 @@ function TemplateEditor({ view, onSaved }: { view: MailTemplateView; onSaved: (n
   const recipients = useLoad(
     () => api<SettlementRecipient[]>({ url: '/settlement-mails/recipients', params: { from: range[0], to: range[1] } }),
     [] as SettlementRecipient[], [range[0], range[1]])
-  const samples = useMemo(() => recipients.data.filter(isSelectable)
+  // 预览用的样本只要能按姓名区分，有没有邮箱无所谓。
+  const samples = useMemo(() => recipients.data.filter(recipient => isSelectable(recipient, { email: false, inbox: true }))
     .sort((a, b) => Number(hasRecords(b)) - Number(hasRecords(a))), [recipients.data])
   const sample = samples.find(r => userKey(r.userId) === sampleUserId) ?? samples[0]
   const unknown = useMemo(() => unknownVariables(`${subject}\n${html}`, view.variables), [subject, html, view.variables])
@@ -135,7 +136,8 @@ function TemplateEditor({ view, onSaved }: { view: MailTemplateView; onSaved: (n
               autoSize={{ minRows: 18, maxRows: 34 }} onChange={event => setHtml(event.target.value)} />
             <Typography.Text type="secondary" className="mail-template-tip">
               用行内样式和表格排版：多数邮件客户端会丢掉 &lt;style&gt;、不支持 flex / grid，也不显示外链图片。
-              点下面的变量插入到光标处；<code>{'{{#siteUrl}}…{{/siteUrl}}'}</code> 包住的内容只在配置了站点地址时出现。
+              同一份模板也用于站内信和导出的 PDF。点下面的变量插入到光标处；<code>{'{{#siteUrl}}…{{/siteUrl}}'}</code>
+              包住的内容只在配置了站点地址时出现（站内信里不显示）。
             </Typography.Text>
           </div>
           {unknown.length > 0 && <Alert type="warning" showIcon style={{ marginBottom: 12 }}

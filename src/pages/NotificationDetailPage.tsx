@@ -1,10 +1,11 @@
 import { Button, Card } from 'antd'
 import { ArrowLeftOutlined } from '@ant-design/icons'
 import { useEffect } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api'
 import { DataState } from '../components'
 import { useLoad } from '../hooks'
+import { statementIdFromActionUrl } from '../settlementMail'
 import type { Notification } from '../types'
 
 export default function NotificationDetailPage() {
@@ -17,6 +18,8 @@ export default function NotificationDetailPage() {
   useEffect(() => {
     if (data && !data.readAt) void api<void>({ method: 'POST', url: `/notifications/${data.id}/read` })
   }, [data])
+  // 清算单通知的正文只是摘要，完整内容在清算单页（从别处拿到这个地址时也能看到全文）。
+  if (data && statementIdFromActionUrl(data.actionUrl)) return <Navigate to={data.actionUrl ?? '/notifications'} replace />
   return <div className="message-detail">
     <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/notifications')}>返回消息中心</Button>
     <Card>

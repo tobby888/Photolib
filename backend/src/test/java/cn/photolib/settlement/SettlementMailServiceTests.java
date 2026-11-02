@@ -40,7 +40,8 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.when;
 
 /**
- * 批量发送清算单：一人一封、失败单独记、全站同一时刻只有一个批次、重启后接着发。
+ * 批量发送清算单：一人一封、失败单独记、全站同一时刻只有一个批次、重启后接着发；
+ * 站内信与邮件可以分开发、各记各的结果。
  *
  * <p>发信在后台线程里跑，要看得见已提交的数据，所以这个类不用事务回滚，造的数据在
  * {@link #cleanUp()} 里删干净。</p>
@@ -90,7 +91,7 @@ class SettlementMailServiceTests {
         fixtures.worklog(b, LocalDate.of(2026, 10, 4), 30, 30, "CONFIRMED", null);
         fixtures.adoption(b, LocalDateTime.of(2026, 10, 20, 10, 0));
 
-        SettlementMailService.BatchView created = service.create(FROM, TO, List.of(userA, userB), minister);
+        SettlementMailService.BatchView created = service.create(FROM, TO, List.of(userA, userB), true, false, minister);
         SettlementMailService.BatchView done = awaitFinished(created.id());
 
         assertThat(done.status()).isEqualTo("COMPLETED");
@@ -119,7 +120,7 @@ class SettlementMailServiceTests {
             return null;
         }).when(mailSender).send(any());
 
-        SettlementMailService.BatchView done = awaitFinished(service.create(FROM, TO, List.of(ok, bad), minister).id());
+        SettlementMailService.BatchView done = awaitFinished(service.create(FROM, TO, List.of(ok, bad), true, false, minister).id());
 
         assertThat(done.sent()).isEqualTo(1);
         assertThat(done.failed()).isEqualTo(1);
@@ -136,18 +137,18 @@ class SettlementMailServiceTests {
         fixtures.user(shared, "s2@example.cn");
         long noEmail = fixtures.user("清算无邮箱" + fixtures.base, null);
 
-        assertThatThrownBy(() -> service.create(FROM, TO, List.of(first), minister))
+        assertThatThrownBy(() -> service.create(FROM, TO, List.of(first), true, false, minister))
                 .isInstanceOf(BusinessException.class).hasMessageContaining("同名");
-        assertThatThrownBy(() -> service.create(FROM, TO, List.of(noEmail), minister))
+        assertThatThrownBy(() -> service.create(FROM, TO, List.of(noEmail), true, false, minister))
                 .isInstanceOf(BusinessException.class).hasMessageContaining("没有填写邮箱");
         AuthenticatedUser campusScoped = new AuthenticatedUser(fixtures.ownerId, "settle-cm", "负责人",
                 UserRole.CAMPUS_MANAGER, fixtures.campusId, false, 3L, "CAMPUS_MANAGER", "校区负责人",
                 DataScope.CAMPUS, EnumSet.allOf(PermissionCode.class), Set.of(fixtures.campusId));
         long fine = fixtures.user("清算戊" + fixtures.base, "wu@example.cn");
-        assertThatThrownBy(() -> service.create(FROM, TO, List.of(fine), campusScoped))
+        assertThatThrownBy(() -> service.create(FROM, TO, List.of(fine), true, false, campusScoped))
                 .isInstanceOf(BusinessException.class).hasMessageContaining("校区范围");
         when(mailSender.configured()).thenReturn(false);
-        assertThatThrownBy(() -> service.create(FROM, TO, List.of(fine), minister))
+        assertThatThrownBy(() -> service.create(FROM, TO, List.of(fine), true, false, minister))
                 .isInstanceOf(BusinessException.class).hasMessageContaining("SMTP_HOST");
         assertThat(sent).isEmpty();
     }
@@ -172,7 +173,7 @@ class SettlementMailServiceTests {
                 results.add(clickers.submit(() -> {
                     together.await(5, TimeUnit.SECONDS);
                     try {
-                        return service.create(FROM, TO, List.of(userId), minister);
+                        return service.create(FROM, TO, List.of(userId), true, false, minister);
                     } catch (BusinessException ex) {
                         return ex;
                     }
@@ -195,7 +196,7 @@ class SettlementMailServiceTests {
             awaitFinished(winner.id());
             assertThat(sends.get()).isEqualTo(1);
             // 前一批发完、发送位释放后，下一批可以正常发。
-            SettlementMailService.BatchView next = service.create(FROM, TO, List.of(a, b), minister);
+            SettlementMailService.BatchView next = service.create(FROM, TO, List.of(a, b), true, false, minister);
             assertThat(awaitFinished(next.id()).sent()).isEqualTo(2);
         } finally {
             release.countDown();
@@ -215,8 +216,9 @@ class SettlementMailServiceTests {
         long batchId = jdbc.sql("SELECT id FROM settlement_mail_batch WHERE active_slot=1").query(Long.class).single();
         for (long userId : new long[]{sending, pending}) {
             jdbc.sql("""
-                    INSERT INTO settlement_mail_delivery(batch_id, user_id, recipient_name, recipient_email, status)
-                    SELECT :batchId, id, display_name, email, :status FROM app_user WHERE id=:userId
+                    INSERT INTO settlement_mail_delivery(batch_id, user_id, recipient_name, recipient_email, status,
+                                                         email_status)
+                    SELECT :batchId, id, display_name, email, :status, 'PENDING' FROM app_user WHERE id=:userId
                     """).param("batchId", batchId).param("userId", userId)
                     .param("status", userId == sending ? "SENDING" : "PENDING").update();
         }
@@ -231,6 +233,101 @@ class SettlementMailServiceTests {
             assertThat(d.errorMessage()).contains("重启");
         });
         assertThat(sent).extracting(OutgoingMail::to).containsExactly("ren@example.cn");
+    }
+
+    @Test
+    void inboxOnlyWorksWithoutSmtpAndWithoutAnEmailAddress() {
+        String name = "清算癸" + fixtures.base;
+        long userId = fixtures.user(name, null);
+        fixtures.worklog(name, LocalDate.of(2026, 10, 3), 60, 0, "REJECTED", "照片没交齐");
+        fixtures.adoption(name, LocalDateTime.of(2026, 10, 20, 10, 0));
+        when(mailSender.configured()).thenReturn(false);
+
+        SettlementMailService.BatchView done = awaitFinished(
+                service.create(FROM, TO, List.of(userId), false, true, minister).id());
+
+        assertThat(done.sendEmail()).isFalse();
+        assertThat(done.sendInbox()).isTrue();
+        assertThat(done.sent()).isEqualTo(1);
+        SettlementMailService.DeliveryView delivery = done.deliveries().get(0);
+        assertThat(delivery.status()).isEqualTo("SENT");
+        assertThat(delivery.inboxStatus()).isEqualTo("SENT");
+        assertThat(delivery.emailStatus()).isNull();
+        assertThat(delivery.statementId()).isNotNull();
+        assertThat(sent).isEmpty();
+
+        // 消息中心里有一条，点开跳到这份清算单；清算单是快照，带着退回原因、参与的选题和图片链接。
+        var notification = jdbc.sql("""
+                SELECT event_type, title, content, action_url FROM user_notification WHERE user_id=:id
+                """).param("id", userId).query((rs, n) -> List.of(rs.getString(1), rs.getString(2),
+                        rs.getString(3), rs.getString(4))).single();
+        assertThat(notification.get(0)).isEqualTo("SETTLEMENT_STATEMENT");
+        assertThat(notification.get(1)).contains(name).contains("2026-10-01");
+        assertThat(notification.get(2)).contains("被退回 1 条").contains("参与选题 1 个，上传图片 1 张");
+        assertThat(notification.get(3)).isEqualTo("/settlements/" + delivery.statementId());
+        String html = jdbc.sql("SELECT html_body FROM settlement_statement WHERE id=:id")
+                .param("id", delivery.statementId()).query(String.class).single();
+        assertThat(html).contains("照片没交齐").contains("cid:brand-logo").contains("href=\"/#/photos/")
+                .contains("href=\"/#/projects/" + fixtures.projectId + "\"");
+    }
+
+    @Test
+    void bothChannelsAreTrackedSeparately() {
+        long withEmail = fixtures.user("清算子" + fixtures.base, "zi@example.cn");
+        long rejected = fixtures.user("清算丑" + fixtures.base, "chou@example.cn");
+        long noEmail = fixtures.user("清算寅" + fixtures.base, null);
+        doAnswer(invocation -> {
+            OutgoingMail mail = invocation.getArgument(0);
+            if (mail.to().startsWith("chou")) throw new MailDeliveryException("收件地址被邮件服务器拒收：550 no such user");
+            sent.add(mail);
+            return null;
+        }).when(mailSender).send(any());
+
+        SettlementMailService.BatchView done = awaitFinished(
+                service.create(FROM, TO, List.of(withEmail, rejected, noEmail), true, true, minister).id());
+
+        assertThat(done.sent()).isEqualTo(2);
+        assertThat(done.failed()).isEqualTo(1);
+        assertThat(done.deliveries()).filteredOn(d -> d.userId() == withEmail).singleElement().satisfies(d -> {
+            assertThat(d.status()).isEqualTo("SENT");
+            assertThat(d.emailStatus()).isEqualTo("SENT");
+            assertThat(d.inboxStatus()).isEqualTo("SENT");
+        });
+        // 邮件被拒收不影响已经发出的站内信，失败原因标明是哪一种。
+        assertThat(done.deliveries()).filteredOn(d -> d.userId() == rejected).singleElement().satisfies(d -> {
+            assertThat(d.status()).isEqualTo("FAILED");
+            assertThat(d.emailStatus()).isEqualTo("FAILED");
+            assertThat(d.inboxStatus()).isEqualTo("SENT");
+            assertThat(d.errorMessage()).startsWith("邮件：").contains("550");
+        });
+        // 两种都发时，没有邮箱的人只收站内信。
+        assertThat(done.deliveries()).filteredOn(d -> d.userId() == noEmail).singleElement().satisfies(d -> {
+            assertThat(d.status()).isEqualTo("SENT");
+            assertThat(d.emailStatus()).isEqualTo("SKIPPED");
+            assertThat(d.inboxStatus()).isEqualTo("SENT");
+        });
+        assertThat(sent).extracting(OutgoingMail::to).containsExactly("zi@example.cn");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM user_notification WHERE user_id IN (:ids) AND event_type='SETTLEMENT_STATEMENT'")
+                .param("ids", List.of(withEmail, rejected, noEmail)).query(Long.class).single()).isEqualTo(3);
+        assertThatThrownBy(() -> service.create(FROM, TO, List.of(withEmail), false, false, minister))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("至少选择一种");
+    }
+
+    @Test
+    void onlyTheRecipientAndGlobalSendersCanOpenAStatement() {
+        var statement = new SettlementInboxController.StatementView(1, 42L, "甲", FROM, TO, "s", "h", "王部长", null);
+        AuthenticatedUser owner = new AuthenticatedUser(42L, "owner", "甲", UserRole.CAMPUS_MANAGER, fixtures.campusId,
+                false, 3L, "MEMBER", "成员", DataScope.CAMPUS, EnumSet.noneOf(PermissionCode.class), Set.of(fixtures.campusId));
+        AuthenticatedUser stranger = new AuthenticatedUser(43L, "other", "乙", UserRole.CAMPUS_MANAGER, fixtures.campusId,
+                false, 3L, "MEMBER", "成员", DataScope.CAMPUS, EnumSet.noneOf(PermissionCode.class), Set.of(fixtures.campusId));
+        AuthenticatedUser scopedSender = new AuthenticatedUser(44L, "cm", "丙", UserRole.CAMPUS_MANAGER, fixtures.campusId,
+                false, 3L, "CAMPUS_MANAGER", "校区负责人", DataScope.CAMPUS, EnumSet.allOf(PermissionCode.class),
+                Set.of(fixtures.campusId));
+
+        assertThat(SettlementInboxController.canView(statement, owner)).isTrue();
+        assertThat(SettlementInboxController.canView(statement, minister)).isTrue();
+        assertThat(SettlementInboxController.canView(statement, stranger)).isFalse();
+        assertThat(SettlementInboxController.canView(statement, scopedSender)).isFalse();
     }
 
     private SettlementMailService.BatchView awaitFinished(long batchId) {

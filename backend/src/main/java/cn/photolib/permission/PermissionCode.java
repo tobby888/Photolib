@@ -47,7 +47,7 @@ public enum PermissionCode {
     TEACHING_MANAGE(PermissionCategory.TEACHING, "上传、替换和编辑教学资料"),
     TEACHING_DELETE(PermissionCategory.TEACHING, "删除教学资料"),
     STATISTICS_DOWNLOAD(PermissionCategory.STATISTICS, "统计数据查看和下载"),
-    SETTLEMENT_MAIL_SEND(PermissionCategory.STATISTICS, "通过邮件向成员发送工时与被引清算单"),
+    SETTLEMENT_MAIL_SEND(PermissionCategory.STATISTICS, "通过邮件或站内信向成员发送工时与被引清算单"),
     MANAGER_CAMPUS_ASSIGN(PermissionCategory.MANAGER_CAMPUS, "负责人校区重新指定");
 
     private final PermissionCategory category;
