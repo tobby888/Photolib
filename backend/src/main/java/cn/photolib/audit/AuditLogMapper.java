@@ -33,6 +33,10 @@ public interface AuditLogMapper extends BaseMapper<AuditLogEntity> {
               <if test="f.ipAddress != null and f.ipAddress != ''">AND a.ip_address = #{f.ipAddress}</if>
               <if test="f.from != null">AND a.created_at &gt;= #{f.from}</if>
               <if test="f.to != null">AND a.created_at &lt; #{f.to}</if>
+              <if test="f.beforeCreatedAt != null">
+                AND (a.created_at &lt; #{f.beforeCreatedAt}
+                  OR (a.created_at = #{f.beforeCreatedAt} AND a.id &lt; #{f.beforeId}))
+              </if>
               <if test="f.keyword != null and f.keyword != ''">
                 AND (LOWER(u.username) LIKE LOWER(CONCAT('%', #{f.keyword}, '%')) ESCAPE '!'
                   OR LOWER(u.display_name) LIKE LOWER(CONCAT('%', #{f.keyword}, '%')) ESCAPE '!'
@@ -67,6 +71,10 @@ public interface AuditLogMapper extends BaseMapper<AuditLogEntity> {
               <if test="f.ipAddress != null and f.ipAddress != ''">AND a.ip_address = #{f.ipAddress}</if>
               <if test="f.from != null">AND a.created_at &gt;= #{f.from}</if>
               <if test="f.to != null">AND a.created_at &lt; #{f.to}</if>
+              <if test="f.beforeCreatedAt != null">
+                AND (a.created_at &lt; #{f.beforeCreatedAt}
+                  OR (a.created_at = #{f.beforeCreatedAt} AND a.id &lt; #{f.beforeId}))
+              </if>
               <if test="f.keyword != null and f.keyword != ''">
                 AND (LOWER(u.username) LIKE LOWER(CONCAT('%', #{f.keyword}, '%')) ESCAPE '!'
                   OR LOWER(u.display_name) LIKE LOWER(CONCAT('%', #{f.keyword}, '%')) ESCAPE '!'

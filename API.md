@@ -2050,7 +2050,7 @@ operatorId? action? resourceType? keyword? from? to? page=1 pageSize=20
 }
 ```
 
-导出：`GET /audit-logs/export`，A。查询筛选与列表相同，不含分页。响应为带 UTF-8 BOM 的 `text/csv`，所有字段双引号转义，最大 100,000 条。客户端必须以 Blob/文件方式处理，不要按统一 JSON 信封解析。
+导出：`GET /audit-logs/export`，A。查询筛选与列表相同，不含分页。响应为带 UTF-8 BOM 的 `text/csv`，所有字段双引号转义，最大 100,000 条。客户端必须以 Blob/文件方式处理，不要按统一 JSON 信封解析。服务端边查边写，响应不带 `Content-Length`；导出中途出错时连接直接断开、文件不完整，不会再改成 JSON 错误体。
 
 审计当前只记录写操作，登录和刷新被排除；日志写入失败不会让主业务失败。
 
