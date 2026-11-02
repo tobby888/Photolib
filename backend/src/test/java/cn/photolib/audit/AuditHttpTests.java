@@ -22,6 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -64,6 +65,30 @@ class AuditHttpTests {
     /** H2 把 JSON 列读成字节数组。 */
     private static String text(Object value) {
         return value instanceof byte[] bytes ? new String(bytes, StandardCharsets.UTF_8) : String.valueOf(value);
+    }
+
+    /**
+     * 导出直接写响应流、不经过返回值处理：拦截器照样要在请求结束时记下这次导出，
+     * 状态码取的是写流之前设好的 200。
+     */
+    @Test
+    void anExportStreamedStraightToTheResponseIsStillRecorded() throws Exception {
+        jdbc.sql("""
+                INSERT INTO audit_log (operator_id, action, action_name, resource_type, resource_id, detail_json)
+                VALUES (:id, 'POST', '新建校区', 'CAMPUSES', 'streamed-row', '{}')
+                """).param("id", ADMIN_ID).update();
+
+        byte[] body = mvc.perform(get("/api/v1/audit-logs/export").param("operatorId", String.valueOf(ADMIN_ID))
+                        .header("Authorization", "Bearer token"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsByteArray();
+
+        String csv = new String(body, StandardCharsets.UTF_8);
+        assertThat(csv).startsWith(AuditController.CSV_HEADER).contains("\"streamed-row\"", "\"日志管理员\"");
+        Map<String, Object> entry = lastEntry();
+        assertThat(entry.get("action_name")).isEqualTo("导出操作日志");
+        assertThat(entry.get("http_status")).isEqualTo(200);
+        assertThat(entry.get("success")).isEqualTo(true);
     }
 
     @Test

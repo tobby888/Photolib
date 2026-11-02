@@ -74,6 +74,10 @@ public class DatabaseDumpService {
     static final Set<String> EXCLUDED_TABLES =
             Set.of("flyway_schema_history", "database_backup", "database_restore");
 
+    /**
+     * 非 MySQL 驱动的每批行数。MySQL 不认它：Connector/J 在连接串没开 useCursorFetch 时会忽略
+     * 正数的 fetchSize，把整张表一次读进堆，见 {@link #fetchSizeFor}。
+     */
     private static final int FETCH_SIZE = 500;
     private static final int INSERT_BATCH = 200;
 
@@ -115,9 +119,10 @@ public class DatabaseDumpService {
             tables.forEach(tableNames::add);
             writeLine(writer, manifest);
 
+            int fetchSize = fetchSizeFor(connection.getMetaData().getDatabaseProductName());
             long total = 0;
             for (String table : tables) {
-                total += dumpTable(connection, writer, table);
+                total += dumpTable(connection, writer, table, fetchSize);
             }
             writer.flush();
             return new DumpResult(tables.size(), total, schema.version(), schema.migrationCount());
@@ -175,10 +180,21 @@ public class DatabaseDumpService {
         }
     }
 
-    private long dumpTable(Connection connection, Writer writer, String table)
+    /**
+     * MySQL / MariaDB 必须用 {@code Integer.MIN_VALUE} 才会逐行流式读取；否则 audit_log 这类只增不减的表
+     * 会在每晚备份时整表进堆，峰值随数据量一直涨。流式读取期间这条连接不能再发别的语句——
+     * {@link #dumpTable} 遍历时只读结果集、写文件，满足这个前提。H2 不接受负数，所以按库区分。
+     */
+    static int fetchSizeFor(String databaseProductName) {
+        String product = databaseProductName == null ? "" : databaseProductName.toLowerCase(Locale.ROOT);
+        return product.contains("mysql") || product.contains("mariadb") ? Integer.MIN_VALUE : FETCH_SIZE;
+    }
+
+    private long dumpTable(Connection connection, Writer writer, String table, int fetchSize)
             throws SQLException, IOException {
-        try (Statement statement = connection.createStatement()) {
-            statement.setFetchSize(FETCH_SIZE);
+        try (Statement statement = connection.createStatement(
+                ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY)) {
+            statement.setFetchSize(fetchSize);
             try (ResultSet rows = statement.executeQuery("SELECT * FROM " + quote(connection, table))) {
                 ResultSetMetaData meta = rows.getMetaData();
                 int columnCount = meta.getColumnCount();

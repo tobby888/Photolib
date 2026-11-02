@@ -22,6 +22,19 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class DatabaseDumpServiceTests {
 
+    /**
+     * MySQL 驱动只在 fetchSize 为 Integer.MIN_VALUE 时逐行流式读取，正数会被忽略、整表进堆。
+     * 测试库是 H2，跑不到 MySQL 分支，只能钉住按库名的选择；H2 收到负数会直接报错。
+     */
+    @Test
+    void streamsRowByRowOnMySqlAndUsesBatchedFetchElsewhere() {
+        assertThat(DatabaseDumpService.fetchSizeFor("MySQL")).isEqualTo(Integer.MIN_VALUE);
+        assertThat(DatabaseDumpService.fetchSizeFor("MariaDB")).isEqualTo(Integer.MIN_VALUE);
+        assertThat(DatabaseDumpService.fetchSizeFor("H2")).isPositive();
+        assertThat(DatabaseDumpService.fetchSizeFor("PostgreSQL")).isPositive();
+        assertThat(DatabaseDumpService.fetchSizeFor(null)).isPositive();
+    }
+
     @Test
     void roundTripsEveryColumnTypeIncludingNulls() throws Exception {
         DataSource dataSource = freshDatabase();

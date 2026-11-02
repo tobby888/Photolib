@@ -26,9 +26,20 @@ public class AuditLogFilter {
     LocalDateTime to;
     /** 已转义的 LIKE 关键词；用 {@link #withKeyword} 设置。 */
     String keyword;
+    /**
+     * 翻页游标：只取排在这一条（{@code created_at DESC, id DESC}）之后的记录。导出分批读用，
+     * 列表接口不设；用 {@link #after} 设置。两个字段要么都有、要么都没有。
+     */
+    LocalDateTime beforeCreatedAt;
+    Long beforeId;
 
     public static AuditLogFilter none() {
         return AuditLogFilter.builder().build();
+    }
+
+    /** 同样的条件，只取排在 {@code last} 之后的记录。 */
+    public AuditLogFilter after(AuditLogView last) {
+        return toBuilder().beforeCreatedAt(last.getCreatedAt()).beforeId(last.getId()).build();
     }
 
     /** 设置关键词并转义 LIKE 通配符（转义字符是 {@code !}）。 */
