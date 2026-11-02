@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>{{siteName}} · 工作清算单</title>
+</head>
+<body style="margin:0;padding:0;background:#eef2f6;-webkit-text-size-adjust:100%;">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;">{{recipientName}}，这是你 {{periodFrom}} 至 {{periodTo}} 的工时与被引清算单。</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eef2f6;">
+  <tr>
+    <td align="center" style="padding:32px 12px;">
+      <table role="presentation" width="680" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:680px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Helvetica Neue',Arial,sans-serif;color:#1f2d3d;">
+        <tr>
+          <td style="padding:0 4px 16px;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="vertical-align:middle;">{{logo}}</td>
+                <td style="vertical-align:middle;padding-left:12px;">
+                  <div style="font-size:18px;font-weight:700;color:#1f3b57;line-height:1.3;">{{siteName}}</div>
+                  <div style="font-size:12px;color:#7a8a9c;margin-top:2px;">{{siteSlogan}}</div>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#ffffff;border-radius:14px;border:1px solid #e3e9f0;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="background:#4682B4;background-image:linear-gradient(135deg,#5a96c8 0%,#356b96 100%);border-radius:14px 14px 0 0;padding:28px 32px;color:#ffffff;">
+                  <div style="font-size:12px;letter-spacing:3px;color:#dbe8f4;">SETTLEMENT STATEMENT</div>
+                  <div style="font-size:24px;font-weight:700;margin-top:6px;color:#ffffff;">工作清算单</div>
+                  <div style="font-size:14px;margin-top:8px;color:#eef5fb;">清算周期：{{periodFrom}} 至 {{periodTo}}</div>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:28px 32px 4px;">
+                  <p style="margin:0 0 8px;font-size:15px;font-weight:600;">{{recipientName}}，你好：</p>
+                  <p style="margin:0;font-size:14px;line-height:1.8;color:#4a5a6a;">以下是你在清算周期内的工时申报与图片被引情况，请逐条核对。如有出入，请在系统内联系部长或管理员。</p>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:20px 32px 4px;">{{summaryCards}}</td>
+              </tr>
+              <tr>
+                <td style="padding:28px 32px 0;">
+                  <div style="font-size:16px;font-weight:700;color:#1f3b57;border-left:4px solid #4682B4;padding-left:10px;margin-bottom:14px;">工时详情</div>
+                  {{worklogTable}}
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:28px 32px 0;">
+                  <div style="font-size:16px;font-weight:700;color:#1f3b57;border-left:4px solid #4682B4;padding-left:10px;margin-bottom:14px;">被引详情</div>
+                  {{adoptionTable}}
+                </td>
+              </tr>
+              {{#siteUrl}}
+              <tr>
+                <td align="center" style="padding:28px 32px 0;">
+                  <a href="{{siteUrl}}" style="display:inline-block;background:#4682B4;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:11px 28px;border-radius:8px;">登录 {{siteName}} 查看</a>
+                </td>
+              </tr>
+              {{/siteUrl}}
+              <tr>
+                <td style="padding:24px 32px 28px;">
+                  <div style="font-size:12px;color:#8a99a8;line-height:1.9;border-top:1px solid #edf1f5;padding-top:16px;">
+                    统计口径：工时按工作日期计入，列出待审核、已确认和已退回的记录（不含草稿），合计以「已确认」为准；被引按被引时间计入，同一张图被多个选题引用时张数只算一次。<br>
+                    记录按姓名「{{recipientName}}」匹配。
+                  </div>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td align="center" style="padding:18px 8px 0;font-size:12px;color:#97a5b3;line-height:1.9;">
+            本邮件由 {{siteName}} 自动发送，请勿直接回复。<br>
+            发送人：{{senderName}} · 生成时间：{{generatedAt}}
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+</body>
+</html>

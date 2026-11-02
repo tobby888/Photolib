@@ -1,6 +1,6 @@
 import {
   AuditOutlined, BgColorsOutlined, CloudUploadOutlined, DashboardOutlined, DatabaseOutlined, EnvironmentOutlined,
-  FileTextOutlined, IdcardOutlined, LayoutOutlined, LineChartOutlined, SafetyCertificateOutlined, SafetyOutlined, TeamOutlined,
+  FileTextOutlined, IdcardOutlined, LayoutOutlined, LineChartOutlined, MailOutlined, SafetyCertificateOutlined, SafetyOutlined, TeamOutlined,
 } from '@ant-design/icons'
 import type { ReactNode } from 'react'
 
@@ -9,6 +9,7 @@ export const ADMIN_SECTION_ICONS: Record<string, ReactNode> = {
   '': <DashboardOutlined />,
   branding: <BgColorsOutlined />,
   site: <LayoutOutlined />,
+  'mail-template': <MailOutlined />,
   users: <TeamOutlined />,
   'registration-codes': <IdcardOutlined />,
   'registration-review': <AuditOutlined />,

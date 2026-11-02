@@ -23,6 +23,7 @@ import UserAvatar from './UserAvatar'
 const AdminDashboardPage = lazy(() => import('./pages/admin/AdminDashboardPage'))
 const BrandingSettingsPage = lazy(() => import('./pages/admin/BrandingSettingsPage'))
 const SiteContentPage = lazy(() => import('./pages/admin/SiteContentPage'))
+const MailTemplatePage = lazy(() => import('./pages/admin/MailTemplatePage'))
 const UsersPage = lazy(() => import('./pages/admin/UsersPage'))
 const RegistrationCodesPage = lazy(() => import('./pages/admin/RegistrationCodesPage'))
 const RegistrationReviewPanel = lazy(() => import('./RegistrationReviewPanel'))
@@ -181,6 +182,7 @@ export default function AdminShell() {
             <Route index element={<AdminDashboardPage />} />
             <Route path="branding" element={<SectionPage section={section('branding')}><BrandingSettingsPage /></SectionPage>} />
             <Route path="site" element={<SectionPage section={section('site')}><SiteContentPage /></SectionPage>} />
+            <Route path="mail-template" element={<SectionPage section={section('mail-template')}><MailTemplatePage /></SectionPage>} />
             <Route path="users" element={<SectionPage section={section('users')}><UsersPage /></SectionPage>} />
             <Route path="registration-codes" element={<SectionPage section={section('registration-codes')}><RegistrationCodesPage /></SectionPage>} />
             <Route path="registration-review" element={<SectionPage section={section('registration-review')}><RegistrationReviewPanel /></SectionPage>} />

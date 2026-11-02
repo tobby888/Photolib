@@ -65,7 +65,9 @@ class PermissionGroupServiceTests {
                 PermissionCode.PROJECT_DELETE, PermissionCode.PHOTO_ARCHIVE,
                 PermissionCode.DOC_PUBLISH, PermissionCode.TEACHING_DELETE,
                 // 文件库的两条新权限默认给管理员和部长，和文档中心的编写权限一致（V62）。
-                PermissionCode.FILE_UPLOAD, PermissionCode.FILE_MANAGE);
+                PermissionCode.FILE_UPLOAD, PermissionCode.FILE_MANAGE,
+                // 邮件清算单由管理员和部长发送（V71）。
+                PermissionCode.SETTLEMENT_MAIL_SEND);
         assertThat(manager.dataScope()).isEqualTo(DataScope.CAMPUS);
         // 校区负责人刻意不补 PROJECT_VIEW_ALL：它改动前就只看得到自己接到需求的选题。
         assertThat(manager.permissions()).containsExactlyInAnyOrder(

@@ -3,9 +3,9 @@ import {
   Statistic, Tabs, Tag, Typography,
 } from 'antd'
 import {
-  CameraOutlined, ClockCircleOutlined, DownloadOutlined, FolderOutlined, SearchOutlined, TrophyOutlined,
+  CameraOutlined, ClockCircleOutlined, DownloadOutlined, FolderOutlined, MailOutlined, SearchOutlined, TrophyOutlined,
 } from '@ant-design/icons'
-import { useMemo, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { api } from '../api'
@@ -25,6 +25,11 @@ import {
 import type { MemberFilter, WorklogPresence } from '../memberStats'
 import { tableToCsv } from '../worklogCsv'
 import { saveBlobAs } from '../exportDownload'
+import { useAuth } from '../auth'
+import { hasPermission } from '../permissions'
+
+// 只有部长和管理员用得到，按需加载，不拖慢统计页首屏。
+const SettlementMailModal = lazy(() => import('../SettlementMailModal'))
 
 interface ExportJobView {
   job: { status: 'PENDING' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED'; errorMessage?: string }
@@ -45,6 +50,9 @@ const DESCRIPTIONS: Record<StatisticsTab, string> = {
 
 export default function StatisticsPage() {
   const { message } = App.useApp()
+  const { user } = useAuth()
+  const canSendSettlement = hasPermission(user, 'SETTLEMENT_MAIL_SEND')
+  const [settlementOpen, setSettlementOpen] = useState(false)
   // 页签进 URL：选题详情页「在统计面板分析」带着 ?tab=analysis&projectId= 跳过来，直接落在分析页签并预填选题条件。
   const [searchParams, setSearchParams] = useSearchParams()
   const requestedTab = searchParams.get('tab') as StatisticsTab | null
@@ -123,7 +131,10 @@ export default function StatisticsPage() {
   const maxBucket = Math.max(1, ...distribution.map(bucket => bucket.count))
   return <div className="statistics-page">
     <PageTitle eyebrow="INSIGHTS" title="数据统计" description={DESCRIPTIONS[tab]}
-      extra={tab === 'members' && <Button type="primary" size="large" icon={<DownloadOutlined />} loading={exporting} onClick={() => void exportData()}>导出 XLSX</Button>} />
+      extra={tab === 'members' && <Space wrap>
+        {canSendSettlement && <Button size="large" icon={<MailOutlined />} onClick={() => setSettlementOpen(true)}>发送清算单</Button>}
+        <Button type="primary" size="large" icon={<DownloadOutlined />} loading={exporting} onClick={() => void exportData()}>导出 XLSX</Button>
+      </Space>} />
     <Tabs className="statistics-tabs" activeKey={tab} onChange={key => switchTab(key as StatisticsTab)} items={[
       { key: 'members', label: '成员核算' },
       { key: 'adoptions', label: '被引分析' },
@@ -281,5 +292,8 @@ export default function StatisticsPage() {
     </Modal>
     <MemberAdoptionModal member={adoptionMember} range={range} basis="PROJECT_COMPLETED"
       onClose={() => setAdoptionMember(null)} />
+    {canSendSettlement && settlementOpen && <Suspense fallback={null}>
+      <SettlementMailModal open initialRange={range} onClose={() => setSettlementOpen(false)} />
+    </Suspense>}
   </div>
 }
