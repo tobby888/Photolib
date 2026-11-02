@@ -3503,3 +3503,45 @@ body {
 .worklog-source .ant-tag { margin-inline-end: 0; }
 .worklog-member { display: flex; flex-direction: column; gap: 2px; }
 .worklog-student-id { color: #8a8f8c; font-size: 12px; white-space: nowrap; }
+
+/* 邮件清算单：统计面板的发送弹窗、管理员面板的邮件模板。 */
+.settlement-mail-alert { margin-bottom: 12px; }
+.settlement-mail-from { display: block; margin-bottom: 4px; font-size: 12px; }
+.settlement-mail-filters { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.settlement-mail-hint { font-size: 12px; margin-bottom: 12px !important; }
+.settlement-mail-footer {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px;
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(5, 5, 5, .06);
+}
+.settlement-history { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 16px; min-height: 360px; }
+.settlement-history-list { display: flex; flex-direction: column; gap: 6px; max-height: 620px; overflow: auto; padding-right: 4px; }
+.settlement-history-list-head { display: flex; align-items: center; justify-content: space-between; }
+.settlement-history-item {
+  display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 8px 10px; text-align: left; cursor: pointer;
+  border: 1px solid rgba(5, 5, 5, .08); border-radius: 8px; background: transparent; color: inherit; font: inherit;
+}
+.settlement-history-item small { color: #8a8f8c; font-size: 12px; }
+.settlement-history-item:hover { border-color: #4682B4; }
+.settlement-history-item:focus-visible { outline: 2px solid #4682B4; outline-offset: 1px; }
+.settlement-history-item.active { border-color: #4682B4; background: rgba(70, 130, 180, .08); }
+.settlement-history-detail { min-width: 0; }
+.settlement-history-summary { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.settlement-history-counts { margin: 4px 0 12px; }
+.settlement-history-counts .text-danger { color: #c0392b; }
+.mail-preview { border: 1px solid rgba(5, 5, 5, .1); border-radius: 8px; overflow: hidden; }
+.mail-preview-subject { display: flex; gap: 10px; align-items: baseline; padding: 10px 12px; border-bottom: 1px solid rgba(5, 5, 5, .08); background: rgba(70, 130, 180, .05); }
+.mail-preview-subject strong { min-width: 0; overflow-wrap: anywhere; }
+.mail-preview-frame { display: block; width: 100%; border: 0; background: #eef2f6; }
+.mail-template-field { margin-bottom: 14px; display: flex; flex-direction: column; gap: 6px; }
+.mail-template-field-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.mail-template-code textarea, textarea.mail-template-code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace; font-size: 12px; line-height: 1.6;
+}
+.mail-template-tip { font-size: 12px; }
+.mail-template-variables { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.mail-template-variable { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+.mail-template-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+@media (max-width: 720px) {
+  .settlement-history { grid-template-columns: 1fr; }
+  .settlement-history-list { max-height: 240px; }
+}

@@ -50,6 +50,12 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
+        <!-- SMTP 发信（邮件清算单）。JavaMailSender 由 SmtpMailConfig 按 photolib.smtp.* 自己装配，
+             不走 spring.mail.*：那样会顺带注册一个连 SMTP 的健康检查，邮箱服务器一抖 /actuator/health 就 DOWN。 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-mail</artifactId>
+        </dependency>
         <dependency>
             <groupId>com.baomidou</groupId>
             <artifactId>mybatis-plus-spring-boot4-starter</artifactId>

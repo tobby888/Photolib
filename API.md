@@ -1740,6 +1740,33 @@ PENDING -> FAILED
 
 `GET /statistics/adoption-analysis/options?from=...&to=...&basis=...` 返回 `{ projects, campuses, photographers }` 三组 `{ value, label }` 下拉候选，与分析共用可见范围。
 
+### 12.6 邮件清算单
+
+给成员发邮件清算单：每人一封，列出清算时间内本人的全部工时（含每次申报时间、每次退回原因和审核记录）与被引明细。发信邮箱读自 `.env` 的 `SMTP_*`（见 README「邮件清算单」）。
+
+**收件人与匹配规则**：收件人是系统账号（`app_user`），要有邮箱；工时按 `worklog.member_name`、被引按 `adoption.photographer_name` 与账号姓名（去首尾空白）完全相等来取。两个在用账号同名时无法区分，这类账号不能收（`sameNameCount > 0`）。工时按 `work_date` 落在 `[from, to]`，列出待审核 / 已确认 / 已退回（不含草稿），合计以已确认为准；被引按 `adopted_at` 落在 `[from, to + 1 day)`。范围最长三年。
+
+除模板接口外都要 `SETTLEMENT_MAIL_SEND`（V71 默认给管理员组、部长组），且校区范围的账号即使有这条权限也返回 403（清算单汇总全部校区）。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/settlement-mails/status` | `{ configured, fromAddress, activeBatchId, siteUrlConfigured }`；`activeBatchId` 为正在发送的批次 |
+| GET | `/settlement-mails/recipients?from=&to=` | 全部在用账号及期内概况：`userId, username, displayName, email, campus, groupName, worklogCount, confirmedMinutes, pendingCount, rejectedCount, adoptedPhotos, adoptionCount, sameNameCount` |
+| POST | `/settlement-mails/preview` | `{ userId, from, to, subject?, html? }` → `{ subject, html }`；只读、不审计。带 `subject` / `html`（未保存的模板）只给管理员 |
+| POST | `/settlement-mails/batches` | `{ from, to, userIds }`（最多 500 人）建批次并在后台发送，立即返回批次；审计「发送清算单邮件」 |
+| GET | `/settlement-mails/batches?limit=20` | 最近的批次（不含明细） |
+| GET | `/settlement-mails/batches/{id}` | 批次及每人的投递：`status` 为 `PENDING / SENDING / SENT / FAILED`，失败带 `errorMessage` |
+| GET | `/settlement-mails/template` | 管理员。`{ template: { subject, html, customized, updatedAt, updatedByName, version }, defaultSubject, defaultHtml, variables }` |
+| PUT | `/settlement-mails/template` | 管理员，需再验证。`{ subject, html, version }`，`version` 为打开时看到的版本（内置模板为 0），不一致返回 409 |
+| DELETE | `/settlement-mails/template` | 管理员，需再验证。恢复内置模板 |
+| POST | `/settlement-mails/template/test` | 管理员。同 preview 的请求体，把所选成员的清算单发一封到自己的邮箱，返回 `{ email }` |
+
+**并发**：全站同一时刻只有一个批次在发（`settlement_mail_batch.active_slot` 唯一索引），后发起的返回 409「X 发起的一批清算单正在发送」。每封信先把投递行从 PENDING 条件更新为 SENDING 才发，计数在库里累加；同时发信的连接数和每封间隔由 `SMTP_CONCURRENCY` / `SMTP_SEND_INTERVAL` 控制。进程重启时 RUNNING 的批次会接着发：SENDING 的那几封记为失败（无法确认是否送达），PENDING 的照常发出。
+
+收件人不满足条件（无邮箱、同名、已停用）时整批返回 400 并列出是谁；邮件服务未配置返回 409。
+
+**模板变量**：`{{name}}` 引用变量，`{{#name}}…{{/name}}` 只在变量非空时保留。普通变量 HTML 转义后填入，`logo`、`summaryCards`、`worklogTable`、`adoptionTable` 是系统生成的 HTML 片段，原样填入。完整清单见 `GET /settlement-mails/template` 的 `variables`。品牌图标以内嵌附件（`cid:brand-logo`）发送；内置图标用预先渲染的 PNG，因为多数邮件客户端不显示 SVG。
+
 ## 13. 站内通知、管理消息与邮件日志
 
 ### 13.1 当前用户通知

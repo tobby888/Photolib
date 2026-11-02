@@ -36,6 +36,10 @@ management:
       base-path: /api/v1/actuator
       exposure:
         include: health,info
+  health:
+    mail:
+      # 不让 SMTP 服务器的可用性影响服务健康检查。
+      enabled: false
 
 photolib:
   preview-bootstrap-retry-delay: ${PREVIEW_BOOTSTRAP_RETRY_DELAY:30s}
@@ -169,6 +173,25 @@ photolib:
     token-refresh-ahead: ${WECOM_TOKEN_REFRESH_AHEAD:5m}
     connect-timeout: ${WECOM_CONNECT_TIMEOUT:5s}
     read-timeout: ${WECOM_READ_TIMEOUT:10s}
+  smtp:
+    # 邮件清算单的发信邮箱。host / username / password 三项都填上才能发信，否则发送接口直接报"邮件服务未配置"。
+    # 465 端口用 SSL（ssl=true），587 端口用 STARTTLS（ssl=false、starttls=true）。
+    host: ${SMTP_HOST:}
+    port: ${SMTP_PORT:465}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    # 发件人显示名，留空用面板品牌名称。
+    from-name: ${SMTP_FROM_NAME:}
+    ssl: ${SMTP_SSL:true}
+    starttls: ${SMTP_STARTTLS:false}
+    connect-timeout: ${SMTP_CONNECT_TIMEOUT:10s}
+    read-timeout: ${SMTP_READ_TIMEOUT:30s}
+    # 同时向 SMTP 服务器发信的连接数（1～8）。多数企业邮箱 / QQ 邮箱对单账号并发和频率都有限制，开大了会被临时封禁。
+    concurrency: ${SMTP_CONCURRENCY:2}
+    # 每个连接两封信之间的最小间隔，同样是为了不触发发信频率限制。
+    send-interval: ${SMTP_SEND_INTERVAL:1s}
+    # 清算单邮件里"在系统中查看"的链接地址（不含路径）；留空用 WECOM_SITE_BASE_URL。
+    site-base-url: ${SMTP_SITE_BASE_URL:${WECOM_SITE_BASE_URL:}}
   # V38 起通知外发改走企业微信；DirectMail 仅用于重试 V38 之前遗留的邮件投递记录。
   direct-mail:
     region-id: ${DIRECTMAIL_REGION_ID:cn-hangzhou}

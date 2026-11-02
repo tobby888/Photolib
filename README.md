@@ -364,7 +364,28 @@ curl "https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=<企业ID>&corpsecret=
 
 正文超过 2048 字节会被截断，但标题和末尾的链接一定保留 —— 内容越长越需要那个链接。
 
-`app_user.email` 保留但只作登录凭据，不再触发投递；DirectMail 配置仅用于重试 V38 之前遗留的邮件记录。
+`app_user.email` 是登录凭据，也是邮件清算单的收件地址（见下一节）；通知不走邮件，DirectMail 配置仅用于重试 V38 之前遗留的邮件记录。
+
+### 邮件清算单（SMTP）
+
+统计面板「成员核算」页的「发送清算单」用一个普通邮箱通过 SMTP 发信：部长和管理员按筛选器挑出收件人，每人收到一封只含本人记录的清算单（工时的每次申报时间、退回原因、审核记录，以及被引明细）。管理员可以在「管理员面板 → 邮件模板」里改主题和 HTML 正文，实时预览、发测试邮件给自己，或恢复内置模板。
+
+在 `backend/.env` 中配置：
+
+| 变量 | 说明 |
+|---|---|
+| `SMTP_HOST` | SMTP 服务器，例如 `smtp.qq.com`、`smtp.163.com`、`smtp.exmail.qq.com` |
+| `SMTP_PORT` | 465（SSL）或 587（STARTTLS），默认 465 |
+| `SMTP_USERNAME` | 发信邮箱地址，同时作为发件人 |
+| `SMTP_PASSWORD` | 邮箱密码；QQ / 163 / 腾讯企业邮等要填邮箱后台生成的**授权码** |
+| `SMTP_SSL` / `SMTP_STARTTLS` | 465 端口用 `SMTP_SSL=true`；587 端口用 `SMTP_SSL=false`、`SMTP_STARTTLS=true` |
+| `SMTP_FROM_NAME` | 发件人显示名，留空用面板品牌名称 |
+| `SMTP_CONCURRENCY` / `SMTP_SEND_INTERVAL` | 同时发信的连接数（默认 2，最大 8）与每个连接两封之间的间隔（默认 1s），按服务商的频率限制调整 |
+| `SMTP_SITE_BASE_URL` | 邮件里「登录查看」按钮的站点地址，留空沿用 `WECOM_SITE_BASE_URL` |
+
+`SMTP_HOST`、`SMTP_USERNAME`、`SMTP_PASSWORD` 缺一项时发送接口直接提示未配置，不会排队后全部失败。改完 `.env` 需重启服务。SMTP 服务器的可用性不计入 `/actuator/health`。
+
+收件人是系统账号，要在「账号管理」里填好邮箱；工时与被引按**账号姓名**匹配（工时的成员姓名、被引的摄影师姓名），同名的两个账号无法区分，界面上会标出并禁止发送。
 
 ### 阿里云 OSS 检查清单
 

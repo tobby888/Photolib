@@ -72,6 +72,9 @@ public class WorklogService {
         worklog.setStatus(command.status() == WorklogStatus.DRAFT
                 ? WorklogStatus.DRAFT : WorklogStatus.SUBMITTED);
         mapper.insert(worklog);
+        if (worklog.getStatus() == WorklogStatus.SUBMITTED) {
+            recordReview(worklog, WorklogStatus.SUBMITTED, null, user.id());
+        }
         return worklog;
     }
 
@@ -108,6 +111,7 @@ public class WorklogService {
         worklog.setRemark(StringUtils.hasText(command.remark()) ? command.remark().trim() : null);
         worklog.setStatus(WorklogStatus.SUBMITTED);
         mapper.insert(worklog);
+        recordReview(worklog, WorklogStatus.SUBMITTED, null, command.responsibleUserId());
         return worklog;
     }
 
@@ -227,6 +231,7 @@ public class WorklogService {
         worklog.setRejectReason(null);
         worklog.setVersion(version);
         updateChecked(worklog);
+        recordReview(worklog, WorklogStatus.SUBMITTED, null, user.id());
         return mapper.selectById(id);
     }
 
@@ -243,6 +248,7 @@ public class WorklogService {
         worklog.setConfirmedAt(LocalDateTime.now());
         worklog.setVersion(version);
         updateChecked(worklog);
+        recordReview(worklog, WorklogStatus.CONFIRMED, null, confirmer.id());
         notifications.notifyUser(worklog.getUserId(), "WORKLOG_CONFIRMED",
                 "工时已确认", NotificationService.paragraphs(
                         "工时记录 #" + worklog.getId() + declaredBy(worklog) + " 已确认"));
@@ -263,6 +269,7 @@ public class WorklogService {
         worklog.setConfirmedAt(LocalDateTime.now());
         worklog.setVersion(version);
         updateChecked(worklog);
+        recordReview(worklog, WorklogStatus.REJECTED, reason, confirmer.id());
         // 链接申报的工时，通知到的是开链接的成员而不是申报人本人（他没有账号）：
         // 所以要写明是谁报的，开链接的人才知道该去转告谁。申报人自己在上传页也看得到退回原因。
         notifications.notifyUser(worklog.getUserId(), "WORKLOG_REJECTED",
@@ -596,5 +603,27 @@ public class WorklogService {
     }
 
     private record ShareLinkOrigin(String linkName, Long projectId, String projectTitle) {
+    }
+
+    /**
+     * 工时每一次提交、确认、退回都留一行（Flyway V71）。worklog 表只存当前状态，退回后重交会把
+     * {@code reject_reason} 清空；邮件清算单要列出每次申报的时间和每一次退回的原因，靠的是这张表。
+     * 和状态更新在同一个事务里，状态改失败（乐观锁冲突）时这一行一起回滚。
+     */
+    private void recordReview(WorklogEntity worklog, WorklogStatus action, String reason, Long actorId) {
+        boolean submitted = action == WorklogStatus.SUBMITTED;
+        jdbc.sql("""
+                INSERT INTO worklog_review_log(worklog_id, action, reason, actor_id,
+                    shooting_minutes, retouching_minutes, backfilled, created_at)
+                VALUES (:worklogId, :action, :reason, :actorId, :shooting, :retouching, FALSE, :createdAt)
+                """)
+                .param("worklogId", worklog.getId())
+                .param("action", action.name())
+                .param("reason", reason)
+                .param("actorId", actorId)
+                .param("shooting", submitted ? worklog.getShootingMinutes() : null)
+                .param("retouching", submitted ? worklog.getRetouchingMinutes() : null)
+                .param("createdAt", LocalDateTime.now())
+                .update();
     }
 }
