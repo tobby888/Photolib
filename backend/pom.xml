@@ -23,7 +23,7 @@
         <lombok.version>1.18.42</lombok.version>
         <aliyun-oss.version>3.18.3</aliyun-oss.version>
         <aliyun-dm.version>3.3.2</aliyun-dm.version>
-        <poi.version>5.4.1</poi.version>
+        <poi.version>6.0.0</poi.version>
         <jsoup.version>1.23.2</jsoup.version>
         <jna.version>5.18.1</jna.version>
         <webauthn4j.version>0.31.10.RELEASE</webauthn4j.version>
