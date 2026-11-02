@@ -21,7 +21,7 @@ import java.time.LocalDate;
 import java.util.List;
 
 /**
- * 邮件清算单（统计面板「发送清算单」）与清算单邮件模板（管理员面板「邮件模板」）。见 API.md §12.6。
+ * 清算单（统计面板「发送清算单」，邮件和 / 或站内信）与清算单模板（管理员面板「邮件模板」）。见 API.md §12.6。
  */
 @RestController
 @RequestMapping("/settlement-mails")
@@ -62,12 +62,15 @@ public class SettlementMailController {
         return ApiResponse.ok(new PreviewResponse(rendered.subject(), rendered.html()));
     }
 
-    @AuditAction("发送清算单邮件")
+    @AuditAction("发送清算单")
     @PostMapping("/batches")
     @PreAuthorize("hasAuthority('SETTLEMENT_MAIL_SEND')")
     ApiResponse<SettlementMailService.BatchView> send(@Valid @RequestBody SendRequest request,
                                                       @AuthenticationPrincipal AuthenticatedUser principal) {
-        return ApiResponse.ok(mails.create(request.from(), request.to(), request.userIds(), principal));
+        // 不带渠道的旧请求按只发邮件处理（V72 之前只有邮件）。
+        boolean email = request.sendEmail() == null ? request.sendInbox() == null : request.sendEmail();
+        boolean inbox = Boolean.TRUE.equals(request.sendInbox());
+        return ApiResponse.ok(mails.create(request.from(), request.to(), request.userIds(), email, inbox, principal));
     }
 
     @GetMapping("/batches")
@@ -124,7 +127,8 @@ public class SettlementMailController {
     record PreviewResponse(String subject, String html) {}
 
     record SendRequest(@NotNull LocalDate from, @NotNull LocalDate to,
-                       @NotEmpty @Size(max = SettlementMailService.MAX_RECIPIENTS) List<@NotNull Long> userIds) {}
+                       @NotEmpty @Size(max = SettlementMailService.MAX_RECIPIENTS) List<@NotNull Long> userIds,
+                       Boolean sendEmail, Boolean sendInbox) {}
 
     record TemplateRequest(@NotNull String subject, @NotNull String html, Integer version) {}
 

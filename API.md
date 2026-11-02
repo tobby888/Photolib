@@ -1740,32 +1740,35 @@ PENDING -> FAILED
 
 `GET /statistics/adoption-analysis/options?from=...&to=...&basis=...` 返回 `{ projects, campuses, photographers }` 三组 `{ value, label }` 下拉候选，与分析共用可见范围。
 
-### 12.6 邮件清算单
+### 12.6 清算单（站内信 / 邮件 / PDF）
 
-给成员发邮件清算单：每人一封，列出清算时间内本人的全部工时（含每次申报时间、每次退回原因和审核记录）与被引明细。发信邮箱读自 `.env` 的 `SMTP_*`（见 README「邮件清算单」）。
+给成员发清算单：每人一份，列出清算时间内本人参与的选题（每个选题上传了多少张图）、全部工时（含每次申报时间、每次退回原因和审核记录）与被引明细（图片可点开详情页）。可以发站内信、发邮件，或两种都发；也可以在前端导出 PDF。发信邮箱读自 `.env` 的 `SMTP_*`（见 README「清算单」），只发站内信不需要配置邮箱。
 
-**收件人与匹配规则**：收件人是系统账号（`app_user`），要有邮箱；工时按 `worklog.member_name`、被引按 `adoption.photographer_name` 与账号姓名（去首尾空白）完全相等来取。两个在用账号同名时无法区分，这类账号不能收（`sameNameCount > 0`）。工时按 `work_date` 落在 `[from, to]`，列出待审核 / 已确认 / 已退回（不含草稿），合计以已确认为准；被引按 `adopted_at` 落在 `[from, to + 1 day)`。范围最长三年。
+**收件人与匹配规则**：收件人是系统账号（`app_user`）。工时按 `worklog.member_name`、被引按 `adoption.photographer_name`、参与的选题按 `photo.photographer_name` 与账号姓名（去首尾空白）完全相等来取。两个在用账号同名时无法区分，这类账号不能收（`sameNameCount > 0`）。只发邮件时还要有邮箱；两种都发时没邮箱的人只收站内信。工时按 `work_date` 落在 `[from, to]`，列出待审核 / 已确认 / 已退回（不含草稿），合计以已确认为准；被引按 `adopted_at`、参与的选题按图片上传时间 `photo.created_at` 落在 `[from, to + 1 day)`，只算传完的图（`PROCESSING / AVAILABLE / ARCHIVED`），选题取 `photo.project_id`，为空时取所属需求的选题。范围最长三年。
 
 除模板接口外都要 `SETTLEMENT_MAIL_SEND`（V71 默认给管理员组、部长组），且校区范围的账号即使有这条权限也返回 403（清算单汇总全部校区）。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/settlement-mails/status` | `{ configured, fromAddress, activeBatchId, siteUrlConfigured }`；`activeBatchId` 为正在发送的批次 |
-| GET | `/settlement-mails/recipients?from=&to=` | 全部在用账号及期内概况：`userId, username, displayName, email, campus, groupName, worklogCount, confirmedMinutes, pendingCount, rejectedCount, adoptedPhotos, adoptionCount, sameNameCount` |
-| POST | `/settlement-mails/preview` | `{ userId, from, to, subject?, html? }` → `{ subject, html }`；只读、不审计。带 `subject` / `html`（未保存的模板）只给管理员 |
-| POST | `/settlement-mails/batches` | `{ from, to, userIds }`（最多 500 人）建批次并在后台发送，立即返回批次；审计「发送清算单邮件」 |
-| GET | `/settlement-mails/batches?limit=20` | 最近的批次（不含明细） |
-| GET | `/settlement-mails/batches/{id}` | 批次及每人的投递：`status` 为 `PENDING / SENDING / SENT / FAILED`，失败带 `errorMessage` |
+| GET | `/settlement-mails/recipients?from=&to=` | 全部在用账号及期内概况：`userId, username, displayName, email, campus, groupName, worklogCount, confirmedMinutes, pendingCount, rejectedCount, adoptedPhotos, adoptionCount, sameNameCount, uploadedPhotos, projectCount` |
+| POST | `/settlement-mails/preview` | `{ userId, from, to, subject?, html? }` → `{ subject, html }`；只读、不审计。前端导出 PDF 用的也是它。带 `subject` / `html`（未保存的模板）只给管理员 |
+| POST | `/settlement-mails/batches` | `{ from, to, userIds, sendEmail, sendInbox }`（最多 500 人）建批次并在后台发送，立即返回批次；审计「发送清算单」。两个开关都不带时按只发邮件处理（兼容旧请求），都为 false 返回 400 |
+| GET | `/settlement-mails/batches?limit=20` | 最近的批次（不含明细），带 `sendEmail / sendInbox` |
+| GET | `/settlement-mails/batches/{id}` | 批次及每人的投递：`status` 为整行状态 `PENDING / SENDING / SENT / FAILED`（所选渠道全部成功才是 SENT）；`emailStatus` / `inboxStatus` 为各渠道结果 `PENDING / SENT / FAILED`（邮件另有 `SKIPPED`：没有邮箱），`null` 表示这次没发这一种；`statementId` 为站内信里那份清算单；失败带 `errorMessage`（两种都发时注明是哪一种） |
+| GET | `/settlement-statements/{id}` | 站内信里的清算单（发送那一刻的快照）：`{ id, userId, recipientName, from, to, subject, html, createdByName, createdAt }`。收件人本人，或有 `SETTLEMENT_MAIL_SEND` 的全局账号能看，其他人一律 404 |
 | GET | `/settlement-mails/template` | 管理员。`{ template: { subject, html, customized, updatedAt, updatedByName, version }, defaultSubject, defaultHtml, variables }` |
 | PUT | `/settlement-mails/template` | 管理员，需再验证。`{ subject, html, version }`，`version` 为打开时看到的版本（内置模板为 0），不一致返回 409 |
 | DELETE | `/settlement-mails/template` | 管理员，需再验证。恢复内置模板 |
 | POST | `/settlement-mails/template/test` | 管理员。同 preview 的请求体，把所选成员的清算单发一封到自己的邮箱，返回 `{ email }` |
 
-**并发**：全站同一时刻只有一个批次在发（`settlement_mail_batch.active_slot` 唯一索引），后发起的返回 409「X 发起的一批清算单正在发送」。每封信先把投递行从 PENDING 条件更新为 SENDING 才发，计数在库里累加；同时发信的连接数和每封间隔由 `SMTP_CONCURRENCY` / `SMTP_SEND_INTERVAL` 控制。进程重启时 RUNNING 的批次会接着发：SENDING 的那几封记为失败（无法确认是否送达），PENDING 的照常发出。
+**站内信**：每人一条消息中心通知（`eventType = SETTLEMENT_STATEMENT`，正文是摘要，`actionUrl = /settlements/{statementId}`），绑定了企业微信的照常推送。完整清算单存在 `settlement_statement`（V72），和通知在同一个事务里写入；图标存成 `cid:brand-logo`，读取时换成当前图标。前端在 `#/settlements/{id}` 显示，可下载 PDF。
 
-收件人不满足条件（无邮箱、同名、已停用）时整批返回 400 并列出是谁；邮件服务未配置返回 409。
+**并发**：全站同一时刻只有一个批次在发（`settlement_mail_batch.active_slot` 唯一索引），后发起的返回 409「X 发起的一批清算单正在发送」。每个收件人先把投递行从 PENDING 条件更新为 SENDING 才发（先站内信、后邮件），计数在库里累加；同时发信的连接数和每封邮件的间隔由 `SMTP_CONCURRENCY` / `SMTP_SEND_INTERVAL` 控制，只发站内信时不等。进程重启时 RUNNING 的批次会接着发：SENDING 的那几个人记为失败（无法确认邮件是否送达），PENDING 的照常发出。
 
-**模板变量**：`{{name}}` 引用变量，`{{#name}}…{{/name}}` 只在变量非空时保留。普通变量 HTML 转义后填入，`logo`、`summaryCards`、`worklogTable`、`adoptionTable` 是系统生成的 HTML 片段，原样填入。完整清单见 `GET /settlement-mails/template` 的 `variables`。品牌图标以内嵌附件（`cid:brand-logo`）发送；内置图标用预先渲染的 PNG，因为多数邮件客户端不显示 SVG。
+收件人不满足条件（同名、已停用；只发邮件时无邮箱）时整批返回 400 并列出是谁；要发邮件但邮件服务未配置返回 409。
+
+**模板变量**：`{{name}}` 引用变量，`{{#name}}…{{/name}}` 只在变量非空时保留。普通变量 HTML 转义后填入，`logo`、`summaryCards`、`projectTable`、`worklogTable`、`adoptionTable` 是系统生成的 HTML 片段，原样填入。站内信和预览 / PDF 里的图片、选题链接用站内路径 `/#/photos/{id}`、`/#/projects/{id}`；邮件里只有配置了 `SMTP_SITE_BASE_URL` 才有链接（绝对地址），否则只显示文字。站内信里 `{{siteUrl}}` 为空（「登录查看」按钮不显示）。完整清单见 `GET /settlement-mails/template` 的 `variables`。品牌图标以内嵌附件（`cid:brand-logo`）发送；内置图标用预先渲染的 PNG，因为多数邮件客户端不显示 SVG。
 
 ## 13. 站内通知、管理消息与邮件日志
 

@@ -13,6 +13,7 @@ import { hasPermission } from '../permissions'
 import { richTextIsEmpty } from '../richText'
 import FeedbackPanel from '../FeedbackPanel'
 import { feedbackThreadUrl } from '../feedback'
+import { statementIdFromActionUrl } from '../settlementMail'
 
 export default function NotificationsPage() {
   const { user } = useAuth()
@@ -35,10 +36,11 @@ export default function NotificationsPage() {
       : Promise.resolve([] as MessageRecipient[]),
     [] as MessageRecipient[], [canSend],
   )
-  // 通用详情页打开时自己标已读；反馈通知直接跳进工单线程、不经过它，所以在这里先标。
-  // 标已读失败不拦跳转：用户要看的是那条反馈，红点下次刷新还在而已。
+  // 通用详情页打开时自己标已读；反馈通知直接跳进工单线程、清算单直接打开那份清算单，都不经过它，
+  // 所以在这里先标。标已读失败不拦跳转：用户要看的是那条内容，红点下次刷新还在而已。
   const openNotification = async (item: Notification) => {
     const feedbackUrl = feedbackThreadUrl(item)
+      ?? (statementIdFromActionUrl(item.actionUrl) ? item.actionUrl ?? null : null)
     if (!feedbackUrl) {
       navigate(`/notifications/${item.id}`)
       return

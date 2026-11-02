@@ -3,6 +3,7 @@ package cn.photolib.settlement;
 import cn.photolib.admin.BrandSnapshotService.BrandSnapshot;
 import cn.photolib.mail.OutgoingMail;
 import cn.photolib.settlement.SettlementStatementService.AdoptionLine;
+import cn.photolib.settlement.SettlementStatementService.ProjectLine;
 import cn.photolib.settlement.SettlementStatementService.ReviewEvent;
 import cn.photolib.settlement.SettlementStatementService.Statement;
 import cn.photolib.settlement.SettlementStatementService.Totals;
@@ -30,10 +31,15 @@ import java.util.regex.Pattern;
  *
  * <p>表格全部用行内样式和 {@code <table>} 排版：邮件客户端（尤其 Outlook、网页版 QQ 邮箱）
  * 会丢掉 {@code <style>}、不支持 flex / grid。</p>
+ *
+ * <p>同一份模板套出三种成品，见 {@link Target}。</p>
  */
 public final class SettlementMailRenderer {
     public static final String LOGO_CONTENT_ID = "brand-logo";
-    static final Set<String> HTML_VARIABLES = Set.of("logo", "summaryCards", "worklogTable", "adoptionTable");
+    static final Set<String> HTML_VARIABLES = Set.of("logo", "summaryCards", "projectTable", "worklogTable",
+            "adoptionTable");
+    /** 站内信和预览里的链接用站内路径：放在 srcdoc iframe 里时按外层页面的地址解析，换个域名访问也不会断。 */
+    static final String IN_APP_LINK_BASE = "/#/";
     /** 模板编辑器里列出来的变量说明，顺序即展示顺序。 */
     public static final Map<String, String> VARIABLES = variables();
 
@@ -52,15 +58,23 @@ public final class SettlementMailRenderer {
     }
 
     /**
-     * @param preview 预览时图标用 data: URI 直接内联（浏览器 iframe 里没有 cid:），
-     *                真正发信时用 {@code cid:brand-logo} 引用内嵌附件。
+     * 套出来给谁看。
+     * <ul>
+     *   <li>{@code EMAIL}：真正发出去的邮件。图标用 {@code cid:brand-logo} 引用内嵌附件；图片、选题链接
+     *       只有配置了站点地址（{@code SMTP_SITE_BASE_URL}）才有，邮箱里没法用站内路径。</li>
+     *   <li>{@code PREVIEW}：发送前预览和导出 PDF。图标用 data: URI 内联（浏览器里没有 cid:），链接用站内路径。</li>
+     *   <li>{@code INBOX}：存进站内信的快照。图标同样存成 {@code cid:brand-logo}，读取时再换成当前图标
+     *       （{@link #inlineLogo}），免得每份快照各存一遍图片；链接用站内路径；「登录查看」按钮不要，人已经在站内。</li>
+     * </ul>
      */
+    public enum Target { EMAIL, PREVIEW, INBOX }
+
     public static Rendered render(String subjectTemplate, String htmlTemplate, Statement statement,
                                   BrandSnapshot brand, String senderName, String siteUrl,
-                                  LocalDateTime generatedAt, boolean preview) {
-        String logoSrc = preview
-                ? "data:" + brand.iconContentType() + ";base64," + Base64.getEncoder().encodeToString(brand.icon())
-                : "cid:" + LOGO_CONTENT_ID;
+                                  LocalDateTime generatedAt, Target target) {
+        String logoSrc = target == Target.PREVIEW ? dataUri(brand) : "cid:" + LOGO_CONTENT_ID;
+        String linkBase = target == Target.EMAIL ? blankToNull(siteUrl) : IN_APP_LINK_BASE;
+        if (target == Target.INBOX) siteUrl = null;
         Totals totals = statement.totals();
         Map<String, String> values = new HashMap<>();
         values.put("siteName", brand.title());
@@ -85,16 +99,28 @@ public final class SettlementMailRenderer {
         values.put("rejectedCount", String.valueOf(totals.rejectedCount()));
         values.put("adoptedPhotos", String.valueOf(totals.adoptedPhotos()));
         values.put("adoptionCount", String.valueOf(totals.adoptionCount()));
+        values.put("projectCount", String.valueOf(totals.projectCount()));
+        values.put("uploadedPhotos", String.valueOf(totals.uploadedPhotos()));
         values.put("summaryCards", summaryCards(totals));
+        values.put("projectTable", projectTable(statement, linkBase));
         values.put("worklogTable", worklogTable(statement));
-        values.put("adoptionTable", adoptionTable(statement));
+        values.put("adoptionTable", adoptionTable(statement, linkBase));
 
         String subject = fill(subjectTemplate, values, false).replaceAll("[\\r\\n]+", " ").trim();
         if (subject.length() > 200) subject = subject.substring(0, 200);
         String html = fill(htmlTemplate, values, true);
-        List<OutgoingMail.InlineImage> images = preview ? List.of()
+        List<OutgoingMail.InlineImage> images = target != Target.EMAIL ? List.of()
                 : List.of(new OutgoingMail.InlineImage(LOGO_CONTENT_ID, brand.icon(), brand.iconContentType()));
         return new Rendered(subject, html, plainText(statement, brand, siteUrl), images);
+    }
+
+    /** 站内信快照里的 {@code cid:brand-logo} 换成当前品牌图标，iframe 里才显示得出来。 */
+    public static String inlineLogo(String html, BrandSnapshot brand) {
+        return html == null ? "" : html.replace("cid:" + LOGO_CONTENT_ID, dataUri(brand));
+    }
+
+    private static String dataUri(BrandSnapshot brand) {
+        return "data:" + brand.iconContentType() + ";base64," + Base64.getEncoder().encodeToString(brand.icon());
     }
 
     static String fill(String template, Map<String, String> values, boolean html) {
@@ -150,6 +176,54 @@ public final class SettlementMailRenderer {
                 .append(escape(note)).append("</div></div></td>");
     }
 
+    // ---- 参与的选题 ----
+
+    private static String projectTable(Statement statement, String linkBase) {
+        if (statement.projects().isEmpty()) return empty("清算周期内没有上传过图片。");
+        Totals totals = statement.totals();
+        StringBuilder html = new StringBuilder();
+        html.append("<div style=\"font-size:13px;color:#4a5a6a;margin:0 0 10px;line-height:1.7;\">共参与 <b style=\"color:#1f3b57;\">")
+                .append(totals.projectCount()).append("</b> 个选题，上传 <b style=\"color:#1f3b57;\">")
+                .append(totals.uploadedPhotos()).append("</b> 张图片。</div>");
+        tableHead(html, "选题", "上传图片", "上传时间");
+        int index = 0;
+        for (ProjectLine line : statement.projects()) {
+            String first = DATE.format(line.firstUploadAt());
+            String last = DATE.format(line.lastUploadAt());
+            html.append("<tr style=\"background:").append(index++ % 2 == 0 ? "#ffffff" : "#fafcfe").append(";\">")
+                    .append("<td style=\"padding:8px 10px;border-bottom:1px solid #eef2f6;color:#1f2d3d;\">")
+                    .append(link(linkBase, "projects/" + line.projectId(), escape(orDash(line.projectTitle()))))
+                    .append("</td>")
+                    .append("<td style=\"padding:8px 10px;border-bottom:1px solid #eef2f6;color:#1f2d3d;white-space:nowrap;\"><b>")
+                    .append(line.photoCount()).append("</b> 张</td>")
+                    .append(cell(first.equals(last) ? first : first + " 至 " + last, true))
+                    .append("</tr>");
+        }
+        html.append("</table>");
+        return html.toString();
+    }
+
+    private static void tableHead(StringBuilder html, String... heads) {
+        html.append("<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" ")
+                .append("style=\"border:1px solid #e3e9f0;border-radius:8px;border-collapse:separate;font-size:13px;\">")
+                .append("<tr style=\"background:#f2f6fa;\">");
+        for (String head : heads) {
+            html.append("<th align=\"left\" style=\"padding:9px 10px;font-size:12px;font-weight:600;color:")
+                    .append(MUTED).append(";border-bottom:1px solid #e3e9f0;white-space:nowrap;\">").append(head).append("</th>");
+        }
+        html.append("</tr>");
+    }
+
+    /**
+     * 站内页面的链接；{@code linkBase} 为空（邮件但没配站点地址）时只输出文字。
+     * {@code innerHtml} 必须已经转义过。
+     */
+    private static String link(String linkBase, String path, String innerHtml) {
+        if (linkBase == null) return innerHtml;
+        return "<a href=\"" + escape(linkBase + path) + "\" target=\"_blank\" rel=\"noopener noreferrer\" "
+                + "style=\"color:#356b96;text-decoration:underline;\">" + innerHtml + "</a>";
+    }
+
     // ---- 工时明细 ----
 
     private static String worklogTable(Statement statement) {
@@ -157,7 +231,7 @@ public final class SettlementMailRenderer {
         StringBuilder html = new StringBuilder();
         for (WorklogLine line : statement.worklogs()) worklogCard(html, line);
         if (statement.hiddenWorklogs() > 0) {
-            html.append(note("另有 " + statement.hiddenWorklogs() + " 条工时记录未在邮件中列出（合计已包含），请登录系统查看。"));
+            html.append(note("另有 " + statement.hiddenWorklogs() + " 条工时记录未在清算单中列出（合计已包含），请登录系统查看。"));
         }
         return html.toString();
     }
@@ -253,26 +327,19 @@ public final class SettlementMailRenderer {
 
     // ---- 被引明细 ----
 
-    private static String adoptionTable(Statement statement) {
+    private static String adoptionTable(Statement statement, String linkBase) {
         if (statement.adoptions().isEmpty()) return empty("清算周期内没有图片被引用。");
         StringBuilder html = new StringBuilder();
-        html.append("<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" ")
-                .append("style=\"border:1px solid #e3e9f0;border-radius:8px;border-collapse:separate;font-size:13px;\">")
-                .append("<tr style=\"background:#f2f6fa;\">");
-        for (String head : new String[]{"被引时间", "选题", "图片", "标记人"}) {
-            html.append("<th align=\"left\" style=\"padding:9px 10px;font-size:12px;font-weight:600;color:")
-                    .append(MUTED).append(";border-bottom:1px solid #e3e9f0;\">").append(head).append("</th>");
-        }
-        html.append("</tr>");
+        tableHead(html, "被引时间", "选题", "图片", "标记人");
         int index = 0;
         for (AdoptionLine line : statement.adoptions()) {
             String background = index++ % 2 == 0 ? "#ffffff" : "#fafcfe";
             html.append("<tr style=\"background:").append(background).append(";\">")
                     .append(cell(DATE_TIME.format(line.adoptedAt()), true))
                     .append(cell(orDash(line.projectTitle()), false))
-                    .append("<td style=\"padding:8px 10px;border-bottom:1px solid #eef2f6;color:#1f2d3d;\">#")
-                    .append(line.photoId()).append(line.photoTitle() == null || line.photoTitle().isBlank() ? ""
-                            : " " + escape(line.photoTitle()))
+                    .append("<td style=\"padding:8px 10px;border-bottom:1px solid #eef2f6;color:#1f2d3d;\">")
+                    .append(link(linkBase, "photos/" + line.photoId(), "#" + line.photoId()
+                            + (line.photoTitle() == null || line.photoTitle().isBlank() ? "" : " " + escape(line.photoTitle()))))
                     .append(line.remark() == null || line.remark().isBlank() ? ""
                             : "<div style=\"font-size:11px;color:" + MUTED + ";\">备注：" + escape(line.remark()) + "</div>")
                     .append("</td>")
@@ -281,7 +348,7 @@ public final class SettlementMailRenderer {
         }
         html.append("</table>");
         if (statement.hiddenAdoptions() > 0) {
-            html.append(note("另有 " + statement.hiddenAdoptions() + " 条被引记录未在邮件中列出（合计已包含），请登录系统查看。"));
+            html.append(note("另有 " + statement.hiddenAdoptions() + " 条被引记录未在清算单中列出（合计已包含），请登录系统查看。"));
         }
         return html.toString();
     }
@@ -303,8 +370,14 @@ public final class SettlementMailRenderer {
                 .append("（拍摄 ").append(duration(totals.confirmedShootingMinutes()))
                 .append("，修图 ").append(duration(totals.confirmedRetouchingMinutes())).append("）\n")
                 .append("待审核：").append(totals.pendingCount()).append(" 条；被退回：").append(totals.rejectedCount()).append(" 条\n")
-                .append("被引图片：").append(totals.adoptedPhotos()).append(" 张（共 ").append(totals.adoptionCount()).append(" 次）\n\n")
-                .append("【工时详情】\n");
+                .append("被引图片：").append(totals.adoptedPhotos()).append(" 张（共 ").append(totals.adoptionCount()).append(" 次）\n")
+                .append("参与选题：").append(totals.projectCount()).append(" 个，上传图片 ").append(totals.uploadedPhotos()).append(" 张\n\n")
+                .append("【参与的选题】\n");
+        if (statement.projects().isEmpty()) text.append("无\n");
+        for (ProjectLine line : statement.projects()) {
+            text.append("- ").append(orDash(line.projectTitle())).append("：上传 ").append(line.photoCount()).append(" 张\n");
+        }
+        text.append("\n【工时详情】\n");
         if (statement.worklogs().isEmpty()) text.append("无\n");
         for (WorklogLine line : statement.worklogs()) {
             text.append("- ").append(DATE.format(line.workDate())).append(" ").append(statusLabel(line.status()))
@@ -393,6 +466,10 @@ public final class SettlementMailRenderer {
         return value == null || value.isBlank() ? "—" : value;
     }
 
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
+    }
+
     private static String nullToEmpty(String value) {
         return value == null ? "" : value;
     }
@@ -416,8 +493,9 @@ public final class SettlementMailRenderer {
         map.put("periodFrom", "清算开始日期");
         map.put("periodTo", "清算结束日期");
         map.put("summaryCards", "汇总卡片（已确认工时、待审核、被退回、被引图片）");
+        map.put("projectTable", "参与的选题（期内上传过图片的选题及每个选题上传的张数，选题可点开）");
         map.put("worklogTable", "工时详情（每条的申报时间、时长、状态、退回原因和审核记录）");
-        map.put("adoptionTable", "被引详情表");
+        map.put("adoptionTable", "被引详情表（图片可点开详情页）");
         map.put("confirmedHours", "已确认工时合计");
         map.put("shootingHours", "已确认拍摄时长");
         map.put("retouchingHours", "已确认修图时长");
@@ -428,6 +506,8 @@ public final class SettlementMailRenderer {
         map.put("rejectedCount", "被退回条数");
         map.put("adoptedPhotos", "被引图片张数（去重）");
         map.put("adoptionCount", "被引次数");
+        map.put("projectCount", "参与的选题个数");
+        map.put("uploadedPhotos", "期内上传的图片张数");
         map.put("senderName", "发送人");
         map.put("generatedAt", "生成时间");
         map.put("siteUrl", "站点地址（未配置时为空；可用 {{#siteUrl}}…{{/siteUrl}} 包住只在有地址时显示的内容）");

@@ -3504,7 +3504,7 @@ body {
 .worklog-member { display: flex; flex-direction: column; gap: 2px; }
 .worklog-student-id { color: #8a8f8c; font-size: 12px; white-space: nowrap; }
 
-/* 邮件清算单：统计面板的发送弹窗、管理员面板的邮件模板。 */
+/* 清算单：统计面板的发送弹窗、管理员面板的邮件模板。 */
 .settlement-mail-alert { margin-bottom: 12px; }
 .settlement-mail-from { display: block; margin-bottom: 4px; font-size: 12px; }
 .settlement-mail-filters { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
@@ -3541,7 +3541,21 @@ body {
 .mail-template-variables { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
 .mail-template-variable { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
 .mail-template-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.settlement-mail-actions { justify-content: flex-end; }
+.settlement-mail-channels {
+  display: inline-flex; align-items: center; gap: 4px; padding: 4px 4px 4px 10px;
+  border: 1px solid rgba(5, 5, 5, .08); border-radius: 8px;
+}
+.settlement-mail-channels > .ant-typography { margin-right: 6px; font-size: 12px; }
+/* 站内信里的清算单 */
+.settlement-statement-page { max-width: 900px; margin: 0 auto; }
+.settlement-statement-head {
+  display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 16px;
+}
+.settlement-statement-head > div:first-child { min-width: 0; }
+.settlement-statement-head h4 { overflow-wrap: anywhere; }
 @media (max-width: 720px) {
+  .settlement-statement-page .ant-card-body { padding: 12px; }
   .settlement-history { grid-template-columns: 1fr; }
   .settlement-history-list { max-height: 240px; }
 }

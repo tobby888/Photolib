@@ -24,7 +24,9 @@ import java.util.Map;
  * 免得把一个人的工时发给另一个人。</p>
  *
  * <p><b>时间口径</b>：工时按工作日期 {@code work_date}（两端都含），草稿不算；被引按被引时间
- * {@code adopted_at}（同样两端都含）。与成员核算按"选题结束时间"取的口径不同，邮件里写明了。</p>
+ * {@code adopted_at}（同样两端都含）；参与的选题按图片上传时间 {@code photo.created_at}（同样两端都含），
+ * 拍摄者姓名是他、且已经传完（处理中、可用、已归档）的图片才算，上传了图片就算参与了这个选题。
+ * 与成员核算按"选题结束时间"取的口径不同，邮件里写明了。</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -32,6 +34,8 @@ public class SettlementStatementService {
     static final int MAX_RANGE_DAYS = 366 * 3;
     /** 单封邮件里最多列多少条，超出的在邮件里注明「另有 N 条」——再多邮件客户端会截断正文。 */
     static final int MAX_LINES = 800;
+    /** 传完了的图片：上传中（可能被放弃）和已删除的不算参与。 */
+    private static final String UPLOADED_STATUSES = "'PROCESSING','AVAILABLE','ARCHIVED'";
 
     private final JdbcClient jdbc;
 
@@ -64,6 +68,16 @@ public class SettlementStatementService {
                       AND a.adopted_at >= :fromDate AND a.adopted_at < :toExclusive
                     GROUP BY TRIM(a.photographer_name)
                 ),
+                up AS (
+                    SELECT TRIM(ph.photographer_name) AS name, COUNT(*) AS photos,
+                           COUNT(DISTINCT p.id) AS projects
+                    FROM photo ph
+                    LEFT JOIN photo_request r ON r.id=ph.request_id
+                    JOIN project p ON p.id=COALESCE(ph.project_id, r.project_id)
+                    WHERE ph.deleted=0 AND p.deleted=0 AND ph.status IN (%s)
+                      AND ph.created_at >= :fromDate AND ph.created_at < :toExclusive
+                    GROUP BY TRIM(ph.photographer_name)
+                ),
                 names AS (
                     SELECT TRIM(display_name) AS name, COUNT(*) AS cnt
                     FROM app_user WHERE deleted=0 AND enabled=TRUE
@@ -72,21 +86,22 @@ public class SettlementStatementService {
                 SELECT u.id, u.username, TRIM(u.display_name), u.email, c.name, g.name,
                        COALESCE(wl.cnt,0), COALESCE(wl.confirmed_minutes,0), COALESCE(wl.pending_count,0),
                        COALESCE(wl.rejected_count,0), COALESCE(ad.photos,0), COALESCE(ad.adoptions,0),
-                       COALESCE(n.cnt,1) - 1
+                       COALESCE(n.cnt,1) - 1, COALESCE(up.photos,0), COALESCE(up.projects,0)
                 FROM app_user u
                 LEFT JOIN campus c ON c.id=u.campus_id
                 LEFT JOIN permission_group g ON g.id=u.permission_group_id
                 LEFT JOIN wl ON wl.name=TRIM(u.display_name)
                 LEFT JOIN ad ON ad.name=TRIM(u.display_name)
+                LEFT JOIN up ON up.name=TRIM(u.display_name)
                 LEFT JOIN names n ON n.name=TRIM(u.display_name)
                 WHERE u.deleted=0 AND u.enabled=TRUE
                 ORDER BY TRIM(u.display_name), u.id
-                """)
+                """.formatted(UPLOADED_STATUSES))
                 .param("fromDate", from).param("toDate", to).param("toExclusive", to.plusDays(1))
                 .query((rs, n) -> new Recipient(rs.getLong(1), rs.getString(2), rs.getString(3),
                         blankToNull(rs.getString(4)), rs.getString(5), rs.getString(6),
                         rs.getInt(7), rs.getInt(8), rs.getInt(9), rs.getInt(10), rs.getInt(11), rs.getInt(12),
-                        rs.getInt(13)))
+                        rs.getInt(13), rs.getInt(14), rs.getInt(15)))
                 .list();
     }
 
@@ -137,8 +152,23 @@ public class SettlementStatementService {
                 .query((rs, n) -> new AdoptionLine(rs.getObject(1, LocalDateTime.class), rs.getString(2),
                         rs.getLong(3), rs.getString(4), rs.getString(5), rs.getString(6), rs.getString(7)))
                 .list();
-        Totals totals = Totals.of(worklogs, adoptions);
-        return new Statement(recipient, from, to,
+        List<ProjectLine> projects = jdbc.sql("""
+                SELECT p.id, p.title, COUNT(*), MIN(ph.created_at), MAX(ph.created_at)
+                FROM photo ph
+                LEFT JOIN photo_request r ON r.id=ph.request_id
+                JOIN project p ON p.id=COALESCE(ph.project_id, r.project_id)
+                WHERE ph.deleted=0 AND p.deleted=0 AND ph.status IN (%s)
+                  AND TRIM(ph.photographer_name)=:name
+                  AND ph.created_at >= :fromDate AND ph.created_at < :toExclusive
+                GROUP BY p.id, p.title
+                ORDER BY MIN(ph.created_at), p.id
+                """.formatted(UPLOADED_STATUSES))
+                .param("name", name).param("fromDate", from).param("toExclusive", to.plusDays(1))
+                .query((rs, n) -> new ProjectLine(rs.getLong(1), rs.getString(2), rs.getInt(3),
+                        rs.getObject(4, LocalDateTime.class), rs.getObject(5, LocalDateTime.class)))
+                .list();
+        Totals totals = Totals.of(worklogs, adoptions, projects);
+        return new Statement(recipient, from, to, projects,
                 worklogs.size() > MAX_LINES ? List.copyOf(worklogs.subList(0, MAX_LINES)) : List.copyOf(worklogs),
                 adoptions.size() > MAX_LINES ? List.copyOf(adoptions.subList(0, MAX_LINES)) : List.copyOf(adoptions),
                 totals);
@@ -185,9 +215,10 @@ public class SettlementStatementService {
      */
     public record Recipient(long userId, String username, String displayName, String email, String campus,
                             String groupName, int worklogCount, int confirmedMinutes, int pendingCount,
-                            int rejectedCount, int adoptedPhotos, int adoptionCount, int sameNameCount) {
+                            int rejectedCount, int adoptedPhotos, int adoptionCount, int sameNameCount,
+                            int uploadedPhotos, int projectCount) {
         public boolean hasRecords() {
-            return worklogCount > 0 || adoptionCount > 0;
+            return worklogCount > 0 || adoptionCount > 0 || uploadedPhotos > 0;
         }
     }
 
@@ -209,14 +240,19 @@ public class SettlementStatementService {
     public record AdoptionLine(LocalDateTime adoptedAt, String projectTitle, long photoId, String photoTitle,
                                String campus, String adoptedBy, String remark) {}
 
+    /** 期内上传过图片的选题：{@code photoCount} 张，首张和最后一张的上传时间。 */
+    public record ProjectLine(long projectId, String projectTitle, int photoCount, LocalDateTime firstUploadAt,
+                              LocalDateTime lastUploadAt) {}
+
     public record Totals(int worklogCount, int confirmedCount, int confirmedShootingMinutes,
                          int confirmedRetouchingMinutes, int pendingCount, int pendingMinutes,
-                         int rejectedCount, int rejectedMinutes, int adoptedPhotos, int adoptionCount) {
+                         int rejectedCount, int rejectedMinutes, int adoptedPhotos, int adoptionCount,
+                         int projectCount, int uploadedPhotos) {
         public int confirmedMinutes() {
             return confirmedShootingMinutes + confirmedRetouchingMinutes;
         }
 
-        static Totals of(List<WorklogLine> worklogs, List<AdoptionLine> adoptions) {
+        static Totals of(List<WorklogLine> worklogs, List<AdoptionLine> adoptions, List<ProjectLine> projects) {
             int confirmed = 0, shooting = 0, retouching = 0, pending = 0, pendingMinutes = 0, rejected = 0, rejectedMinutes = 0;
             for (WorklogLine line : worklogs) {
                 switch (line.status()) {
@@ -238,12 +274,14 @@ public class SettlementStatementService {
             }
             long photos = adoptions.stream().mapToLong(AdoptionLine::photoId).distinct().count();
             return new Totals(worklogs.size(), confirmed, shooting, retouching, pending, pendingMinutes,
-                    rejected, rejectedMinutes, (int) photos, adoptions.size());
+                    rejected, rejectedMinutes, (int) photos, adoptions.size(), projects.size(),
+                    projects.stream().mapToInt(ProjectLine::photoCount).sum());
         }
     }
 
     /** 明细超过 {@link #MAX_LINES} 时只列前面这些，{@code totals} 仍按全部记录算。 */
-    public record Statement(Recipient recipient, LocalDate from, LocalDate to, List<WorklogLine> worklogs,
+    public record Statement(Recipient recipient, LocalDate from, LocalDate to, List<ProjectLine> projects,
+                            List<WorklogLine> worklogs,
                             List<AdoptionLine> adoptions, Totals totals) {
         public int hiddenWorklogs() {
             return Math.max(0, totals.worklogCount() - worklogs.size());

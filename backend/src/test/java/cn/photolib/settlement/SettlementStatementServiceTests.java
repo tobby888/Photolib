@@ -3,6 +3,7 @@ package cn.photolib.settlement;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.permission.DataScope;
 import cn.photolib.permission.PermissionCode;
+import cn.photolib.settlement.SettlementStatementService.ProjectLine;
 import cn.photolib.settlement.SettlementStatementService.Recipient;
 import cn.photolib.settlement.SettlementStatementService.Statement;
 import cn.photolib.user.model.UserRole;
@@ -21,6 +22,7 @@ import java.util.List;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 
 /**
  * 清算单的取数：按账号姓名匹配工时和被引、时间口径、审核记录。只读，用事务回滚。
@@ -87,6 +89,36 @@ class SettlementStatementServiceTests {
         assertThat(statement.totals().confirmedMinutes()).isEqualTo(90);
         assertThat(statement.totals().pendingMinutes()).isEqualTo(45);
         assertThat(statement.totals().rejectedCount()).isEqualTo(1);
+    }
+
+    @Test
+    void projectsAreTheOnesWithPhotosUploadedInTheRange() {
+        long userId = fixtures.user(name, "jia@example.cn");
+        long other = fixtures.project("清算选题乙");
+        fixtures.photo(name, fixtures.projectId, LocalDateTime.of(2026, 10, 1, 0, 0), "AVAILABLE", false);
+        // 老数据只挂需求、没有 project_id，选题从需求上取。
+        fixtures.photo(name, fixtures.projectId, LocalDateTime.of(2026, 10, 20, 12, 0), "ARCHIVED", true);
+        fixtures.photo(name + " ", other, LocalDateTime.of(2026, 10, 31, 23, 59), "PROCESSING", false);
+        // 没传完的、删掉的、区间外的、别人拍的都不算。
+        fixtures.photo(name, other, LocalDateTime.of(2026, 10, 10, 0, 0), "UPLOADING", false);
+        fixtures.photo(name, other, LocalDateTime.of(2026, 10, 10, 0, 0), "DELETED", false);
+        fixtures.photo(name, other, LocalDateTime.of(2026, 11, 1, 0, 0), "AVAILABLE", false);
+        fixtures.photo(name, other, LocalDateTime.of(2026, 9, 30, 23, 59), "AVAILABLE", false);
+        fixtures.photo(name + "乙", other, LocalDateTime.of(2026, 10, 10, 0, 0), "AVAILABLE", false);
+
+        Recipient recipient = statements.recipient(userId, FROM, TO);
+        assertThat(recipient.uploadedPhotos()).isEqualTo(3);
+        assertThat(recipient.projectCount()).isEqualTo(2);
+        assertThat(recipient.hasRecords()).isTrue();
+
+        Statement statement = statements.statement(recipient, FROM, TO);
+        assertThat(statement.projects()).extracting(ProjectLine::projectTitle, ProjectLine::photoCount)
+                .containsExactly(tuple("清算选题", 2), tuple("清算选题乙", 1));
+        assertThat(statement.projects().get(0).projectId()).isEqualTo(fixtures.projectId);
+        assertThat(statement.projects().get(0).firstUploadAt()).isEqualTo(LocalDateTime.of(2026, 10, 1, 0, 0));
+        assertThat(statement.projects().get(0).lastUploadAt()).isEqualTo(LocalDateTime.of(2026, 10, 20, 12, 0));
+        assertThat(statement.totals().projectCount()).isEqualTo(2);
+        assertThat(statement.totals().uploadedPhotos()).isEqualTo(3);
     }
 
     @Test

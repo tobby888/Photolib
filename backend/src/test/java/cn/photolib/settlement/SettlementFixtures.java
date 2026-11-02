@@ -22,6 +22,7 @@ final class SettlementFixtures {
     private final List<Long> worklogs = new ArrayList<>();
     private final List<Long> photos = new ArrayList<>();
     private final List<Long> adoptions = new ArrayList<>();
+    private final List<Long> projects = new ArrayList<>();
     private long sequence = 100;
 
     SettlementFixtures(JdbcClient jdbc) {
@@ -83,19 +84,41 @@ final class SettlementFixtures {
                 .param("actor", ownerId).param("at", at).update();
     }
 
-    long adoption(String photographerName, LocalDateTime adoptedAt) {
+    long project(String title) {
+        long id = base + sequence++;
+        jdbc.sql("""
+                INSERT INTO project(id, title, status, created_by, completed_at)
+                VALUES (:id, :title, 'ACTIVE', :userId, NULL)
+                """).param("id", id).param("title", title).param("userId", ownerId).update();
+        projects.add(id);
+        return id;
+    }
+
+    /**
+     * 一张拍摄者为 {@code photographerName}、在 {@code uploadedAt} 传进 {@code project} 的图片。
+     * {@code viaRequest} 为真时只挂需求（老数据的样子，project_id 为空，选题从需求上取）。
+     */
+    long photo(String photographerName, long project, LocalDateTime uploadedAt, String status, boolean viaRequest) {
         long photoId = base + sequence++;
         jdbc.sql("""
                 INSERT INTO photo(id, request_id, project_id, title, photographer_student_id, photographer_name,
                                   uploaded_by, campus_id, taken_at, size, content_type, object_key,
-                                  stored_file_name, sha256, status)
+                                  stored_file_name, sha256, status, created_at)
                 VALUES (:id, :requestId, :projectId, '清算图片', 'S-SETTLE', :name, :userId, :campusId, :takenAt,
-                        100, 'image/jpeg', :objectKey, 'settle.jpg', :sha256, 'AVAILABLE')
-                """).param("id", photoId).param("requestId", requestId).param("projectId", projectId)
+                        100, 'image/jpeg', :objectKey, 'settle.jpg', :sha256, :status, :createdAt)
+                """).param("id", photoId).param("requestId", viaRequest ? requestId : null)
+                .param("projectId", viaRequest ? null : project)
                 .param("name", photographerName).param("userId", ownerId).param("campusId", campusId)
-                .param("takenAt", adoptedAt.minusDays(1)).param("objectKey", "settle-" + photoId + ".jpg")
-                .param("sha256", String.format("%064x", photoId)).update();
+                .param("takenAt", uploadedAt.minusHours(2)).param("objectKey", "settle-" + photoId + ".jpg")
+                .param("sha256", String.format("%064x", photoId)).param("status", status)
+                .param("createdAt", uploadedAt).update();
         photos.add(photoId);
+        return photoId;
+    }
+
+    /** 被引的图片在被引前一天传进本选题，所以它同时也算一次「参与选题」。 */
+    long adoption(String photographerName, LocalDateTime adoptedAt) {
+        long photoId = photo(photographerName, projectId, adoptedAt.minusDays(1), "AVAILABLE", false);
         long adoptionId = base + sequence++;
         jdbc.sql("""
                 INSERT INTO adoption(id, project_id, photo_id, photographer_student_id, photographer_name,
@@ -108,6 +131,10 @@ final class SettlementFixtures {
     }
 
     void cleanup() {
+        jdbc.sql("""
+                DELETE FROM settlement_statement WHERE batch_id IN
+                    (SELECT id FROM settlement_mail_batch WHERE created_by IN (:users))
+                """).param("users", users).update();
         jdbc.sql("""
                 DELETE FROM settlement_mail_delivery WHERE batch_id IN
                     (SELECT id FROM settlement_mail_batch WHERE created_by IN (:users))
@@ -122,6 +149,7 @@ final class SettlementFixtures {
         if (!photos.isEmpty()) jdbc.sql("DELETE FROM photo WHERE id IN (:ids)").param("ids", photos).update();
         jdbc.sql("DELETE FROM photo_request WHERE id=:id").param("id", requestId).update();
         jdbc.sql("DELETE FROM project WHERE id=:id").param("id", projectId).update();
+        if (!projects.isEmpty()) jdbc.sql("DELETE FROM project WHERE id IN (:ids)").param("ids", projects).update();
         jdbc.sql("DELETE FROM app_user WHERE id IN (:users)").param("users", users).update();
         jdbc.sql("DELETE FROM campus WHERE id=:id").param("id", campusId).update();
     }
