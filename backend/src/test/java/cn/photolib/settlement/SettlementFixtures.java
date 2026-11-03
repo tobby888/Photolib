@@ -168,6 +168,15 @@ final class SettlementFixtures {
         return photoId;
     }
 
+    /** 把图片添加进 {@code project} 的相册（从图库添加 / 从别的选题复制），{@code addedBy} 为空表示 V73 之前加的。 */
+    void addToAlbum(long photoId, long project, Long addedBy, LocalDateTime at) {
+        jdbc.sql("""
+                INSERT INTO photo_project(photo_id, project_id, added_by, created_at)
+                VALUES (:photoId, :projectId, :addedBy, :at)
+                """).param("photoId", photoId).param("projectId", project).param("addedBy", addedBy)
+                .param("at", at).update();
+    }
+
     /** 被引的图片在被引前一天传进本选题，所以它同时也算一次「参与选题」。 */
     long adoption(String photographerName, LocalDateTime adoptedAt) {
         return adoption(photographerName, projectId, adoptedAt);
@@ -202,7 +211,10 @@ final class SettlementFixtures {
             jdbc.sql("DELETE FROM worklog WHERE id IN (:ids)").param("ids", worklogs).update();
         }
         if (!adoptions.isEmpty()) jdbc.sql("DELETE FROM adoption WHERE id IN (:ids)").param("ids", adoptions).update();
-        if (!photos.isEmpty()) jdbc.sql("DELETE FROM photo WHERE id IN (:ids)").param("ids", photos).update();
+        if (!photos.isEmpty()) {
+            jdbc.sql("DELETE FROM photo_project WHERE photo_id IN (:ids)").param("ids", photos).update();
+            jdbc.sql("DELETE FROM photo WHERE id IN (:ids)").param("ids", photos).update();
+        }
         if (!shareLinks.isEmpty()) {
             jdbc.sql("DELETE FROM project_share_link WHERE id IN (:ids)").param("ids", shareLinks).update();
         }

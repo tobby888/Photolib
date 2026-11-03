@@ -576,9 +576,14 @@ public class ProjectService {
             // Adding photos to an album is an idempotent membership operation. The gallery
             // can be stale by the time the user confirms a selection, so an already-linked
             // photo must not roll back other new links in the same request.
-            jdbc.sql("INSERT IGNORE INTO photo_project (photo_id, project_id) VALUES (:photoId, :projectId)")
+            // added_by：清算单「参与的选题」据此标出这张图是谁添加进来的（V73）。
+            jdbc.sql("""
+                    INSERT IGNORE INTO photo_project (photo_id, project_id, added_by)
+                    VALUES (:photoId, :projectId, :addedBy)
+                    """)
                     .param("photoId", photoId)
                     .param("projectId", projectId)
+                    .param("addedBy", user.id())
                     .update();
         }
     }
@@ -682,9 +687,13 @@ public class ProjectService {
             if (user.isCampusScoped() && !photo.getUploadedBy().equals(user.id())) {
                 throw new BusinessException(ErrorCode.FORBIDDEN, "只能复制或移动本人上传的图片");
             }
-            int inserted = jdbc.sql("INSERT IGNORE INTO photo_project (photo_id, project_id) VALUES (:photoId, :projectId)")
+            int inserted = jdbc.sql("""
+                            INSERT IGNORE INTO photo_project (photo_id, project_id, added_by)
+                            VALUES (:photoId, :projectId, :addedBy)
+                            """)
                     .param("photoId", photoId)
                     .param("projectId", targetId)
+                    .param("addedBy", user.id())
                     .update();
             if (inserted > 0) copied++;
             else alreadyInTarget++;

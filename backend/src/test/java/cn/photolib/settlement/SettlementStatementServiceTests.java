@@ -192,6 +192,54 @@ class SettlementStatementServiceTests {
     }
 
     @Test
+    void photosAddedToAnAlbumCountAsParticipationAndAreMarked() {
+        long userId = fixtures.user(name, "jia@example.cn");
+        long minister = fixtures.user("清算部长" + fixtures.base, null);
+        long other = fixtures.project("别的选题");
+        long ongoing = fixtures.project("进行中选题");
+        LocalDateTime at = LocalDateTime.of(2026, 10, 10, 9, 0);
+        // 图库里直接上传、不属于任何选题的图，被部长添加进清算选题。
+        long gallery = fixtures.photo(name, null, null, at, "AVAILABLE", userId, null);
+        fixtures.addToAlbum(gallery, fixtures.projectId, minister, at.plusDays(1));
+        // 来源是别的选题的图，被复制进清算选题；V73 之前加的不知道是谁。
+        long copied = fixtures.photo(name, other, null, at, "AVAILABLE", userId, null);
+        fixtures.addToAlbum(copied, fixtures.projectId, null, at.plusDays(2));
+        // 自己把图库里的图添加进来。
+        long own = fixtures.photo(name, null, null, at, "AVAILABLE", userId, null);
+        fixtures.addToAlbum(own, fixtures.projectId, userId, at.plusDays(3));
+        // 上传时写的来源归属那一行不重复计。
+        long uploaded = fixtures.photo(name, fixtures.projectId, null, at, "AVAILABLE", userId, null);
+        fixtures.addToAlbum(uploaded, fixtures.projectId, null, at);
+        // 进行中的选题按添加时间算：期末之后才添加的不算。
+        fixtures.addToAlbum(gallery, ongoing, minister, LocalDateTime.of(2026, 11, 1, 0, 0));
+        fixtures.addToAlbum(own, ongoing, userId, LocalDateTime.of(2026, 10, 31, 23, 0));
+        // 删除了的图添加进来也不算。
+        long deleted = fixtures.photo(name, null, null, at, "DELETED", userId, null);
+        fixtures.addToAlbum(deleted, fixtures.projectId, minister, at);
+
+        Recipient recipient = statements.recipient(userId, FROM, TO);
+        assertThat(recipient.uploadedPhotos()).isEqualTo(4);
+        assertThat(recipient.projectCount()).isEqualTo(1);
+        // 别的选题（进行中）里有 copied 的来源，进行中选题里有本人在期内添加的一张。
+        assertThat(recipient.ongoingPhotos()).isEqualTo(2);
+        assertThat(recipient.ongoingProjectCount()).isEqualTo(2);
+
+        Statement statement = statements.statement(recipient, FROM, TO);
+        assertThat(statement.projects()).extracting(ProjectLine::projectTitle, ProjectLine::ended, ProjectLine::photoCount)
+                .containsExactly(tuple("清算选题", true, 4), tuple("别的选题", false, 1), tuple("进行中选题", false, 1));
+        assertThat(statement.projects().get(0).sources())
+                .extracting(UploadSource::channel, UploadSource::uploaderName, UploadSource::photoCount)
+                .containsExactlyInAnyOrder(tuple(UploadChannel.SELF, null, 1),
+                        tuple(UploadChannel.ALBUM_ADDED, "清算部长" + fixtures.base, 1),
+                        tuple(UploadChannel.ALBUM_ADDED, null, 1),
+                        tuple(UploadChannel.ALBUM_ADDED, "本人", 1));
+        // 添加进来的图按添加时间算首末时间。
+        assertThat(statement.projects().get(0).lastUploadAt()).isEqualTo(at.plusDays(3));
+        assertThat(statement.projects().get(2).sources()).singleElement()
+                .satisfies(source -> assertThat(source.uploaderName()).isEqualTo("本人"));
+    }
+
+    @Test
     void sameNamedAccountsAreFlagged() {
         long first = fixtures.user(name, "a@example.cn");
         fixtures.user(name, "b@example.cn");

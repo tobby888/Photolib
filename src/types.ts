@@ -13,7 +13,7 @@ export type PermissionCode =
   | 'RECRUITMENT_VIEW' | 'RECRUITMENT_PUBLISH' | 'SURVEY_CREATE' | 'SURVEY_ACCESS' | 'SURVEY_RESULT_VIEW'
   | 'FEATURED_MANAGE' | 'DOC_MANAGE' | 'DOC_PUBLISH' | 'FILE_UPLOAD' | 'FILE_MANAGE'
   | 'TEACHING_MANAGE' | 'TEACHING_DELETE'
-  | 'STATISTICS_DOWNLOAD' | 'SETTLEMENT_MAIL_SEND' | 'MANAGER_CAMPUS_ASSIGN'
+  | 'STATISTICS_DOWNLOAD' | 'SETTLEMENT_MAIL_SEND' | 'SALARY_CALCULATE' | 'MANAGER_CAMPUS_ASSIGN'
 
 export interface User {
   id: EntityId
@@ -1269,4 +1269,77 @@ export interface PerformanceDownload {
   url: string
   fileName: string
   expiresAt: string
+}
+
+/** 工资计算的计算依据：按工时、按被引、两者相同、都为 0（只有待审核工时）。 */
+export type SalaryBasis = 'HOURS' | 'ADOPTIONS' | 'EQUAL' | 'NONE'
+
+/** 一次工资计算（快照）的概况。金额单位是元。 */
+export interface SalaryCalculationSummary {
+  id: EntityId
+  from: string
+  to: string
+  hourlyRate: number
+  adoptionRate: number
+  projectCount: number
+  memberCount: number
+  lineCount: number
+  totalAmount: number
+  /** 计算时还在待审核、没有计入的工时条数。 */
+  pendingWorklogCount: number
+  createdByName: string
+  createdAt: string
+}
+
+/** 一个选题里一位成员的工资：max(已确认工时小时数 × 时薪, 被引张数 × 单价)。 */
+export interface SalaryLine {
+  projectId: EntityId
+  projectTitle: string
+  projectCompletedAt: string
+  /** `id:<学号>`，没有学号的老记录是 `name:<姓名>`。 */
+  memberKey: string
+  studentId?: string | null
+  memberName: string
+  campus?: string | null
+  shootingMinutes: number
+  retouchingMinutes: number
+  confirmedWorklogCount: number
+  pendingWorklogCount: number
+  pendingMinutes: number
+  adoptedPhotos: number
+  hourAmount: number
+  adoptionAmount: number
+  salaryAmount: number
+  basis: SalaryBasis
+}
+
+export interface SalaryProjectGroup {
+  projectId: EntityId
+  projectTitle: string
+  completedAt: string
+  confirmedMinutes: number
+  adoptedPhotos: number
+  salaryAmount: number
+  pendingWorklogCount: number
+  lines: SalaryLine[]
+}
+
+export interface SalaryMemberTotal {
+  memberKey: string
+  studentId?: string | null
+  memberName: string
+  campus?: string | null
+  projectCount: number
+  confirmedMinutes: number
+  adoptedPhotos: number
+  hourAmount: number
+  adoptionAmount: number
+  salaryAmount: number
+  pendingWorklogCount: number
+}
+
+export interface SalaryCalculationDetail {
+  calculation: SalaryCalculationSummary
+  projects: SalaryProjectGroup[]
+  members: SalaryMemberTotal[]
 }

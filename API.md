@@ -1744,7 +1744,7 @@ PENDING -> FAILED
 
 给成员发清算单：每人一份，列出清算时间内本人参与的选题（每个选题上传了多少张图）、全部工时（含每次申报时间、每次退回原因和审核记录）与被引明细（图片可点开详情页）。可以发站内信、发邮件，或两种都发；也可以在前端导出 PDF。发信邮箱读自 `.env` 的 `SMTP_*`（见 README「清算单」），只发站内信不需要配置邮箱。
 
-**收件人与匹配规则**：收件人是系统账号（`app_user`）。工时按 `worklog.member_name`、被引按 `adoption.photographer_name`、参与的选题按 `photo.photographer_name` 与账号姓名（去首尾空白）完全相等来取。两个在用账号同名时无法区分，这类账号不能收（`sameNameCount > 0`）。只发邮件时还要有邮箱；两种都发时没邮箱的人只收站内信。**按所属选题的结束时间清算**：工时和被引只取所属选题 `status=COMPLETED` 且 `completed_at` 落在 `[from, to + 1 day)` 的记录，选题没结束的不出现；工时列出待审核 / 已确认 / 已退回（不含草稿），合计以已确认为准。参与的选题分两组：已结束（期内结束的选题，本人的图全算，计入 `projectCount` / `uploadedPhotos`）和未结束（截至期末仍进行中或期末后才结束的选题，算期末前上传的图，计入 `ongoingProjectCount` / `ongoingPhotos`，只列出不计入）；取消的选题不列。只算传完的图（`PROCESSING / AVAILABLE / ARCHIVED`），选题取 `photo.project_id`，为空时取所属需求的选题。每个选题按上传方式拆开：`share_link_id` 非空为上传链接，`uploaded_by` 是收件人本人为本人上传，否则挂需求的为他人代传、不挂需求的为他人添加到选题。范围最长三年。
+**收件人与匹配规则**：收件人是系统账号（`app_user`）。工时按 `worklog.member_name`、被引按 `adoption.photographer_name`、参与的选题按 `photo.photographer_name` 与账号姓名（去首尾空白）完全相等来取。两个在用账号同名时无法区分，这类账号不能收（`sameNameCount > 0`）。只发邮件时还要有邮箱；两种都发时没邮箱的人只收站内信。**按所属选题的结束时间清算**：工时和被引只取所属选题 `status=COMPLETED` 且 `completed_at` 落在 `[from, to + 1 day)` 的记录，选题没结束的不出现；工时列出待审核 / 已确认 / 已退回（不含草稿），合计以已确认为准。参与的选题分两组：已结束（期内结束的选题，本人的图全算，计入 `projectCount` / `uploadedPhotos`）和未结束（截至期末仍进行中或期末后才结束的选题，算期末前上传的图，计入 `ongoingProjectCount` / `ongoingPhotos`，只列出不计入）；取消的选题不列。只算传完的图（`PROCESSING / AVAILABLE / ARCHIVED`）。图片属于的选题有两种：来源选题（`photo.project_id`，为空时取所属需求的选题，按上传时间算）和后来添加进去的选题相册（`photo_project` 里来源选题以外的行：从图库添加、从别的选题复制 / 移动，按添加时间算，V73 起记下添加人 `added_by`）。每个选题按上传方式拆开（`UploadChannel`）：添加进选题的为 `ALBUM_ADDED`（「X 从图库 / 其他选题添加进选题」，V73 之前添加的不知道是谁）；其余按 `share_link_id` 非空为上传链接（`SHARE_LINK`），`uploaded_by` 是收件人本人为本人上传（`SELF`），否则挂需求的为他人代传（`REQUEST_PROXY`）、不挂需求的为他人直接传到选题（`PROJECT_ADDED`）。范围最长三年。
 
 除模板接口外都要 `SETTLEMENT_MAIL_SEND`（V71 默认给管理员组、部长组），且校区范围的账号即使有这条权限也返回 403（清算单汇总全部校区）。
 
@@ -1769,6 +1769,34 @@ PENDING -> FAILED
 收件人不满足条件（同名、已停用；只发邮件时无邮箱）时整批返回 400 并列出是谁；要发邮件但邮件服务未配置返回 409。
 
 **模板变量**：`{{name}}` 引用变量，`{{#name}}…{{/name}}` 只在变量非空时保留。普通变量 HTML 转义后填入，`logo`、`summaryCards`、`projectTable`、`worklogTable`、`adoptionTable` 是系统生成的 HTML 片段，原样填入。站内信和预览 / PDF 里的图片、选题链接用站内路径 `/#/photos/{id}`、`/#/projects/{id}`；邮件里只有配置了 `SMTP_SITE_BASE_URL` 才有链接（绝对地址），否则只显示文字。站内信里 `{{siteUrl}}` 为空（「登录查看」按钮不显示）。完整清单见 `GET /settlement-mails/template` 的 `variables`。品牌图标以内嵌附件（`cid:brand-logo`）发送；内置图标用预先渲染的 PNG，因为多数邮件客户端不显示 SVG。
+
+### 12.7 工资计算
+
+统计面板「工资计算」页签。**按选题结算**：只算选题结束时间（`status=COMPLETED` 且 `completed_at` 落在 `[from, to + 1 day)`）在范围内的选题，与成员核算、清算单同一口径。每个选题里每位有记录的成员一行：
+
+```
+工资 = max(已确认工时（小时）× 20 元, 被引张数 × 10 元)
+```
+
+- 工时 = 这个选题下（需求填报和上传链接申报）**已确认**工时的拍摄 + 修图分钟数 ÷ 60，不取整；工时工资四舍五入到分。待审核的不计入，只记条数提醒；已退回、草稿不算。
+- 被引张数 = 这个选题里被引用、拍摄者是他的图片张数。
+- 「有记录」= 这个选题里有他的已确认或待审核工时，或有被引图片。只有待审核工时的人也列出（工资 0，依据 `NONE`）。
+- 成员按学号归并（`member_student_id` / `photographer_student_id`），没有学号的老记录按姓名归并；`memberKey` 是 `id:<学号>` 或 `name:<姓名>`。
+- `basis`：`HOURS`（按工时更高）/ `ADOPTIONS`（按被引更高）/ `EQUAL`（两者相等且大于 0）/ `NONE`（都为 0）。
+
+计算结果是**快照**（`salary_calculation` / `salary_calculation_line`，V73），之后工时再审核、被引再取消都不改它；时薪和单价存在计算上（`hourlyRate` / `adoptionRate`）。要新结果就再算一次。
+
+全部接口要 `SALARY_CALCULATE`（V73 默认给管理员组、部长组），校区范围的账号即使有这条权限也返回 403。范围最长三年。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/salary-calculations?limit=50` | 计算记录（新的在前，不含已删除）：`id, from, to, hourlyRate, adoptionRate, projectCount, memberCount, lineCount, totalAmount, pendingWorklogCount, createdByName, createdAt` |
+| POST | `/salary-calculations` | `{ from, to }` 计算并保存，返回同上的概况；审计「计算工资」 |
+| GET | `/salary-calculations/{id}` | 明细 `{ calculation, projects, members }`。`projects` 按选题结束时间排，每组 `projectId, projectTitle, completedAt, confirmedMinutes, adoptedPhotos, salaryAmount, pendingWorklogCount, lines`；`lines` 每行 `memberKey, studentId, memberName, campus, shootingMinutes, retouchingMinutes, confirmedWorklogCount, pendingWorklogCount, pendingMinutes, adoptedPhotos, hourAmount, adoptionAmount, salaryAmount, basis`（组内应发高的在前）。`members` 是按成员跨选题的合计（应发高的在前） |
+| GET | `/salary-calculations/{id}/export` | 下载 XLSX（审计「导出工资明细」）：第一张 sheet「汇总」按成员合计，之后每个选题一张 sheet（名为「序号 选题标题」，去掉 Excel 不认的字符、截到 31 个字符），列出参与的摄影师的拍摄 / 修图 / 已确认工时、工时工资、被引张数、被引工资、应发工资、计算依据和待审核条数，末行合计。金额写数值不写公式 |
+| DELETE | `/salary-calculations/{id}` | 软删除，之后列表、明细、导出都看不到；审计「删除工资计算」 |
+
+**清算单预留字段**（V73，暂不写入）：`settlement_mail_batch.salary_calculation_id`、`settlement_statement.salary_calculation_id` / `salary_amount`，用于以后在清算单里附上对应那次工资计算的应发金额。
 
 ## 13. 站内通知、管理消息与邮件日志
 

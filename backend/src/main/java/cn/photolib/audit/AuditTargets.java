@@ -51,6 +51,8 @@ public class AuditTargets {
             Map.entry("teaching", new Lookup("SELECT title FROM teaching_material WHERE id = ?", null)),
             Map.entry("materials", new Lookup(null, "SELECT title FROM teaching_material WHERE public_id = ?")),
             Map.entry("worklogs", new Lookup("SELECT member_name FROM worklog WHERE id = ?", null)),
+            Map.entry("salary-calculations", new Lookup(
+                    "SELECT CONCAT(from_date, ' 至 ', to_date) FROM salary_calculation WHERE id = ?", null)),
             Map.entry("shares", new Lookup(null, "SELECT name FROM project_share_link WHERE token = ?")),
             Map.entry("admin-alerts", new Lookup("SELECT message FROM admin_alert WHERE id = ?", null)));
 
