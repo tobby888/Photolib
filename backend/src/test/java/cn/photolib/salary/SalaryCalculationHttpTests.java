@@ -77,12 +77,30 @@ class SalaryCalculationHttpTests {
                         .contentType(MediaType.APPLICATION_JSON).content(body)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.from").value("2026-10-01"))
-                .andExpect(jsonPath("$.data.hourlyRate").value(20.0))
+                .andExpect(jsonPath("$.data.formula").value(SalaryFormula.DEFAULT))
                 .andReturn();
         String json = created.getResponse().getContentAsString();
         long id = Long.parseLong(json.replaceAll("(?s).*\"id\":(\\d+).*", "$1"));
 
         mvc.perform(as("member", get("/api/v1/salary-calculations/" + id))).andExpect(status().isForbidden());
+        mvc.perform(as("member", get("/api/v1/salary-calculations/formula"))).andExpect(status().isForbidden());
+        mvc.perform(as("minister", get("/api/v1/salary-calculations/formula")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.defaultFormula").value(SalaryFormula.DEFAULT))
+                .andExpect(jsonPath("$.data.variables[?(@.name=='拍摄时长')].alias").value("shootingHours"));
+        mvc.perform(as("minister", post("/api/v1/salary-calculations/formula/check")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"formula\":\"min(工时 * 30, 200\"}")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.valid").value(false))
+                .andExpect(jsonPath("$.data.error").value(containsString("右括号")));
+        // 自定义公式：存进快照。写错的公式 400。
+        mvc.perform(as("minister", post("/api/v1/salary-calculations").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"from\":\"2026-10-01\",\"to\":\"2026-10-31\",\"formula\":\"min(工时 * 30, 200)\"}")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.formula").value("min(工时 * 30, 200)"));
+        mvc.perform(as("minister", post("/api/v1/salary-calculations").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"from\":\"2026-10-01\",\"to\":\"2026-10-31\",\"formula\":\"工资 * 2\"}")))
+                .andExpect(status().isBadRequest());
         mvc.perform(as("member", get("/api/v1/salary-calculations/" + id + "/export"))).andExpect(status().isForbidden());
         mvc.perform(as("minister", get("/api/v1/salary-calculations/" + id)))
                 .andExpect(status().isOk())

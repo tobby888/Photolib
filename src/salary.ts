@@ -1,9 +1,14 @@
-import type { SalaryBasis, SalaryCalculationDetail, SalaryLine, SalaryProjectGroup } from './types'
+import type { SalaryCalculationDetail, SalaryLine, SalaryProjectGroup } from './types'
 
 /**
- * 统计面板「工资计算」的展示辅助。金额和口径都由后端算好、存成快照（见 SalaryCalculationService），
- * 前端只负责格式化和在明细里筛选，不重新计算。
+ * 统计面板「工资计算」的展示辅助。金额由后端按公式算好、存成快照（见 SalaryCalculationService），
+ * 公式的解析和校验也只在后端做（SalaryFormula）；前端只负责格式化、编辑框插入和明细筛选。
  */
+
+/** 和后端 `SalaryFormula.DEFAULT` 一致；接口没取到时的兜底。 */
+export const DEFAULT_SALARY_FORMULA = 'max(工时 * 20, 被引张数 * 10)'
+/** 和后端 `SalaryFormula.MAX_LENGTH` 一致。 */
+export const SALARY_FORMULA_MAX_LENGTH = 500
 
 const yuanFormat = new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
@@ -17,16 +22,24 @@ export function minutesToHours(minutes: number | null | undefined): string {
   return String(Number(((Number(minutes) || 0) / 60).toFixed(2)))
 }
 
-export const BASIS_LABELS: Record<SalaryBasis, string> = {
-  HOURS: '按工时',
-  ADOPTIONS: '按被引',
-  EQUAL: '两者相同',
-  NONE: '无已确认记录',
+/** 计算规则的一句话说明。 */
+export function salaryRule(formula: string): string {
+  return `每位成员在每个选题的工资 = ${formula}（单位元，小于 0 按 0 计，四舍五入到分）`
 }
 
-/** 计算规则的一句话说明，和导出表、后端注释是同一句。 */
-export function salaryRule(hourlyRate: number, adoptionRate: number): string {
-  return `每位成员在每个选题的工资 = max(已确认工时（小时）× ${Number(hourlyRate)} 元，被引张数 × ${Number(adoptionRate)} 元)`
+/**
+ * 在编辑框的选区 `[start, end)` 处插入一段字段名或函数，返回新文本和光标位置。
+ * 函数片段（以 `()` 结尾）把光标放进括号里，接着就能写参数；插入点紧挨着前面的字段 / 数字时补一个空格。
+ */
+export function insertSnippet(text: string, start: number, end: number, snippet: string): { text: string; cursor: number } {
+  const from = Math.max(0, Math.min(start, text.length))
+  const to = Math.max(from, Math.min(end, text.length))
+  const before = text.slice(0, from)
+  const after = text.slice(to)
+  const needsSpace = /[\p{L}\p{N}_)]$/u.test(before)
+  const piece = (needsSpace ? ' ' : '') + snippet
+  const cursor = before.length + piece.length - (snippet.endsWith('()') ? 1 : 0)
+  return { text: before + piece + after, cursor }
 }
 
 const normalize = (value: string) => value.trim().toLowerCase()

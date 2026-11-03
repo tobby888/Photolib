@@ -1,7 +1,6 @@
 package cn.photolib.salary;
 
 import cn.photolib.common.util.SpreadsheetText;
-import cn.photolib.salary.SalaryCalculationService.Basis;
 import cn.photolib.salary.SalaryCalculationService.CalculationSummary;
 import cn.photolib.salary.SalaryCalculationService.Detail;
 import cn.photolib.salary.SalaryCalculationService.Line;
@@ -22,14 +21,16 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.format.DateTimeFormatter;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
 /**
- * 工资计算导出表：第一张「汇总」按成员合计，后面每个选题一张 sheet，列出参与的摄影师的工资计算明细。
- * 金额和工时写数值（不写公式）：有的表格预览不重算公式，公式格会显示成 0。
+ * 工资计算导出表：第一张「汇总」按成员合计，后面每个选题一张 sheet，列出参与的摄影师的工资计算明细：
+ * 公式能用到的各项数值、「计算过程」（公式代入数值）和应发工资。
+ * 数值写数值（不写公式）：有的表格预览不重算公式，公式格会显示成 0。
  */
 final class SalaryWorkbook {
     static final String CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -41,9 +42,11 @@ final class SalaryWorkbook {
     private static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
     static final List<String> PROJECT_HEADERS = List.of("序号", "姓名", "学号", "校区", "拍摄（小时）", "修图（小时）",
-            "已确认工时（小时）", "工时工资（元）", "被引张数", "被引工资（元）", "应发工资（元）", "计算依据", "待审核工时（条）");
-    static final List<String> SUMMARY_HEADERS = List.of("序号", "姓名", "学号", "校区", "参与选题数", "已确认工时（小时）",
-            "被引张数", "工时工资合计（元）", "被引工资合计（元）", "应发工资合计（元）", "待审核工时（条）");
+            "已确认工时（小时）", "被引张数", "上传张数", "待审核工时（条）", "计算过程", "应发工资（元）");
+    static final List<String> SUMMARY_HEADERS = List.of("序号", "姓名", "学号", "校区", "参与选题数", "拍摄（小时）",
+            "修图（小时）", "已确认工时（小时）", "被引张数", "上传张数", "待审核工时（条）", "应发工资合计（元）");
+    /** 「计算过程」那一列：公式代进数值，可能比较长。 */
+    private static final int PROCESS_COLUMN = 10;
 
     private SalaryWorkbook() {
     }
@@ -53,9 +56,9 @@ final class SalaryWorkbook {
     }
 
     static String rule(CalculationSummary calculation) {
-        return "每位成员在每个选题的工资 = max(已确认工时（小时）× " + plain(calculation.hourlyRate()) + " 元，被引张数 × "
-                + plain(calculation.adoptionRate()) + " 元)。只算选题结束时间在 " + calculation.from() + " 至 "
-                + calculation.to() + "（两端都含）的选题；待审核的工时不计入。";
+        return "每位成员在每个选题的工资 = " + calculation.formula() + "（单位元，小于 0 按 0 计，四舍五入到分）。"
+                + "只算选题结束时间在 " + calculation.from() + " 至 " + calculation.to()
+                + "（两端都含）的选题；工时只算已确认的，单位小时。";
     }
 
     static byte[] write(Detail detail) {
@@ -100,53 +103,56 @@ final class SalaryWorkbook {
     }
 
     private static void summarySheet(Sheet sheet, Styles styles, CalculationSummary calculation, Detail detail) {
+        int width = SUMMARY_HEADERS.size();
         int row = title(sheet, styles, "工资计算汇总（" + calculation.from() + " 至 " + calculation.to() + "）",
-                calculation, SUMMARY_HEADERS.size());
-        info(sheet, styles, row++, "选题数", calculation.projectCount() + " 个", SUMMARY_HEADERS.size());
-        info(sheet, styles, row++, "成员数", calculation.memberCount() + " 人", SUMMARY_HEADERS.size());
-        info(sheet, styles, row++, "应发合计", plain(calculation.totalAmount()) + " 元", SUMMARY_HEADERS.size());
+                calculation, width);
+        info(sheet, styles, row++, "选题数", calculation.projectCount() + " 个", width);
+        info(sheet, styles, row++, "成员数", calculation.memberCount() + " 人", width);
+        info(sheet, styles, row++, "应发合计", plain(calculation.totalAmount()) + " 元", width);
         if (calculation.pendingWorklogCount() > 0) {
             info(sheet, styles, row++, "提醒", "计算时还有 " + calculation.pendingWorklogCount()
-                    + " 条待审核工时没有计入，审核完后可以重新计算。", SUMMARY_HEADERS.size());
+                    + " 条待审核工时，审核完后可以重新计算。", width);
         }
         row++;
         int headerRow = row;
         header(sheet, styles, row++, SUMMARY_HEADERS);
         int index = 1;
-        for (MemberTotal member : detail.members()) {
+        List<MemberTotal> members = detail.members();
+        for (MemberTotal member : members) {
             Row r = sheet.createRow(row++);
             number(r, 0, index++, styles.integer);
             text(r, 1, member.memberName(), styles.text);
             text(r, 2, member.studentId(), styles.text);
             text(r, 3, member.campus(), styles.text);
             number(r, 4, member.projectCount(), styles.integer);
-            number(r, 5, hours(member.confirmedMinutes()), styles.decimal);
-            number(r, 6, member.adoptedPhotos(), styles.integer);
-            money(r, 7, member.hourAmount(), styles.money);
-            money(r, 8, member.adoptionAmount(), styles.money);
-            money(r, 9, member.salaryAmount(), styles.moneyBold);
+            number(r, 5, hours(member.shootingMinutes()), styles.decimal);
+            number(r, 6, hours(member.retouchingMinutes()), styles.decimal);
+            number(r, 7, hours(member.confirmedMinutes()), styles.decimal);
+            number(r, 8, member.adoptedPhotos(), styles.integer);
+            number(r, 9, member.uploadedPhotos(), styles.integer);
             number(r, 10, member.pendingWorklogCount(), styles.integer);
+            money(r, 11, member.salaryAmount(), styles.moneyBold);
         }
         Row total = sheet.createRow(row);
         text(total, 1, "合计", styles.bold);
         number(total, 4, calculation.projectCount(), styles.integerBold);
-        number(total, 5, hours(detail.members().stream().mapToInt(MemberTotal::confirmedMinutes).sum()), styles.decimalBold);
-        number(total, 6, detail.members().stream().mapToInt(MemberTotal::adoptedPhotos).sum(), styles.integerBold);
-        money(total, 7, detail.members().stream().map(MemberTotal::hourAmount).reduce(BigDecimal.ZERO, BigDecimal::add),
-                styles.moneyBold);
-        money(total, 8, detail.members().stream().map(MemberTotal::adoptionAmount).reduce(BigDecimal.ZERO, BigDecimal::add),
-                styles.moneyBold);
-        money(total, 9, calculation.totalAmount(), styles.moneyBold);
+        number(total, 5, hours(members.stream().mapToInt(MemberTotal::shootingMinutes).sum()), styles.decimalBold);
+        number(total, 6, hours(members.stream().mapToInt(MemberTotal::retouchingMinutes).sum()), styles.decimalBold);
+        number(total, 7, hours(members.stream().mapToInt(MemberTotal::confirmedMinutes).sum()), styles.decimalBold);
+        number(total, 8, members.stream().mapToInt(MemberTotal::adoptedPhotos).sum(), styles.integerBold);
+        number(total, 9, members.stream().mapToInt(MemberTotal::uploadedPhotos).sum(), styles.integerBold);
         number(total, 10, calculation.pendingWorklogCount(), styles.integerBold);
-        finish(sheet, headerRow, SUMMARY_HEADERS.size());
+        money(total, 11, calculation.totalAmount(), styles.moneyBold);
+        finish(sheet, headerRow, width, -1);
     }
 
     private static void projectSheet(Sheet sheet, Styles styles, CalculationSummary calculation, ProjectGroup project) {
-        int row = title(sheet, styles, project.projectTitle(), calculation, PROJECT_HEADERS.size());
+        int width = PROJECT_HEADERS.size();
+        int row = title(sheet, styles, project.projectTitle(), calculation, width);
         info(sheet, styles, row++, "选题结束时间",
-                project.completedAt() == null ? "" : DATE_TIME.format(project.completedAt()), PROJECT_HEADERS.size());
-        info(sheet, styles, row++, "参与人数", project.lines().size() + " 人", PROJECT_HEADERS.size());
-        info(sheet, styles, row++, "本选题应发合计", plain(project.salaryAmount()) + " 元", PROJECT_HEADERS.size());
+                project.completedAt() == null ? "" : DATE_TIME.format(project.completedAt()), width);
+        info(sheet, styles, row++, "参与人数", project.lines().size() + " 人", width);
+        info(sheet, styles, row++, "本选题应发合计", plain(project.salaryAmount()) + " 元", width);
         row++;
         int headerRow = row;
         header(sheet, styles, row++, PROJECT_HEADERS);
@@ -160,35 +166,22 @@ final class SalaryWorkbook {
             number(r, 4, hours(line.shootingMinutes()), styles.decimal);
             number(r, 5, hours(line.retouchingMinutes()), styles.decimal);
             number(r, 6, hours(line.confirmedMinutes()), styles.decimal);
-            money(r, 7, line.hourAmount(), styles.money);
-            number(r, 8, line.adoptedPhotos(), styles.integer);
-            money(r, 9, line.adoptionAmount(), styles.money);
-            money(r, 10, line.salaryAmount(), styles.moneyBold);
-            text(r, 11, basisLabel(line.basis()), styles.text);
-            number(r, 12, line.pendingWorklogCount(), styles.integer);
+            number(r, 7, line.adoptedPhotos(), styles.integer);
+            number(r, 8, line.uploadedPhotos(), styles.integer);
+            number(r, 9, line.pendingWorklogCount(), styles.integer);
+            text(r, PROCESS_COLUMN, line.process(), styles.text);
+            money(r, 11, line.salaryAmount(), styles.moneyBold);
         }
         Row total = sheet.createRow(row);
         text(total, 1, "合计", styles.bold);
         number(total, 4, hours(project.lines().stream().mapToInt(Line::shootingMinutes).sum()), styles.decimalBold);
         number(total, 5, hours(project.lines().stream().mapToInt(Line::retouchingMinutes).sum()), styles.decimalBold);
         number(total, 6, hours(project.confirmedMinutes()), styles.decimalBold);
-        money(total, 7, project.lines().stream().map(Line::hourAmount).reduce(BigDecimal.ZERO, BigDecimal::add),
-                styles.moneyBold);
-        number(total, 8, project.adoptedPhotos(), styles.integerBold);
-        money(total, 9, project.lines().stream().map(Line::adoptionAmount).reduce(BigDecimal.ZERO, BigDecimal::add),
-                styles.moneyBold);
-        money(total, 10, project.salaryAmount(), styles.moneyBold);
-        number(total, 12, project.pendingWorklogCount(), styles.integerBold);
-        finish(sheet, headerRow, PROJECT_HEADERS.size());
-    }
-
-    static String basisLabel(Basis basis) {
-        return switch (basis) {
-            case HOURS -> "按工时";
-            case ADOPTIONS -> "按被引";
-            case EQUAL -> "两者相同";
-            case NONE -> "无已确认记录";
-        };
+        number(total, 7, project.adoptedPhotos(), styles.integerBold);
+        number(total, 8, project.uploadedPhotos(), styles.integerBold);
+        number(total, 9, project.pendingWorklogCount(), styles.integerBold);
+        money(total, 11, project.salaryAmount(), styles.moneyBold);
+        finish(sheet, headerRow, width, PROCESS_COLUMN);
     }
 
     /** 标题、计算规则、计算人，返回下一行的行号。 */
@@ -214,17 +207,17 @@ final class SalaryWorkbook {
         for (int i = 0; i < headers.size(); i++) text(row, i, headers.get(i), styles.header);
     }
 
-    private static void finish(Sheet sheet, int headerRow, int width) {
+    private static void finish(Sheet sheet, int headerRow, int width, int wideColumn) {
         sheet.createFreezePane(0, headerRow + 1);
         sheet.setColumnWidth(0, 6 * 256);
         sheet.setColumnWidth(1, 14 * 256);
         sheet.setColumnWidth(2, 16 * 256);
         sheet.setColumnWidth(3, 18 * 256);
-        for (int i = 4; i < width; i++) sheet.setColumnWidth(i, 16 * 256);
+        for (int i = 4; i < width; i++) sheet.setColumnWidth(i, (i == wideColumn ? 48 : 14) * 256);
     }
 
     private static double hours(int minutes) {
-        return BigDecimal.valueOf(minutes).divide(BigDecimal.valueOf(60), 2, java.math.RoundingMode.HALF_UP).doubleValue();
+        return BigDecimal.valueOf(minutes).divide(BigDecimal.valueOf(60), 2, RoundingMode.HALF_UP).doubleValue();
     }
 
     private static String plain(BigDecimal value) {
@@ -256,7 +249,6 @@ final class SalaryWorkbook {
         final CellStyle integerBold;
         final CellStyle decimal;
         final CellStyle decimalBold;
-        final CellStyle money;
         final CellStyle moneyBold;
 
         Styles(XSSFWorkbook workbook) {
@@ -290,8 +282,6 @@ final class SalaryWorkbook {
             decimalBold = workbook.createCellStyle();
             decimalBold.setDataFormat(decimalFormat);
             decimalBold.setFont(boldFont);
-            money = workbook.createCellStyle();
-            money.setDataFormat(moneyFormat);
             moneyBold = workbook.createCellStyle();
             moneyBold.setDataFormat(moneyFormat);
             moneyBold.setFont(boldFont);

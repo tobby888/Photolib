@@ -55,7 +55,7 @@ public class SettlementStatementService {
             (p.deleted=0 AND (p.status IN ('DRAFT','ACTIVE')
              OR (p.status='COMPLETED' AND p.completed_at >= :toExclusive)))""";
     /** 传完了、没删的图片（别名 {@code ph}），{@link #projectPhotos} 两路都套这个条件。 */
-    private static final String UPLOADED_PHOTO = "ph.deleted=0 AND ph.status IN (%s)".formatted(UPLOADED_STATUSES);
+    public static final String UPLOADED_PHOTO = "ph.deleted=0 AND ph.status IN (%s)".formatted(UPLOADED_STATUSES);
     /**
      * 参与的选题里算哪些图（{@link #projectPhotos} 的结果 {@code x} 联选题 {@code p}）：期内结束的选题全算，
      * 未结束的只算期末之前进入选题的（上传的按上传时间，添加进来的按添加时间）。
@@ -75,18 +75,20 @@ public class SettlementStatementService {
      * </ul>
      * 上传时 {@code photo_project} 也会写一行来源选题（AGENTS.md §2.5），按来源算，不重复计。
      * {@code photoCondition} 用别名 {@code ph} 写，两路都套上，按姓名筛选时不用先展开全部图片。
-     * 结果列：photo_id, photographer_name, uploaded_by, share_link_id, request_id, project_id, added, added_by, entered_at。
+     * 结果列：photo_id, photographer_name, photographer_student_id, uploaded_by, share_link_id, request_id, project_id,
+     * added, added_by, entered_at。工资计算的「上传张数」也用它（{@code SalaryCalculationService}），口径保持一致。
      */
-    static String projectPhotos(String photoCondition) {
+    public static String projectPhotos(String photoCondition) {
         return """
-                SELECT ph.id AS photo_id, ph.photographer_name, ph.uploaded_by, ph.share_link_id, ph.request_id,
+                SELECT ph.id AS photo_id, ph.photographer_name, ph.photographer_student_id, ph.uploaded_by,
+                       ph.share_link_id, ph.request_id,
                        COALESCE(ph.project_id, r.project_id) AS project_id, 0 AS added, NULL AS added_by,
                        ph.created_at AS entered_at
                 FROM photo ph LEFT JOIN photo_request r ON r.id=ph.request_id
                 WHERE COALESCE(ph.project_id, r.project_id) IS NOT NULL AND %1$s
                 UNION ALL
-                SELECT ph.id, ph.photographer_name, ph.uploaded_by, ph.share_link_id, ph.request_id,
-                       pp.project_id, 1, pp.added_by, pp.created_at
+                SELECT ph.id, ph.photographer_name, ph.photographer_student_id, ph.uploaded_by,
+                       ph.share_link_id, ph.request_id, pp.project_id, 1, pp.added_by, pp.created_at
                 FROM photo_project pp
                 JOIN photo ph ON ph.id=pp.photo_id
                 LEFT JOIN photo_request r ON r.id=ph.request_id

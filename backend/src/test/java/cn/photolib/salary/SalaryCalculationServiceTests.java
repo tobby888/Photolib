@@ -4,7 +4,6 @@ import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.permission.DataScope;
 import cn.photolib.permission.PermissionCode;
-import cn.photolib.salary.SalaryCalculationService.Basis;
 import cn.photolib.salary.SalaryCalculationService.CalculationSummary;
 import cn.photolib.salary.SalaryCalculationService.Detail;
 import cn.photolib.salary.SalaryCalculationService.Line;
@@ -104,22 +103,83 @@ class SalaryCalculationServiceTests {
         worklog(request(ongoing), null, "甲", "S-JIA", 600, 0, "CONFIRMED");
         adoptions(before, "甲", "S-JIA", 9);
 
-        List<Line> lines = mine(salaries.compute(FROM, TO));
+        List<Line> lines = mine(salaries.compute(FROM, TO, SalaryFormula.compile(null)));
 
+        // 默认公式 max(工时 × 20, 被引张数 × 10)。上传张数：被引的图都传进了这个选题。
         assertThat(lines).extracting(Line::projectTitle, Line::memberName, Line::studentId,
-                        Line::confirmedMinutes, Line::adoptedPhotos, Line::hourAmount, Line::adoptionAmount,
-                        Line::salaryAmount, Line::basis, Line::pendingWorklogCount)
+                        Line::confirmedMinutes, Line::adoptedPhotos, Line::uploadedPhotos, Line::salaryAmount,
+                        Line::pendingWorklogCount)
                 .containsExactly(
-                        tuple("运动会", "乙", "S-YI", 30, 5, money("10.00"), money("50.00"), money("50.00"), Basis.ADOPTIONS, 0),
-                        tuple("运动会", "甲", "S-JIA", 120, 3, money("40.00"), money("30.00"), money("40.00"), Basis.HOURS, 0),
-                        tuple("运动会", "丙", "S-BING", 0, 2, money("0.00"), money("20.00"), money("20.00"), Basis.ADOPTIONS, 0),
-                        tuple("运动会", "丁", "S-DING", 0, 0, money("0.00"), money("0.00"), money("0.00"), Basis.NONE, 1),
-                        tuple("校报", "老成员", null, 60, 0, money("20.00"), money("0.00"), money("20.00"), Basis.HOURS, 0),
-                        tuple("校报", "甲", "S-JIA", 20, 0, money("6.67"), money("0.00"), money("6.67"), Basis.HOURS, 0),
-                        tuple("两者相同", "甲", "S-JIA", 30, 1, money("10.00"), money("10.00"), money("10.00"), Basis.EQUAL, 0));
+                        tuple("运动会", "乙", "S-YI", 30, 5, 5, money("50.00"), 0),
+                        tuple("运动会", "甲", "S-JIA", 120, 3, 3, money("40.00"), 0),
+                        tuple("运动会", "丙", "S-BING", 0, 2, 2, money("20.00"), 0),
+                        tuple("运动会", "丁", "S-DING", 0, 0, 0, money("0.00"), 1),
+                        tuple("校报", "老成员", null, 60, 0, 0, money("20.00"), 0),
+                        tuple("校报", "甲", "S-JIA", 20, 0, 0, money("6.67"), 0),
+                        tuple("两者相同", "甲", "S-JIA", 30, 1, 1, money("10.00"), 0));
         // 校区取工时的需求校区和被引图片的校区；链接申报的工时没有校区。
         assertThat(lines.get(1).campus()).isEqualTo("工资校区");
         assertThat(lines.get(3).pendingMinutes()).isEqualTo(120);
+    }
+
+    @Test
+    void aCustomFormulaUsesEveryField() {
+        long sports = project("运动会", "COMPLETED", LocalDateTime.of(2026, 10, 10, 18, 0));
+        long sportsRequest = request(sports);
+        // 甲：拍摄 2 小时、修图 1 小时（两条），被引 2 张，另外又有 3 张没被引的图添加进了相册。
+        worklog(sportsRequest, null, "甲", "S-JIA", 120, 0, "CONFIRMED");
+        worklog(sportsRequest, null, "甲", "S-JIA", 0, 60, "CONFIRMED");
+        worklog(sportsRequest, null, "甲", "S-JIA", 30, 0, "SUBMITTED");
+        adoptions(sports, "甲", "S-JIA", 2);
+        for (long photo : photos(null, "甲", "S-JIA", 3)) albumAdd(photo, sports);
+        // 乙只有上传、没有工时也没有被引：不算「有记录」，不出现。
+        photos(sports, "乙", "S-YI", 4);
+
+        String formula = "拍摄时长 * 25 + 修图时长 * 15 + 被引张数 * 10 + 上传张数 + 工时条数 * 100"
+                + " + if(待审核条数 > 0, 1000, 0) + 待审核时长 * 2";
+        List<Line> lines = mine(salaries.compute(FROM, TO, SalaryFormula.compile(formula)));
+
+        // 50 + 15 + 20 + 5 + 200 + 1000 + 1 = 1291。
+        assertThat(lines).singleElement().satisfies(line -> {
+            assertThat(line.memberName()).isEqualTo("甲");
+            assertThat(line.uploadedPhotos()).isEqualTo(5);
+            assertThat(line.confirmedWorklogCount()).isEqualTo(2);
+            assertThat(line.salaryAmount()).isEqualByComparingTo("1291.00");
+        });
+        // 公式算不下去时报出是哪个选题、哪个人（先把库里别的测试留下的同期选题挪走）。
+        isolateRange();
+        assertThatThrownBy(() -> salaries.compute(FROM, TO, SalaryFormula.compile("工时 / (被引张数 - 2)")))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("「运动会」的 甲").hasMessageContaining("除数为 0");
+    }
+
+    @Test
+    void formulaCheckAndReferenceForTheEditor() {
+        var reference = salaries.formulaReference(minister);
+        assertThat(reference.defaultFormula()).isEqualTo(SalaryFormula.DEFAULT);
+        assertThat(reference.variables()).extracting(SalaryCalculationService.VariableInfo::name)
+                .contains("工时", "拍摄时长", "修图时长", "被引张数", "上传张数");
+        assertThat(reference.functions()).extracting(SalaryCalculationService.FunctionInfo::name)
+                .contains("max", "min", "round", "if");
+
+        var ok = salaries.check(" max(拍摄时长 * 30, 被引张数 * 10) ", minister);
+        assertThat(ok.valid()).isTrue();
+        assertThat(ok.formula()).isEqualTo("max(拍摄时长 * 30, 被引张数 * 10)");
+        assertThat(ok.variables()).containsExactly("拍摄时长", "被引张数");
+        assertThat(ok.sampleSalary()).isEqualByComparingTo("90.00");
+        assertThat(ok.sampleProcess()).isEqualTo("max(3 × 30, 5 × 10) = 90.00");
+
+        var bad = salaries.check("max(工时 * 20", minister);
+        assertThat(bad.valid()).isFalse();
+        assertThat(bad.error()).contains("少了右括号");
+        assertThat(bad.position()).isEqualTo(11);
+
+        // 写法没错、只是示例值下除以 0：可以用，但提示一下。
+        var risky = salaries.check("工时 / (被引张数 - 5)", minister);
+        assertThat(risky.valid()).isTrue();
+        assertThat(risky.error()).contains("除数为 0");
+
+        assertThatThrownBy(() -> salaries.calculate(FROM, TO, "工资 * 2", minister))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("工资公式有误").hasMessageContaining("第 1 个字符");
     }
 
     @Test
@@ -133,14 +193,14 @@ class SalaryCalculationServiceTests {
         worklog(request(paper), null, "甲", "S-JIA", 30, 0, "CONFIRMED");
         isolateRange();
 
-        CalculationSummary summary = salaries.calculate(FROM, TO, minister);
+        CalculationSummary summary = salaries.calculate(FROM, TO, null, minister);
         assertThat(summary.projectCount()).isEqualTo(2);
         assertThat(summary.memberCount()).isEqualTo(2);
         assertThat(summary.lineCount()).isEqualTo(3);
         assertThat(summary.totalAmount()).isEqualByComparingTo("70.00");
         assertThat(summary.pendingWorklogCount()).isEqualTo(1);
-        assertThat(summary.hourlyRate()).isEqualByComparingTo("20");
-        assertThat(summary.adoptionRate()).isEqualByComparingTo("10");
+        assertThat(summary.formula()).isEqualTo(SalaryFormula.DEFAULT);
+        assertThat(salaries.formulaReference(minister).lastFormula()).isEqualTo(SalaryFormula.DEFAULT);
         assertThat(summary.createdByName()).isEqualTo("工资部长");
         assertThat(salaries.list(10, minister)).extracting(CalculationSummary::id).contains(summary.id());
 
@@ -152,6 +212,9 @@ class SalaryCalculationServiceTests {
         assertThat(detail.members()).extracting(MemberTotal::memberName, MemberTotal::projectCount,
                         MemberTotal::confirmedMinutes, MemberTotal::salaryAmount, MemberTotal::pendingWorklogCount)
                 .containsExactly(tuple("乙", 1, 0, money("40.00"), 0), tuple("甲", 2, 90, money("30.00"), 1));
+        // 计算过程用快照里的公式和数值现渲染。
+        assertThat(detail.projects().get(0).lines()).extracting(Line::process)
+                .containsExactly("max(0 × 20, 4 × 10) = 40.00", "max(1 × 20, 0 × 10) = 20.00");
 
         byte[] bytes = SalaryWorkbook.write(detail);
         try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(bytes))) {
@@ -167,16 +230,19 @@ class SalaryCalculationServiceTests {
             Row jia = sports1.getRow(header + 2);
             assertThat(jia.getCell(1).getStringCellValue()).isEqualTo("甲");
             assertThat(jia.getCell(6).getNumericCellValue()).isEqualTo(1.0);
-            assertThat(jia.getCell(7).getNumericCellValue()).isEqualTo(20.0);
-            assertThat(jia.getCell(10).getNumericCellValue()).isEqualTo(20.0);
-            assertThat(jia.getCell(11).getStringCellValue()).isEqualTo("按工时");
-            assertThat(jia.getCell(12).getNumericCellValue()).isEqualTo(1.0);
+            assertThat(jia.getCell(7).getNumericCellValue()).isEqualTo(0.0);
+            assertThat(jia.getCell(9).getNumericCellValue()).isEqualTo(1.0);
+            assertThat(jia.getCell(10).getStringCellValue()).isEqualTo("max(1 × 20, 0 × 10) = 20.00");
+            assertThat(jia.getCell(11).getNumericCellValue()).isEqualTo(20.0);
             Row yi = sports1.getRow(header + 1);
             assertThat(yi.getCell(1).getStringCellValue()).isEqualTo("乙");
-            assertThat(yi.getCell(10).getNumericCellValue()).isEqualTo(40.0);
+            assertThat(yi.getCell(8).getNumericCellValue()).isEqualTo(4.0);
+            assertThat(yi.getCell(11).getNumericCellValue()).isEqualTo(40.0);
             Row total = sports1.getRow(header + 3);
             assertThat(total.getCell(1).getStringCellValue()).isEqualTo("合计");
-            assertThat(total.getCell(10).getNumericCellValue()).isEqualTo(60.0);
+            assertThat(total.getCell(11).getNumericCellValue()).isEqualTo(60.0);
+            // 计算规则里写着这次用的公式。
+            assertThat(sports1.getRow(1).getCell(1).getStringCellValue()).contains(SalaryFormula.DEFAULT);
             // 标题以 = 开头不能被当成公式。
             assertThat(workbook.getSheet("02 =校报").getRow(0).getCell(0).getStringCellValue()).isEqualTo("'=校报");
 
@@ -184,7 +250,7 @@ class SalaryCalculationServiceTests {
             int summaryHeader = headerRow(summarySheet);
             assertThat(cells(summarySheet.getRow(summaryHeader)))
                     .containsExactlyElementsOf(SalaryWorkbook.SUMMARY_HEADERS);
-            assertThat(summarySheet.getRow(summaryHeader + 3).getCell(9).getNumericCellValue()).isEqualTo(70.0);
+            assertThat(summarySheet.getRow(summaryHeader + 3).getCell(11).getNumericCellValue()).isEqualTo(70.0);
         }
         assertThat(SalaryWorkbook.fileName(summary)).isEqualTo("工资计算-2026-10-01至2026-10-31.xlsx");
 
@@ -199,12 +265,12 @@ class SalaryCalculationServiceTests {
         AuthenticatedUser manager = new AuthenticatedUser(ownerId, "salary-m", "校区负责人", UserRole.CAMPUS_MANAGER,
                 campusId, false, 3L, "CAMPUS_MANAGER", "负责人", DataScope.CAMPUS,
                 EnumSet.of(PermissionCode.SALARY_CALCULATE), Set.of(campusId));
-        assertThatThrownBy(() -> salaries.calculate(FROM, TO, manager)).isInstanceOf(BusinessException.class)
+        assertThatThrownBy(() -> salaries.calculate(FROM, TO, null, manager)).isInstanceOf(BusinessException.class)
                 .hasMessageContaining("校区范围");
         assertThatThrownBy(() -> salaries.list(10, manager)).isInstanceOf(BusinessException.class);
-        assertThatThrownBy(() -> salaries.calculate(TO, FROM, minister)).isInstanceOf(BusinessException.class)
+        assertThatThrownBy(() -> salaries.calculate(TO, FROM, null, minister)).isInstanceOf(BusinessException.class)
                 .hasMessageContaining("不能早于");
-        assertThatThrownBy(() -> salaries.calculate(FROM, FROM.plusYears(4), minister))
+        assertThatThrownBy(() -> salaries.calculate(FROM, FROM.plusYears(4), null, minister))
                 .isInstanceOf(BusinessException.class);
     }
 
@@ -226,12 +292,17 @@ class SalaryCalculationServiceTests {
     }
 
     @Test
-    void amountsRoundToCents() {
-        assertThat(SalaryCalculationService.hourAmount(1, new BigDecimal("20"))).isEqualByComparingTo("0.33");
-        assertThat(SalaryCalculationService.hourAmount(2, new BigDecimal("20"))).isEqualByComparingTo("0.67");
-        assertThat(SalaryCalculationService.hourAmount(90, new BigDecimal("20"))).isEqualByComparingTo("30.00");
-        assertThat(SalaryCalculationService.adoptionAmount(7, new BigDecimal("10"))).isEqualByComparingTo("70.00");
-        assertThat(SalaryCalculationService.basis(BigDecimal.ZERO, BigDecimal.ZERO)).isEqualTo(Basis.NONE);
+    void hoursAreExactBeforeTheFormulaRounds() {
+        SalaryFormula formula = SalaryFormula.compile(SalaryFormula.DEFAULT);
+        // 1 分钟 × 20 元/小时 = 0.333… → 0.33；2 分钟 → 0.67；90 分钟 → 30。
+        assertThat(formula.salary(SalaryCalculationService.values(1, 0, 1, 0, 0, 0, 0))).isEqualByComparingTo("0.33");
+        assertThat(formula.salary(SalaryCalculationService.values(1, 1, 1, 0, 0, 0, 0))).isEqualByComparingTo("0.67");
+        assertThat(formula.salary(SalaryCalculationService.values(60, 30, 1, 0, 0, 0, 0))).isEqualByComparingTo("30.00");
+        assertThat(formula.salary(SalaryCalculationService.values(0, 0, 0, 0, 0, 7, 0))).isEqualByComparingTo("70.00");
+        assertThat(SalaryCalculationService.values(90, 30, 2, 1, 45, 3, 8))
+                .containsEntry(SalaryFormula.Variable.TOTAL_HOURS, new BigDecimal("2"))
+                .containsEntry(SalaryFormula.Variable.PENDING_HOURS, new BigDecimal("0.75"))
+                .containsEntry(SalaryFormula.Variable.UPLOADED_PHOTOS, new BigDecimal("8"));
     }
 
     // ---- 造数 ----
@@ -302,6 +373,27 @@ class SalaryCalculationServiceTests {
 
     /** {@code count} 张拍摄者为 {@code name} 的图片传进 {@code project} 并被引用。 */
     private List<Long> adoptions(long project, String name, String studentId, int count) {
+        List<Long> photos = photos(project, name, studentId, count);
+        for (long photoId : photos) {
+            jdbc.sql("""
+                    INSERT INTO adoption(id, project_id, photo_id, photographer_student_id, photographer_name,
+                                         adopted_by, adopted_at)
+                    VALUES (:id, :projectId, :photoId, :studentId, :name, :userId, :adoptedAt)
+                    """).param("id", base + sequence++).param("projectId", project).param("photoId", photoId)
+                    .param("studentId", studentId).param("name", name).param("userId", ownerId)
+                    .param("adoptedAt", LocalDateTime.of(2026, 10, 6, 10, 0)).update();
+        }
+        return photos;
+    }
+
+    /** 把图片添加进 {@code project} 的相册（从图库添加）。 */
+    private void albumAdd(long photoId, long project) {
+        jdbc.sql("INSERT INTO photo_project(photo_id, project_id, added_by) VALUES (:photoId, :projectId, :userId)")
+                .param("photoId", photoId).param("projectId", project).param("userId", ownerId).update();
+    }
+
+    /** {@code count} 张拍摄者为 {@code name} 的图片，{@code project} 为空时是图库里直接上传的。 */
+    private List<Long> photos(Long project, String name, String studentId, int count) {
         List<Long> photos = new ArrayList<>();
         for (int i = 0; i < count; i++) {
             long photoId = base + sequence++;
@@ -316,13 +408,6 @@ class SalaryCalculationServiceTests {
                     .param("takenAt", LocalDateTime.of(2026, 10, 1, 9, 0))
                     .param("objectKey", "salary-" + photoId + ".jpg").param("sha256", String.format("%064x", photoId))
                     .update();
-            jdbc.sql("""
-                    INSERT INTO adoption(id, project_id, photo_id, photographer_student_id, photographer_name,
-                                         adopted_by, adopted_at)
-                    VALUES (:id, :projectId, :photoId, :studentId, :name, :userId, :adoptedAt)
-                    """).param("id", base + sequence++).param("projectId", project).param("photoId", photoId)
-                    .param("studentId", studentId).param("name", name).param("userId", ownerId)
-                    .param("adoptedAt", LocalDateTime.of(2026, 10, 6, 10, 0)).update();
             photos.add(photoId);
         }
         return photos;

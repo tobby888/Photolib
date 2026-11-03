@@ -1,10 +1,12 @@
 package cn.photolib.salary;
 
 import cn.photolib.audit.AuditAction;
+import cn.photolib.audit.AuditSkip;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.ApiResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
@@ -40,7 +42,23 @@ public class SalaryCalculationController {
     @PreAuthorize("hasAuthority('SALARY_CALCULATE')")
     ApiResponse<SalaryCalculationService.CalculationSummary> calculate(@Valid @RequestBody CalculateRequest request,
                                                                       @AuthenticationPrincipal AuthenticatedUser principal) {
-        return ApiResponse.ok(salaries.calculate(request.from(), request.to(), principal));
+        return ApiResponse.ok(salaries.calculate(request.from(), request.to(), request.formula(), principal));
+    }
+
+    /** 公式编辑器：可用的字段、函数，默认公式和最近一次计算用的公式。 */
+    @GetMapping("/formula")
+    @PreAuthorize("hasAuthority('SALARY_CALCULATE')")
+    ApiResponse<SalaryCalculationService.FormulaReference> formula(@AuthenticationPrincipal AuthenticatedUser principal) {
+        return ApiResponse.ok(salaries.formulaReference(principal));
+    }
+
+    /** 检查公式并用示例值试算。只读，POST 只是因为公式放在请求体里更省事（不用转义）。 */
+    @AuditSkip("只读校验，不落库；编辑器每改一次都会请求")
+    @PostMapping("/formula/check")
+    @PreAuthorize("hasAuthority('SALARY_CALCULATE')")
+    ApiResponse<SalaryCalculationService.FormulaCheck> check(@Valid @RequestBody FormulaRequest request,
+                                                             @AuthenticationPrincipal AuthenticatedUser principal) {
+        return ApiResponse.ok(salaries.check(request.formula(), principal));
     }
 
     @GetMapping("/{id}")
@@ -71,5 +89,9 @@ public class SalaryCalculationController {
         return ApiResponse.ok();
     }
 
-    record CalculateRequest(@NotNull LocalDate from, @NotNull LocalDate to) {}
+    /** {@code formula} 为空时用默认公式。 */
+    record CalculateRequest(@NotNull LocalDate from, @NotNull LocalDate to,
+                            @Size(max = SalaryFormula.MAX_LENGTH) String formula) {}
+
+    record FormulaRequest(@Size(max = SalaryFormula.MAX_LENGTH) String formula) {}
 }
