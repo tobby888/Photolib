@@ -173,7 +173,9 @@ class SettlementMailRendererTests {
                 new UploadSource(UploadChannel.SELF, null, null, 5),
                 new UploadSource(UploadChannel.SHARE_LINK, null, "现场<A>", 3),
                 new UploadSource(UploadChannel.REQUEST_PROXY, "李负责人", null, 3),
-                new UploadSource(UploadChannel.PROJECT_ADDED, null, null, 1)));
+                new UploadSource(UploadChannel.PROJECT_ADDED, null, null, 1),
+                new UploadSource(UploadChannel.ALBUM_ADDED, "部长丁", null, 4),
+                new UploadSource(UploadChannel.ALBUM_ADDED, null, null, 1)));
         ProjectLine paper = new ProjectLine(78, "校报", false, null, 1,
                 LocalDateTime.of(2026, 10, 9, 9, 0), LocalDateTime.of(2026, 10, 9, 9, 0), List.of(
                 new UploadSource(UploadChannel.SHARE_LINK, null, null, 1)));
@@ -191,18 +193,22 @@ class SettlementMailRendererTests {
         // 两组分开，已结束的在前。
         assertThat(html.indexOf("已结束的选题 · 计入本期清算")).isPositive()
                 .isLessThan(html.indexOf("未结束的选题 · 不计入本期"));
-        assertThat(html).contains("运动会&lt;开幕&gt;").contains("<b>12</b> 张").contains("2026-10-02 至 2026-10-05 上传")
+        assertThat(html).contains("运动会&lt;开幕&gt;").contains("<b>12</b> 张")
+                .contains("2026-10-02 至 2026-10-05 上传 / 添加").contains("2026-10-12 至 2026-10-13 上传<")
                 .contains(">2026-10-20<");
-        // 上传方式：本人 / 上传链接 / 代传 / 添加到选题，名字和链接名都转义。
+        // 上传方式：本人 / 上传链接 / 代传 / 直接传到选题 / 从图库添加，名字和链接名都转义。
         assertThat(html).contains("本人上传 <b>5</b> 张").contains("通过上传链接「现场&lt;A&gt;」上传 <b>3</b> 张")
-                .contains("李负责人 代传（需求交付） <b>3</b> 张").contains("他人 添加到选题 <b>1</b> 张")
-                .contains("通过上传链接上传 <b>1</b> 张").contains("采编丙 添加到选题 <b>2</b> 张");
+                .contains("李负责人 代传（需求交付） <b>3</b> 张").contains("他人 直接传到选题 <b>1</b> 张")
+                .contains("通过上传链接上传 <b>1</b> 张").contains("采编丙 直接传到选题 <b>2</b> 张")
+                .contains("部长丁 从图库 / 其他选题添加进选题 <b>4</b> 张")
+                .contains(">从图库 / 其他选题添加进选题 <b>1</b> 张");
         assertThat(html).contains(">进行中<").contains("2026-11-02 结束（晚于本期）");
         assertThat(rendered.plainText())
                 .contains("本期结束的参与选题：1 个，上传图片 12 张")
                 .contains("尚未结束的参与选题：2 个，已上传图片 3 张（不计入本期）")
                 .contains("- [已结束] 运动会<开幕>（2026-10-20）：上传 12 张，本人上传 5 张；通过上传链接「现场<A>」上传 3 张；"
-                        + "李负责人 代传（需求交付） 3 张；他人 添加到选题 1 张")
+                        + "李负责人 代传（需求交付） 3 张；他人 直接传到选题 1 张；"
+                        + "部长丁 从图库 / 其他选题添加进选题 4 张；从图库 / 其他选题添加进选题 1 张")
                 .contains("- [未结束] 校报（进行中）：上传 1 张，通过上传链接上传 1 张");
         assertThat(SettlementMailRenderer.render("s", "{{projectTable}}", statement(List.of(), List.of()), BRAND,
                 "部长", null, NOW, Target.PREVIEW).html()).contains("清算周期内没有参与的选题。");

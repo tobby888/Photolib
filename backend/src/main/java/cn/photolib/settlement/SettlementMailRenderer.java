@@ -7,6 +7,7 @@ import cn.photolib.settlement.SettlementStatementService.ProjectLine;
 import cn.photolib.settlement.SettlementStatementService.ReviewEvent;
 import cn.photolib.settlement.SettlementStatementService.Statement;
 import cn.photolib.settlement.SettlementStatementService.Totals;
+import cn.photolib.settlement.SettlementStatementService.UploadChannel;
 import cn.photolib.settlement.SettlementStatementService.UploadSource;
 import cn.photolib.settlement.SettlementStatementService.WorklogLine;
 import org.springframework.web.util.HtmlUtils;
@@ -226,7 +227,10 @@ public final class SettlementMailRenderer {
                     .append("<td valign=\"top\" style=\"padding:8px 10px;border-bottom:1px solid #eef2f6;color:#1f2d3d;white-space:nowrap;\"><b>")
                     .append(line.photoCount()).append("</b> 张<div style=\"font-size:11px;color:").append(MUTED)
                     .append(";line-height:1.6;white-space:normal;\">").append(escape(first.equals(last) ? first : first + " 至 " + last))
-                    .append(" 上传</div></td>")
+                    // 添加进选题的图片按添加时间算。
+                    .append(line.sources().stream().anyMatch(source -> source.channel() == UploadChannel.ALBUM_ADDED)
+                            ? " 上传 / 添加" : " 上传")
+                    .append("</div></td>")
                     .append("<td valign=\"top\" style=\"padding:8px 10px;border-bottom:1px solid #eef2f6;color:#1f2d3d;\">");
             for (UploadSource source : line.sources()) {
                 html.append("<div style=\"line-height:1.8;\">")
@@ -248,7 +252,10 @@ public final class SettlementMailRenderer {
             case SELF -> "本人上传";
             case SHARE_LINK -> "通过上传链接" + (source.shareLinkName() == null ? "" : "「" + source.shareLinkName() + "」") + "上传";
             case REQUEST_PROXY -> uploader + " 代传（需求交付）";
-            case PROJECT_ADDED -> uploader + " 添加到选题";
+            case PROJECT_ADDED -> uploader + " 直接传到选题";
+            // 图片原本不在这个选题：从图库或别的选题添加进来。V73 之前添加的不知道是谁加的。
+            case ALBUM_ADDED -> (source.uploaderName() == null ? "" : source.uploaderName() + " ")
+                    + "从图库 / 其他选题添加进选题";
         };
     }
 
@@ -257,6 +264,7 @@ public final class SettlementMailRenderer {
             case SELF -> GREEN;
             case SHARE_LINK -> "#4682B4";
             case REQUEST_PROXY, PROJECT_ADDED -> AMBER;
+            case ALBUM_ADDED -> "#7a5af8";
         };
     }
 
@@ -569,7 +577,7 @@ public final class SettlementMailRenderer {
         map.put("periodFrom", "清算开始日期");
         map.put("periodTo", "清算结束日期");
         map.put("summaryCards", "汇总卡片（已确认工时、待审核、被退回、被引图片）");
-        map.put("projectTable", "参与的选题（分「已结束」和「未结束」两组，列出每个选题的上传张数、上传方式：本人 / 上传链接 / 他人代传 / 他人添加，选题可点开）");
+        map.put("projectTable", "参与的选题（分「已结束」和「未结束」两组，列出每个选题的上传张数、上传方式：本人 / 上传链接 / 他人代传 / 他人直接传 / 从图库或其他选题添加，选题可点开）");
         map.put("worklogTable", "工时详情（每条的申报时间、时长、状态、退回原因和审核记录）");
         map.put("adoptionTable", "被引详情表（图片可点开详情页）");
         map.put("confirmedHours", "已确认工时合计");

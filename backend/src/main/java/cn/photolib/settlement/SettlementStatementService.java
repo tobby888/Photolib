@@ -32,8 +32,9 @@ import java.util.Map;
  *
  * <p><b>参与的选题</b>分两组都列出来（{@link ProjectLine#ended()}）：已结束 = 期内结束的选题，拍摄者姓名是他
  * 的图全部算；未结束 = 到清算期末还没结束的选题（进行中，或期末之后才结束），算期末之前上传的图。
- * 取消的选题不列。只算已经传完（处理中、可用、已归档）的图片。每个选题再按 {@link UploadChannel}
- * 标出这些图是本人传的、通过上传链接传的，还是别人代传 / 添加的。</p>
+ * 取消的选题不列。只算已经传完（处理中、可用、已归档）的图片。图片属于哪些选题见 {@link #projectPhotos}：
+ * 除了上传时的来源选题，后来从图库 / 别的选题添加进相册的也算参与。每个选题再按 {@link UploadChannel}
+ * 标出这些图是本人传的、通过上传链接传的、别人代传的，还是后来添加进选题的。</p>
  *
  * <p>{@link #recipients} 和 {@link #statement} 两处 SQL 口径必须一致，改一处就改另一处。</p>
  */
@@ -53,13 +54,46 @@ public class SettlementStatementService {
     private static final String ONGOING_PROJECT = """
             (p.deleted=0 AND (p.status IN ('DRAFT','ACTIVE')
              OR (p.status='COMPLETED' AND p.completed_at >= :toExclusive)))""";
-    /** 参与的选题里算哪些图：期内结束的选题全算，未结束的只算期末之前上传的。 */
-    private static final String PARTICIPATION_PHOTO = """
-            ph.deleted=0 AND ph.status IN (%s)
-            AND (%s OR (%s AND ph.created_at < :toExclusive))""".formatted(UPLOADED_STATUSES, SETTLED_PROJECT,
-            ONGOING_PROJECT);
+    /** 传完了、没删的图片（别名 {@code ph}），{@link #projectPhotos} 两路都套这个条件。 */
+    private static final String UPLOADED_PHOTO = "ph.deleted=0 AND ph.status IN (%s)".formatted(UPLOADED_STATUSES);
+    /**
+     * 参与的选题里算哪些图（{@link #projectPhotos} 的结果 {@code x} 联选题 {@code p}）：期内结束的选题全算，
+     * 未结束的只算期末之前进入选题的（上传的按上传时间，添加进来的按添加时间）。
+     */
+    private static final String PARTICIPATION = "(%s OR (%s AND x.entered_at < :toExclusive))"
+            .formatted(SETTLED_PROJECT, ONGOING_PROJECT);
 
     private final JdbcClient jdbc;
+
+    /**
+     * 图片进了哪些选题，一行一个「图片 × 选题」，两路合起来：
+     * <ul>
+     *   <li>来源选题（{@code added=0}）：上传时挂的选题，只挂需求的取需求的选题。进入时间是上传时间。</li>
+     *   <li>后来添加进去的选题相册（{@code added=1}）：{@code photo_project} 里来源选题以外的行——从图库添加、
+     *       从别的选题复制 / 移动过来的。图库里直接上传、不属于任何选题的图片只会走这一路。
+     *       进入时间是添加时间，{@code added_by} 是添加的账号（V73 之前添加的为空）。</li>
+     * </ul>
+     * 上传时 {@code photo_project} 也会写一行来源选题（AGENTS.md §2.5），按来源算，不重复计。
+     * {@code photoCondition} 用别名 {@code ph} 写，两路都套上，按姓名筛选时不用先展开全部图片。
+     * 结果列：photo_id, photographer_name, uploaded_by, share_link_id, request_id, project_id, added, added_by, entered_at。
+     */
+    static String projectPhotos(String photoCondition) {
+        return """
+                SELECT ph.id AS photo_id, ph.photographer_name, ph.uploaded_by, ph.share_link_id, ph.request_id,
+                       COALESCE(ph.project_id, r.project_id) AS project_id, 0 AS added, NULL AS added_by,
+                       ph.created_at AS entered_at
+                FROM photo ph LEFT JOIN photo_request r ON r.id=ph.request_id
+                WHERE COALESCE(ph.project_id, r.project_id) IS NOT NULL AND %1$s
+                UNION ALL
+                SELECT ph.id, ph.photographer_name, ph.uploaded_by, ph.share_link_id, ph.request_id,
+                       pp.project_id, 1, pp.added_by, pp.created_at
+                FROM photo_project pp
+                JOIN photo ph ON ph.id=pp.photo_id
+                LEFT JOIN photo_request r ON r.id=ph.request_id
+                WHERE (COALESCE(ph.project_id, r.project_id) IS NULL
+                       OR pp.project_id <> COALESCE(ph.project_id, r.project_id))
+                  AND %1$s""".formatted(photoCondition);
+    }
 
     static void validateRange(LocalDate from, LocalDate to) {
         if (from == null || to == null) throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择清算时间范围");
@@ -92,20 +126,19 @@ public class SettlementStatementService {
                     GROUP BY TRIM(a.photographer_name)
                 ),
                 up AS (
-                    SELECT x.name,
-                           SUM(x.ended) AS photos,
-                           COUNT(DISTINCT CASE WHEN x.ended=1 THEN x.project_id END) AS projects,
-                           SUM(1 - x.ended) AS ongoing_photos,
-                           COUNT(DISTINCT CASE WHEN x.ended=0 THEN x.project_id END) AS ongoing_projects
+                    SELECT y.name,
+                           SUM(y.ended) AS photos,
+                           COUNT(DISTINCT CASE WHEN y.ended=1 THEN y.project_id END) AS projects,
+                           SUM(1 - y.ended) AS ongoing_photos,
+                           COUNT(DISTINCT CASE WHEN y.ended=0 THEN y.project_id END) AS ongoing_projects
                     FROM (
-                        SELECT TRIM(ph.photographer_name) AS name, p.id AS project_id,
+                        SELECT TRIM(x.photographer_name) AS name, p.id AS project_id,
                                CASE WHEN %1$s THEN 1 ELSE 0 END AS ended
-                        FROM photo ph
-                        LEFT JOIN photo_request r ON r.id=ph.request_id
-                        JOIN project p ON p.id=COALESCE(ph.project_id, r.project_id)
+                        FROM (%3$s) x
+                        JOIN project p ON p.id=x.project_id
                         WHERE %2$s
-                    ) x
-                    GROUP BY x.name
+                    ) y
+                    GROUP BY y.name
                 ),
                 names AS (
                     SELECT TRIM(display_name) AS name, COUNT(*) AS cnt
@@ -126,7 +159,7 @@ public class SettlementStatementService {
                 LEFT JOIN names n ON n.name=TRIM(u.display_name)
                 WHERE u.deleted=0 AND u.enabled=TRUE
                 ORDER BY TRIM(u.display_name), u.id
-                """.formatted(SETTLED_PROJECT, PARTICIPATION_PHOTO))
+                """.formatted(SETTLED_PROJECT, PARTICIPATION, projectPhotos(UPLOADED_PHOTO)))
                 .param("fromDate", from).param("toExclusive", to.plusDays(1))
                 .query((rs, n) -> new Recipient(rs.getLong(1), rs.getString(2), rs.getString(3),
                         blankToNull(rs.getString(4)), rs.getString(5), rs.getString(6),
@@ -198,34 +231,44 @@ public class SettlementStatementService {
         record Row(long projectId, String projectTitle, boolean ended, LocalDateTime completedAt,
                    UploadChannel channel, String uploaderName, String shareLinkName, int photoCount,
                    LocalDateTime first, LocalDateTime last) {}
+        // actor：上传的账号；添加进相册的图片是添加的账号。上传链接的 uploaded_by 是开链接的人，不展示。
         List<Row> rows = jdbc.sql("""
-                SELECT x.project_id, x.project_title, x.ended, x.completed_at, x.channel, x.uploader_name,
-                       x.link_name, COUNT(*), MIN(x.created_at), MAX(x.created_at)
+                SELECT y.project_id, y.project_title, y.ended, y.completed_at, y.channel, y.actor_name,
+                       y.link_name, COUNT(*), MIN(y.entered_at), MAX(y.entered_at), y.actor_id
                 FROM (
-                    SELECT p.id AS project_id, p.title AS project_title, p.completed_at, ph.created_at,
+                    SELECT p.id AS project_id, p.title AS project_title, p.completed_at, x.entered_at,
                            CASE WHEN %s THEN 1 ELSE 0 END AS ended,
-                           CASE WHEN ph.share_link_id IS NOT NULL THEN 'SHARE_LINK'
-                                WHEN ph.uploaded_by = :userId THEN 'SELF'
-                                WHEN ph.request_id IS NOT NULL THEN 'REQUEST_PROXY'
+                           CASE WHEN x.added=1 THEN 'ALBUM_ADDED'
+                                WHEN x.share_link_id IS NOT NULL THEN 'SHARE_LINK'
+                                WHEN x.uploaded_by = :userId THEN 'SELF'
+                                WHEN x.request_id IS NOT NULL THEN 'REQUEST_PROXY'
                                 ELSE 'PROJECT_ADDED' END AS channel,
-                           ph.uploaded_by AS uploader_id, u.display_name AS uploader_name,
-                           ph.share_link_id AS link_id, l.name AS link_name
-                    FROM photo ph
-                    LEFT JOIN photo_request r ON r.id=ph.request_id
-                    JOIN project p ON p.id=COALESCE(ph.project_id, r.project_id)
-                    LEFT JOIN app_user u ON u.id=ph.uploaded_by
-                    LEFT JOIN project_share_link l ON l.id=ph.share_link_id
-                    WHERE TRIM(ph.photographer_name)=:name AND %s
-                ) x
-                GROUP BY x.project_id, x.project_title, x.ended, x.completed_at, x.channel, x.uploader_id,
-                         x.uploader_name, x.link_id, x.link_name
-                """.formatted(SETTLED_PROJECT, PARTICIPATION_PHOTO))
+                           u.id AS actor_id, u.display_name AS actor_name,
+                           l.id AS link_id, l.name AS link_name
+                    FROM (%s) x
+                    JOIN project p ON p.id=x.project_id
+                    LEFT JOIN app_user u ON u.id=CASE WHEN x.added=1 THEN x.added_by ELSE x.uploaded_by END
+                    LEFT JOIN project_share_link l ON l.id=x.share_link_id AND x.added=0
+                    WHERE %s
+                ) y
+                GROUP BY y.project_id, y.project_title, y.ended, y.completed_at, y.channel, y.actor_id,
+                         y.actor_name, y.link_id, y.link_name
+                """.formatted(SETTLED_PROJECT, projectPhotos(UPLOADED_PHOTO + " AND TRIM(ph.photographer_name)=:name"),
+                        PARTICIPATION))
                 .param("userId", recipient.userId()).param("name", recipient.displayName())
                 .param("fromDate", from).param("toExclusive", to.plusDays(1))
-                .query((rs, n) -> new Row(rs.getLong(1), rs.getString(2), rs.getInt(3) == 1,
-                        rs.getObject(4, LocalDateTime.class), UploadChannel.valueOf(rs.getString(5)),
-                        blankToNull(rs.getString(6)), blankToNull(rs.getString(7)), rs.getInt(8),
-                        rs.getObject(9, LocalDateTime.class), rs.getObject(10, LocalDateTime.class)))
+                .query((rs, n) -> {
+                    UploadChannel channel = UploadChannel.valueOf(rs.getString(5));
+                    String actor = blankToNull(rs.getString(6));
+                    // 自己把自己的图添加进选题，写「本人」而不是自己的名字。
+                    if (channel == UploadChannel.ALBUM_ADDED && Long.valueOf(recipient.userId())
+                            .equals(rs.getObject(11, Long.class))) {
+                        actor = "本人";
+                    }
+                    return new Row(rs.getLong(1), rs.getString(2), rs.getInt(3) == 1,
+                            rs.getObject(4, LocalDateTime.class), channel, actor, blankToNull(rs.getString(7)),
+                            rs.getInt(8), rs.getObject(9, LocalDateTime.class), rs.getObject(10, LocalDateTime.class));
+                })
                 .list();
         Map<Long, List<Row>> byProject = new LinkedHashMap<>();
         rows.forEach(row -> byProject.computeIfAbsent(row.projectId(), id -> new ArrayList<>()).add(row));
@@ -355,12 +398,18 @@ public class SettlementStatementService {
         /** 别的账号在需求交付里代传（需求负责人，或者管理员）。 */
         REQUEST_PROXY,
         /** 别的账号不经需求、直接把图传进选题相册（持选题采用权限的管理员、部长、采编）。 */
-        PROJECT_ADDED
+        PROJECT_ADDED,
+        /**
+         * 图片原本不属于这个选题（图库里直接上传的，或者来源是别的选题），后来被添加进这个选题相册：
+         * 从图库添加、从别的选题复制 / 移动（{@code photo_project.added_by}）。
+         */
+        ALBUM_ADDED
     }
 
     /**
      * 一个选题里某一种上传方式的张数。{@code uploaderName}：代传 / 添加图片的账号姓名，
-     * 只有 {@code REQUEST_PROXY}、{@code PROJECT_ADDED} 有；{@code shareLinkName}：上传链接的备注名，
+     * 只有 {@code REQUEST_PROXY}、{@code PROJECT_ADDED}、{@code ALBUM_ADDED} 有（{@code ALBUM_ADDED} 是收件人
+     * 自己添加的写「本人」，V73 之前添加的为空）；{@code shareLinkName}：上传链接的备注名，
      * 只有 {@code SHARE_LINK} 有，且可能为空。
      */
     public record UploadSource(UploadChannel channel, String uploaderName, String shareLinkName, int photoCount) {}

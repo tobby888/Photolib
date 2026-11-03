@@ -30,6 +30,7 @@ import { hasPermission } from '../permissions'
 
 // 只有部长和管理员用得到，按需加载，不拖慢统计页首屏。
 const SettlementMailModal = lazy(() => import('../SettlementMailModal'))
+const SalaryCalculationPanel = lazy(() => import('../SalaryCalculationPanel'))
 
 interface ExportJobView {
   job: { status: 'PENDING' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED'; errorMessage?: string }
@@ -39,24 +40,28 @@ interface ExportJobView {
 const wait = (milliseconds: number) => new Promise(resolve => window.setTimeout(resolve, milliseconds))
 const formatHours = (minutes = 0) => `${Number((minutes / 60).toFixed(2))} 小时`
 
-type StatisticsTab = 'members' | 'adoptions' | 'analysis'
-const TABS: StatisticsTab[] = ['members', 'adoptions', 'analysis']
+type StatisticsTab = 'members' | 'adoptions' | 'analysis' | 'salary'
+const TABS: StatisticsTab[] = ['members', 'adoptions', 'analysis', 'salary']
 
 const DESCRIPTIONS: Record<StatisticsTab, string> = {
   members: '按选题结束时间统计工时，并对应每位成员的被引张数；可按被引张数、校区、工时情况筛选。',
   adoptions: '看图片在什么时候、被哪些选题引用，谁的图被引得多；可按选题、校区、摄影师筛选。',
   analysis: '按工作日期筛选、汇总工时，条件可以自由组合，并用图表看走势与分布。',
+  salary: '按选题结算工资：所选时间内结束的选题，每人取「已确认工时 × 20 元」和「被引张数 × 10 元」中较高的一项。',
 }
 
 export default function StatisticsPage() {
   const { message } = App.useApp()
   const { user } = useAuth()
   const canSendSettlement = hasPermission(user, 'SETTLEMENT_MAIL_SEND')
+  const canCalculateSalary = hasPermission(user, 'SALARY_CALCULATE')
   const [settlementOpen, setSettlementOpen] = useState(false)
   // 页签进 URL：选题详情页「在统计面板分析」带着 ?tab=analysis&projectId= 跳过来，直接落在分析页签并预填选题条件。
   const [searchParams, setSearchParams] = useSearchParams()
   const requestedTab = searchParams.get('tab') as StatisticsTab | null
-  const tab: StatisticsTab = requestedTab && TABS.includes(requestedTab) ? requestedTab : 'members'
+  // 工资计算页签只给有权限的人；没权限时带着 ?tab=salary 进来也落回成员核算。
+  const tab: StatisticsTab = requestedTab && TABS.includes(requestedTab)
+    && (requestedTab !== 'salary' || canCalculateSalary) ? requestedTab : 'members'
   const [initialProjectId] = useState(() => {
     const value = searchParams.get('projectId') || ''
     return /^\d+$/.test(value) ? value : undefined
@@ -139,9 +144,11 @@ export default function StatisticsPage() {
       { key: 'members', label: '成员核算' },
       { key: 'adoptions', label: '被引分析' },
       { key: 'analysis', label: '工时分析' },
+      ...(canCalculateSalary ? [{ key: 'salary', label: '工资计算' }] : []),
     ]} />
     {tab === 'analysis' && <WorklogAnalysisPanel initialProjectId={initialProjectId} />}
     {tab === 'adoptions' && <AdoptionAnalysisPanel />}
+    {tab === 'salary' && canCalculateSalary && <Suspense fallback={null}><SalaryCalculationPanel /></Suspense>}
     {tab === 'members' && <>
     <Card className="filter-card member-filter-card">
       <div className="member-filter-bar">
