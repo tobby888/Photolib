@@ -240,7 +240,7 @@ class PerformanceHttpTests {
                 .andExpect(jsonPath("$.data.stopReason").value("MANUAL"))
                 .andExpect(jsonPath("$.data.stoppedByName").value("性能管理员"));
         assertThat(recorder.active()).isFalse();
-        waitUntil(() -> "COMPLETED".equals(statusOf(id)), 30_000);
+        waitUntilExported(id);
 
         // 库内明细已删，记录与 CSV 保留。
         assertThat(count("perf_snapshot_event", id)).isZero();
@@ -321,7 +321,7 @@ class PerformanceHttpTests {
         snapshots.resume();
 
         assertThat(recorder.sessionId()).isEqualTo(running);
-        waitUntil(() -> "COMPLETED".equals(statusOf(expired)), 30_000);
+        waitUntilExported(expired);
         String eventsKey = jdbc.sql("SELECT events_object_key FROM perf_snapshot_session WHERE id = :id")
                 .param("id", expired).query(String.class).single();
         assertThat(read(eventsKey)).contains("SELECT 1 FROM 停机前").contains("\"1.234\"");
@@ -375,6 +375,16 @@ class PerformanceHttpTests {
 
     private JsonNode data(String body) throws Exception {
         return json.readTree(body).get("data");
+    }
+
+    /**
+     * 等导出线程把这份快照导完：状态变成 COMPLETED **并且**库内明细删完。
+     * 导出是先改状态、再删明细（CSV 已经安全上传，删失败下次启动再清），只等状态的话，
+     * 在慢一点的机器上（CI）断言明细为 0 时导出线程可能还没删到。
+     */
+    private void waitUntilExported(String id) throws InterruptedException {
+        waitUntil(() -> "COMPLETED".equals(statusOf(id))
+                && count("perf_snapshot_event", id) == 0 && count("perf_snapshot_sample", id) == 0, 30_000);
     }
 
     private static void waitUntil(BooleanSupplier condition, long timeoutMillis) throws InterruptedException {
