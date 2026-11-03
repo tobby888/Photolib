@@ -3559,3 +3559,10 @@ body {
   .settlement-history { grid-template-columns: 1fr; }
   .settlement-history-list { max-height: 240px; }
 }
+
+/* 统计面板「工资计算」的公式编辑器：字段 / 函数按钮点一下插到光标处。 */
+.salary-formula-palette { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 4px; margin-top: 8px; }
+.salary-formula-palette > .ant-typography { margin-right: 4px; }
+.salary-formula-palette > .ant-typography:not(:first-child) { margin-left: 8px; }
+.salary-formula-chip { cursor: pointer; user-select: none; margin-inline-end: 0; }
+.salary-formula-status { margin-top: 8px; min-height: 22px; }

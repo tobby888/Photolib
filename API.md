@@ -1772,28 +1772,40 @@ PENDING -> FAILED
 
 ### 12.7 工资计算
 
-统计面板「工资计算」页签。**按选题结算**：只算选题结束时间（`status=COMPLETED` 且 `completed_at` 落在 `[from, to + 1 day)`）在范围内的选题，与成员核算、清算单同一口径。每个选题里每位有记录的成员一行：
+统计面板「工资计算」页签。**按选题结算**：只算选题结束时间（`status=COMPLETED` 且 `completed_at` 落在 `[from, to + 1 day)`）在范围内的选题，与成员核算、清算单同一口径。每个选题里每位有记录的成员一行，工资按**计算时给的公式**算（V74 起；默认公式就是第一版的固定规则）：
 
 ```
-工资 = max(已确认工时（小时）× 20 元, 被引张数 × 10 元)
+max(工时 * 20, 被引张数 * 10)
 ```
 
-- 工时 = 这个选题下（需求填报和上传链接申报）**已确认**工时的拍摄 + 修图分钟数 ÷ 60，不取整；工时工资四舍五入到分。待审核的不计入，只记条数提醒；已退回、草稿不算。
-- 被引张数 = 这个选题里被引用、拍摄者是他的图片张数。
-- 「有记录」= 这个选题里有他的已确认或待审核工时，或有被引图片。只有待审核工时的人也列出（工资 0，依据 `NONE`）。
+**公式字段**（中文名和英文别名都认，英文不分大小写）：
+
+| 字段 | 别名 | 含义 |
+|---|---|---|
+| `工时` | `totalHours` | 已确认工时（拍摄 + 修图），小时，分钟 ÷ 60 不取整 |
+| `拍摄时长` / `修图时长` | `shootingHours` / `retouchingHours` | 已确认工时里的拍摄 / 修图，小时 |
+| `被引张数` | `adoptedPhotos` | 这个选题里被引用、拍摄者是他的图片张数 |
+| `上传张数` | `uploadedPhotos` | 进入这个选题、拍摄者是他的图片张数（上传或添加进来的，口径同清算单「参与的选题」） |
+| `工时条数` | `worklogCount` | 已确认工时条数 |
+| `待审核时长` / `待审核条数` | `pendingHours` / `pendingCount` | 还在待审核的工时（默认公式不用） |
+
+**运算与函数**：`+ - * /`、括号、比较 `> < >= <= == !=`（成立为 1、不成立为 0）；函数 `max(a, b, …)`、`min(a, b, …)`、`round(x)` / `round(x, 位数)`（四舍五入，位数 0～6 的整数常量）、`floor(x)`、`ceil(x)`、`abs(x)`、`if(条件, 成立时, 不成立时)`（只算选中的那一支）；函数也认中文名（最大、最小、四舍五入、向下取整、向上取整、绝对值、如果）。全角括号、逗号和 `×`、`÷` 按半角处理。公式最长 500 字符。结果小于 0 按 0 计，四舍五入到分；某一行算不下去（例如除以 0）整次计算返回 400 并指出是哪个选题、哪个人。公式只在后端解析（`SalaryFormula`，不经过脚本引擎）。
+
+- 「有记录」= 这个选题里有他的已确认或待审核工时，或有被引图片；只有上传、没有工时也没被引的人不列。
 - 成员按学号归并（`member_student_id` / `photographer_student_id`），没有学号的老记录按姓名归并；`memberKey` 是 `id:<学号>` 或 `name:<姓名>`。
-- `basis`：`HOURS`（按工时更高）/ `ADOPTIONS`（按被引更高）/ `EQUAL`（两者相等且大于 0）/ `NONE`（都为 0）。
 
-计算结果是**快照**（`salary_calculation` / `salary_calculation_line`，V73），之后工时再审核、被引再取消都不改它；时薪和单价存在计算上（`hourlyRate` / `adoptionRate`）。要新结果就再算一次。
+计算结果是**快照**（`salary_calculation` / `salary_calculation_line`），连同公式；之后工时再审核、被引再取消都不改它，要新结果就再算一次。明细里每行的 `process`（计算过程，例如 `max(4.5 × 20, 5 × 10) = 90.00`）是查看时用快照里的公式和数值现渲染的，不落库。V73 的老计算回填了等价公式。
 
 全部接口要 `SALARY_CALCULATE`（V73 默认给管理员组、部长组），校区范围的账号即使有这条权限也返回 403。范围最长三年。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/salary-calculations?limit=50` | 计算记录（新的在前，不含已删除）：`id, from, to, hourlyRate, adoptionRate, projectCount, memberCount, lineCount, totalAmount, pendingWorklogCount, createdByName, createdAt` |
-| POST | `/salary-calculations` | `{ from, to }` 计算并保存，返回同上的概况；审计「计算工资」 |
-| GET | `/salary-calculations/{id}` | 明细 `{ calculation, projects, members }`。`projects` 按选题结束时间排，每组 `projectId, projectTitle, completedAt, confirmedMinutes, adoptedPhotos, salaryAmount, pendingWorklogCount, lines`；`lines` 每行 `memberKey, studentId, memberName, campus, shootingMinutes, retouchingMinutes, confirmedWorklogCount, pendingWorklogCount, pendingMinutes, adoptedPhotos, hourAmount, adoptionAmount, salaryAmount, basis`（组内应发高的在前）。`members` 是按成员跨选题的合计（应发高的在前） |
-| GET | `/salary-calculations/{id}/export` | 下载 XLSX（审计「导出工资明细」）：第一张 sheet「汇总」按成员合计，之后每个选题一张 sheet（名为「序号 选题标题」，去掉 Excel 不认的字符、截到 31 个字符），列出参与的摄影师的拍摄 / 修图 / 已确认工时、工时工资、被引张数、被引工资、应发工资、计算依据和待审核条数，末行合计。金额写数值不写公式 |
+| GET | `/salary-calculations?limit=50` | 计算记录（新的在前，不含已删除）：`id, from, to, formula, projectCount, memberCount, lineCount, totalAmount, pendingWorklogCount, createdByName, createdAt` |
+| GET | `/salary-calculations/formula` | 公式编辑器参考：`{ defaultFormula, lastFormula, variables: [{ name, alias, description, sample }], functions: [{ name, chineseName, signature, description }] }`；`lastFormula` 是最近一次计算用的公式 |
+| POST | `/salary-calculations/formula/check` | `{ formula }` → `{ valid, error, position, formula, variables, sampleSalary, sampleProcess }`。只读、不审计。写错时 `valid=false`，`position` 是出错字符下标（从 0 数）；写对时用各字段的示例值试算一次（试算除以 0 时 `valid` 仍为 true，原因在 `error`） |
+| POST | `/salary-calculations` | `{ from, to, formula? }` 计算并保存（`formula` 为空用默认公式，写错返回 400），返回同上的概况；审计「计算工资」 |
+| GET | `/salary-calculations/{id}` | 明细 `{ calculation, projects, members }`。`projects` 按选题结束时间排，每组 `projectId, projectTitle, completedAt, confirmedMinutes, adoptedPhotos, uploadedPhotos, salaryAmount, pendingWorklogCount, lines`；`lines` 每行 `memberKey, studentId, memberName, campus, shootingMinutes, retouchingMinutes, confirmedWorklogCount, pendingWorklogCount, pendingMinutes, adoptedPhotos, uploadedPhotos, salaryAmount, process`（组内应发高的在前）。`members` 是按成员跨选题的合计 `shootingMinutes, retouchingMinutes, adoptedPhotos, uploadedPhotos, salaryAmount, …`（应发高的在前） |
+| GET | `/salary-calculations/{id}/export` | 下载 XLSX（审计「导出工资明细」）：第一张 sheet「汇总」按成员合计，之后每个选题一张 sheet（名为「序号 选题标题」，去掉 Excel 不认的字符、截到 31 个字符），列出参与的摄影师的拍摄 / 修图 / 已确认工时、被引张数、上传张数、待审核条数、计算过程和应发工资，末行合计；表头写着这次用的公式。数值写数值不写公式 |
 | DELETE | `/salary-calculations/{id}` | 软删除，之后列表、明细、导出都看不到；审计「删除工资计算」 |
 
 **清算单预留字段**（V73，暂不写入）：`settlement_mail_batch.salary_calculation_id`、`settlement_statement.salary_calculation_id` / `salary_amount`，用于以后在清算单里附上对应那次工资计算的应发金额。

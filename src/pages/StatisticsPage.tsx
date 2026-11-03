@@ -47,7 +47,7 @@ const DESCRIPTIONS: Record<StatisticsTab, string> = {
   members: '按选题结束时间统计工时，并对应每位成员的被引张数；可按被引张数、校区、工时情况筛选。',
   adoptions: '看图片在什么时候、被哪些选题引用，谁的图被引得多；可按选题、校区、摄影师筛选。',
   analysis: '按工作日期筛选、汇总工时，条件可以自由组合，并用图表看走势与分布。',
-  salary: '按选题结算工资：所选时间内结束的选题，每人取「已确认工时 × 20 元」和「被引张数 × 10 元」中较高的一项。',
+  salary: '按选题结算工资：所选时间内结束的选题，每人按工资公式算一次；公式可以用拍摄时长、修图时长、被引张数等字段和 max、min 等函数。',
 }
 
 export default function StatisticsPage() {

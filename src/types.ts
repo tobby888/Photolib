@@ -1271,27 +1271,24 @@ export interface PerformanceDownload {
   expiresAt: string
 }
 
-/** 工资计算的计算依据：按工时、按被引、两者相同、都为 0（只有待审核工时）。 */
-export type SalaryBasis = 'HOURS' | 'ADOPTIONS' | 'EQUAL' | 'NONE'
-
 /** 一次工资计算（快照）的概况。金额单位是元。 */
 export interface SalaryCalculationSummary {
   id: EntityId
   from: string
   to: string
-  hourlyRate: number
-  adoptionRate: number
+  /** 这次用的工资公式，例如 `max(工时 * 20, 被引张数 * 10)`。 */
+  formula: string
   projectCount: number
   memberCount: number
   lineCount: number
   totalAmount: number
-  /** 计算时还在待审核、没有计入的工时条数。 */
+  /** 计算时还在待审核的工时条数（默认公式不计入）。 */
   pendingWorklogCount: number
   createdByName: string
   createdAt: string
 }
 
-/** 一个选题里一位成员的工资：max(已确认工时小时数 × 时薪, 被引张数 × 单价)。 */
+/** 一个选题里一位成员的工资，按这次计算的公式算出来。 */
 export interface SalaryLine {
   projectId: EntityId
   projectTitle: string
@@ -1307,10 +1304,10 @@ export interface SalaryLine {
   pendingWorklogCount: number
   pendingMinutes: number
   adoptedPhotos: number
-  hourAmount: number
-  adoptionAmount: number
+  uploadedPhotos: number
   salaryAmount: number
-  basis: SalaryBasis
+  /** 计算过程：公式代入这一行的数值，例如 `max(4.5 × 20, 5 × 10) = 90.00`。 */
+  process?: string | null
 }
 
 export interface SalaryProjectGroup {
@@ -1319,6 +1316,7 @@ export interface SalaryProjectGroup {
   completedAt: string
   confirmedMinutes: number
   adoptedPhotos: number
+  uploadedPhotos: number
   salaryAmount: number
   pendingWorklogCount: number
   lines: SalaryLine[]
@@ -1330,12 +1328,32 @@ export interface SalaryMemberTotal {
   memberName: string
   campus?: string | null
   projectCount: number
-  confirmedMinutes: number
+  shootingMinutes: number
+  retouchingMinutes: number
   adoptedPhotos: number
-  hourAmount: number
-  adoptionAmount: number
+  uploadedPhotos: number
   salaryAmount: number
   pendingWorklogCount: number
+}
+
+/** 公式编辑器的参考：能用的字段（中文名 + 英文别名）和函数。 */
+export interface SalaryFormulaReference {
+  defaultFormula: string
+  /** 最近一次计算用的公式，没算过时为空。 */
+  lastFormula?: string | null
+  variables: { name: string; alias: string; description: string; sample: number }[]
+  functions: { name: string; chineseName: string; signature: string; description: string }[]
+}
+
+/** 公式检查结果；`position` 是出错字符的下标（从 0 数）。写对了时附带用示例值试算的结果。 */
+export interface SalaryFormulaCheck {
+  valid: boolean
+  error?: string | null
+  position?: number | null
+  formula: string
+  variables: string[]
+  sampleSalary?: number | null
+  sampleProcess?: string | null
 }
 
 export interface SalaryCalculationDetail {
