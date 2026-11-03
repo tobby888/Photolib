@@ -382,10 +382,12 @@ public class SettlementMailService {
     static String[] inboxSummary(Statement statement) {
         Totals totals = statement.totals();
         return new String[]{
-                "清算周期：" + statement.from() + " 至 " + statement.to(),
+                "清算周期：" + statement.from() + " 至 " + statement.to() + "（按选题结束时间清算）",
                 "已确认工时 " + SettlementMailRenderer.duration(totals.confirmedMinutes())
                         + "，待审核 " + totals.pendingCount() + " 条，被退回 " + totals.rejectedCount() + " 条；"
-                        + "参与选题 " + totals.projectCount() + " 个，上传图片 " + totals.uploadedPhotos() + " 张；"
+                        + "本期结束的参与选题 " + totals.projectCount() + " 个，上传图片 " + totals.uploadedPhotos() + " 张"
+                        + (totals.ongoingProjectCount() > 0
+                                ? "（另有 " + totals.ongoingProjectCount() + " 个未结束，不计入）" : "") + "；"
                         + "被引图片 " + totals.adoptedPhotos() + " 张。",
                 "点开查看完整清算单，可下载 PDF。"
         };

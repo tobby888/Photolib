@@ -10,6 +10,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,10 +24,18 @@ import java.util.Map;
  * {@link Recipient#sameNameCount()} 大于 0 的账号不能收清算单（{@link SettlementMailService} 会拒绝），
  * 免得把一个人的工时发给另一个人。</p>
  *
- * <p><b>时间口径</b>：工时按工作日期 {@code work_date}（两端都含），草稿不算；被引按被引时间
- * {@code adopted_at}（同样两端都含）；参与的选题按图片上传时间 {@code photo.created_at}（同样两端都含），
- * 拍摄者姓名是他、且已经传完（处理中、可用、已归档）的图片才算，上传了图片就算参与了这个选题。
- * 与成员核算按"选题结束时间"取的口径不同，邮件里写明了。</p>
+ * <p><b>时间口径：按所属选题的结束时间清算</b>，与成员核算（{@code StatisticsService.members}）同一口径。
+ * 工时和被引只取所属选题已完成（{@code status='COMPLETED'}）、且 {@code completed_at} 落在清算期内
+ * （两端日期都含）的记录；选题没结束的记录不出现在清算单里，等选题结束后计入那一期。工时列待审核、
+ * 已确认、已退回（不含草稿），合计以已确认为准。重新开放的选题 {@code completed_at} 被清空，它的记录
+ * 会从清算单里退出，再次完成后按新的结束时间计入。</p>
+ *
+ * <p><b>参与的选题</b>分两组都列出来（{@link ProjectLine#ended()}）：已结束 = 期内结束的选题，拍摄者姓名是他
+ * 的图全部算；未结束 = 到清算期末还没结束的选题（进行中，或期末之后才结束），算期末之前上传的图。
+ * 取消的选题不列。只算已经传完（处理中、可用、已归档）的图片。每个选题再按 {@link UploadChannel}
+ * 标出这些图是本人传的、通过上传链接传的，还是别人代传 / 添加的。</p>
+ *
+ * <p>{@link #recipients} 和 {@link #statement} 两处 SQL 口径必须一致，改一处就改另一处。</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -36,6 +45,19 @@ public class SettlementStatementService {
     static final int MAX_LINES = 800;
     /** 传完了的图片：上传中（可能被放弃）和已删除的不算参与。 */
     private static final String UPLOADED_STATUSES = "'PROCESSING','AVAILABLE','ARCHIVED'";
+    /** 选题 {@code p} 在清算期内结束：这一期要清算的选题。 */
+    private static final String SETTLED_PROJECT = """
+            (p.deleted=0 AND p.status='COMPLETED'
+             AND p.completed_at >= :fromDate AND p.completed_at < :toExclusive)""";
+    /** 选题 {@code p} 到清算期末还没结束（进行中，或期末之后才结束）；取消的不算。 */
+    private static final String ONGOING_PROJECT = """
+            (p.deleted=0 AND (p.status IN ('DRAFT','ACTIVE')
+             OR (p.status='COMPLETED' AND p.completed_at >= :toExclusive)))""";
+    /** 参与的选题里算哪些图：期内结束的选题全算，未结束的只算期末之前上传的。 */
+    private static final String PARTICIPATION_PHOTO = """
+            ph.deleted=0 AND ph.status IN (%s)
+            AND (%s OR (%s AND ph.created_at < :toExclusive))""".formatted(UPLOADED_STATUSES, SETTLED_PROJECT,
+            ONGOING_PROJECT);
 
     private final JdbcClient jdbc;
 
@@ -52,31 +74,38 @@ public class SettlementStatementService {
         validateRange(from, to);
         return jdbc.sql("""
                 WITH wl AS (
-                    SELECT TRIM(member_name) AS name, COUNT(*) AS cnt,
-                           SUM(CASE WHEN status='CONFIRMED' THEN shooting_minutes + retouching_minutes ELSE 0 END) AS confirmed_minutes,
-                           SUM(CASE WHEN status='SUBMITTED' THEN 1 ELSE 0 END) AS pending_count,
-                           SUM(CASE WHEN status='REJECTED' THEN 1 ELSE 0 END) AS rejected_count
-                    FROM worklog
-                    WHERE deleted=0 AND status<>'DRAFT' AND member_name IS NOT NULL
-                      AND work_date >= :fromDate AND work_date <= :toDate
-                    GROUP BY TRIM(member_name)
+                    SELECT TRIM(w.member_name) AS name, COUNT(*) AS cnt,
+                           SUM(CASE WHEN w.status='CONFIRMED' THEN w.shooting_minutes + w.retouching_minutes ELSE 0 END) AS confirmed_minutes,
+                           SUM(CASE WHEN w.status='SUBMITTED' THEN 1 ELSE 0 END) AS pending_count,
+                           SUM(CASE WHEN w.status='REJECTED' THEN 1 ELSE 0 END) AS rejected_count
+                    FROM worklog w
+                    LEFT JOIN photo_request r ON r.id=w.request_id
+                    LEFT JOIN project_share_link l ON l.id=w.share_link_id
+                    JOIN project p ON p.id=COALESCE(r.project_id, l.project_id)
+                    WHERE w.deleted=0 AND w.status<>'DRAFT' AND w.member_name IS NOT NULL AND %1$s
+                    GROUP BY TRIM(w.member_name)
                 ),
                 ad AS (
                     SELECT TRIM(a.photographer_name) AS name, COUNT(DISTINCT a.photo_id) AS photos, COUNT(*) AS adoptions
                     FROM adoption a JOIN project p ON p.id=a.project_id
-                    WHERE a.deleted=0 AND p.deleted=0
-                      AND a.adopted_at >= :fromDate AND a.adopted_at < :toExclusive
+                    WHERE a.deleted=0 AND %1$s
                     GROUP BY TRIM(a.photographer_name)
                 ),
                 up AS (
-                    SELECT TRIM(ph.photographer_name) AS name, COUNT(*) AS photos,
-                           COUNT(DISTINCT p.id) AS projects
-                    FROM photo ph
-                    LEFT JOIN photo_request r ON r.id=ph.request_id
-                    JOIN project p ON p.id=COALESCE(ph.project_id, r.project_id)
-                    WHERE ph.deleted=0 AND p.deleted=0 AND ph.status IN (%s)
-                      AND ph.created_at >= :fromDate AND ph.created_at < :toExclusive
-                    GROUP BY TRIM(ph.photographer_name)
+                    SELECT x.name,
+                           SUM(x.ended) AS photos,
+                           COUNT(DISTINCT CASE WHEN x.ended=1 THEN x.project_id END) AS projects,
+                           SUM(1 - x.ended) AS ongoing_photos,
+                           COUNT(DISTINCT CASE WHEN x.ended=0 THEN x.project_id END) AS ongoing_projects
+                    FROM (
+                        SELECT TRIM(ph.photographer_name) AS name, p.id AS project_id,
+                               CASE WHEN %1$s THEN 1 ELSE 0 END AS ended
+                        FROM photo ph
+                        LEFT JOIN photo_request r ON r.id=ph.request_id
+                        JOIN project p ON p.id=COALESCE(ph.project_id, r.project_id)
+                        WHERE %2$s
+                    ) x
+                    GROUP BY x.name
                 ),
                 names AS (
                     SELECT TRIM(display_name) AS name, COUNT(*) AS cnt
@@ -86,7 +115,8 @@ public class SettlementStatementService {
                 SELECT u.id, u.username, TRIM(u.display_name), u.email, c.name, g.name,
                        COALESCE(wl.cnt,0), COALESCE(wl.confirmed_minutes,0), COALESCE(wl.pending_count,0),
                        COALESCE(wl.rejected_count,0), COALESCE(ad.photos,0), COALESCE(ad.adoptions,0),
-                       COALESCE(n.cnt,1) - 1, COALESCE(up.photos,0), COALESCE(up.projects,0)
+                       COALESCE(n.cnt,1) - 1, COALESCE(up.photos,0), COALESCE(up.projects,0),
+                       COALESCE(up.ongoing_photos,0), COALESCE(up.ongoing_projects,0)
                 FROM app_user u
                 LEFT JOIN campus c ON c.id=u.campus_id
                 LEFT JOIN permission_group g ON g.id=u.permission_group_id
@@ -96,12 +126,12 @@ public class SettlementStatementService {
                 LEFT JOIN names n ON n.name=TRIM(u.display_name)
                 WHERE u.deleted=0 AND u.enabled=TRUE
                 ORDER BY TRIM(u.display_name), u.id
-                """.formatted(UPLOADED_STATUSES))
-                .param("fromDate", from).param("toDate", to).param("toExclusive", to.plusDays(1))
+                """.formatted(SETTLED_PROJECT, PARTICIPATION_PHOTO))
+                .param("fromDate", from).param("toExclusive", to.plusDays(1))
                 .query((rs, n) -> new Recipient(rs.getLong(1), rs.getString(2), rs.getString(3),
                         blankToNull(rs.getString(4)), rs.getString(5), rs.getString(6),
                         rs.getInt(7), rs.getInt(8), rs.getInt(9), rs.getInt(10), rs.getInt(11), rs.getInt(12),
-                        rs.getInt(13), rs.getInt(14), rs.getInt(15)))
+                        rs.getInt(13), rs.getInt(14), rs.getInt(15), rs.getInt(16), rs.getInt(17)))
                 .list();
     }
 
@@ -117,61 +147,111 @@ public class SettlementStatementService {
         List<WorklogLine> worklogs = new ArrayList<>(jdbc.sql("""
                 SELECT w.id, w.work_date, p.title, r.title, c.name, w.share_link_id, l.name,
                        w.shooting_minutes, w.retouching_minutes, w.status, w.remark, w.reject_reason,
-                       w.created_at, w.confirmed_at, rv.display_name, w.member_student_id
+                       w.created_at, w.confirmed_at, rv.display_name, w.member_student_id, p.completed_at
                 FROM worklog w
                 LEFT JOIN photo_request r ON r.id=w.request_id
                 LEFT JOIN project_share_link l ON l.id=w.share_link_id
-                LEFT JOIN project p ON p.id=COALESCE(r.project_id, l.project_id)
+                JOIN project p ON p.id=COALESCE(r.project_id, l.project_id)
                 LEFT JOIN campus c ON c.id=r.campus_id
                 LEFT JOIN app_user rv ON rv.id=w.confirmed_by
-                WHERE w.deleted=0 AND w.status<>'DRAFT' AND TRIM(w.member_name)=:name
-                  AND w.work_date >= :fromDate AND w.work_date <= :toDate
-                ORDER BY w.work_date, w.id
-                """)
-                .param("name", name).param("fromDate", from).param("toDate", to)
+                WHERE w.deleted=0 AND w.status<>'DRAFT' AND TRIM(w.member_name)=:name AND %s
+                ORDER BY p.completed_at, p.id, w.work_date, w.id
+                """.formatted(SETTLED_PROJECT))
+                .param("name", name).param("fromDate", from).param("toExclusive", to.plusDays(1))
                 .query((rs, n) -> new WorklogLine(rs.getLong(1), rs.getObject(2, LocalDate.class),
                         rs.getString(3), rs.getString(4), rs.getString(5), rs.getObject(6, Long.class) != null,
                         rs.getString(7), rs.getInt(8), rs.getInt(9), rs.getString(10), rs.getString(11),
                         rs.getString(12), rs.getObject(13, LocalDateTime.class), rs.getObject(14, LocalDateTime.class),
-                        rs.getString(15), rs.getString(16), new ArrayList<>()))
+                        rs.getString(15), rs.getString(16), rs.getObject(17, LocalDateTime.class), new ArrayList<>()))
                 .list());
         attachReviewEvents(worklogs);
         List<AdoptionLine> adoptions = jdbc.sql("""
                 SELECT a.adopted_at, p.title, a.photo_id, COALESCE(ph.title, ph.stored_file_name), c.name,
-                       u.display_name, a.remark
+                       u.display_name, a.remark, p.completed_at
                 FROM adoption a
                 JOIN project p ON p.id=a.project_id
                 JOIN photo ph ON ph.id=a.photo_id
                 LEFT JOIN campus c ON c.id=ph.campus_id
                 LEFT JOIN app_user u ON u.id=a.adopted_by
-                WHERE a.deleted=0 AND p.deleted=0 AND TRIM(a.photographer_name)=:name
-                  AND a.adopted_at >= :fromDate AND a.adopted_at < :toExclusive
-                ORDER BY a.adopted_at, a.id
-                """)
+                WHERE a.deleted=0 AND TRIM(a.photographer_name)=:name AND %s
+                ORDER BY p.completed_at, p.id, a.adopted_at, a.id
+                """.formatted(SETTLED_PROJECT))
                 .param("name", name).param("fromDate", from).param("toExclusive", to.plusDays(1))
                 .query((rs, n) -> new AdoptionLine(rs.getObject(1, LocalDateTime.class), rs.getString(2),
-                        rs.getLong(3), rs.getString(4), rs.getString(5), rs.getString(6), rs.getString(7)))
+                        rs.getLong(3), rs.getString(4), rs.getString(5), rs.getString(6), rs.getString(7),
+                        rs.getObject(8, LocalDateTime.class)))
                 .list();
-        List<ProjectLine> projects = jdbc.sql("""
-                SELECT p.id, p.title, COUNT(*), MIN(ph.created_at), MAX(ph.created_at)
-                FROM photo ph
-                LEFT JOIN photo_request r ON r.id=ph.request_id
-                JOIN project p ON p.id=COALESCE(ph.project_id, r.project_id)
-                WHERE ph.deleted=0 AND p.deleted=0 AND ph.status IN (%s)
-                  AND TRIM(ph.photographer_name)=:name
-                  AND ph.created_at >= :fromDate AND ph.created_at < :toExclusive
-                GROUP BY p.id, p.title
-                ORDER BY MIN(ph.created_at), p.id
-                """.formatted(UPLOADED_STATUSES))
-                .param("name", name).param("fromDate", from).param("toExclusive", to.plusDays(1))
-                .query((rs, n) -> new ProjectLine(rs.getLong(1), rs.getString(2), rs.getInt(3),
-                        rs.getObject(4, LocalDateTime.class), rs.getObject(5, LocalDateTime.class)))
-                .list();
+        List<ProjectLine> projects = projects(recipient, from, to);
         Totals totals = Totals.of(worklogs, adoptions, projects);
         return new Statement(recipient, from, to, projects,
                 worklogs.size() > MAX_LINES ? List.copyOf(worklogs.subList(0, MAX_LINES)) : List.copyOf(worklogs),
                 adoptions.size() > MAX_LINES ? List.copyOf(adoptions.subList(0, MAX_LINES)) : List.copyOf(adoptions),
                 totals);
+    }
+
+    /**
+     * 参与的选题，每个选题再按上传方式拆开（见 {@link UploadChannel}）。
+     * 先按「选题 + 方式 + 上传账号 + 上传链接」分组计数，再在内存里并成每个选题一行——
+     * 一个人一期参与的选题是几十个的量级。已结束的排在前面（按结束时间），未结束的按首张上传时间。
+     */
+    private List<ProjectLine> projects(Recipient recipient, LocalDate from, LocalDate to) {
+        record Row(long projectId, String projectTitle, boolean ended, LocalDateTime completedAt,
+                   UploadChannel channel, String uploaderName, String shareLinkName, int photoCount,
+                   LocalDateTime first, LocalDateTime last) {}
+        List<Row> rows = jdbc.sql("""
+                SELECT x.project_id, x.project_title, x.ended, x.completed_at, x.channel, x.uploader_name,
+                       x.link_name, COUNT(*), MIN(x.created_at), MAX(x.created_at)
+                FROM (
+                    SELECT p.id AS project_id, p.title AS project_title, p.completed_at, ph.created_at,
+                           CASE WHEN %s THEN 1 ELSE 0 END AS ended,
+                           CASE WHEN ph.share_link_id IS NOT NULL THEN 'SHARE_LINK'
+                                WHEN ph.uploaded_by = :userId THEN 'SELF'
+                                WHEN ph.request_id IS NOT NULL THEN 'REQUEST_PROXY'
+                                ELSE 'PROJECT_ADDED' END AS channel,
+                           ph.uploaded_by AS uploader_id, u.display_name AS uploader_name,
+                           ph.share_link_id AS link_id, l.name AS link_name
+                    FROM photo ph
+                    LEFT JOIN photo_request r ON r.id=ph.request_id
+                    JOIN project p ON p.id=COALESCE(ph.project_id, r.project_id)
+                    LEFT JOIN app_user u ON u.id=ph.uploaded_by
+                    LEFT JOIN project_share_link l ON l.id=ph.share_link_id
+                    WHERE TRIM(ph.photographer_name)=:name AND %s
+                ) x
+                GROUP BY x.project_id, x.project_title, x.ended, x.completed_at, x.channel, x.uploader_id,
+                         x.uploader_name, x.link_id, x.link_name
+                """.formatted(SETTLED_PROJECT, PARTICIPATION_PHOTO))
+                .param("userId", recipient.userId()).param("name", recipient.displayName())
+                .param("fromDate", from).param("toExclusive", to.plusDays(1))
+                .query((rs, n) -> new Row(rs.getLong(1), rs.getString(2), rs.getInt(3) == 1,
+                        rs.getObject(4, LocalDateTime.class), UploadChannel.valueOf(rs.getString(5)),
+                        blankToNull(rs.getString(6)), blankToNull(rs.getString(7)), rs.getInt(8),
+                        rs.getObject(9, LocalDateTime.class), rs.getObject(10, LocalDateTime.class)))
+                .list();
+        Map<Long, List<Row>> byProject = new LinkedHashMap<>();
+        rows.forEach(row -> byProject.computeIfAbsent(row.projectId(), id -> new ArrayList<>()).add(row));
+        List<ProjectLine> result = new ArrayList<>();
+        for (List<Row> group : byProject.values()) {
+            Row head = group.get(0);
+            LocalDateTime first = group.stream().map(Row::first).min(Comparator.naturalOrder()).orElseThrow();
+            LocalDateTime last = group.stream().map(Row::last).max(Comparator.naturalOrder()).orElseThrow();
+            List<UploadSource> sources = group.stream()
+                    .map(row -> new UploadSource(row.channel(),
+                            row.channel() == UploadChannel.SELF || row.channel() == UploadChannel.SHARE_LINK
+                                    ? null : row.uploaderName(),
+                            row.channel() == UploadChannel.SHARE_LINK ? row.shareLinkName() : null,
+                            row.photoCount()))
+                    .sorted(Comparator.comparing(UploadSource::channel)
+                            .thenComparing(UploadSource::photoCount, Comparator.reverseOrder())
+                            .thenComparing(source -> source.uploaderName() == null ? "" : source.uploaderName())
+                            .thenComparing(source -> source.shareLinkName() == null ? "" : source.shareLinkName()))
+                    .toList();
+            result.add(new ProjectLine(head.projectId(), head.projectTitle(), head.ended(), head.completedAt(),
+                    group.stream().mapToInt(Row::photoCount).sum(), first, last, sources));
+        }
+        result.sort(Comparator.comparing((ProjectLine line) -> !line.ended())
+                .thenComparing(line -> line.ended() ? line.completedAt() : line.firstUploadAt())
+                .thenComparing(ProjectLine::projectId));
+        return result;
     }
 
     /** 一次查出这批工时的全部审核记录，按工时 id 挂上去（不逐条查）。 */
@@ -211,23 +291,28 @@ public class SettlementStatementService {
 
     /**
      * 收件人候选。{@code sameNameCount}：另有几个在用账号与他同名，大于 0 时不能收清算单。
-     * {@code worklogCount} 含待审核和已退回（不含草稿）。
+     * {@code worklogCount} 含待审核和已退回（不含草稿）。工时、被引、{@code uploadedPhotos} /
+     * {@code projectCount} 都只算期内结束的选题；{@code ongoingPhotos} / {@code ongoingProjectCount}
+     * 是到期末还没结束的选题。
      */
     public record Recipient(long userId, String username, String displayName, String email, String campus,
                             String groupName, int worklogCount, int confirmedMinutes, int pendingCount,
                             int rejectedCount, int adoptedPhotos, int adoptionCount, int sameNameCount,
-                            int uploadedPhotos, int projectCount) {
+                            int uploadedPhotos, int projectCount, int ongoingPhotos, int ongoingProjectCount) {
         public boolean hasRecords() {
-            return worklogCount > 0 || adoptionCount > 0 || uploadedPhotos > 0;
+            return worklogCount > 0 || adoptionCount > 0 || uploadedPhotos > 0 || ongoingPhotos > 0;
         }
     }
 
-    /** {@code events}：这条工时的每一次提交 / 确认 / 退回，按时间先后。 */
+    /**
+     * {@code events}：这条工时的每一次提交 / 确认 / 退回，按时间先后。
+     * {@code projectCompletedAt}：所属选题的结束时间，清算单按它把这条工时计入这一期。
+     */
     public record WorklogLine(long id, LocalDate workDate, String projectTitle, String requestTitle, String campus,
                               boolean viaShareLink, String shareLinkName, int shootingMinutes,
                               int retouchingMinutes, String status, String remark, String rejectReason,
                               LocalDateTime createdAt, LocalDateTime reviewedAt, String reviewerName,
-                              String memberStudentId, List<ReviewEvent> events) {
+                              String memberStudentId, LocalDateTime projectCompletedAt, List<ReviewEvent> events) {
         public int totalMinutes() {
             return shootingMinutes + retouchingMinutes;
         }
@@ -237,17 +322,57 @@ public class SettlementStatementService {
     public record ReviewEvent(String action, LocalDateTime at, String actorName, String reason,
                               Integer shootingMinutes, Integer retouchingMinutes, boolean backfilled) {}
 
+    /** {@code projectCompletedAt}：所属选题的结束时间，清算单按它把这次被引计入这一期。 */
     public record AdoptionLine(LocalDateTime adoptedAt, String projectTitle, long photoId, String photoTitle,
-                               String campus, String adoptedBy, String remark) {}
+                               String campus, String adoptedBy, String remark, LocalDateTime projectCompletedAt) {}
 
-    /** 期内上传过图片的选题：{@code photoCount} 张，首张和最后一张的上传时间。 */
-    public record ProjectLine(long projectId, String projectTitle, int photoCount, LocalDateTime firstUploadAt,
-                              LocalDateTime lastUploadAt) {}
+    /**
+     * 参与的选题：{@code ended} 为真是期内结束的选题（{@code completedAt} 是结束时间），为假是到期末还没结束的
+     * （进行中时 {@code completedAt} 为空，期末之后才结束的有值）。{@code photoCount} 张，首张和最后一张的上传时间；
+     * {@code sources} 是这些图分别是怎么进选题的，按 {@link UploadChannel} 的顺序、同一方式里张数多的在前。
+     */
+    public record ProjectLine(long projectId, String projectTitle, boolean ended, LocalDateTime completedAt,
+                              int photoCount, LocalDateTime firstUploadAt, LocalDateTime lastUploadAt,
+                              List<UploadSource> sources) {
+        public ProjectLine {
+            sources = List.copyOf(sources);
+        }
+    }
 
+    /**
+     * 图片是怎么进选题的。全看照片行自己的列，不需要翻审计日志：上传链接记 {@code share_link_id}，
+     * 站内上传记 {@code uploaded_by}（上传账号），挂没挂需求看 {@code request_id}。
+     * 枚举顺序就是清算单里的展示顺序。
+     */
+    public enum UploadChannel {
+        /** 收件人用自己的账号在站内上传（需求交付或直接传进选题相册）。 */
+        SELF,
+        /**
+         * 通过选题的上传链接上传。拍摄者是上传的人进门时自报的姓名，{@code uploaded_by} 记的是开链接的成员，
+         * 不是传图的人，所以这里不写上传账号。
+         */
+        SHARE_LINK,
+        /** 别的账号在需求交付里代传（需求负责人，或者管理员）。 */
+        REQUEST_PROXY,
+        /** 别的账号不经需求、直接把图传进选题相册（持选题采用权限的管理员、部长、采编）。 */
+        PROJECT_ADDED
+    }
+
+    /**
+     * 一个选题里某一种上传方式的张数。{@code uploaderName}：代传 / 添加图片的账号姓名，
+     * 只有 {@code REQUEST_PROXY}、{@code PROJECT_ADDED} 有；{@code shareLinkName}：上传链接的备注名，
+     * 只有 {@code SHARE_LINK} 有，且可能为空。
+     */
+    public record UploadSource(UploadChannel channel, String uploaderName, String shareLinkName, int photoCount) {}
+
+    /**
+     * {@code projectCount} / {@code uploadedPhotos}：期内结束的参与选题及其中的图片；
+     * {@code ongoingProjectCount} / {@code ongoingPhotos}：到期末还没结束的。
+     */
     public record Totals(int worklogCount, int confirmedCount, int confirmedShootingMinutes,
                          int confirmedRetouchingMinutes, int pendingCount, int pendingMinutes,
                          int rejectedCount, int rejectedMinutes, int adoptedPhotos, int adoptionCount,
-                         int projectCount, int uploadedPhotos) {
+                         int projectCount, int uploadedPhotos, int ongoingProjectCount, int ongoingPhotos) {
         public int confirmedMinutes() {
             return confirmedShootingMinutes + confirmedRetouchingMinutes;
         }
@@ -273,9 +398,12 @@ public class SettlementStatementService {
                 }
             }
             long photos = adoptions.stream().mapToLong(AdoptionLine::photoId).distinct().count();
+            List<ProjectLine> ended = projects.stream().filter(ProjectLine::ended).toList();
+            List<ProjectLine> ongoing = projects.stream().filter(line -> !line.ended()).toList();
             return new Totals(worklogs.size(), confirmed, shooting, retouching, pending, pendingMinutes,
-                    rejected, rejectedMinutes, (int) photos, adoptions.size(), projects.size(),
-                    projects.stream().mapToInt(ProjectLine::photoCount).sum());
+                    rejected, rejectedMinutes, (int) photos, adoptions.size(), ended.size(),
+                    ended.stream().mapToInt(ProjectLine::photoCount).sum(), ongoing.size(),
+                    ongoing.stream().mapToInt(ProjectLine::photoCount).sum());
         }
     }
 

@@ -8,6 +8,8 @@ import cn.photolib.settlement.SettlementStatementService.Recipient;
 import cn.photolib.settlement.SettlementStatementService.ReviewEvent;
 import cn.photolib.settlement.SettlementStatementService.Statement;
 import cn.photolib.settlement.SettlementStatementService.Totals;
+import cn.photolib.settlement.SettlementStatementService.UploadChannel;
+import cn.photolib.settlement.SettlementStatementService.UploadSource;
 import cn.photolib.settlement.SettlementStatementService.WorklogLine;
 import org.junit.jupiter.api.Test;
 
@@ -33,7 +35,7 @@ class SettlementMailRendererTests {
         assertThat(html).contains("<p>&lt;script&gt;张三</p>");
         assertThat(html).doesNotContain("<script>");
         // 生成的片段原样进来（是一段 HTML，而不是被转义成文字）。
-        assertThat(html).contains("<div style=").contains("清算周期内没有工时记录。");
+        assertThat(html).contains("<div style=").contains("清算周期内结束的选题里没有你的工时记录。");
     }
 
     @Test
@@ -84,10 +86,12 @@ class SettlementMailRendererTests {
                 new ReviewEvent("SUBMITTED", LocalDateTime.of(2026, 10, 5, 10, 0), "李四", null, 90, 30, false),
                 new ReviewEvent("CONFIRMED", LocalDateTime.of(2026, 10, 6, 18, 0), "王部长", null, null, null, false)));
         WorklogLine confirmed = new WorklogLine(11, LocalDate.of(2026, 10, 2), "运动会", "开幕式", "北校区", false, null,
-                90, 30, "CONFIRMED", "补拍", null, LocalDateTime.of(2026, 10, 3, 14, 0), null, "王部长", "S1", events);
+                90, 30, "CONFIRMED", "补拍", null, LocalDateTime.of(2026, 10, 3, 14, 0), null, "王部长", "S1",
+                LocalDateTime.of(2026, 10, 25, 12, 0), events);
         WorklogLine rejected = new WorklogLine(12, LocalDate.of(2026, 10, 8), "运动会", null, null, true, "现场上传",
                 0, 45, "REJECTED", null, "照片不在相册里", LocalDateTime.of(2026, 10, 8, 20, 0),
-                LocalDateTime.of(2026, 10, 9, 8, 0), "王部长", "S1", new ArrayList<>());
+                LocalDateTime.of(2026, 10, 9, 8, 0), "王部长", "S1", LocalDateTime.of(2026, 10, 25, 12, 0),
+                new ArrayList<>());
 
         String html = SettlementMailRenderer.render("s", "{{worklogTable}}", statement(List.of(confirmed, rejected),
                 List.of()), BRAND, "部长", null, NOW, Target.EMAIL).html();
@@ -100,19 +104,23 @@ class SettlementMailRendererTests {
         assertThat(html).contains("2026-10-08 20:00").contains("退回原因：</b>照片不在相册里");
         assertThat(html).contains("上传链接申报（现场上传）");
         assertThat(html).contains("工时 #11").contains("周五");
+        // 所属选题的结束时间：清算单按它计入。
+        assertThat(html).contains("选题：运动会（2026-10-25 结束）");
     }
 
     @Test
     void adoptionTableAndSummary() {
         AdoptionLine adoption = new AdoptionLine(LocalDateTime.of(2026, 10, 10, 11, 0), "校报 10 月刊", 501,
-                "IMG_0001.jpg", "北校区", "编辑甲", "封面");
+                "IMG_0001.jpg", "北校区", "编辑甲", "封面", LocalDateTime.of(2026, 10, 28, 9, 0));
         WorklogLine pending = new WorklogLine(13, LocalDate.of(2026, 10, 9), "运动会", "闭幕式", "北校区", false, null,
-                30, 0, "SUBMITTED", null, null, LocalDateTime.of(2026, 10, 9, 21, 0), null, null, "S1", new ArrayList<>());
+                30, 0, "SUBMITTED", null, null, LocalDateTime.of(2026, 10, 9, 21, 0), null, null, "S1",
+                LocalDateTime.of(2026, 10, 28, 9, 0), new ArrayList<>());
         SettlementMailRenderer.Rendered rendered = SettlementMailRenderer.render("s",
                 "{{summaryCards}}|{{adoptionTable}}|{{adoptedPhotos}}|{{pendingHours}}",
                 statement(List.of(pending), List.of(adoption, adoption)), BRAND, "部长", null, NOW, Target.EMAIL);
 
-        assertThat(rendered.html()).contains("#501 IMG_0001.jpg").contains("校报 10 月刊").contains("备注：封面");
+        assertThat(rendered.html()).contains("#501 IMG_0001.jpg").contains("校报 10 月刊").contains("备注：封面")
+                .contains("2026-10-28 结束");
         // 同一张图被引两次：张数 1、次数 2。
         assertThat(rendered.html()).contains("|1|30 分钟").contains("共被引用 2 次");
         assertThat(rendered.plainText()).contains("待审核：1 条").contains("图片 #501");
@@ -135,9 +143,10 @@ class SettlementMailRendererTests {
     @Test
     void photoAndProjectLinksDependOnWhereTheStatementIsShown() {
         AdoptionLine adoption = new AdoptionLine(LocalDateTime.of(2026, 10, 10, 11, 0), "校报", 501, "封面图", null,
-                "编辑甲", null);
-        ProjectLine project = new ProjectLine(77, "运动会", 3, LocalDateTime.of(2026, 10, 2, 9, 0),
-                LocalDateTime.of(2026, 10, 2, 18, 0));
+                "编辑甲", null, LocalDateTime.of(2026, 10, 20, 9, 0));
+        ProjectLine project = new ProjectLine(77, "运动会", true, LocalDateTime.of(2026, 10, 20, 9, 0), 3,
+                LocalDateTime.of(2026, 10, 2, 9, 0), LocalDateTime.of(2026, 10, 2, 18, 0),
+                List.of(new UploadSource(UploadChannel.SELF, null, null, 3)));
         Statement statement = statement(List.of(), List.of(adoption), List.of(project));
         String template = "{{projectTable}}{{adoptionTable}}";
 
@@ -158,21 +167,57 @@ class SettlementMailRendererTests {
     }
 
     @Test
-    void projectTableListsUploadsPerProject() {
-        ProjectLine sports = new ProjectLine(77, "运动会<开幕>", 12, LocalDateTime.of(2026, 10, 2, 9, 0),
-                LocalDateTime.of(2026, 10, 5, 18, 0));
-        ProjectLine paper = new ProjectLine(78, "校报", 1, LocalDateTime.of(2026, 10, 9, 9, 0),
-                LocalDateTime.of(2026, 10, 9, 9, 0));
+    void projectTableSplitsEndedAndOngoingAndShowsHowEachPhotoGotIn() {
+        ProjectLine sports = new ProjectLine(77, "运动会<开幕>", true, LocalDateTime.of(2026, 10, 20, 18, 0), 12,
+                LocalDateTime.of(2026, 10, 2, 9, 0), LocalDateTime.of(2026, 10, 5, 18, 0), List.of(
+                new UploadSource(UploadChannel.SELF, null, null, 5),
+                new UploadSource(UploadChannel.SHARE_LINK, null, "现场<A>", 3),
+                new UploadSource(UploadChannel.REQUEST_PROXY, "李负责人", null, 3),
+                new UploadSource(UploadChannel.PROJECT_ADDED, null, null, 1)));
+        ProjectLine paper = new ProjectLine(78, "校报", false, null, 1,
+                LocalDateTime.of(2026, 10, 9, 9, 0), LocalDateTime.of(2026, 10, 9, 9, 0), List.of(
+                new UploadSource(UploadChannel.SHARE_LINK, null, null, 1)));
+        ProjectLine later = new ProjectLine(79, "晚会", false, LocalDateTime.of(2026, 11, 2, 9, 0), 2,
+                LocalDateTime.of(2026, 10, 12, 9, 0), LocalDateTime.of(2026, 10, 13, 9, 0), List.of(
+                new UploadSource(UploadChannel.PROJECT_ADDED, "采编丙", null, 2)));
         SettlementMailRenderer.Rendered rendered = SettlementMailRenderer.render("s",
-                "{{projectTable}}|{{projectCount}}|{{uploadedPhotos}}",
-                statement(List.of(), List.of(), List.of(sports, paper)), BRAND, "部长", null, NOW, Target.PREVIEW);
+                "{{projectTable}}|{{projectCount}}|{{uploadedPhotos}}|{{ongoingProjectCount}}|{{ongoingPhotos}}",
+                statement(List.of(), List.of(), List.of(sports, paper, later)), BRAND, "部长", null, NOW, Target.PREVIEW);
 
-        assertThat(rendered.html()).contains("共参与 <b style=\"color:#1f3b57;\">2</b> 个选题")
-                .contains("运动会&lt;开幕&gt;").contains("<b>12</b> 张").contains("2026-10-02 至 2026-10-05")
-                .contains("<b>1</b> 张").contains(">2026-10-09<").endsWith("|2|13");
-        assertThat(rendered.plainText()).contains("参与选题：2 个，上传图片 13 张").contains("- 运动会<开幕>：上传 12 张");
+        String html = rendered.html();
+        assertThat(html).contains("本期结束 <b style=\"color:#1f3b57;\">1</b> 个参与的选题")
+                .contains("另有 <b style=\"color:#b26a00;\">2</b> 个参与的选题尚未结束（已上传 3 张）")
+                .endsWith("|1|12|2|3");
+        // 两组分开，已结束的在前。
+        assertThat(html.indexOf("已结束的选题 · 计入本期清算")).isPositive()
+                .isLessThan(html.indexOf("未结束的选题 · 不计入本期"));
+        assertThat(html).contains("运动会&lt;开幕&gt;").contains("<b>12</b> 张").contains("2026-10-02 至 2026-10-05 上传")
+                .contains(">2026-10-20<");
+        // 上传方式：本人 / 上传链接 / 代传 / 添加到选题，名字和链接名都转义。
+        assertThat(html).contains("本人上传 <b>5</b> 张").contains("通过上传链接「现场&lt;A&gt;」上传 <b>3</b> 张")
+                .contains("李负责人 代传（需求交付） <b>3</b> 张").contains("他人 添加到选题 <b>1</b> 张")
+                .contains("通过上传链接上传 <b>1</b> 张").contains("采编丙 添加到选题 <b>2</b> 张");
+        assertThat(html).contains(">进行中<").contains("2026-11-02 结束（晚于本期）");
+        assertThat(rendered.plainText())
+                .contains("本期结束的参与选题：1 个，上传图片 12 张")
+                .contains("尚未结束的参与选题：2 个，已上传图片 3 张（不计入本期）")
+                .contains("- [已结束] 运动会<开幕>（2026-10-20）：上传 12 张，本人上传 5 张；通过上传链接「现场<A>」上传 3 张；"
+                        + "李负责人 代传（需求交付） 3 张；他人 添加到选题 1 张")
+                .contains("- [未结束] 校报（进行中）：上传 1 张，通过上传链接上传 1 张");
         assertThat(SettlementMailRenderer.render("s", "{{projectTable}}", statement(List.of(), List.of()), BRAND,
-                "部长", null, NOW, Target.PREVIEW).html()).contains("清算周期内没有上传过图片。");
+                "部长", null, NOW, Target.PREVIEW).html()).contains("清算周期内没有参与的选题。");
+    }
+
+    @Test
+    void onlyOngoingProjectsStillListThem() {
+        ProjectLine paper = new ProjectLine(78, "校报", false, null, 4,
+                LocalDateTime.of(2026, 10, 9, 9, 0), LocalDateTime.of(2026, 10, 9, 9, 0), List.of(
+                new UploadSource(UploadChannel.SELF, null, null, 4)));
+        String html = SettlementMailRenderer.render("s", "{{projectTable}}",
+                statement(List.of(), List.of(), List.of(paper)), BRAND, "部长", null, NOW, Target.PREVIEW).html();
+
+        assertThat(html).contains("本期结束 <b style=\"color:#1f3b57;\">0</b> 个参与的选题")
+                .contains("未结束的选题 · 不计入本期").doesNotContain("已结束的选题 · 计入本期清算");
     }
 
     @Test
@@ -195,7 +240,7 @@ class SettlementMailRendererTests {
     private static Statement statement(List<WorklogLine> worklogs, List<AdoptionLine> adoptions,
                                        List<ProjectLine> projects) {
         Recipient recipient = new Recipient(1, "zhangsan", "<script>张三", "z@example.cn", "北校区", "成员",
-                worklogs.size(), 0, 0, 0, 0, adoptions.size(), 0, 0, projects.size());
+                worklogs.size(), 0, 0, 0, 0, adoptions.size(), 0, 0, projects.size(), 0, 0);
         return new Statement(recipient, LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 31), projects, worklogs,
                 adoptions, Totals.of(worklogs, adoptions, projects));
     }

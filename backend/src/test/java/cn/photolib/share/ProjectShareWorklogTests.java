@@ -417,7 +417,8 @@ class ProjectShareWorklogTests {
                     assertThat(detail.projectTitle()).isEqualTo("校庆特刊");
                     assertThat(detail.totalMinutes()).isEqualTo(165);
                 });
-        assertThat(statistics.worklogs(workDate, workDate))
+        // 工时导出按选题结束时间取：选题今天结束，区间要包含今天。
+        assertThat(statistics.worklogs(LocalDate.now(), LocalDate.now()))
                 .filteredOn(row -> STUDENT_ID.equals(row.studentId()))
                 .singleElement().satisfies(row -> {
                     assertThat(row.memberName()).isEqualTo("李外援");
@@ -440,7 +441,7 @@ class ProjectShareWorklogTests {
         // 按校区筛、或者校区范围账号来看：这类工时不属于任何校区，不该被算到某个校区头上。
         assertThat(statistics.members(null, null, creation.getId(), campusId, null)).isEmpty();
         assertThat(statistics.members(null, null, creation.getId(), null, null, Set.of(campusId))).isEmpty();
-        assertThat(statistics.worklogs(workDate, workDate, Set.of(campusId)))
+        assertThat(statistics.worklogs(workDate, LocalDate.now(), Set.of(campusId)))
                 .noneMatch(row -> STUDENT_ID.equals(row.studentId()));
     }
 }
