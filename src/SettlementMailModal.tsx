@@ -184,7 +184,7 @@ function SettlementMailContent({ initialRange }: { initialRange: [string, string
     {view === 'compose' && <>
       <div className="settlement-mail-filters">
         <Space wrap>
-          <span>清算时间</span>
+          <span>清算时间（选题结束）</span>
           <DatePicker.RangePicker allowClear={false} value={[dayjs(range[0]), dayjs(range[1])]}
             onChange={values => values?.[0] && values[1]
               && setRange([values[0].format('YYYY-MM-DD'), values[1].format('YYYY-MM-DD')])} />
@@ -206,8 +206,9 @@ function SettlementMailContent({ initialRange }: { initialRange: [string, string
         </Space>
       </div>
       <Typography.Paragraph type="secondary" className="settlement-mail-hint">
-        记录按账号姓名匹配：工时取成员姓名、被引和上传的图片取拍摄者姓名相同的记录。工时按工作日期、被引按被引时间、
-        参与的选题按图片上传时间落在清算时间内计入，列出待审核、已确认和已退回的工时（不含草稿）。
+        记录按账号姓名匹配：工时取成员姓名、被引和上传的图片取拍摄者姓名相同的记录。按所属选题的结束时间清算：
+        工时和被引只计入在清算时间内结束的选题，选题没结束的记录不出现，列出待审核、已确认和已退回的工时（不含草稿）。
+        参与的选题另把截至期末还没结束的单独列出（不计入本期），并标出每张图是本人上传、上传链接上传还是他人代传。
         与别的账号同名的人不能选；只发邮件时，没有邮箱的人也不能选。
       </Typography.Paragraph>
       <DataState loading={recipients.loading} error={recipients.error} onRetry={recipients.reload}>
@@ -233,8 +234,13 @@ function SettlementMailContent({ initialRange }: { initialRange: [string, string
             { title: '邮箱', dataIndex: 'email', ellipsis: true, render: value => value || <Typography.Text type="secondary">—</Typography.Text> },
             { title: '校区', dataIndex: 'campus', width: 110, render: value => value || '—' },
             { title: '权限组', dataIndex: 'groupName', width: 120, render: value => value || '—' },
-            { title: '参与选题', key: 'projects', width: 120, render: (_, recipient) => recipient.uploadedPhotos
-              ? <span>{recipient.projectCount ?? 0} 个 · {recipient.uploadedPhotos} 张</span>
+            { title: '参与选题', key: 'projects', width: 140, render: (_, recipient) => recipient.uploadedPhotos || recipient.ongoingPhotos
+              ? <Space orientation="vertical" size={0}>
+                {recipient.uploadedPhotos ? <span>已结束 {recipient.projectCount ?? 0} 个 · {recipient.uploadedPhotos} 张</span> : null}
+                {recipient.ongoingPhotos
+                  ? <Typography.Text type="secondary">未结束 {recipient.ongoingProjectCount ?? 0} 个 · {recipient.ongoingPhotos} 张</Typography.Text>
+                  : null}
+              </Space>
               : <Typography.Text type="secondary">无</Typography.Text>,
             sorter: (a, b) => (a.uploadedPhotos ?? 0) - (b.uploadedPhotos ?? 0) },
             { title: '工时记录', key: 'worklogs', width: 210, render: (_, recipient) => recipient.worklogCount

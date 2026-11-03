@@ -562,7 +562,7 @@ export default function WorklogsPage() {
       confirmLoading={exporting}
     >
       <Form layout="vertical" requiredMark={false}>
-        <Form.Item label="工时日期范围">
+        <Form.Item label="选题结束时间" extra="按工时所属选题的结束时间筛选：只导出在这段时间内结束的选题里的工时和被引，选题没结束的工时不在表里。">
           <DatePicker.RangePicker
             value={exportRange}
             maxDate={dayjs()}

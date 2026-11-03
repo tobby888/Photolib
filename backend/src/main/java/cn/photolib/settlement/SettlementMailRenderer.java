@@ -7,6 +7,7 @@ import cn.photolib.settlement.SettlementStatementService.ProjectLine;
 import cn.photolib.settlement.SettlementStatementService.ReviewEvent;
 import cn.photolib.settlement.SettlementStatementService.Statement;
 import cn.photolib.settlement.SettlementStatementService.Totals;
+import cn.photolib.settlement.SettlementStatementService.UploadSource;
 import cn.photolib.settlement.SettlementStatementService.WorklogLine;
 import org.springframework.web.util.HtmlUtils;
 
@@ -101,6 +102,8 @@ public final class SettlementMailRenderer {
         values.put("adoptionCount", String.valueOf(totals.adoptionCount()));
         values.put("projectCount", String.valueOf(totals.projectCount()));
         values.put("uploadedPhotos", String.valueOf(totals.uploadedPhotos()));
+        values.put("ongoingProjectCount", String.valueOf(totals.ongoingProjectCount()));
+        values.put("ongoingPhotos", String.valueOf(totals.ongoingPhotos()));
         values.put("summaryCards", summaryCards(totals));
         values.put("projectTable", projectTable(statement, linkBase));
         values.put("worklogTable", worklogTable(statement));
@@ -178,29 +181,88 @@ public final class SettlementMailRenderer {
 
     // ---- 参与的选题 ----
 
+    /**
+     * 两组：期内结束的选题（计入本期清算）和到期末还没结束的选题（只列出来，不计入）。
+     * 每个选题的「上传方式」一行一种：本人上传、通过上传链接上传、别人代传、别人添加到选题。
+     */
     private static String projectTable(Statement statement, String linkBase) {
-        if (statement.projects().isEmpty()) return empty("清算周期内没有上传过图片。");
+        if (statement.projects().isEmpty()) return empty("清算周期内没有参与的选题。");
         Totals totals = statement.totals();
+        List<ProjectLine> ended = statement.projects().stream().filter(ProjectLine::ended).toList();
+        List<ProjectLine> ongoing = statement.projects().stream().filter(line -> !line.ended()).toList();
         StringBuilder html = new StringBuilder();
-        html.append("<div style=\"font-size:13px;color:#4a5a6a;margin:0 0 10px;line-height:1.7;\">共参与 <b style=\"color:#1f3b57;\">")
-                .append(totals.projectCount()).append("</b> 个选题，上传 <b style=\"color:#1f3b57;\">")
-                .append(totals.uploadedPhotos()).append("</b> 张图片。</div>");
-        tableHead(html, "选题", "上传图片", "上传时间");
+        html.append("<div style=\"font-size:13px;color:#4a5a6a;margin:0 0 10px;line-height:1.7;\">本期结束 <b style=\"color:#1f3b57;\">")
+                .append(totals.projectCount()).append("</b> 个参与的选题（上传 <b style=\"color:#1f3b57;\">")
+                .append(totals.uploadedPhotos()).append("</b> 张图片），计入本期清算");
+        if (totals.ongoingProjectCount() > 0) {
+            html.append("；另有 <b style=\"color:").append(AMBER).append(";\">").append(totals.ongoingProjectCount())
+                    .append("</b> 个参与的选题尚未结束（已上传 ").append(totals.ongoingPhotos())
+                    .append(" 张），不计入本期，选题结束后计入那一期的清算单");
+        }
+        html.append("。</div>");
+        if (!ended.isEmpty()) {
+            projectGroup(html, "已结束的选题 · 计入本期清算", GREEN, "结束时间", ended, linkBase);
+        }
+        if (!ongoing.isEmpty()) {
+            if (!ended.isEmpty()) html.append("<div style=\"height:14px;line-height:14px;\">&nbsp;</div>");
+            projectGroup(html, "未结束的选题 · 不计入本期", AMBER, "选题状态", ongoing, linkBase);
+        }
+        return html.toString();
+    }
+
+    private static void projectGroup(StringBuilder html, String title, String color, String stateHead,
+                                     List<ProjectLine> lines, String linkBase) {
+        html.append("<div style=\"font-size:13px;font-weight:700;color:").append(color)
+                .append(";margin:0 0 6px;\">").append(escape(title)).append("</div>");
+        tableHead(html, "选题", "上传图片", "上传方式", stateHead);
         int index = 0;
-        for (ProjectLine line : statement.projects()) {
+        for (ProjectLine line : lines) {
             String first = DATE.format(line.firstUploadAt());
             String last = DATE.format(line.lastUploadAt());
             html.append("<tr style=\"background:").append(index++ % 2 == 0 ? "#ffffff" : "#fafcfe").append(";\">")
-                    .append("<td style=\"padding:8px 10px;border-bottom:1px solid #eef2f6;color:#1f2d3d;\">")
+                    .append("<td valign=\"top\" style=\"padding:8px 10px;border-bottom:1px solid #eef2f6;color:#1f2d3d;\">")
                     .append(link(linkBase, "projects/" + line.projectId(), escape(orDash(line.projectTitle()))))
                     .append("</td>")
-                    .append("<td style=\"padding:8px 10px;border-bottom:1px solid #eef2f6;color:#1f2d3d;white-space:nowrap;\"><b>")
-                    .append(line.photoCount()).append("</b> 张</td>")
-                    .append(cell(first.equals(last) ? first : first + " 至 " + last, true))
-                    .append("</tr>");
+                    .append("<td valign=\"top\" style=\"padding:8px 10px;border-bottom:1px solid #eef2f6;color:#1f2d3d;white-space:nowrap;\"><b>")
+                    .append(line.photoCount()).append("</b> 张<div style=\"font-size:11px;color:").append(MUTED)
+                    .append(";line-height:1.6;white-space:normal;\">").append(escape(first.equals(last) ? first : first + " 至 " + last))
+                    .append(" 上传</div></td>")
+                    .append("<td valign=\"top\" style=\"padding:8px 10px;border-bottom:1px solid #eef2f6;color:#1f2d3d;\">");
+            for (UploadSource source : line.sources()) {
+                html.append("<div style=\"line-height:1.8;\">")
+                        .append("<span style=\"display:inline-block;width:7px;height:7px;border-radius:50%;background:")
+                        .append(sourceColor(source)).append(";margin-right:6px;vertical-align:middle;\"></span>")
+                        .append(escape(sourceLabel(source))).append(" <b>").append(source.photoCount()).append("</b> 张</div>");
+            }
+            html.append("</td>")
+                    .append("<td valign=\"top\" style=\"padding:8px 10px;border-bottom:1px solid #eef2f6;color:#1f2d3d;white-space:nowrap;\">")
+                    .append(escape(projectState(line))).append("</td></tr>");
         }
         html.append("</table>");
-        return html.toString();
+    }
+
+    /** 「上传方式」的文字，HTML 和纯文本共用。 */
+    static String sourceLabel(UploadSource source) {
+        String uploader = source.uploaderName() == null ? "他人" : source.uploaderName();
+        return switch (source.channel()) {
+            case SELF -> "本人上传";
+            case SHARE_LINK -> "通过上传链接" + (source.shareLinkName() == null ? "" : "「" + source.shareLinkName() + "」") + "上传";
+            case REQUEST_PROXY -> uploader + " 代传（需求交付）";
+            case PROJECT_ADDED -> uploader + " 添加到选题";
+        };
+    }
+
+    private static String sourceColor(UploadSource source) {
+        return switch (source.channel()) {
+            case SELF -> GREEN;
+            case SHARE_LINK -> "#4682B4";
+            case REQUEST_PROXY, PROJECT_ADDED -> AMBER;
+        };
+    }
+
+    private static String projectState(ProjectLine line) {
+        if (line.ended()) return DATE.format(line.completedAt());
+        return line.completedAt() == null ? "进行中" : DATE.format(line.completedAt()) + " 结束（晚于本期）";
     }
 
     private static void tableHead(StringBuilder html, String... heads) {
@@ -227,7 +289,7 @@ public final class SettlementMailRenderer {
     // ---- 工时明细 ----
 
     private static String worklogTable(Statement statement) {
-        if (statement.worklogs().isEmpty()) return empty("清算周期内没有工时记录。");
+        if (statement.worklogs().isEmpty()) return empty("清算周期内结束的选题里没有你的工时记录。");
         StringBuilder html = new StringBuilder();
         for (WorklogLine line : statement.worklogs()) worklogCard(html, line);
         if (statement.hiddenWorklogs() > 0) {
@@ -250,6 +312,9 @@ public final class SettlementMailRenderer {
         // 第二行：来源
         StringBuilder source = new StringBuilder();
         source.append("选题：").append(escape(orDash(line.projectTitle())));
+        if (line.projectCompletedAt() != null) {
+            source.append("（").append(DATE.format(line.projectCompletedAt())).append(" 结束）");
+        }
         if (line.viaShareLink()) {
             source.append(" · 来源：上传链接申报");
             if (line.shareLinkName() != null && !line.shareLinkName().isBlank()) {
@@ -328,7 +393,7 @@ public final class SettlementMailRenderer {
     // ---- 被引明细 ----
 
     private static String adoptionTable(Statement statement, String linkBase) {
-        if (statement.adoptions().isEmpty()) return empty("清算周期内没有图片被引用。");
+        if (statement.adoptions().isEmpty()) return empty("清算周期内结束的选题里没有你的图片被引用。");
         StringBuilder html = new StringBuilder();
         tableHead(html, "被引时间", "选题", "图片", "标记人");
         int index = 0;
@@ -336,7 +401,12 @@ public final class SettlementMailRenderer {
             String background = index++ % 2 == 0 ? "#ffffff" : "#fafcfe";
             html.append("<tr style=\"background:").append(background).append(";\">")
                     .append(cell(DATE_TIME.format(line.adoptedAt()), true))
-                    .append(cell(orDash(line.projectTitle()), false))
+                    .append("<td style=\"padding:8px 10px;border-bottom:1px solid #eef2f6;color:#1f2d3d;\">")
+                    .append(escape(orDash(line.projectTitle())))
+                    .append(line.projectCompletedAt() == null ? ""
+                            : "<div style=\"font-size:11px;color:" + MUTED + ";\">" + DATE.format(line.projectCompletedAt())
+                            + " 结束</div>")
+                    .append("</td>")
                     .append("<td style=\"padding:8px 10px;border-bottom:1px solid #eef2f6;color:#1f2d3d;\">")
                     .append(link(linkBase, "photos/" + line.photoId(), "#" + line.photoId()
                             + (line.photoTitle() == null || line.photoTitle().isBlank() ? "" : " " + escape(line.photoTitle()))))
@@ -371,11 +441,17 @@ public final class SettlementMailRenderer {
                 .append("，修图 ").append(duration(totals.confirmedRetouchingMinutes())).append("）\n")
                 .append("待审核：").append(totals.pendingCount()).append(" 条；被退回：").append(totals.rejectedCount()).append(" 条\n")
                 .append("被引图片：").append(totals.adoptedPhotos()).append(" 张（共 ").append(totals.adoptionCount()).append(" 次）\n")
-                .append("参与选题：").append(totals.projectCount()).append(" 个，上传图片 ").append(totals.uploadedPhotos()).append(" 张\n\n")
+                .append("本期结束的参与选题：").append(totals.projectCount()).append(" 个，上传图片 ").append(totals.uploadedPhotos()).append(" 张\n")
+                .append("尚未结束的参与选题：").append(totals.ongoingProjectCount()).append(" 个，已上传图片 ").append(totals.ongoingPhotos()).append(" 张（不计入本期）\n\n")
                 .append("【参与的选题】\n");
         if (statement.projects().isEmpty()) text.append("无\n");
         for (ProjectLine line : statement.projects()) {
-            text.append("- ").append(orDash(line.projectTitle())).append("：上传 ").append(line.photoCount()).append(" 张\n");
+            text.append("- [").append(line.ended() ? "已结束" : "未结束").append("] ").append(orDash(line.projectTitle()))
+                    .append("（").append(projectState(line)).append("）：上传 ").append(line.photoCount()).append(" 张");
+            List<String> sources = line.sources().stream()
+                    .map(source -> sourceLabel(source) + " " + source.photoCount() + " 张").toList();
+            if (!sources.isEmpty()) text.append("，").append(String.join("；", sources));
+            text.append("\n");
         }
         text.append("\n【工时详情】\n");
         if (statement.worklogs().isEmpty()) text.append("无\n");
@@ -493,7 +569,7 @@ public final class SettlementMailRenderer {
         map.put("periodFrom", "清算开始日期");
         map.put("periodTo", "清算结束日期");
         map.put("summaryCards", "汇总卡片（已确认工时、待审核、被退回、被引图片）");
-        map.put("projectTable", "参与的选题（期内上传过图片的选题及每个选题上传的张数，选题可点开）");
+        map.put("projectTable", "参与的选题（分「已结束」和「未结束」两组，列出每个选题的上传张数、上传方式：本人 / 上传链接 / 他人代传 / 他人添加，选题可点开）");
         map.put("worklogTable", "工时详情（每条的申报时间、时长、状态、退回原因和审核记录）");
         map.put("adoptionTable", "被引详情表（图片可点开详情页）");
         map.put("confirmedHours", "已确认工时合计");
@@ -506,8 +582,10 @@ public final class SettlementMailRenderer {
         map.put("rejectedCount", "被退回条数");
         map.put("adoptedPhotos", "被引图片张数（去重）");
         map.put("adoptionCount", "被引次数");
-        map.put("projectCount", "参与的选题个数");
-        map.put("uploadedPhotos", "期内上传的图片张数");
+        map.put("projectCount", "本期结束的参与选题个数");
+        map.put("uploadedPhotos", "本期结束的参与选题里上传的图片张数");
+        map.put("ongoingProjectCount", "尚未结束的参与选题个数（不计入本期）");
+        map.put("ongoingPhotos", "尚未结束的参与选题里已上传的图片张数");
         map.put("senderName", "发送人");
         map.put("generatedAt", "生成时间");
         map.put("siteUrl", "站点地址（未配置时为空；可用 {{#siteUrl}}…{{/siteUrl}} 包住只在有地址时显示的内容）");

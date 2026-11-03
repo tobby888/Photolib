@@ -46,6 +46,8 @@ test('筛选：关键词、校区、权限组、有无记录、只看有退回�
   assert.deepEqual(ids({}), [1, 2])
   // 只上传过图片（参与了选题）也算有记录。
   assert.equal(filterRecipients([recipient({ uploadedPhotos: 3, projectCount: 1 })], EMPTY_RECIPIENT_FILTER).length, 1)
+  // 只在还没结束的选题里传过图，也算有记录（清算单里单独列出）。
+  assert.equal(filterRecipients([recipient({ ongoingPhotos: 2, ongoingProjectCount: 1 })], EMPTY_RECIPIENT_FILTER).length, 1)
   assert.deepEqual(ids({ records: 'all' }), [1, 2, 3])
   assert.deepEqual(ids({ records: 'without' }), [3])
   assert.deepEqual(ids({ records: 'all', keyword: 'LISI' }), [2])

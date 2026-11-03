@@ -263,7 +263,8 @@ class SettlementMailServiceTests {
                         rs.getString(3), rs.getString(4))).single();
         assertThat(notification.get(0)).isEqualTo("SETTLEMENT_STATEMENT");
         assertThat(notification.get(1)).contains(name).contains("2026-10-01");
-        assertThat(notification.get(2)).contains("被退回 1 条").contains("参与选题 1 个，上传图片 1 张");
+        assertThat(notification.get(2)).contains("被退回 1 条").contains("本期结束的参与选题 1 个，上传图片 1 张")
+                .contains("按选题结束时间清算");
         assertThat(notification.get(3)).isEqualTo("/settlements/" + delivery.statementId());
         String html = jdbc.sql("SELECT html_body FROM settlement_statement WHERE id=:id")
                 .param("id", delivery.statementId()).query(String.class).single();

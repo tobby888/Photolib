@@ -196,8 +196,10 @@ public class StatisticsService {
     }
 
     /**
-     * 工时导出。两处关联需求的地方都是 LEFT JOIN：通过上传链接申报的工时没有需求
-     * （Flyway V63），用内连接会把它们整条丢掉，导出的时长就比审核面板里确认过的少。
+     * 工时导出。**工时和被引都按所属选题的结束时间取**：只算已完成、且 {@code completed_at} 落在
+     * {@code from}～{@code to}（两端日期都含）的选题，选题没结束的工时不进表，与成员核算
+     * （{@link #members}）和清算单同一口径。所属选题是 {@code COALESCE(需求的选题, 链接的选题)}：
+     * 通过上传链接申报的工时没有需求（Flyway V63），只关联需求会把它们整条丢掉。
      * 这类工时没有校区，校区范围的导出里不出现。
      */
     public List<WorklogExportRow> worklogs(LocalDate from, LocalDate to,
@@ -211,10 +213,13 @@ public class StatisticsService {
                            SUM(w.retouching_minutes) AS retouching_minutes
                     FROM worklog w
                     LEFT JOIN photo_request r ON r.id=w.request_id
+                    LEFT JOIN project_share_link l ON l.id=w.share_link_id
+                    JOIN project p ON p.id=COALESCE(r.project_id, l.project_id)
                     LEFT JOIN campus c ON c.id=r.campus_id
                     WHERE w.deleted=0
                       AND w.status='CONFIRMED'
-                      AND w.work_date BETWEEN :fromDate AND :toDate
+                      AND p.deleted=0 AND p.status='COMPLETED'
+                      AND p.completed_at >= :fromDate AND p.completed_at < :toExclusive
                       AND (:campusScoped=FALSE OR r.campus_id IN (:campusIds))
                     GROUP BY w.member_student_id
                 ),
@@ -226,8 +231,11 @@ public class StatisticsService {
                            MAX(CASE WHEN w.status='DRAFT' THEN 1 ELSE 0 END) AS has_draft
                     FROM worklog w
                     LEFT JOIN photo_request status_r ON status_r.id=w.request_id
+                    LEFT JOIN project_share_link status_l ON status_l.id=w.share_link_id
+                    JOIN project status_p ON status_p.id=COALESCE(status_r.project_id, status_l.project_id)
                     WHERE w.deleted=0
-                      AND w.work_date BETWEEN :fromDate AND :toDate
+                      AND status_p.deleted=0 AND status_p.status='COMPLETED'
+                      AND status_p.completed_at >= :fromDate AND status_p.completed_at < :toExclusive
                       AND (:campusScoped=FALSE OR status_r.campus_id IN (:campusIds))
                     GROUP BY w.member_student_id
                 ),
@@ -273,7 +281,6 @@ public class StatisticsService {
                 ORDER BY COALESCE(mw.member_name, a.photographer_name), people.student_id
                 """)
                 .param("fromDate", from)
-                .param("toDate", to)
                 .param("toExclusive", to.plusDays(1))
                 .param("campusScoped", campusScoped)
                 .param("campusIds", scopedIds)
@@ -338,7 +345,7 @@ public class StatisticsService {
 
     /**
      * 找出该期已完成项目中有被引（采用）记录、但其学号无法匹配到任何该期已确认工时成员的摄影师。
-     * 口径与 {@link #worklogs} 的被引侧一致（项目 COMPLETED 且 completed_at 落在区间）。
+     * 口径与 {@link #worklogs} 一致：被引和工时都按所属选题 COMPLETED 且 completed_at 落在区间取。
      * 这类摄影师会进入工时导出并显示实际被引数，同时标注其申报/审核状态，仍需人工核对。
      */
     public List<UnmatchedAdoption> unmatchedAdoptions(LocalDate from, LocalDate to) {
@@ -363,16 +370,19 @@ public class StatisticsService {
                   AND (:campusScoped=FALSE OR ph.campus_id IN (:campusIds))
                   AND NOT EXISTS (
                       SELECT 1 FROM worklog w
+                      LEFT JOIN photo_request wr ON wr.id=w.request_id
+                      LEFT JOIN project_share_link wl ON wl.id=w.share_link_id
+                      JOIN project wp ON wp.id=COALESCE(wr.project_id, wl.project_id)
                       WHERE w.deleted=0
                         AND w.status='CONFIRMED'
-                        AND w.work_date BETWEEN :fromDate AND :toDate
+                        AND wp.deleted=0 AND wp.status='COMPLETED'
+                        AND wp.completed_at >= :fromDate AND wp.completed_at < :toExclusive
                         AND w.member_student_id=a.photographer_student_id
                   )
                 GROUP BY a.photographer_student_id
                 ORDER BY adopted_count DESC, a.photographer_student_id
                 """)
                 .param("fromDate", from)
-                .param("toDate", to)
                 .param("toExclusive", to.plusDays(1))
                 .param("campusScoped", campusScoped)
                 .param("campusIds", scopedIds)

@@ -18,7 +18,7 @@ export interface SettlementRecipient {
   email?: string | null
   campus?: string | null
   groupName?: string | null
-  /** 期内按姓名匹配到的工时条数（含待审核、已退回，不含草稿）。 */
+  /** 按姓名匹配到的、所属选题在期内结束的工时条数（含待审核、已退回，不含草稿）。 */
   worklogCount: number
   confirmedMinutes: number
   pendingCount: number
@@ -27,9 +27,12 @@ export interface SettlementRecipient {
   adoptionCount: number
   /** 另有几个在用账号与他同名；大于 0 时无法按姓名区分记录，不能收清算单。 */
   sameNameCount: number
-  /** 期内上传（拍摄者是他、已传完）的图片张数和涉及的选题数。 */
+  /** 期内结束、他上传过图（拍摄者是他、已传完）的选题数和其中的图片张数。 */
   uploadedPhotos?: number
   projectCount?: number
+  /** 截至期末还没结束、他上传过图的选题数和期末前上传的张数（清算单里单独列出，不计入本期）。 */
+  ongoingPhotos?: number
+  ongoingProjectCount?: number
 }
 
 /** 这次发哪几种。两种都发时没邮箱的人只收站内信。 */
@@ -145,6 +148,7 @@ export const isSelectable = (recipient: SettlementRecipient, channels: Settlemen
 
 export const hasRecords = (recipient: SettlementRecipient) =>
   recipient.worklogCount > 0 || recipient.adoptionCount > 0 || (recipient.uploadedPhotos ?? 0) > 0
+  || (recipient.ongoingPhotos ?? 0) > 0
 
 export function filterRecipients(recipients: SettlementRecipient[], filter: RecipientFilter) {
   const keyword = filter.keyword.trim().toLowerCase()

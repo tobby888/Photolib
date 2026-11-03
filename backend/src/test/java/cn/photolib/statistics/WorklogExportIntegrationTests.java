@@ -79,6 +79,9 @@ class WorklogExportIntegrationTests {
         long outsideProjectId = base + 3;
         long requestId = base + 4;
         long secondInsideProjectId = base + 5;
+        long outsideRequestId = base + 6;
+        long ongoingProjectId = base + 7;
+        long ongoingRequestId = base + 8;
 
         jdbc.sql("""
                 INSERT INTO campus (id, code, name)
@@ -106,15 +109,26 @@ class WorklogExportIntegrationTests {
                 .param("deadline", LocalDateTime.of(2026, 6, 30, 23, 59))
                 .param("userId", userId)
                 .update();
+        jdbc.sql("INSERT INTO project (id, title, status, created_by) VALUES (:id, '进行中项目', 'ACTIVE', :userId)")
+                .param("id", ongoingProjectId).param("userId", userId).update();
+        insertRequest(outsideRequestId, outsideProjectId, campusId, userId);
+        insertRequest(ongoingRequestId, ongoingProjectId, campusId, userId);
 
+        // 工时按所属选题的结束时间取，不看工作日期。
         insertWorklog(base + 10, requestId, userId, LocalDate.of(2026, 6, 1),
                 "成员甲", "20260001", 60, 30);
         insertWorklog(base + 11, requestId, userId, LocalDate.of(2026, 6, 30),
                 "成员甲", "20260001", 15, 45);
         insertWorklog(base + 12, requestId, userId, LocalDate.of(2026, 6, 15),
                 "成员乙", "20260002", 20, 10);
-        insertWorklog(base + 13, requestId, userId, LocalDate.of(2026, 5, 31),
+        // 工作日期在区间里，但选题 7 月 1 日才结束 / 还在进行中：不进表。
+        insertWorklog(base + 13, outsideRequestId, userId, LocalDate.of(2026, 6, 15),
                 "成员甲", "20260001", 999, 999);
+        insertWorklog(base + 15, ongoingRequestId, userId, LocalDate.of(2026, 6, 15),
+                "成员丁", "20260004", 999, 999);
+        // 工作日期在区间之前，但选题在区间内结束：照样计入。
+        insertWorklog(base + 16, requestId, userId, LocalDate.of(2026, 5, 20),
+                "成员丙", "20260003", 30, 30);
         // 未确认（SUBMITTED）工时必须被排除，否则会把未审核工时发进工资。
         insertWorklog(base + 14, requestId, userId, LocalDate.of(2026, 6, 10),
                 "成员乙", "20260002", 500, 500, "SUBMITTED");
@@ -149,13 +163,16 @@ class WorklogExportIntegrationTests {
             Sheet sheet = workbook.getSheet("工时统计");
             assertThat(sheet).isNotNull();
             assertHeader(sheet.getRow(0));
-            assertThat(sheet.getLastRowNum()).isEqualTo(2);
+            assertThat(sheet.getLastRowNum()).isEqualTo(3);
 
             Map<String, Row> rows = new HashMap<>();
             for (int index = 1; index <= sheet.getLastRowNum(); index++) {
                 rows.put(sheet.getRow(index).getCell(1).getStringCellValue(), sheet.getRow(index));
             }
-            // 成员甲：被引按 DISTINCT 照片计为 2（photoOne 虽被两个项目采用也只算一次）。
+            assertExportRow(rows.get("20260003"), "成员丙", "测试校区", 0.5, 0.5, 1, 0, "已确认");
+            assertThat(rows).doesNotContainKey("20260004");
+            // 成员甲：被引按 DISTINCT 照片计为 2（photoOne 虽被两个项目采用也只算一次）；
+            // 7 月 1 日才结束的选题里那条 999/999 不算。
             assertExportRow(rows.get("20260001"), "成员甲", "测试校区", 1.25, 1.25, 2.5, 2, "已确认");
             // 成员乙：仅 CONFIRMED 工时计入（20/10），SUBMITTED 的 500/500 被排除。
             assertExportRow(rows.get("20260002"), "成员乙", "测试校区",
@@ -439,6 +456,15 @@ class WorklogExportIntegrationTests {
         assertThat(statistics.overview(from, to, null, withoutCampuses))
                 .containsEntry("projects", 0L).containsEntry("requests", 0L)
                 .containsEntry("photos", 0L).containsEntry("adoptions", 0L);
+    }
+
+    private void insertRequest(long id, long projectId, long campusId, long userId) {
+        jdbc.sql("""
+                INSERT INTO photo_request
+                    (id, project_id, title, campus_id, required_count, deadline, status, created_by)
+                VALUES (:id, :projectId, '测试拍摄需求', :campusId, 1, :deadline, 'IN_PROGRESS', :userId)
+                """).param("id", id).param("projectId", projectId).param("campusId", campusId)
+                .param("deadline", LocalDateTime.of(2026, 6, 30, 23, 59)).param("userId", userId).update();
     }
 
     private void insertProject(long id, long userId, String title, LocalDateTime completedAt) {

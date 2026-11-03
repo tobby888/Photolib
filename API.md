@@ -1633,7 +1633,7 @@ C 的 `userId` 会被强制为本人。日期按 `workDate >= from AND workDate 
 }
 ```
 
-工时导出要求 `from <= to`，日期均必填；统计导出的日期可空。`format` 字段必填，但当前实现始终生成 XLSX，客户端固定传 `XLSX`。
+工时导出要求 `from <= to`，日期均必填；统计导出的日期可空。工时导出的 `from`/`to` 是**选题结束时间**范围（两端日期都含）：工时和被引都只算所属选题已完成、且 `completed_at` 落在区间内的记录，选题没结束的工时不进表，与成员核算、清算单同一口径。`format` 字段必填，但当前实现始终生成 XLSX，客户端固定传 `XLSX`。
 
 批量图片 ZIP：
 
@@ -1744,14 +1744,14 @@ PENDING -> FAILED
 
 给成员发清算单：每人一份，列出清算时间内本人参与的选题（每个选题上传了多少张图）、全部工时（含每次申报时间、每次退回原因和审核记录）与被引明细（图片可点开详情页）。可以发站内信、发邮件，或两种都发；也可以在前端导出 PDF。发信邮箱读自 `.env` 的 `SMTP_*`（见 README「清算单」），只发站内信不需要配置邮箱。
 
-**收件人与匹配规则**：收件人是系统账号（`app_user`）。工时按 `worklog.member_name`、被引按 `adoption.photographer_name`、参与的选题按 `photo.photographer_name` 与账号姓名（去首尾空白）完全相等来取。两个在用账号同名时无法区分，这类账号不能收（`sameNameCount > 0`）。只发邮件时还要有邮箱；两种都发时没邮箱的人只收站内信。工时按 `work_date` 落在 `[from, to]`，列出待审核 / 已确认 / 已退回（不含草稿），合计以已确认为准；被引按 `adopted_at`、参与的选题按图片上传时间 `photo.created_at` 落在 `[from, to + 1 day)`，只算传完的图（`PROCESSING / AVAILABLE / ARCHIVED`），选题取 `photo.project_id`，为空时取所属需求的选题。范围最长三年。
+**收件人与匹配规则**：收件人是系统账号（`app_user`）。工时按 `worklog.member_name`、被引按 `adoption.photographer_name`、参与的选题按 `photo.photographer_name` 与账号姓名（去首尾空白）完全相等来取。两个在用账号同名时无法区分，这类账号不能收（`sameNameCount > 0`）。只发邮件时还要有邮箱；两种都发时没邮箱的人只收站内信。**按所属选题的结束时间清算**：工时和被引只取所属选题 `status=COMPLETED` 且 `completed_at` 落在 `[from, to + 1 day)` 的记录，选题没结束的不出现；工时列出待审核 / 已确认 / 已退回（不含草稿），合计以已确认为准。参与的选题分两组：已结束（期内结束的选题，本人的图全算，计入 `projectCount` / `uploadedPhotos`）和未结束（截至期末仍进行中或期末后才结束的选题，算期末前上传的图，计入 `ongoingProjectCount` / `ongoingPhotos`，只列出不计入）；取消的选题不列。只算传完的图（`PROCESSING / AVAILABLE / ARCHIVED`），选题取 `photo.project_id`，为空时取所属需求的选题。每个选题按上传方式拆开：`share_link_id` 非空为上传链接，`uploaded_by` 是收件人本人为本人上传，否则挂需求的为他人代传、不挂需求的为他人添加到选题。范围最长三年。
 
 除模板接口外都要 `SETTLEMENT_MAIL_SEND`（V71 默认给管理员组、部长组），且校区范围的账号即使有这条权限也返回 403（清算单汇总全部校区）。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/settlement-mails/status` | `{ configured, fromAddress, activeBatchId, siteUrlConfigured }`；`activeBatchId` 为正在发送的批次 |
-| GET | `/settlement-mails/recipients?from=&to=` | 全部在用账号及期内概况：`userId, username, displayName, email, campus, groupName, worklogCount, confirmedMinutes, pendingCount, rejectedCount, adoptedPhotos, adoptionCount, sameNameCount, uploadedPhotos, projectCount` |
+| GET | `/settlement-mails/recipients?from=&to=` | 全部在用账号及期内概况：`userId, username, displayName, email, campus, groupName, worklogCount, confirmedMinutes, pendingCount, rejectedCount, adoptedPhotos, adoptionCount, sameNameCount, uploadedPhotos, projectCount, ongoingPhotos, ongoingProjectCount` |
 | POST | `/settlement-mails/preview` | `{ userId, from, to, subject?, html? }` → `{ subject, html }`；只读、不审计。前端导出 PDF 用的也是它。带 `subject` / `html`（未保存的模板）只给管理员 |
 | POST | `/settlement-mails/batches` | `{ from, to, userIds, sendEmail, sendInbox }`（最多 500 人）建批次并在后台发送，立即返回批次；审计「发送清算单」。两个开关都不带时按只发邮件处理（兼容旧请求），都为 false 返回 400 |
 | GET | `/settlement-mails/batches?limit=20` | 最近的批次（不含明细），带 `sendEmail / sendInbox` |
