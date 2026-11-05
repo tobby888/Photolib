@@ -234,11 +234,13 @@ public class PhotoController {
                          @NotBlank String contentType,
                          @Positive long size,
                          @NotBlank @Pattern(regexp = "^[a-fA-F0-9]{64}$") String sha256,
-                         @NotNull Long photographerContactId,
-                         @NotNull @PastOrPresent LocalDateTime takenAt) {
+                         Long photographerContactId,
+                         @NotNull @PastOrPresent LocalDateTime takenAt,
+                         Boolean publicPhoto) {
+        /** 拍摄者二选一：通讯录成员（{@code photographerContactId}）或公共照片（{@code publicPhoto=true}）。 */
         PhotoService.CreateTicket command() {
             return new PhotoService.CreateTicket(requestId, projectId, fileName, contentType, size, sha256,
-                    photographerContactId, takenAt);
+                    photographerContactId, takenAt, publicPhoto);
         }
     }
 
@@ -248,13 +250,14 @@ public class PhotoController {
 
     record MetadataRequest(@NotBlank @Size(max = 200) String title,
                            @Size(max = 5000) String description,
-                           @NotNull Long photographerContactId,
+                           Long photographerContactId,
                            @NotNull @PastOrPresent LocalDateTime takenAt,
                            @Size(max = 30) List<@Size(max = 100) String> tags,
-                           @Min(1) int version) {
+                           @Min(1) int version,
+                           Boolean publicPhoto) {
         PhotoService.Metadata command() {
             return new PhotoService.Metadata(title, description, photographerContactId,
-                    takenAt, tags, version);
+                    takenAt, tags, version, publicPhoto);
         }
     }
 

@@ -34,6 +34,20 @@ export interface ShareUploadItem {
  * 与服务端 `ProjectShareUploadService.updateTags` 同一条线——处理中途改标签会让压缩管线的
  * 提交失败；记在别人名下的要先切换回那个人。
  */
+/**
+ * 公共照片在会话上没有学号（空串），列表里「这张记在谁名下」就用这个固定的键代替学号，
+ * 这样 {@link canRetag} 和「记在别人名下」的判断对公共照片照样成立。
+ */
+export const PUBLIC_UPLOADER_KEY = '__public__'
+
+/** 当前拍摄者的归属键：公共照片是 {@link PUBLIC_UPLOADER_KEY}，否则是学号。 */
+export function uploaderKey(
+  access: { uploaderPublic?: boolean; uploaderStudentId?: string | null } | null | undefined,
+): string | undefined {
+  if (!access) return undefined
+  return access.uploaderPublic ? PUBLIC_UPLOADER_KEY : (access.uploaderStudentId || undefined)
+}
+
 export function canRetag(item: ShareUploadItem, currentStudentId?: string | null): boolean {
   return item.stage === 'done' && !!item.photoId && !!currentStudentId
     && item.photographerStudentId === currentStudentId

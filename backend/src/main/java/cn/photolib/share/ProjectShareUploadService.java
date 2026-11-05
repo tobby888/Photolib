@@ -7,6 +7,7 @@ import cn.photolib.uploadlimit.UploadLimitService;
 import cn.photolib.photo.PhotoProcessingService;
 import cn.photolib.photo.PhotoService;
 import cn.photolib.photo.PhotoTags;
+import cn.photolib.photo.PublicPhoto;
 import cn.photolib.photo.batch.BatchUploadService;
 import cn.photolib.photo.batch.PhotoUploadBatchEntity;
 import cn.photolib.photo.batch.PhotoUploadBatchMapper;
@@ -110,6 +111,7 @@ public class ProjectShareUploadService {
         photoService.validateUploadFile(command.fileName(), command.contentType(), command.size());
         ProjectEntity project = requireOpenProject(link);
         Uploader uploader = requireUploader(context);
+        projectService.requireAcceptsPhotographer(project.getId(), uploader.isPublic());
         requireCapacity(link);
 
         String sha256Lower = command.sha256().toLowerCase();
@@ -232,7 +234,8 @@ public class ProjectShareUploadService {
         requireOpenProject(link);
         Uploader uploader = requireUploader(context);
         PhotoEntity photo = requireOwnUpload(link, photoId, null);
-        if (!uploader.studentId().equals(photo.getPhotographerStudentId())) {
+        if (!uploader.studentId().equals(photo.getPhotographerStudentId())
+                || uploader.isPublic() != PublicPhoto.isPublic(photo)) {
             // 409 而不是 404：访客页把 403/404 一律当成会话失效、退回密码页，
             // 而这里只是该先切换拍摄者，会话本身好好的。
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
@@ -353,6 +356,7 @@ public class ProjectShareUploadService {
         requireOpenProject(link);
         requireOwnBatch(link, batchId);
         Uploader uploader = requireUploader(context);
+        projectService.requireAcceptsPhotographer(link.getProjectId(), uploader.isPublic());
         List<String> tags = guestTags(requestedTags);
         int waiting = batchService.waitingItems(batchId).size();
         requireCapacity(link, waiting);
@@ -387,6 +391,11 @@ public class ProjectShareUploadService {
                                        WorklogDeclaration declaration) {
         ProjectShareLinkEntity link = shareService.requireUploadLink(context.link());
         Uploader uploader = requireUploader(context);
+        if (uploader.isPublic()) {
+            // 409 而不是 403：访客页把 403/404 当成会话失效，而这里只是选了公共照片。
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
+                    "传的是公共照片，不能申报工时；替自己传图请先切换成本人");
+        }
         requireHandedInPhotos(link, uploader);
         return guestView(worklogService.createForShareLink(new WorklogService.ShareLinkWorklog(
                 link.getId(), link.getProjectId(), link.getCreatedBy(),
@@ -405,6 +414,7 @@ public class ProjectShareUploadService {
     public List<GuestWorklog> worklogs(ProjectShareService.GuestContext context) {
         ProjectShareLinkEntity link = shareService.requireUploadLink(context.link());
         Uploader uploader = requireUploader(context);
+        if (uploader.isPublic()) return List.of();
         return worklogService.listForShareLink(link.getId(), uploader.studentId())
                 .stream().map(this::guestView).toList();
     }
@@ -470,6 +480,9 @@ public class ProjectShareUploadService {
         ProjectShareSessionEntity session = context.session();
         String name = session == null ? null : session.getUploaderName();
         String studentId = session == null ? null : session.getUploaderStudentId();
+        if (PublicPhoto.isPublic(name)) {
+            return new Uploader(PublicPhoto.PHOTOGRAPHER_NAME, PublicPhoto.PHOTOGRAPHER_STUDENT_ID);
+        }
         if (!StringUtils.hasText(name) || !StringUtils.hasText(studentId)) {
             // 只可能发生在 V48 之前发出、还没过期的会话上；让访客重新进一次门即可。
             throw new BusinessException(ErrorCode.FORBIDDEN, "请重新输入密码并填写上传者信息");
@@ -520,7 +533,11 @@ public class ProjectShareUploadService {
         return trimmed.length() > maxLength ? trimmed.substring(0, maxLength) : trimmed;
     }
 
-    private record Uploader(String name, String studentId) {}
+    private record Uploader(String name, String studentId) {
+        boolean isPublic() {
+            return PublicPhoto.isPublic(name);
+        }
+    }
 
     public record TicketCommand(String fileName, String contentType, long size, String sha256,
                                 LocalDateTime takenAt) {}

@@ -29,6 +29,9 @@ import { preparePhotoBatchDownload } from '../photoBatchDownload'
 import { selectPhotoRange } from '../photoSelection'
 import TagSelect from '../TagSelect'
 import { normalizeTags, tagRules } from '../photoTags'
+import {
+  PUBLIC_PHOTOGRAPHER_VALUE, PUBLIC_PHOTO_HINT, photographerOptionsFor, photographerPayload,
+} from '../publicPhoto'
 import { isPortalEvent, selectablePreview, usePhotoCardClick } from '../usePhotoCardClick'
 import { matchPhotoCardShortcut, photoCardHint, usePhotoCardShortcuts } from '../photoCardShortcuts'
 
@@ -110,6 +113,11 @@ export default function RequestDeliveryPage() {
     [canUpload, request?.id],
   )
   const tagOptions = tagOptionsState.data
+  const publicPhotosOnly = !!tagOptions.publicPhotosOnly
+  // 需求所属选题只收公共照片：拍摄者直接选好并锁住（后端同样会拦）。
+  useEffect(() => {
+    if (publicPhotosOnly) form.setFieldValue('photographerContactId', PUBLIC_PHOTOGRAPHER_VALUE)
+  }, [form, publicPhotosOnly])
   const campusName = useMemo(() => request
     ? requestState.data.campuses.find(campus => campus.id === request.campusId)?.name || `校区 #${request.campusId}`
     : '', [request, requestState.data.campuses])
@@ -205,7 +213,7 @@ export default function RequestDeliveryPage() {
             contentType: file.type,
             size: file.size,
             sha256: hash,
-            photographerContactId: values.photographerContactId,
+            ...photographerPayload(values.photographerContactId),
             takenAt: values.takenAt.format('YYYY-MM-DDTHH:mm:ss'),
           },
         })
@@ -223,6 +231,7 @@ export default function RequestDeliveryPage() {
       }
       message.success(`${files.length} 张图片已上传，正在后台处理`)
       form.resetFields()
+      if (publicPhotosOnly) form.setFieldValue('photographerContactId', PUBLIC_PHOTOGRAPHER_VALUE)
       setPhotoStatus('PROCESSING')
       await photosState.reload()
     } catch (error) {
@@ -426,14 +435,17 @@ export default function RequestDeliveryPage() {
                 </Upload.Dragger>
               </Form.Item>
               <Form.Item label="拍摄者" name="photographerContactId"
-                extra="从需求所属校区通讯录选择，通讯录在「通讯录」页维护"
-                rules={[{ required: true, message: '请从通讯录选择拍摄者' }]}>
+                extra={publicPhotosOnly
+                  ? '这个选题只收公共照片，拍摄者固定为「公共照片」。'
+                  : `从需求所属校区通讯录选择，通讯录在「通讯录」页维护。${PUBLIC_PHOTO_HINT}`}
+                rules={[{ required: true, message: '请从通讯录选择拍摄者，或选「公共照片」' }]}>
                 <Select showSearch optionFilterProp="label" loading={membersState.loading}
-                  placeholder={membersState.data.length ? '按姓名或学号选择' : '该校区通讯录为空，请先添加成员'}
+                  disabled={publicPhotosOnly}
+                  placeholder={membersState.data.length ? '按姓名或学号选择' : '该校区通讯录为空，可选「公共照片」'}
                   notFoundContent="该校区通讯录中没有可用成员"
-                  options={membersState.data.map(member => ({
+                  options={photographerOptionsFor(membersState.data.map(member => ({
                     value: member.id, label: `${member.name} · ${member.studentId}`,
-                  }))} />
+                  })), publicPhotosOnly)} />
               </Form.Item>
               <Form.Item label="拍摄时间" name="takenAt" rules={[{ required: true }]}
                 extra="批量上传统一采用该时间，已自动取自第一张照片的 EXIF，可手动调整">

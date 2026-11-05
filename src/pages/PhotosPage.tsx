@@ -46,6 +46,9 @@ import BatchTagModal from '../BatchTagModal'
 import type { BatchTagMode } from '../BatchTagModal'
 import TagSelect from '../TagSelect'
 import { MAX_TAG_LENGTH, normalizeTags, tagRules } from '../photoTags'
+import {
+  PUBLIC_PHOTO_HINT, isPublicPhoto, photographerPayload, publicPhotographerFirst, withPublicPhotographer,
+} from '../publicPhoto'
 import { readRecentTags, recordTagSearch } from '../photoTagHistory'
 import RecentTagChips from '../RecentTagChips'
 import { selectPhotoRange } from '../photoSelection'
@@ -139,7 +142,8 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
   )
   // 已经选中的拍摄者可能不在候选里（他的图全被删了，或者 URL 是别人分享的）。
   // 这时仍然要把它摆在框里，否则列表明明被筛过了，筛选条件却看不见、也清不掉。
-  const photographerOptions = [...new Set([...photographerNames, ...filters.photographers])]
+  // 「公共照片」是一个固定的作者，排在最前面，方便在总库里一筛就找到。
+  const photographerOptions = publicPhotographerFirst([...new Set([...photographerNames, ...filters.photographers])])
     .map(name => ({ value: name, label: name }))
   // 只有一位拍摄者时摆个下拉框只是噪音；但已经筛上了就得留着，否则条件清不掉。
   const showPhotographerFilter = photographerOptions.length > 1 || filters.photographers.length > 0
@@ -218,7 +222,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
         method: 'POST', url: '/photos/upload-tickets', data: {
           requestId: values.requestId || null, projectId: values.projectId || null,
           fileName: file.name, contentType: file.type, size: file.size, sha256: hash,
-          photographerContactId: values.photographerContactId,
+          ...photographerPayload(values.photographerContactId),
           takenAt: values.takenAt.format('YYYY-MM-DDTHH:mm:ss'),
         },
       })
@@ -441,6 +445,13 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
       return
     }
     const photos = projectPickerPhotos
+    // 选题只收公共照片时先在这里说清楚，免得发出去才被整批拒绝。后端同样会拦。
+    const nonPublic = project.publicPhotosOnly
+      ? photos.filter(photo => !isPublicPhoto(photo.photographerName)).length : 0
+    if (nonPublic) {
+      message.warning(`“${project.title}”仅接收公共照片，所选图片中有 ${nonPublic} 张不是公共照片`)
+      return
+    }
     // 已经在这个选题里的不必再发；后端一次最多收 200 张，多了按批顺序发。
     const photoIds = photos.filter(photo => !isLinkedToProject(photo, project.id)).map(photo => photo.id)
     setProjectSaving(true)
@@ -685,11 +696,12 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
         </Form.Item>
         <Row gutter={16}><Col span={12}><Form.Item label="图片标题" name="title" rules={[{ required: true }]}><Input /></Form.Item></Col>
           <Col span={12}><Form.Item label="拍摄时间" name="takenAt" rules={[{ required: true }]}><DatePicker showTime style={{ width: '100%' }} /></Form.Item></Col></Row>
-        <Form.Item label="拍摄者" name="photographerContactId" rules={[{ required: true, message: '请从通讯录选择拍摄者' }]}>
+        <Form.Item label="拍摄者" name="photographerContactId" extra={PUBLIC_PHOTO_HINT}
+          rules={[{ required: true, message: '请从通讯录选择拍摄者，或选「公共照片」' }]}>
           <Select showSearch optionFilterProp="label" loading={photographersLoading}
-            placeholder={photographers.length ? '按姓名或学号选择' : '通讯录为空，请先在「通讯录」页添加成员'}
+            placeholder={photographers.length ? '按姓名或学号选择' : '通讯录为空，可先选「公共照片」或到「通讯录」页添加成员'}
             notFoundContent={photographersLoading ? '正在加载通讯录…' : '通讯录中没有可用成员'}
-            options={photographers} />
+            options={withPublicPhotographer(photographers)} />
         </Form.Item>
         <Form.Item label="标签" name="tags" rules={tagRules}><TagSelect /></Form.Item>
         <Form.Item label="图片说明" name="description"><Input.TextArea rows={3} /></Form.Item>
@@ -756,7 +768,8 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
           locale={{ emptyText: projectsError ? '暂时无法加载项目' : '没有匹配的进行中项目' }}
           columns={[
             { title: '选题项目', dataIndex: 'title', render: (title, project) =>
-              <div className="table-title"><strong>{title}</strong><span>项目 #{project.id}</span></div> },
+              <div className="table-title"><strong>{title}</strong><span>项目 #{project.id}
+                {project.publicPhotosOnly && <Tag color="cyan" style={{ marginLeft: 8 }}>仅收公共照片</Tag>}</span></div> },
             { title: '关联状态', width: 130, render: (_, project) => {
               const linkedCount = projectPickerPhotos.filter(photo => isLinkedToProject(photo, project.id)).length
               if (!linkedCount) return <Typography.Text type="secondary">可添加</Typography.Text>

@@ -202,7 +202,8 @@ public class RequestService {
                 ? get(id, user)
                 : requireParticipantAccess(id, user);
         List<String> presets = projectService.presetTags(request.getProjectId());
-        return new TagOptions(!presets.isEmpty(), presets);
+        return new TagOptions(!presets.isEmpty(), presets,
+                projectService.acceptsOnlyPublicPhotos(request.getProjectId()));
     }
 
     /**
@@ -503,7 +504,12 @@ public class RequestService {
         }
     }
 
-    public record TagOptions(boolean restricted, List<String> tags) {
+    /**
+     * 上传表单要知道的选题设置。上传者不一定能看选题，所以从需求这边带过去（§2.22）。
+     *
+     * @param publicPhotosOnly 选题仅接收公共照片，表单把拍摄者锁成「公共照片」
+     */
+    public record TagOptions(boolean restricted, List<String> tags, boolean publicPhotosOnly) {
     }
 
     public record AssignableUser(Long id, String username, String displayName) {

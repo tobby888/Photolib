@@ -44,6 +44,7 @@ import {
   hasActiveFilters, normalizeTags, tagRules,
 } from '../photoTags'
 import type { ProjectPhotoFilters } from '../photoTags'
+import { isPublicPhoto } from '../publicPhoto'
 import ProjectPhotoFilterBar from '../ProjectPhotoFilterBar'
 import { describeRemovalResult, planPhotoRemoval } from '../projectPhotoRemoval'
 import type { RemovePhotosResult } from '../projectPhotoRemoval'
@@ -224,17 +225,20 @@ const ProjectPhotoCard = memo(function ProjectPhotoCard({
       <span>{photo.photographerName}</span>
       <span>{dayjs(photo.takenAt).format('YYYY.MM.DD')}</span>
     </div>
-    {canAdopt && <Button
-      block
-      type={adopted ? 'default' : 'primary'}
-      danger={adopted}
-      icon={<LinkOutlined />}
-      loading={marking}
-      disabled={adoptDisabled}
-      onClick={() => onToggleAdoption(photo)}
-    >
-      {adopted ? '取消采纳' : '标注为采纳'}
-    </Button>}
+    {canAdopt && (isPublicPhoto(photo.photographerName) && !adopted
+      // 公共照片不计被引，后端也会拒绝；按钮留着占位，说清楚为什么点不了。
+      ? <Button block icon={<LinkOutlined />} disabled>公共照片不计被引</Button>
+      : <Button
+          block
+          type={adopted ? 'default' : 'primary'}
+          danger={adopted}
+          icon={<LinkOutlined />}
+          loading={marking}
+          disabled={adoptDisabled}
+          onClick={() => onToggleAdoption(photo)}
+        >
+          {adopted ? '取消采纳' : '标注为采纳'}
+        </Button>)}
   </Card>
 })
 
@@ -844,6 +848,11 @@ export default function ProjectDetailPage() {
                     {isEvent ? '未设置。活动选题的选片人只能从预设标签里挑，请先定义一组' : '未设置，上传者可以自定义标签'}
                   </Typography.Text>}
             </div>
+            {project.publicPhotosOnly && <div className="project-preset-tags">
+              <Typography.Text type="secondary"><CameraOutlined /> 拍摄者</Typography.Text>
+              <Tag color="cyan" variant="filled">仅接收公共照片</Tag>
+              <Typography.Text type="secondary">传进来的图都记在「公共照片」名下，不计被引</Typography.Text>
+            </div>}
             {(isEvent || !!project.selectors?.length) && <div className="project-preset-tags">
               <Typography.Text type="secondary"><TeamOutlined /> 选片人</Typography.Text>
               {project.selectors?.length
@@ -872,7 +881,10 @@ export default function ProjectDetailPage() {
             {canEdit && <>
             {project.status !== 'COMPLETED' && project.status !== 'CANCELLED' &&
               <Button icon={<EditOutlined />} onClick={() => {
-                editForm.setFieldsValue({ title: project.title, description: project.description, tags: project.tags || [] })
+                editForm.setFieldsValue({
+                  title: project.title, description: project.description, tags: project.tags || [],
+                  publicPhotosOnly: !!project.publicPhotosOnly,
+                })
                 setEditOpen(true)
               }}>编辑项目</Button>}
             {canCreateRequest && (project.status === 'DRAFT' || project.status === 'ACTIVE') &&
@@ -1053,6 +1065,10 @@ export default function ProjectDetailPage() {
           <Form.Item label="预设标签" name="tags" rules={tagRules}
             extra="需求上传图片时只能从这些标签中选择（清空则允许自定义）；在选题里给图片加标签和上传链接的上传者打标签时，预设只是候选，也可以自己输入。修改不会改动图片上已有的标签。">
             <TagSelect placeholder="输入后回车添加预设标签" />
+          </Form.Item>
+          <Form.Item name="publicPhotosOnly" valuePropName="checked"
+            extra="打开后，需求交付、选题相册直传、批量上传、上传链接，以及从图库添加 / 复制 / 移动进来的图，拍摄者都必须是「公共照片」。公共照片不属于任何人、不计入被引；上传链接里传公共照片不能申报工时。修改不会改动相册里已有的图。">
+            <Checkbox>本选题仅接收公共照片</Checkbox>
           </Form.Item>
         </Form>
       </Modal>

@@ -12,6 +12,7 @@ import cn.photolib.common.util.PublicId;
 import cn.photolib.permission.PermissionCode;
 import cn.photolib.photo.PhotoService;
 import cn.photolib.photo.PhotoTags;
+import cn.photolib.photo.PublicPhoto;
 import cn.photolib.photo.mapper.PhotoMapper;
 import cn.photolib.photo.model.PhotoEntity;
 import cn.photolib.photo.model.PhotoStatus;
@@ -262,7 +263,11 @@ public class ProjectShareService {
      */
     public LinkGreeting greet(String token) {
         ProjectShareLinkEntity link = requireUsable(token);
-        return new LinkGreeting(true, purposeOf(link));
+        ShareLinkPurpose purpose = purposeOf(link);
+        // 「仅接收公共照片」同样只决定密码页长什么样（不用报姓名学号），不透露选题内容。
+        boolean publicOnly = purpose == ShareLinkPurpose.UPLOAD
+                && projectService.acceptsOnlyPublicPhotos(link.getProjectId());
+        return new LinkGreeting(true, purpose, publicOnly);
     }
 
     @Transactional
@@ -273,7 +278,7 @@ public class ProjectShareService {
         }
         // 上传链接的身份在进门时一次性确定，这次会话上传的每一张都用同一份快照。
         GuestIdentity uploader = purposeOf(link) == ShareLinkPurpose.UPLOAD
-                ? validatedIdentity(identity) : null;
+                ? validatedIdentity(identity, link) : null;
         String sessionToken = newSessionToken();
         LocalDateTime now = LocalDateTime.now(clock);
         ProjectShareSessionEntity session = new ProjectShareSessionEntity();
@@ -333,6 +338,7 @@ public class ProjectShareService {
         ShareLinkPurpose purpose = purposeOf(link);
         boolean upload = purpose == ShareLinkPurpose.UPLOAD;
         ProjectShareSessionEntity session = context.session();
+        boolean publicUploader = session != null && PublicPhoto.isPublic(session.getUploaderName());
         // 上传链接的访客看不到相册，所以这里连项目状态之外的东西都不需要多给。
         // 姓名学号只是把他自己填的那份回显出来，好让他确认没填错人、切换拍摄者时看得清当前是谁；
         // 预设标签是他给自己的图片打标签时唯一能选的那几个（AGENTS §2.21.3）。
@@ -340,12 +346,15 @@ public class ProjectShareService {
                 Boolean.TRUE.equals(link.getAllowDownload()),
                 Boolean.TRUE.equals(link.getAllowAdoption()),
                 upload && canAcceptUploads(project),
-                upload && canAcceptWorklogs(project),
+                // 选了公共照片就不能申报工时：公共照片不属于任何人，工时也就没有主人。
+                upload && canAcceptWorklogs(project) && !publicUploader,
                 session == null ? null : session.getUploaderName(),
                 session == null ? null : session.getUploaderStudentId(),
                 upload ? projectService.presetTags(project.getId()) : List.of(),
                 upload ? existingTags(project.getId()) : List.of(),
-                link.getExpiresAt());
+                link.getExpiresAt(),
+                publicUploader,
+                upload && Boolean.TRUE.equals(project.getPublicPhotosOnly()));
     }
 
     /**
@@ -363,7 +372,7 @@ public class ProjectShareService {
     @Transactional
     public GuestAccess switchUploader(GuestContext context, GuestIdentity identity) {
         requireUploadLink(context.link());
-        GuestIdentity uploader = validatedIdentity(identity);
+        GuestIdentity uploader = validatedIdentity(identity, context.link());
         ProjectShareSessionEntity session = context.session();
         int updated = jdbc.sql("""
                         UPDATE project_share_session
@@ -709,11 +718,22 @@ public class ProjectShareService {
      * 两处面对的是同一件事——站外的人手敲的学号，可能带全角数字、空格和大小写差异。
      * 姓名只做长度和空白校验，中文姓名没有可靠的形状可判。</p>
      */
-    private GuestIdentity validatedIdentity(GuestIdentity identity) {
+    private GuestIdentity validatedIdentity(GuestIdentity identity, ProjectShareLinkEntity link) {
+        // 公共照片：选题仅收公共照片时不论填了什么都是它；访客自己勾选时也一样。
+        // 姓名学号都不要——它不属于任何人，后面也不能申报工时。
+        if ((identity != null && Boolean.TRUE.equals(identity.publicPhoto()))
+                || projectService.acceptsOnlyPublicPhotos(link.getProjectId())) {
+            return PUBLIC_IDENTITY;
+        }
         String name = identity == null || identity.name() == null ? "" : identity.name().trim();
         if (name.isEmpty() || name.codePointCount(0, name.length()) > MAX_UPLOADER_NAME_LENGTH) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR,
                     "请填写上传者姓名（" + MAX_UPLOADER_NAME_LENGTH + " 字以内）");
+        }
+        if (PublicPhoto.isPublic(name)) {
+            // 保留的拍摄者姓名：带着学号报成「公共照片」就能给公共照片申报工时。
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                    "「" + PublicPhoto.PHOTOGRAPHER_NAME + "」不能作为姓名，要传公共照片请直接勾选");
         }
         return new GuestIdentity(name,
                 RecruitmentStudentId.normalize(identity.studentId()).value());
@@ -810,7 +830,8 @@ public class ProjectShareService {
 
     public record ResetPassword(ShareLinkView link, String password) {}
 
-    public record LinkGreeting(boolean requiresPassword, ShareLinkPurpose purpose) {}
+    /** @param publicPhotosOnly 上传链接所在选题仅接收公共照片：密码页不用再报姓名学号 */
+    public record LinkGreeting(boolean requiresPassword, ShareLinkPurpose purpose, boolean publicPhotosOnly) {}
 
     public record GuestSession(String sessionToken, LocalDateTime expiresAt, GuestAccess access) {}
 
@@ -819,13 +840,27 @@ public class ProjectShareService {
                               boolean allowUpload, boolean allowWorklog, String uploaderName,
                               String uploaderStudentId, List<String> presetTags,
                               List<String> existingTags,
-                              LocalDateTime expiresAt) {}
+                              LocalDateTime expiresAt,
+                              boolean uploaderPublic,
+                              boolean publicPhotosOnly) {}
 
     /** 一次访客请求解析出来的上下文：当前这一刻的链接行，加上发起请求的那个会话。 */
     public record GuestContext(ProjectShareLinkEntity link, ProjectShareSessionEntity session) {}
 
-    /** 上传链接的访客进门时自报的身份，作为照片上的拍摄者快照。 */
-    public record GuestIdentity(String name, String studentId) {}
+    /**
+     * 上传链接的访客进门时自报的身份，作为照片上的拍摄者快照。
+     *
+     * @param publicPhoto 传的是公共照片：不报姓名学号，拍摄者记成「公共照片」
+     */
+    public record GuestIdentity(String name, String studentId, Boolean publicPhoto) {
+        public GuestIdentity(String name, String studentId) {
+            this(name, studentId, false);
+        }
+    }
+
+    /** 公共照片在会话上的身份快照：学号是空串（照片上的学号列 NOT NULL）。 */
+    static final GuestIdentity PUBLIC_IDENTITY = new GuestIdentity(
+            PublicPhoto.PHOTOGRAPHER_NAME, PublicPhoto.PHOTOGRAPHER_STUDENT_ID, true);
 
     /**
      * @param tags 图片上的标签。访客页把它们画在卡片上、点一下就按它筛选，与选题详情页一致；

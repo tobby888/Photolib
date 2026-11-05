@@ -95,8 +95,10 @@ public class PhotoService {
             // 撞上的全是自己在同一处没传完的票据：续一张新地址，而不是让人干等清理任务。
             return resumeTicket(duplicates.get(0), user);
         }
-        // 强制拍摄者来自通讯录：解析放在文件校验、参与人校区校验之后，快照姓名/学号写入照片。
-        var photographer = campusMemberService.resolvePhotographer(command.photographerContactId(), campusId);
+        // 强制拍摄者来自通讯录（或选公共照片）：解析放在文件校验、参与人校区校验之后，快照姓名/学号写入照片。
+        var photographer = PublicPhoto.resolve(command.publicPhoto(), command.photographerContactId(),
+                campusId, campusMemberService);
+        projectService.requireAcceptsPhotographer(projectId, photographer.isPublic());
         String extension = command.contentType().equals("image/png") ? "png" : "jpg";
         String id = UUID.randomUUID().toString();
         String originalKey = "temporary/photos/" + id + "." + extension;
@@ -104,8 +106,8 @@ public class PhotoService {
         PhotoEntity photo = new PhotoEntity();
         photo.setRequestId(command.requestId());
         photo.setProjectId(projectId);
-        photo.setPhotographerStudentId(photographer.getStudentId());
-        photo.setPhotographerName(photographer.getName());
+        photo.setPhotographerStudentId(photographer.studentId());
+        photo.setPhotographerName(photographer.name());
         photo.setUploadedBy(user.id());
         photo.setCampusId(campusId);
         photo.setTakenAt(command.takenAt());
@@ -427,12 +429,14 @@ public class PhotoService {
         requireCanManageMetadata(photo, user);
         List<String> tags = PhotoTags.normalize(command.tags());
         projectService.requireAllowedPhotoTags(photo.getProjectId(), newlyAdded(photo, tags));
-        var photographer = campusMemberService.resolvePhotographer(
-                command.photographerContactId(), photo.getCampusId());
+        var photographer = PublicPhoto.resolve(command.publicPhoto(), command.photographerContactId(),
+                photo.getCampusId(), campusMemberService);
+        projectService.requireAcceptsPhotographer(photo.getProjectId(), photographer.isPublic());
+        requireMayBecomePublic(photo, photographer.isPublic());
         photo.setTitle(command.title());
         photo.setDescription(command.description());
-        photo.setPhotographerStudentId(photographer.getStudentId());
-        photo.setPhotographerName(photographer.getName());
+        photo.setPhotographerStudentId(photographer.studentId());
+        photo.setPhotographerName(photographer.name());
         photo.setTakenAt(command.takenAt());
         photo.setTagsJson(PhotoTags.toJson(tags));
         photo.setVersion(command.version());
@@ -570,6 +574,12 @@ public class PhotoService {
         String title = requireText(command.title(), "图片标题不能为空");
         String name = requireText(command.photographerName(), "拍摄者姓名不能为空");
         String studentId = Objects.requireNonNullElse(command.photographerStudentId(), "").strip();
+        if (PublicPhoto.isPublic(name)) {
+            // 公共照片没有学号：手填的学号丢掉，否则同一个作者会按学号裂成几份。
+            name = PublicPhoto.PHOTOGRAPHER_NAME;
+            studentId = PublicPhoto.PHOTOGRAPHER_STUDENT_ID;
+        }
+        requireMayBecomePublic(photo, PublicPhoto.isPublic(name));
         Map<String, Object> previous = previousValues(photo);
         boolean photographerChanged = !name.equals(photo.getPhotographerName())
                 || !studentId.equals(photo.getPhotographerStudentId());
@@ -620,11 +630,17 @@ public class PhotoService {
                 : requireText(command.photographer().name(), "拍摄者姓名不能为空");
         String studentId = command.photographer() == null ? null
                 : Objects.requireNonNullElse(command.photographer().studentId(), "").strip();
+        if (PublicPhoto.isPublic(name)) {
+            name = PublicPhoto.PHOTOGRAPHER_NAME;
+            studentId = PublicPhoto.PHOTOGRAPHER_STUDENT_ID;
+        }
         Long campusId = command.campus() == null ? null : command.campus().campusId();
         if (campusId != null) campusService.get(campusId);
 
         List<PhotoEntity> photos = ids.stream().map(this::require).toList();
         photos.forEach(this::requireMetadataEditable);
+        boolean toPublic = PublicPhoto.isPublic(name);
+        photos.forEach(photo -> requireMayBecomePublic(photo, toPublic));
         List<Map<String, Object>> previous = new ArrayList<>();
         int changed = 0;
         int adoptions = 0;
@@ -684,6 +700,17 @@ public class PhotoService {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
                     "图片「" + displayName(photo) + "」还在上传或处理中，处理完成后才能修改");
         }
+    }
+
+    /**
+     * 改成公共照片之前，图上不能有未撤销的被引：公共照片不计被引（{@link PublicPhoto}），
+     * 留着那条记录就会让「公共照片」出现在成员核算和被引排行里。本来就是公共照片的不拦。
+     */
+    private void requireMayBecomePublic(PhotoEntity photo, boolean toPublic) {
+        if (!toPublic || PublicPhoto.isPublic(photo)) return;
+        long active = jdbc.sql("SELECT COUNT(*) FROM adoption WHERE photo_id=:photoId AND deleted=FALSE")
+                .param("photoId", photo.getId()).query(Long.class).single();
+        if (active > 0) throw PublicPhoto.adoptedCannotBecomePublic();
     }
 
     private int syncAdoptionPhotographer(Long photoId, String studentId, String name) {
@@ -1229,12 +1256,23 @@ public class PhotoService {
         return adoptionCounts(List.of(photoId)).getOrDefault(photoId, 0L);
     }
 
+    /** @param publicPhoto 拍摄者选「公共照片」；为真时不看 {@code photographerContactId} */
     public record CreateTicket(Long requestId, Long projectId, String fileName, String contentType, long size,
                                String sha256, Long photographerContactId,
-                               LocalDateTime takenAt) {}
+                               LocalDateTime takenAt, Boolean publicPhoto) {
+        public CreateTicket(Long requestId, Long projectId, String fileName, String contentType, long size,
+                            String sha256, Long photographerContactId, LocalDateTime takenAt) {
+            this(requestId, projectId, fileName, contentType, size, sha256, photographerContactId, takenAt, false);
+        }
+    }
     public record CompleteUpload(String title, String description, List<String> tags) {}
     public record Metadata(String title, String description, Long photographerContactId,
-                           LocalDateTime takenAt, List<String> tags, int version) {}
+                           LocalDateTime takenAt, List<String> tags, int version, Boolean publicPhoto) {
+        public Metadata(String title, String description, Long photographerContactId,
+                        LocalDateTime takenAt, List<String> tags, int version) {
+            this(title, description, photographerContactId, takenAt, tags, version, false);
+        }
+    }
     public record BatchTags(List<Long> photoIds, List<String> addTags, List<String> removeTags,
                             Long projectId) {}
     public record TaggedPhoto(Long id, List<String> tags, Integer version) {}

@@ -346,18 +346,21 @@ public class ProjectSharePublicController {
 
     record UploadTagsRequest(@NotNull @Size(max = PhotoTags.MAX_TAGS) List<@Size(max = 100) String> tags) {}
 
+    /** {@code publicPhoto=true} 时传的是公共照片，姓名学号不用填。 */
     record UploaderRequest(@Size(max = ProjectShareService.MAX_UPLOADER_NAME_LENGTH) String uploaderName,
-                           @Size(max = 64) String uploaderStudentId) {
+                           @Size(max = 64) String uploaderStudentId,
+                           Boolean publicPhoto) {
         ProjectShareService.GuestIdentity identity() {
-            return new ProjectShareService.GuestIdentity(uploaderName, uploaderStudentId);
+            return new ProjectShareService.GuestIdentity(uploaderName, uploaderStudentId, publicPhoto);
         }
     }
 
     record PasswordRequest(@NotNull @Size(max = ProjectShareService.MAX_PASSWORD_LENGTH) String password,
                            @Size(max = ProjectShareService.MAX_UPLOADER_NAME_LENGTH) String uploaderName,
-                           @Size(max = 64) String uploaderStudentId) {
+                           @Size(max = 64) String uploaderStudentId,
+                           Boolean publicPhoto) {
         ProjectShareService.GuestIdentity identity() {
-            return new ProjectShareService.GuestIdentity(uploaderName, uploaderStudentId);
+            return new ProjectShareService.GuestIdentity(uploaderName, uploaderStudentId, publicPhoto);
         }
     }
 

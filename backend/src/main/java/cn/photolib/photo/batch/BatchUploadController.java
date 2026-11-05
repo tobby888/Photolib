@@ -57,7 +57,7 @@ public class BatchUploadController {
         return ApiResponse.ok(service.setMetadata(batchId, itemId,
                 new BatchUploadService.ItemMetadata(request.title(), request.description(),
                         request.photographerContactId(),
-                        request.takenAt(), request.tags()), user));
+                        request.takenAt(), request.tags(), request.publicPhoto()), user));
     }
 
     @AuditAction("批量填写上传图片信息")
@@ -69,7 +69,8 @@ public class BatchUploadController {
             @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.setMetadataForAll(batchId,
                 new BatchUploadService.BatchMetadata(request.description(),
-                        request.photographerContactId(), request.takenAt(), request.tags()), user));
+                        request.photographerContactId(), request.takenAt(), request.tags(),
+                        request.publicPhoto()), user));
     }
 
     record CreateRequest(@NotNull BatchMode mode, Long requestId, Long projectId,
@@ -78,13 +79,16 @@ public class BatchUploadController {
     record FileRequest(@NotBlank String fileName, @NotBlank String contentType,
                        @Positive long size,
                        @NotBlank @Pattern(regexp = "^[a-fA-F0-9]{64}$") String sha256) {}
+    /** 拍摄者二选一：通讯录成员（{@code photographerContactId}）或公共照片（{@code publicPhoto=true}）。 */
     record MetadataRequest(@NotBlank @Size(max = 200) String title,
                            @Size(max = 5000) String description,
-                           @NotNull Long photographerContactId,
+                           Long photographerContactId,
                            @NotNull @PastOrPresent LocalDateTime takenAt,
-                           @Size(max = 30) List<@Size(max = 100) String> tags) {}
+                           @Size(max = 30) List<@Size(max = 100) String> tags,
+                           Boolean publicPhoto) {}
     record BatchMetadataRequest(@Size(max = 5000) String description,
-                                @NotNull Long photographerContactId,
+                                Long photographerContactId,
                                 @NotNull @PastOrPresent LocalDateTime takenAt,
-                                @Size(max = 30) List<@Size(max = 100) String> tags) {}
+                                @Size(max = 30) List<@Size(max = 100) String> tags,
+                                Boolean publicPhoto) {}
 }

@@ -11,6 +11,7 @@ import cn.photolib.photo.PhotoProcessingService;
 import cn.photolib.photo.PhotoProcessingWorkspace;
 import cn.photolib.photo.PhotoTags;
 import cn.photolib.photo.ProcessingPriority;
+import cn.photolib.photo.PublicPhoto;
 import cn.photolib.photo.mapper.PhotoMapper;
 import cn.photolib.photo.model.PhotoEntity;
 import cn.photolib.photo.model.PhotoStatus;
@@ -170,9 +171,11 @@ public class BatchUploadService {
         Long campusId = batch.getRequestId() == null
                 ? requireGalleryUploadCampus(user)
                 : requestService.get(batch.getRequestId()).getCampusId();
-        var photographer = campusMemberService.resolvePhotographer(metadata.photographerContactId(), campusId);
+        var photographer = PublicPhoto.resolve(metadata.publicPhoto(), metadata.photographerContactId(),
+                campusId, campusMemberService);
+        projectService.requireAcceptsPhotographer(batch.getProjectId(), photographer.isPublic());
         createPhoto(batch, item, metadata.title(), metadata.description(), metadata.takenAt(),
-                tags, photographer.getStudentId(), photographer.getName(), campusId, user.id(), null,
+                tags, photographer.studentId(), photographer.name(), campusId, user.id(), null,
                 null);
         refreshBatch(batchId);
         return view(batchMapper.selectById(batchId));
@@ -187,9 +190,11 @@ public class BatchUploadService {
         Long campusId = batch.getRequestId() == null
                 ? requireGalleryUploadCampus(user)
                 : requestService.get(batch.getRequestId()).getCampusId();
-        var photographer = campusMemberService.resolvePhotographer(metadata.photographerContactId(), campusId);
+        var photographer = PublicPhoto.resolve(metadata.publicPhoto(), metadata.photographerContactId(),
+                campusId, campusMemberService);
+        projectService.requireAcceptsPhotographer(batch.getProjectId(), photographer.isPublic());
         return finishAllWithSnapshot(batchId, new PhotoSnapshot(
-                photographer.getStudentId(), photographer.getName(), campusId, user.id(), null,
+                photographer.studentId(), photographer.name(), campusId, user.id(), null,
                 metadata.takenAt(), metadata.description(), metadata.tags()));
     }
 
@@ -633,10 +638,21 @@ public class BatchUploadService {
                                 Long uploadedBy, Long shareLinkId, LocalDateTime takenAt,
                                 String description, List<String> tags) {}
     public record FileSpec(String fileName, String contentType, long size, String sha256) {}
+    /** @param publicPhoto 拍摄者选「公共照片」；为真时不看 {@code photographerContactId} */
     public record ItemMetadata(String title, String description, Long photographerContactId,
-                               LocalDateTime takenAt, List<String> tags) {}
+                               LocalDateTime takenAt, List<String> tags, Boolean publicPhoto) {
+        public ItemMetadata(String title, String description, Long photographerContactId,
+                            LocalDateTime takenAt, List<String> tags) {
+            this(title, description, photographerContactId, takenAt, tags, false);
+        }
+    }
     public record BatchMetadata(String description, Long photographerContactId,
-                                LocalDateTime takenAt, List<String> tags) {}
+                                LocalDateTime takenAt, List<String> tags, Boolean publicPhoto) {
+        public BatchMetadata(String description, Long photographerContactId,
+                             LocalDateTime takenAt, List<String> tags) {
+            this(description, photographerContactId, takenAt, tags, false);
+        }
+    }
     public record ItemTicket(Long itemId, String fileName, String uploadUrl, String contentType,
                              java.time.Instant expiresAt) {}
     public record BatchTicket(String batchId, BatchMode mode, List<ItemTicket> tickets) {}

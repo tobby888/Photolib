@@ -1,5 +1,5 @@
 import {
-  App, Button, Card, Col, Form, Input, Modal, Radio, Row, Select, Space, Tag, Typography,
+  App, Button, Card, Checkbox, Col, Form, Input, Modal, Radio, Row, Select, Space, Tag, Typography,
 } from 'antd'
 import {
   ArrowRightOutlined, FolderOpenOutlined, PlusOutlined, PushpinFilled, PushpinOutlined, SearchOutlined, TagsOutlined,
@@ -97,6 +97,7 @@ export default function ProjectsPage() {
               <Space size={4}>
                 {item.pinned && <Tag color="gold" variant="filled">已置顶</Tag>}
                 {item.type === 'EVENT' && <Tag color="purple" variant="filled">活动选题</Tag>}
+                {item.publicPhotosOnly && <Tag color="cyan" variant="filled">仅收公共照片</Tag>}
                 <StatusTag value={item.status} />
                 <Button type="text" size="small" loading={pinningId === item.id}
                   icon={item.pinned ? <PushpinFilled /> : <PushpinOutlined />}
@@ -125,7 +126,8 @@ export default function ProjectsPage() {
     </DataState>
     <Modal title="新建选题项目" width={760} open={open} onCancel={() => setOpen(false)} onOk={create} confirmLoading={saving}
       okText="创建项目" cancelText="取消">
-      <Form form={form} layout="vertical" initialValues={{ status: 'DRAFT', type: 'CREATION' }} requiredMark={false}>
+      <Form form={form} layout="vertical" initialValues={{ status: 'DRAFT', type: 'CREATION', publicPhotosOnly: false }}
+        requiredMark={false}>
         <Form.Item label="选题类型" name="type" extra={typeOptions.map(option =>
           `${option.label}——${option.hint}`).join('；')}>
           <Radio.Group optionType="button" buttonStyle="solid"
@@ -140,6 +142,9 @@ export default function ProjectsPage() {
         <Form.Item label="预设标签" name="tags" rules={tagRules}
           extra="设置后，需求上传图片和在选题里给图片加标签时只能从这些标签中选择（也可以不加）；留空则允许上传者自定义标签。直接上传到图片库不受影响。活动选题的选片人就是从这组标签里挑，可以随时增删。">
           <TagSelect placeholder="输入后回车添加，例如：开幕式、合影、颁奖" />
+        </Form.Item>
+        <Form.Item name="publicPhotosOnly" valuePropName="checked" extra="打开后，需求交付、选题相册直传、批量上传、上传链接，以及从图库添加 / 复制 / 移动进来的图，拍摄者都必须是「公共照片」。公共照片不属于任何人、不计入被引；上传链接里传公共照片不能申报工时。">
+          <Checkbox>本选题仅接收公共照片</Checkbox>
         </Form.Item>
         <Form.Item label="初始状态" name="status"><Select options={statusOptions.slice(0, 2)} /></Form.Item>
       </Form>

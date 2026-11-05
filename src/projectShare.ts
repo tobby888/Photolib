@@ -78,12 +78,17 @@ export interface ShareUploaderIdentity {
   uploaderStudentId: string
 }
 
+/** 进门 / 切换时发给后端的身份：要么自报姓名学号，要么勾选公共照片。 */
+export type ShareUploaderChoice = ShareUploaderIdentity | { publicPhoto: true }
+
 export const shareApi = {
   // purpose 决定这个 token 该由哪一页接（相册还是上传台），所以密码页之前就要问一次。
   greet: (token: string) =>
-    api<{ requiresPassword: boolean; purpose: ShareLinkPurpose }>({ url: `/public/shares/${token}` }),
+    api<{ requiresPassword: boolean; purpose: ShareLinkPurpose; publicPhotosOnly?: boolean }>({
+      url: `/public/shares/${token}`,
+    }),
 
-  openSession: (token: string, password: string, identity?: ShareUploaderIdentity) =>
+  openSession: (token: string, password: string, identity?: ShareUploaderChoice) =>
     api<ShareGuestSession>({
       method: 'POST', url: `/public/shares/${token}/sessions`, data: { password, ...identity },
     }),
@@ -152,7 +157,7 @@ export const shareUploadApi = {
     }),
 
   // 切换这场会话的拍摄者（一个人替两个人交图）。之后的上传和工时申报都记在新身份名下。
-  switchUploader: (token: string, session: string, identity: ShareUploaderIdentity) =>
+  switchUploader: (token: string, session: string, identity: ShareUploaderChoice) =>
     api<ShareGuestAccess>({
       method: 'PUT', url: `/public/shares/${token}/session/uploader`,
       data: identity, ...guest(session),

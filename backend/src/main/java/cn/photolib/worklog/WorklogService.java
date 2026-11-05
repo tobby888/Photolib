@@ -98,6 +98,10 @@ public class WorklogService {
      */
     @Transactional
     public WorklogEntity createForShareLink(ShareLinkWorklog command) {
+        if (cn.photolib.photo.PublicPhoto.isPublic(command.memberName())) {
+            // 公共照片不属于任何人，工时没有主人（上传链接里选了公共照片就不能申报）。
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "公共照片不能申报工时");
+        }
         validate(command.workDate(), command.shootingMinutes(), command.retouchingMinutes());
         requireProjectOpen(command.projectId());
         WorklogEntity worklog = new WorklogEntity();
