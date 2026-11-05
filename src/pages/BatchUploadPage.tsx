@@ -4,7 +4,7 @@ import {
 } from 'antd'
 import { ArrowLeftOutlined, FileZipOutlined, InboxOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import { useAuth } from '../auth'
@@ -14,8 +14,11 @@ import { uploadToObjectStorage } from '../storageUpload'
 import { describeBytes } from '../uploadLimits'
 import { useUploadLimits } from '../useUploadLimits'
 import type {
-  BatchUploadStatus, BatchUploadView, CampusMember, DedupedMember, EntityId, PhotoRequest, TagOptions,
+  BatchUploadStatus, BatchUploadView, CampusMember, DedupedMember, EntityId, PhotoRequest, Project, TagOptions,
 } from '../types'
+import {
+  PUBLIC_PHOTOGRAPHER_VALUE, PUBLIC_PHOTO_HINT, photographerOptionsFor, photographerPayload,
+} from '../publicPhoto'
 import TagSelect from '../TagSelect'
 import { normalizeTags, tagRules } from '../photoTags'
 
@@ -58,6 +61,10 @@ export default function BatchUploadPage() {
         api<PhotoRequest>({ url: `/requests/${requestId}` }),
         api<TagOptions>({ url: `/requests/${requestId}/tag-options` }),
       ])
+    } else if (requestedProjectId) {
+      // 直接传进选题相册：只为知道选题是否仅收公共照片。读不到就按不限处理，后端照样会拦。
+      const project = await api<Project>({ url: `/projects/${requestedProjectId}` }).catch(() => null)
+      tagOptions = { ...tagOptions, publicPhotosOnly: !!project?.publicPhotosOnly }
     }
     const members = request
       ? (await api<CampusMember[]>({
@@ -71,7 +78,12 @@ export default function BatchUploadPage() {
     return { request, members, tagOptions }
   }, { request: null as PhotoRequest | null, members: [] as { value: EntityId; label: string }[],
     tagOptions: { restricted: false, tags: [] } as TagOptions },
-  [requestId, user?.dataScope])
+  [requestId, requestedProjectId, user?.dataScope])
+  const publicPhotosOnly = !!context.data.tagOptions.publicPhotosOnly
+  // 选题只收公共照片：拍摄者直接选好并锁住。
+  useEffect(() => {
+    if (publicPhotosOnly) form.setFieldValue('photographerContactId', PUBLIC_PHOTOGRAPHER_VALUE)
+  }, [form, publicPhotosOnly])
 
   const currentStep = useMemo(() => {
     if (phase === 'uploading') return 0
@@ -144,7 +156,7 @@ export default function BatchUploadPage() {
         method: 'PUT',
         url: `/photos/batches/${ticket.batchId}/metadata`,
         data: {
-          photographerContactId: values.photographerContactId,
+          ...photographerPayload(values.photographerContactId),
           takenAt: values.takenAt.format('YYYY-MM-DDTHH:mm:ss'),
           tags: normalizeTags(values.tags),
           description: values.description,
@@ -213,9 +225,11 @@ export default function BatchUploadPage() {
           </Upload.Dragger>
         </Form.Item>
         <Form.Item label="拍摄者" name="photographerContactId"
-          rules={[{ required: true, message: '请从通讯录选择拍摄者' }]}>
-          <Select showSearch optionFilterProp="label" options={context.data.members}
-            placeholder={context.data.members.length ? '按姓名或学号选择' : '通讯录中没有可用成员'} />
+          extra={publicPhotosOnly ? '这个选题只收公共照片，拍摄者固定为「公共照片」。' : PUBLIC_PHOTO_HINT}
+          rules={[{ required: true, message: '请从通讯录选择拍摄者，或选「公共照片」' }]}>
+          <Select showSearch optionFilterProp="label" disabled={publicPhotosOnly}
+            options={photographerOptionsFor(context.data.members, publicPhotosOnly)}
+            placeholder={context.data.members.length ? '按姓名或学号选择' : '通讯录中没有可用成员，可选「公共照片」'} />
         </Form.Item>
         <Form.Item label="统一拍摄时间" name="takenAt" rules={[{ required: true }]}>
           <DatePicker showTime style={{ width: '100%' }} />

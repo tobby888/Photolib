@@ -26,6 +26,8 @@ public class ProjectEntity extends BaseEntity {
     /** 预设标签的 JSON 数组；对外只暴露解析后的 {@link #getTags()}。 */
     @JsonIgnore
     private String tagsJson;
+    /** 仅接收公共照片（V75），见 {@code cn.photolib.photo.PublicPhoto}。 */
+    private Boolean publicPhotosOnly;
     /** 当前账号有没有置顶这个选题；只有列表接口会填，置顶存在 {@code project_pin}（V65）。 */
     @TableField(exist = false)
     private Boolean pinned;

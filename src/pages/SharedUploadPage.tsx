@@ -1,10 +1,12 @@
 import {
-  Alert, App, Button, Card, DatePicker, Empty, Form, Input, InputNumber, List, Modal, Progress, Result, Segmented,
+  Alert, App, Button, Card, Checkbox, DatePicker, Empty, Form, Input, InputNumber, List, Modal, Progress, Result,
+  Segmented,
   Skeleton, Space, Tag, Tooltip, Typography, Upload,
 } from 'antd'
 import type { FormRule } from 'antd'
 import {
-  ClockCircleOutlined, CloudUploadOutlined, FileZipOutlined, InboxOutlined, LockOutlined, SwapOutlined,
+  ClockCircleOutlined, CloudUploadOutlined, FileZipOutlined, InboxOutlined, LockOutlined, PictureOutlined,
+  SwapOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -16,12 +18,13 @@ import TagSelect from '../TagSelect'
 import {
   clearShareSession, readStoredShareSession, shareApi, shareUploadApi, storeShareSession,
 } from '../projectShare'
-import type { ShareUploaderIdentity } from '../projectShare'
+import type { ShareUploaderChoice, ShareUploaderIdentity } from '../projectShare'
+import { PUBLIC_PHOTOGRAPHER } from '../publicPhoto'
 import { sha256Hex } from '../recruitmentUpload'
 import {
   MAX_QUEUE_SIZE, addToQueue, canRetag, createUploadPump, describeBatchOutcome,
   isTerminalBatchStatus, markFailedForRetry, progressOf, readRememberedUploaders, rejectArchiveReason,
-  rememberUploader, storeRememberedUploaders, summarize,
+  rememberUploader, storeRememberedUploaders, summarize, uploaderKey,
 } from '../shareUpload'
 import type { ShareUploadItem } from '../shareUpload'
 import {
@@ -83,7 +86,12 @@ export default function SharedUploadPage() {
   const { message } = App.useApp()
   const branding = useBranding()
   const uploadLimits = useUploadLimits()
-  const [gateForm] = Form.useForm<{ password: string; uploaderName: string; uploaderStudentId: string }>()
+  const [gateForm] = Form.useForm<{
+    password: string; uploaderName: string; uploaderStudentId: string; publicPhoto?: boolean
+  }>()
+  const gatePublic = Form.useWatch('publicPhoto', gateForm)
+  /** 选题仅接收公共照片：密码页不用报姓名学号（greet 告诉我们的，进门后以 access 为准）。 */
+  const [greetPublicOnly, setGreetPublicOnly] = useState(false)
   const [worklogForm] = Form.useForm<{
     workDate: dayjs.Dayjs; shootingMinutes: number; retouchingMinutes: number; remark?: string
   }>()
@@ -160,6 +168,7 @@ export default function SharedUploadPage() {
         // 拿着相册链接走到了上传页（或者反过来）：把人送到对的那一页，
         // 而不是让他对着一个永远传不上去的上传台。
         setLinkState(greeting.purpose === 'UPLOAD' ? 'usable' : 'browse')
+        setGreetPublicOnly(!!greeting.publicPhotosOnly)
       } catch {
         if (!cancelled) setLinkState('broken')
       }
@@ -186,7 +195,8 @@ export default function SharedUploadPage() {
   // 申报记录要等确认了这是一条上传链接再取：浏览链接调这个接口一律 403，而这一页对
   // 403 的处理是清会话退回密码页——拿着相册会话误开到这里的人，会话会在跳走之前被清掉。
   // 服务端按当前拍摄者的学号列，所以切换拍摄者之后要重取一次。
-  const currentStudentId = access?.uploaderStudentId
+  // 公共照片没有学号，用固定的键代替（uploaderKey），列表里「记在谁名下」照样分得清。
+  const currentStudentId = uploaderKey(access)
   useEffect(() => {
     if (!session || access?.purpose !== 'UPLOAD') return
     let cancelled = false
@@ -233,18 +243,22 @@ export default function SharedUploadPage() {
   }
 
   /** 切换拍摄者。成功后 access 换成新身份，申报记录随之重取（见上面那个 effect）。 */
-  const applyUploader = async (identity: ShareUploaderIdentity) => {
+  const applyUploader = async (identity: ShareUploaderChoice) => {
     if (!session) return
     setSwitching(true)
     try {
-      const next = await shareUploadApi.switchUploader(token, session, {
-        uploaderName: identity.uploaderName.trim(),
-        uploaderStudentId: identity.uploaderStudentId.trim(),
-      })
+      const next = await shareUploadApi.switchUploader(token, session, 'publicPhoto' in identity
+        ? identity
+        : {
+            uploaderName: identity.uploaderName.trim(),
+            uploaderStudentId: identity.uploaderStudentId.trim(),
+          })
       setAccess(next)
       setSwitchOpen(false)
       switchForm.resetFields()
-      message.success(`已切换拍摄者为「${next.uploaderName}」，之后上传的照片和申报的工时都记在 TA 名下`)
+      message.success(next.uploaderPublic
+        ? '已切换为上传公共照片：之后上传的照片不属于任何人，也不能申报工时'
+        : `已切换拍摄者为「${next.uploaderName}」，之后上传的照片和申报的工时都记在 TA 名下`)
     } catch (reason) {
       handleGuestError(reason)
     } finally {
@@ -283,10 +297,13 @@ export default function SharedUploadPage() {
     const values = await gateForm.validateFields()
     setUnlocking(true)
     try {
-      const identity = {
-        uploaderName: values.uploaderName.trim(),
-        uploaderStudentId: values.uploaderStudentId.trim(),
-      }
+      // 公共照片不报姓名学号；选题仅收公共照片时服务端不论填了什么都按公共照片记。
+      const identity: ShareUploaderChoice = greetPublicOnly || values.publicPhoto
+        ? { publicPhoto: true }
+        : {
+            uploaderName: values.uploaderName.trim(),
+            uploaderStudentId: values.uploaderStudentId.trim(),
+          }
       const opened = await shareApi.openSession(token, values.password, identity)
       storeShareSession(token, opened)
       setSession(opened.sessionToken)
@@ -349,7 +366,7 @@ export default function SharedUploadPage() {
       patch(item.key, {
         photoId: ticket.photoId,
         photographerName: ticket.photographerName ?? accessRef.current?.uploaderName ?? undefined,
-        photographerStudentId: accessRef.current?.uploaderStudentId ?? undefined,
+        photographerStudentId: uploaderKey(accessRef.current),
       })
       await uploadToObjectStorage(ticket, item.file,
         percent => patch(item.key, { percent }))
@@ -522,22 +539,32 @@ export default function SharedUploadPage() {
     <div className="share-body">
       <Card className="share-gate">
         <Typography.Title level={5}><LockOutlined /> 输入上传密码</Typography.Title>
-        <Typography.Paragraph type="secondary">
-          密码由发给你链接的同学提供。姓名和学号会作为你这次上传的每一张照片的拍摄者，
-          传完之后申报工时用的也是这一份，请填写本人的。替别的同学交图时，进去之后可以切换拍摄者。
-        </Typography.Paragraph>
+        {greetPublicOnly
+          ? <Alert type="info" showIcon style={{ marginBottom: 16 }}
+              message="这个选题只收公共照片"
+              description={`传进来的照片拍摄者都记为「${PUBLIC_PHOTOGRAPHER}」，不属于任何人、不计入被引，也不能申报工时，所以不用填姓名学号。`} />
+          : <Typography.Paragraph type="secondary">
+              密码由发给你链接的同学提供。姓名和学号会作为你这次上传的每一张照片的拍摄者，
+              传完之后申报工时用的也是这一份，请填写本人的。替别的同学交图时，进去之后可以切换拍摄者。
+            </Typography.Paragraph>}
         <Form form={gateForm} layout="vertical" requiredMark={false} onFinish={() => void unlock()}>
           <Form.Item label="上传密码" name="password" rules={[{ required: true, message: '请输入上传密码' }]}>
             <Input.Password autoFocus placeholder="请输入上传密码" maxLength={64} />
           </Form.Item>
-          <Form.Item label="你的姓名" name="uploaderName" rules={UPLOADER_NAME_RULES}>
-            <Input placeholder="例如：张三" maxLength={50} />
-          </Form.Item>
-          <Form.Item label="你的学号" name="uploaderStudentId"
-            extra="用于统计照片归属和工时，请填写本人学号"
-            rules={UPLOADER_STUDENT_ID_RULES}>
-            <Input placeholder="例如：20230001" maxLength={64} />
-          </Form.Item>
+          {!greetPublicOnly && <Form.Item name="publicPhoto" valuePropName="checked"
+            extra={gatePublic ? `拍摄者记为「${PUBLIC_PHOTOGRAPHER}」：不属于任何人、不计入被引，选了就不能申报工时。` : undefined}>
+            <Checkbox>我上传的是公共照片</Checkbox>
+          </Form.Item>}
+          {!greetPublicOnly && !gatePublic && <>
+            <Form.Item label="你的姓名" name="uploaderName" rules={UPLOADER_NAME_RULES}>
+              <Input placeholder="例如：张三" maxLength={50} />
+            </Form.Item>
+            <Form.Item label="你的学号" name="uploaderStudentId"
+              extra="用于统计照片归属和工时，请填写本人学号"
+              rules={UPLOADER_STUDENT_ID_RULES}>
+              <Input placeholder="例如：20230001" maxLength={64} />
+            </Form.Item>
+          </>}
           <Button type="primary" htmlType="submit" block loading={unlocking}>进入上传</Button>
         </Form>
       </Card>
@@ -607,12 +634,15 @@ export default function SharedUploadPage() {
                 {currentUploader ? describeUploader(currentUploader) : (access?.uploaderName || '—')}
               </Typography.Text>{' '}名下
             </Typography.Text>
-            <Tooltip title={uploadBusy ? '正在上传，传完这一批再切换' : '替别的同学交图时用'}>
-              <Button size="small" icon={<SwapOutlined />} disabled={uploadBusy || !access}
-                onClick={() => setSwitchOpen(true)}>
-                切换拍摄者
-              </Button>
-            </Tooltip>
+            {access?.uploaderPublic && <Tag icon={<PictureOutlined />} color="cyan">公共照片 · 不计被引</Tag>}
+            {/* 选题只收公共照片时没得切：服务端也会把切换后的身份按公共照片记。 */}
+            {!access?.publicPhotosOnly &&
+              <Tooltip title={uploadBusy ? '正在上传，传完这一批再切换' : '替别的同学交图、或改传公共照片时用'}>
+                <Button size="small" icon={<SwapOutlined />} disabled={uploadBusy || !access}
+                  onClick={() => setSwitchOpen(true)}>
+                  切换拍摄者
+                </Button>
+              </Tooltip>}
           </Space>
 
           {/* 候选是预设加相册里已有的标签，也可以直接输入新标签，回车添加。 */}
@@ -751,17 +781,21 @@ export default function SharedUploadPage() {
       </Card>
 
       {/* 最后一步：传完图申报这次的工时。排在上传之后，是因为它本来就是上传之后的事——
-          服务端也要求先通过这条链接交过图。 */}
+          服务端也要求先通过这条链接交过图。选题只收公共照片时没有人能报，整张卡片不出现。 */}
+      {!access?.publicPhotosOnly &&
       <Card title="申报工时" extra={<Tag icon={<ClockCircleOutlined />}>传完照片后填写</Tag>}>
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
           <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
             照片传完之后，在这里申报这次拍摄和修图花的时间。提交后直接进入部长和管理员的工时审核，
             确认或退回的结果会显示在下面。申报人是当前拍摄者
-            {access?.uploaderName ? `「${access.uploaderName}」` : ''}，需要先以这个身份通过这条链接传成功至少一张照片；
+            {access?.uploaderName && !access.uploaderPublic ? `「${access.uploaderName}」` : ''}，需要先以这个身份通过这条链接传成功至少一张照片；
             替别人报工时请先在上面切换拍摄者。同一天有几段工作可以分几条报。
           </Typography.Paragraph>
 
-          {access && !access.allowWorklog && <Alert type="warning" showIcon
+          {access?.uploaderPublic && <Alert type="info" showIcon
+            message="现在传的是公共照片，不能申报工时"
+            description="公共照片不属于任何人。要给自己报工时，请先在上面切换成本人，并以本人身份传成功至少一张照片。" />}
+          {access && !access.allowWorklog && !access.uploaderPublic && <Alert type="warning" showIcon
             message="这个选题已经结束，不再接收工时申报"
             description="已经提交的申报不受影响，照常审核。如果还有工时没报，请联系发给你链接的同学。" />}
           {handedInHere && access?.allowWorklog && !worklogs.length && <Alert type="info" showIcon
@@ -816,7 +850,7 @@ export default function SharedUploadPage() {
               </List.Item>
             }} />}
         </Space>
-      </Card>
+      </Card>}
       </Space>
     </div>
 
@@ -830,6 +864,11 @@ export default function SharedUploadPage() {
           已经传上去的照片不受影响。
         </Typography.Paragraph>
         {currentUploader && <Typography.Text>当前：{describeUploader(currentUploader)}</Typography.Text>}
+        {access?.uploaderPublic && <Typography.Text>当前：{PUBLIC_PHOTOGRAPHER}</Typography.Text>}
+        {!access?.uploaderPublic && <Button icon={<PictureOutlined />} disabled={switching}
+          onClick={() => void applyUploader({ publicPhoto: true })}>
+          改传公共照片（不计被引，不能申报工时）
+        </Button>}
         {/* 来回切的人最常用的就是这几个：一键切回，免得重敲学号敲错一位记到别人名下。 */}
         {!!otherUploaders.length && <Space direction="vertical" size={4}>
           <Typography.Text type="secondary">这台设备上用过的：</Typography.Text>

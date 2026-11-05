@@ -38,7 +38,7 @@ public class ProjectController {
     ApiResponse<ProjectEntity> create(@Valid @RequestBody CreateRequest request,
                                       @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.create(request.title(), request.description(), request.status(),
-                request.tags(), request.type(), user));
+                request.tags(), request.type(), Boolean.TRUE.equals(request.publicPhotosOnly()), user));
     }
 
     @GetMapping
@@ -133,7 +133,7 @@ public class ProjectController {
     ApiResponse<ProjectEntity> update(@PathVariable Long id, @Valid @RequestBody UpdateRequest request,
                                       @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.update(id, request.title(), request.description(), request.tags(),
-                request.version(), user));
+                request.publicPhotosOnly(), request.version(), user));
     }
 
     @AuditAction("修改选题状态")
@@ -160,15 +160,20 @@ public class ProjectController {
         return ApiResponse.ok();
     }
 
-    /** {@code type} 省略时按创作选题建立，与改动之前的行为一致。选题类型建立后不可改。 */
+    /**
+     * {@code type} 省略时按创作选题建立，与改动之前的行为一致。选题类型建立后不可改。
+     * {@code publicPhotosOnly} 省略时为 false（收任何拍摄者的图）。
+     */
     record CreateRequest(@NotBlank @Size(max = 200) String title, @Size(max = 5000) String description,
                          @NotNull ProjectStatus status, ProjectType type,
-                         @Size(max = 30) List<@Size(max = 100) String> tags) {
+                         @Size(max = 30) List<@Size(max = 100) String> tags,
+                         Boolean publicPhotosOnly) {
     }
 
-    /** {@code tags} 省略时保留原预设标签；传空数组表示取消限制。 */
+    /** {@code tags} 省略时保留原预设标签；传空数组表示取消限制。{@code publicPhotosOnly} 省略时保留原设置。 */
     record UpdateRequest(@NotBlank @Size(max = 200) String title, @Size(max = 5000) String description,
                          @Size(max = 30) List<@Size(max = 100) String> tags,
+                         Boolean publicPhotosOnly,
                          @Min(1) int version) {
     }
 

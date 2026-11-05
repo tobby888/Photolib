@@ -6,6 +6,7 @@ import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.util.LikeFilter;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.photo.PhotoTags;
+import cn.photolib.photo.PublicPhoto;
 import cn.photolib.photo.mapper.PhotoMapper;
 import cn.photolib.photo.model.PhotoEntity;
 import cn.photolib.photo.model.PhotoStatus;
@@ -58,6 +59,13 @@ public class ProjectService {
     @Transactional
     public ProjectEntity create(String title, String description, ProjectStatus status, List<String> tags,
                                 ProjectType type, AuthenticatedUser user) {
+        return create(title, description, status, tags, type, false, user);
+    }
+
+    /** @param publicPhotosOnly 仅接收公共照片（V75，见 {@link PublicPhoto}） */
+    @Transactional
+    public ProjectEntity create(String title, String description, ProjectStatus status, List<String> tags,
+                                ProjectType type, boolean publicPhotosOnly, AuthenticatedUser user) {
         requirePermission(user, PermissionCode.PROJECT_CREATE);
         if (status != ProjectStatus.DRAFT && status != ProjectStatus.ACTIVE) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "新项目状态只能是 DRAFT 或 ACTIVE");
@@ -69,6 +77,7 @@ public class ProjectService {
         project.setType(type == null ? ProjectType.CREATION : type);
         project.setCreatedBy(user.id());
         project.setTagsJson(PhotoTags.toJson(PhotoTags.normalizeProjectPresets(tags)));
+        project.setPublicPhotosOnly(publicPhotosOnly);
         mapper.insert(project);
         return project;
     }
@@ -189,7 +198,8 @@ public class ProjectService {
                 canSelect(project, user),
                 canManageSelection(project, user),
                 deprecatedPhotoCount(id),
-                isPinned(id, user.id()));
+                isPinned(id, user.id()),
+                Boolean.TRUE.equals(project.getPublicPhotosOnly()));
     }
 
     /** 存量行的 {@code type} 可能是 {@code NULL}（迁移之前建的选题），一律按创作选题看待。 */
@@ -252,6 +262,16 @@ public class ProjectService {
     @Transactional
     public ProjectEntity update(Long id, String title, String description, List<String> tags, int version,
                                 AuthenticatedUser user) {
+        return update(id, title, description, tags, null, version, user);
+    }
+
+    /**
+     * @param publicPhotosOnly {@code null} 时保留原设置。改开关不回写已在相册里的图，
+     *                         只管之后传进来、加进来的图。
+     */
+    @Transactional
+    public ProjectEntity update(Long id, String title, String description, List<String> tags,
+                                Boolean publicPhotosOnly, int version, AuthenticatedUser user) {
         requirePermission(user, PermissionCode.PROJECT_CREATE);
         ProjectEntity project = get(id);
         requireOwnerOrAdmin(project, user);
@@ -261,9 +281,33 @@ public class ProjectService {
         project.setTitle(title);
         project.setDescription(description);
         if (tags != null) project.setTagsJson(PhotoTags.toJson(PhotoTags.normalizeProjectPresets(tags)));
+        if (publicPhotosOnly != null) project.setPublicPhotosOnly(publicPhotosOnly);
         project.setVersion(version);
         updateChecked(project);
         return get(id);
+    }
+
+    /** 选题是否仅接收公共照片；选题为空或不存在时为 false（直接传图库不受限）。 */
+    public boolean acceptsOnlyPublicPhotos(Long projectId) {
+        if (projectId == null) return false;
+        ProjectEntity project = mapper.selectById(projectId);
+        return project != null && Boolean.TRUE.equals(project.getPublicPhotosOnly());
+    }
+
+    /**
+     * 选题仅接收公共照片时，传进来 / 加进来的图必须是公共照片。所有入口共用这一处：
+     * 需求交付与选题直传（{@code PhotoService.createTicket}）、批量上传、上传链接、
+     * 改图片信息，以及 {@link #addPhotos} / {@link #transferPhotos}。
+     */
+    public void requireAcceptsPhotographer(Long projectId, boolean publicPhoto) {
+        if (!publicPhoto && acceptsOnlyPublicPhotos(projectId)) {
+            throw onlyPublicPhotos();
+        }
+    }
+
+    private static BusinessException onlyPublicPhotos() {
+        return new BusinessException(ErrorCode.VALIDATION_ERROR,
+                "本选题仅接收公共照片，请把拍摄者选为「" + PublicPhoto.PHOTOGRAPHER_NAME + "」");
     }
 
     /** 选题的预设标签；选题不存在或没有预设时返回空列表（即不限制）。 */
@@ -561,11 +605,24 @@ public class ProjectService {
         if (photoIds == null || photoIds.isEmpty() || photoIds.size() > 200) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择 1 至 200 张图片");
         }
-        if (getVisible(projectId, user).getStatus() != ProjectStatus.ACTIVE) {
+        ProjectEntity target = getVisible(projectId, user);
+        if (target.getStatus() != ProjectStatus.ACTIVE) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "仅进行中项目可添加图片");
         }
+        boolean publicOnly = Boolean.TRUE.equals(target.getPublicPhotosOnly());
 
-        for (Long photoId : photoIds.stream().distinct().toList()) {
+        List<Long> distinctIds = photoIds.stream().distinct().toList();
+        if (publicOnly) {
+            // 先整批查完再写：混进一张不是公共照片的，整批一张都不加。
+            for (Long photoId : distinctIds) {
+                PhotoEntity photo = photoMapper.selectById(photoId);
+                if (photo != null && !PublicPhoto.isPublic(photo)) {
+                    throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                            "本选题仅接收公共照片，所选图片中有不是公共照片的");
+                }
+            }
+        }
+        for (Long photoId : distinctIds) {
             PhotoEntity photo = photoMapper.selectById(photoId);
             if (photo == null || photo.getStatus() != PhotoStatus.AVAILABLE) {
                 throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "存在不可添加的图片");
@@ -668,17 +725,27 @@ public class ProjectService {
         if (move && source.getStatus() != ProjectStatus.ACTIVE) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "仅进行中项目可移出图片，可以改用复制");
         }
-        if (getVisible(targetId, user).getStatus() != ProjectStatus.ACTIVE) {
+        ProjectEntity target = getVisible(targetId, user);
+        if (target.getStatus() != ProjectStatus.ACTIVE) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "只能复制或移动到进行中的选题");
         }
-
         int copied = 0;
         int alreadyInTarget = 0;
         int skipped = 0;
         int removed = 0;
         int keptAdopted = 0;
         int keptUploadedHere = 0;
-        for (Long photoId : photoIds.stream().distinct().toList()) {
+        List<Long> distinctIds = photoIds.stream().distinct().toList();
+        if (Boolean.TRUE.equals(target.getPublicPhotosOnly())) {
+            for (Long photoId : distinctIds) {
+                PhotoEntity photo = photoMapper.selectById(photoId);
+                if (photo != null && !PublicPhoto.isPublic(photo)) {
+                    throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                            "目标选题仅接收公共照片，所选图片中有不是公共照片的");
+                }
+            }
+        }
+        for (Long photoId : distinctIds) {
             PhotoEntity photo = photoMapper.selectById(photoId);
             if (photo == null || photo.getStatus() != PhotoStatus.AVAILABLE || !inAlbum(photoId, sourceId)) {
                 skipped++;
@@ -828,13 +895,14 @@ public class ProjectService {
      * @param canManageSelection 当前账号能不能改选片人；活动选题还意味着能清理 deprecated 图片
      * @param deprecatedCount 相册里打了 {@code deprecated} 的图片数（含已被引的，前端按需提示）
      * @param pinned         当前账号有没有置顶这个选题
+     * @param publicPhotosOnly 仅接收公共照片（V75）
      */
     public record ProjectDetail(Long id, String title, String description, ProjectStatus status,
                                 ProjectType type, Long createdBy, LocalDateTime createdAt,
                                 LocalDateTime updatedAt, Integer version, long requestCount,
                                 long photoCount, long adoptionCount, List<String> tags,
                                 List<Selector> selectors, boolean canSelect, boolean canManageSelection,
-                                long deprecatedCount, boolean pinned) {
+                                long deprecatedCount, boolean pinned, boolean publicPhotosOnly) {
     }
 
     public record Selector(Long userId, String displayName, String username) {

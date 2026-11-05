@@ -364,9 +364,19 @@ type BatchItemStatus = 'UPLOADING' | 'WAITING_METADATA' | 'PROCESSING' | 'SUCCEE
   "selectors": [],
   "canSelect": false,
   "canManageSelection": false,
-  "deprecatedCount": 0
+  "deprecatedCount": 0,
+  "publicPhotosOnly": false
 }
 ```
+
+`publicPhotosOnly`（V75，`ProjectEntity` 上同名字段）：选题仅接收公共照片。`POST /projects` 与
+`PUT /projects/{id}` 都接受可选的 `publicPhotosOnly`，创建时省略为 `false`，更新时省略保留原值。
+打开后，传进选题的图（需求交付、选题相册直传、批量上传、上传链接）以及 `POST /projects/{id}/photos`、
+复制 / 移动进来的图，拍摄者都必须是公共照片，否则 `400`。改开关不回写相册里已有的图。
+
+**公共照片**是一个固定的拍摄者：`photographerName = "公共照片"`、`photographerStudentId = ""`。
+图库 `GET /photos?photographers=公共照片` 就能筛出全部公共照片。公共照片不能标记被引（`409`），
+已被引的图也不能改成公共照片；上传链接里选了公共照片不能申报工时。
 
 项目相册归属和 `photoCount` 以多对多表为准。一张图片可以属于多个项目；`Photo.projectId` 只是主/来源项目。
 
@@ -1143,7 +1153,8 @@ POST /photos/batch-metadata
   "size": 12345678,
   "sha256": "64位十六进制SHA-256",
   "photographerContactId": "...",
-  "takenAt": "2026-07-24T09:10:00"
+  "takenAt": "2026-07-24T09:10:00",
+  "publicPhoto": false
 }
 ```
 
@@ -1155,7 +1166,8 @@ POST /photos/batch-metadata
 - `fileName` 扩展名必须与 `contentType` 一致。
 - 单张大小 `1..104857600` 字节（默认 100 MiB，管理员可调，见 16.5）。
 - `sha256` 必须为 64 位十六进制；服务端转小写并对未删除图片做全库查重。
-- 拍摄者必须来自通讯录。需求上传按需求校区校验；C 的普通图库上传按本人校区校验；A/M 普通图库上传可使用 `/campus-members/deduped` 返回的代表 ID。
+- 拍摄者必须来自通讯录，或者传 `publicPhoto: true` 选公共照片（此时不看 `photographerContactId`，拍摄者记为「公共照片」、学号为空串）。需求上传按需求校区校验；C 的普通图库上传按本人校区校验；A/M 普通图库上传可使用 `/campus-members/deduped` 返回的代表 ID。批量上传的两个元数据接口、`PUT /photos/{id}` 同样接受 `publicPhoto`。
+- 来源选题 `publicPhotosOnly` 时只收公共照片，选通讯录成员返回 `400`。`GET /requests/{id}/tag-options` 带回 `publicPhotosOnly`，供上传表单锁定拍摄者。
 - 文件校验和参与权限在拍摄者校验之前执行，客户端不要依赖错误顺序之外的推断。
 
 响应：
@@ -1399,7 +1411,7 @@ UPLOADING -> PROCESSING -> WAITING_METADATA -> PROCESSING
 
 ### 10.1 加入采用
 
-`POST /projects/{projectId}/adoptions`，A/M/C 均可调用，但受服务层可见性约束。
+`POST /projects/{projectId}/adoptions`，A/M/C 均可调用，但受服务层可见性约束。所选图片中有公共照片（拍摄者「公共照片」）时整批 `409`：公共照片不计入被引记录。
 
 ```json
 {
@@ -2487,8 +2499,8 @@ interface ProjectShareLink {
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/public/shares/{token}` | 链接是否可用 + `purpose`；刻意不返回项目标题等任何项目信息 |
-| POST | `/public/shares/{token}/sessions` | `{ password, uploaderName?, uploaderStudentId? }` → `{ sessionToken, expiresAt, access }`；上传链接必须带后两项 |
+| GET | `/public/shares/{token}` | 链接是否可用 + `purpose` + `publicPhotosOnly`（上传链接的选题只收公共照片，密码页不用报姓名学号）；刻意不返回项目标题等任何项目信息 |
+| POST | `/public/shares/{token}/sessions` | `{ password, uploaderName?, uploaderStudentId?, publicPhoto? }` → `{ sessionToken, expiresAt, access }`；上传链接必须带姓名学号，或 `publicPhoto: true`（选题只收公共照片时一律按公共照片记） |
 | GET | `/public/shares/{token}/access` | 重新读取这条链接当下授予的能力 |
 | GET | `/public/shares/{token}/photos` | `page`、`pageSize`、`keyword?` → `PageData<SharePhoto>` |
 | POST | `/public/shares/{token}/photos/{photoId}/download-url` | 需要 `allowDownload` |
@@ -2511,6 +2523,7 @@ interface ProjectShareLink {
 上传通道与站内单张上传是同一条流水线（签票据 → PUT 预签名地址 → complete），差别只在凭据和身份：
 
 - 拍摄者取自**会话**上的 `uploaderName` / `uploaderStudentId`（进门时填一次，整场会话共用），而不是通讯录——拿着链接的人按定义在通讯录之外，把通讯录摆给站外的人挑也会泄露姓名和学号。
+- 公共照片：进门或 `PUT /session/uploader` 时传 `publicPhoto: true`，会话身份变成「公共照片」（学号空串），`access.uploaderPublic = true`、`access.allowWorklog = false`，申报工时 `409`、列出工时为空。「公共照片」是保留姓名，自报成它会 `400`。选题 `publicPhotosOnly`（`access.publicPhotosOnly`）时不论报什么都按公共照片记。
 - 照片的 `uploadedBy` 记链接创建者（站内唯一可追责的成员），`shareLinkId` 记是哪条链接放进来的；`complete` 的归属判定只认后者。
 - 每次请求都重判选题是否仍在收图：选题一旦完成，已经拿着会话的人立刻传不进来（`access.allowUpload` 同步变 `false`）。
 - 创作选题和活动选题走的是同一条路：图片只进选题相册（`photo_project`），`requestId` 和 `campusId` 为空，不挂需求、不替任何人接单——与站内持 `PROJECT_ADOPT` 直接传进选题相册是同一种形态。

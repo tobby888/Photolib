@@ -162,6 +162,8 @@ export interface Project extends BaseEntity {
   createdBy: EntityId
   /** 选题预设标签；为空表示上传者可以自定义标签。 */
   tags?: string[]
+  /** 仅接收公共照片：传进来、加进来的图拍摄者都必须是「公共照片」（见 src/publicPhoto.ts）。 */
+  publicPhotosOnly?: boolean
   requestCount?: number
   photoCount?: number
   adoptionCount?: number
@@ -296,6 +298,8 @@ export interface Photo extends BaseEntity {
 export interface TagOptions {
   restricted: boolean
   tags: string[]
+  /** 需求所属选题仅接收公共照片：上传表单把拍摄者锁成「公共照片」。 */
+  publicPhotosOnly?: boolean
 }
 
 /** POST /photos/batch-tags 逐张返回的新标签与新版本号。 */
@@ -414,6 +418,10 @@ export interface ShareGuestAccess {
   /** 上传链接：相册里已经用过的其他标签（不含预设和 deprecated），同样只是候选，上传者也可以自己造。 */
   existingTags?: string[]
   expiresAt?: string | null
+  /** 上传链接：当前传的是公共照片（不属于任何人，不能申报工时）。 */
+  uploaderPublic?: boolean
+  /** 上传链接：选题仅接收公共照片，访客不用报姓名学号，也不能切换成具体的人。 */
+  publicPhotosOnly?: boolean
 }
 
 export interface ShareGuestSession {

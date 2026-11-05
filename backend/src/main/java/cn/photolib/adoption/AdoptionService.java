@@ -4,6 +4,7 @@ import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.api.PageResponse;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
+import cn.photolib.photo.PublicPhoto;
 import cn.photolib.photo.mapper.PhotoMapper;
 import cn.photolib.photo.model.PhotoEntity;
 import cn.photolib.photo.model.PhotoStatus;
@@ -71,6 +72,12 @@ public class AdoptionService {
             PhotoEntity photo = photoMapper.selectById(photoId);
             if (photo == null || photo.getStatus() != PhotoStatus.AVAILABLE) {
                 throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "存在不可采用的图片");
+            }
+            // 公共照片不计被引：不写被引记录，成员核算、被引排行、清算单、工资计算就都不会出现它。
+            // 站内标记和分享链接访客标记都走这里，判定只有这一处。
+            if (PublicPhoto.isPublic(photo)) {
+                throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
+                        "公共照片不计入被引记录，不能标记被引");
             }
             if (scopedUser != null && scopedUser.isCampusScoped()
                     && !photo.getUploadedBy().equals(scopedUser.id())) {

@@ -18,6 +18,7 @@ import {
 import type { ShareFilterOptions } from '../projectShare'
 import { emptyProjectPhotoFilters, hasActiveFilters, tagDisplayName } from '../photoTags'
 import type { ProjectPhotoFilters } from '../photoTags'
+import { isPublicPhoto } from '../publicPhoto'
 import ProjectPhotoFilterBar from '../ProjectPhotoFilterBar'
 import { shareTagHistoryScope } from '../photoTagHistory'
 import { selectPhotoRange } from '../photoSelection'
@@ -518,11 +519,13 @@ export default function SharedProjectPage() {
                   <span>{photo.photographerName}</span>
                   <span>{dayjs(photo.takenAt).format('YYYY.MM.DD')}</span>
                 </div>
-                {access?.allowAdoption && <Button block type={photo.adopted ? 'default' : 'primary'}
-                  danger={photo.adopted} icon={<LinkOutlined />} loading={markingPhotoId === photo.id}
-                  onClick={() => void toggleAdoption(photo)}>
-                  {photo.adopted ? '取消被引' : '标记被引'}
-                </Button>}
+                {access?.allowAdoption && (isPublicPhoto(photo.photographerName) && !photo.adopted
+                  ? <Button block icon={<LinkOutlined />} disabled>公共照片不计被引</Button>
+                  : <Button block type={photo.adopted ? 'default' : 'primary'}
+                      danger={photo.adopted} icon={<LinkOutlined />} loading={markingPhotoId === photo.id}
+                      onClick={() => void toggleAdoption(photo)}>
+                      {photo.adopted ? '取消被引' : '标记被引'}
+                    </Button>)}
               </Card>
             </Col>)}
           </Row> : searching
