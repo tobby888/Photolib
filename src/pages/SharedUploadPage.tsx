@@ -337,7 +337,7 @@ export default function SharedUploadPage() {
       if (status.status === 'UPLOADING') {
         patch(item.key, {
           stage: 'failed',
-          error: status.failureReason || '这张图片没能处理完成，换一张 JPG / PNG 再试。',
+          error: status.failureReason || '这张图片没能处理完成，换一张 JPG / PNG / GIF 再试。',
         })
         return
       }
@@ -670,17 +670,17 @@ export default function SharedUploadPage() {
 
           <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
             {mode === 'files'
-              ? `支持 JPG 和 PNG，单张不超过 ${describeBytes(uploadLimits.PHOTO_IMAGE_MAX_BYTES)}，`
+              ? `支持 JPG、PNG 和 GIF（动图原样保存），单张不超过 ${describeBytes(uploadLimits.PHOTO_IMAGE_MAX_BYTES)}，`
                 + `一次最多 ${MAX_QUEUE_SIZE} 张。`
               : `一个压缩包最大 ${describeBytes(uploadLimits.PHOTO_ZIP_MAX_BYTES)}，`
-                + `里面最多 ${uploadLimits.PHOTO_ZIP_MAX_IMAGES} 张 JPG / PNG，`
+                + `里面最多 ${uploadLimits.PHOTO_ZIP_MAX_IMAGES} 张 JPG / PNG / GIF，`
                 + `单张不超过 ${describeBytes(uploadLimits.PHOTO_IMAGE_MAX_BYTES)}；包里的其他文件会被自动跳过。`}
             照片会直接进入这个选题的图库，由选题负责人后续处理；这里看不到别人传了什么。
           </Typography.Paragraph>
 
           {mode === 'files' ? <>
             {/* 传的过程中也能接着拖：新的一批排到队尾，不用等前一批传完。 */}
-            <Upload.Dragger multiple accept="image/jpeg,image/png" showUploadList={false}
+            <Upload.Dragger multiple accept="image/jpeg,image/png,image/gif" showUploadList={false}
               disabled={!access?.allowUpload}
               beforeUpload={(_file, fileList) => {
                 // 交给自己的队列跑：antd 的自动上传不认预签名地址那一套两步流程。

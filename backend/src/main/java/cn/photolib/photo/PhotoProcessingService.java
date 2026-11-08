@@ -118,9 +118,14 @@ public class PhotoProcessingService {
 
             Path processedPath = workspace.taskFile(taskDirectory,
                     "processed" + extension(photo.getContentType()));
-            ImageCompressor.FileResult result = compressor.compress(
-                    source, processedPath, photo.getContentType(), properties.imageTargetBytes());
-            if (result.size() > properties.imageTargetBytes()) {
+            // 动图（GIF、APNG）原样保存，不压缩，也不受成品目标体积约束：见 AnimatedImages。
+            AnimatedImages.Info animation = AnimatedImages.inspect(source, photo.getContentType());
+            photo.setAnimated(animation.animated());
+            ImageCompressor.FileResult result = animation.keepAsIs()
+                    ? compressor.keepAsIs(source, processedPath, photo.getContentType(), animation)
+                    : compressor.compress(source, processedPath, photo.getContentType(),
+                            properties.imageTargetBytes());
+            if (!animation.keepAsIs() && result.size() > properties.imageTargetBytes()) {
                 throw new IllegalArgumentException("图片无法在保留最低可用尺寸的同时压缩至 10 MiB");
             }
             upload(photo.getObjectKey(), result.path(), result.size(), result.contentType());
@@ -152,7 +157,7 @@ public class PhotoProcessingService {
                         photo.getId(), previewFailure);
             }
             UserEntity uploader = userMapper.selectById(photo.getUploadedBy());
-            String extension = photo.getContentType().equals("image/png") ? "png" : "jpg";
+            String extension = extension(photo.getContentType()).substring(1);
             LocalDateTime originalDeleteAfter =
                     LocalDateTime.now().plus(properties.originalRetention());
             String storedFileName = fileName(uploader.getDisplayName(),
@@ -210,6 +215,7 @@ public class PhotoProcessingService {
             return photoMapper.completeProcessingWithProfileGuard(
                     photo.getId(), photo.getVersion(), storedFileName,
                     result.size(), result.width(), result.height(),
+                    Boolean.TRUE.equals(photo.getAnimated()),
                     previewKey, previewSize, originalDeleteAfter,
                     target.compressionRatio(), target.generatorFingerprint(),
                     permit.bootstrappingFlag(), permit.observedDatabaseProfileFlag(),
@@ -247,7 +253,7 @@ public class PhotoProcessingService {
                     photo.getId(), exception.getMessage());
         }
         String failureReason = UploadFailureMessage.forUploader(exception,
-                "这张图片没能处理完成。请确认是完整的 JPG / PNG 后重新上传；如果反复失败，请联系管理员。");
+                "这张图片没能处理完成。请确认是完整的 JPG / PNG / GIF 后重新上传；如果反复失败，请联系管理员。");
         int failed = photoMapper.failProcessing(photo.getId(), photo.getVersion(),
                 failureReason, LocalDateTime.now());
         if (failed == 1) {
@@ -332,7 +338,10 @@ public class PhotoProcessingService {
         boolean png = length >= 8 && (bytes[0] & 0xff) == 0x89
                 && bytes[1] == 0x50 && bytes[2] == 0x4e && bytes[3] == 0x47
                 && bytes[4] == 0x0d && bytes[5] == 0x0a && bytes[6] == 0x1a && bytes[7] == 0x0a;
-        if (contentType.equals("image/jpeg") && !jpeg || contentType.equals("image/png") && !png) {
+        boolean gif = length >= 6 && bytes[0] == 'G' && bytes[1] == 'I' && bytes[2] == 'F'
+                && bytes[3] == '8' && (bytes[4] == '7' || bytes[4] == '9') && bytes[5] == 'a';
+        if (contentType.equals("image/jpeg") && !jpeg || contentType.equals("image/png") && !png
+                || contentType.equals(AnimatedImages.GIF) && !gif) {
             throw new IllegalArgumentException("文件真实格式与声明类型不一致");
         }
     }
@@ -366,6 +375,7 @@ public class PhotoProcessingService {
     }
 
     private String extension(String contentType) {
+        if (AnimatedImages.GIF.equals(contentType)) return ".gif";
         return "image/png".equals(contentType) ? ".png" : ".jpg";
     }
 

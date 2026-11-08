@@ -10,7 +10,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 
-/** Lightweight JPEG/PNG magic-byte detection without decoding image pixels. */
+/** Lightweight JPEG/PNG/GIF magic-byte detection without decoding image pixels. */
 public final class ImageSignature {
     private static final byte[] PNG = {
             (byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a
@@ -39,6 +39,10 @@ public final class ImageSignature {
                 matches &= header[index] == PNG[index];
             }
             if (matches) return "image/png";
+        }
+        if (header.length >= 6 && header[0] == 'G' && header[1] == 'I' && header[2] == 'F'
+                && header[3] == '8' && (header[4] == '7' || header[4] == '9') && header[5] == 'a') {
+            return "image/gif";
         }
         return null;
     }

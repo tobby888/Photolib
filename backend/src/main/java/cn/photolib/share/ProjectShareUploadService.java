@@ -1,5 +1,6 @@
 package cn.photolib.share;
 
+import cn.photolib.common.upload.ImageUploadPolicy;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.uploadlimit.UploadLimit;
@@ -117,7 +118,7 @@ public class ProjectShareUploadService {
         String sha256Lower = command.sha256().toLowerCase();
         photoService.requireUniqueSha256(sha256Lower, null);
 
-        String extension = command.contentType().equals("image/png") ? "png" : "jpg";
+        String extension = ImageUploadPolicy.extension(command.contentType()).substring(1);
         String id = UUID.randomUUID().toString();
         String originalKey = "temporary/photos/" + id + "." + extension;
         String finalKey = "photos/" + LocalDateTime.now(clock).getYear() + "/" + id + "." + extension;

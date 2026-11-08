@@ -2399,7 +2399,8 @@ body {
 }
 .photo-detail-image .ant-image { display: flex; max-width: 100%; }
 .photo-detail-image .ant-image-img,
-.photo-detail-image img {
+.photo-detail-image img,
+.photo-detail-image canvas {
   display: block;
   width: auto;
   max-width: 100%;
@@ -2466,7 +2467,8 @@ body {
   .photo-detail-image,
   .photo-detail-image .image-placeholder { min-height: 240px; }
   .photo-detail-image .ant-image-img,
-  .photo-detail-image img { max-height: 62vh; }
+  .photo-detail-image img,
+  .photo-detail-image canvas { max-height: 62vh; }
   .histogram-summary { grid-template-columns: 1fr; }
 }
 
@@ -3566,3 +3568,65 @@ body {
 .salary-formula-palette > .ant-typography:not(:first-child) { margin-left: 8px; }
 .salary-formula-chip { cursor: pointer; user-select: none; margin-inline-end: 0; }
 .salary-formula-status { margin-top: 8px; min-height: 22px; }
+
+/* 动图（src/AnimatedPhoto.tsx）：网格角标与悬停播放层、详情页播放区。
+   角标放右下：各网格的左下角是状态标签。 */
+.animated-badge {
+  position: absolute;
+  z-index: 2;
+  right: 10px;
+  bottom: 10px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 20px;
+  letter-spacing: .04em;
+  color: #fff;
+  background: rgba(0, 0, 0, .55);
+  pointer-events: none;
+}
+/* 盖在缩略图上，画出第一帧前透明；底色取格子的底色，透明动图不会透出下面的首帧。 */
+.animated-player-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  opacity: 0;
+  background: inherit;
+  pointer-events: none;
+  transition: opacity 160ms ease;
+}
+.animated-player-overlay.is-ready { opacity: 1; }
+.animated-player-overlay canvas,
+.animated-player-overlay img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center center;
+}
+.animated-stage {
+  position: relative;
+  width: 100%;
+  min-height: inherit;
+  display: grid;
+  place-items: center;
+}
+.animated-player-inline { display: contents; }
+.animated-player-inline[hidden] { display: none; }
+.animated-stage-toggle {
+  position: absolute;
+  z-index: 2;
+  right: 16px;
+  bottom: 16px;
+}
+.animated-stage-note {
+  position: absolute;
+  z-index: 2;
+  left: 16px;
+  bottom: 16px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: #fff;
+  background: rgba(0, 0, 0, .55);
+}

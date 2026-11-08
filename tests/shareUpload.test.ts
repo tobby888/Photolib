@@ -27,8 +27,11 @@ test('前端的文件校验与后端 validateUploadFile 是同一套规则', () 
   assert.equal(rejectReason(fakeFile('a.png', 1024, 'image/png')), null)
   // 扩展名和 Content-Type 必须对得上：后端按同一条规则判，光看其中一个会在
   // 签完票据之后才被拒，访客白等一次上传。
-  assert.match(String(rejectReason(fakeFile('a.png', 1024, 'image/jpeg'))), /只能传 JPG 或 PNG/)
-  assert.match(String(rejectReason(fakeFile('a.gif', 1024, 'image/gif'))), /只能传 JPG 或 PNG/)
+  assert.match(String(rejectReason(fakeFile('a.png', 1024, 'image/jpeg'))), /只能传 JPG、PNG 或 GIF/)
+  // 动图（GIF）原样保存，只生成静态首帧缩略图；扩展名同样要和类型对得上。
+  assert.equal(rejectReason(fakeFile('a.gif', 1024, 'image/gif')), null)
+  assert.match(String(rejectReason(fakeFile('a.gif', 1024, 'image/png'))), /只能传 JPG、PNG 或 GIF/)
+  assert.match(String(rejectReason(fakeFile('a.webp', 1024, 'image/webp'))), /只能传 JPG、PNG 或 GIF/)
   assert.match(String(rejectReason(fakeFile('a.jpg', 0))), /这个文件是空的/)
   assert.match(String(rejectReason(fakeFile('a.jpg', MAX_UPLOAD_BYTES + 1))), /100 MiB/)
 })
@@ -62,7 +65,7 @@ test('超出队列上限的那些被如实报出来，而不是悄悄少传几�
 })
 
 test('不合规的文件被挡下来，同一批里合规的照传不误', () => {
-  const added = addToQueue([], [fakeFile('good.jpg'), fakeFile('bad.gif', 1024, 'image/gif')])
+  const added = addToQueue([], [fakeFile('good.jpg'), fakeFile('bad.webp', 1024, 'image/webp')])
 
   assert.deepEqual(added.items.map(entry => entry.file.name), ['good.jpg'])
   assert.equal(added.errors.length, 1)
@@ -173,7 +176,7 @@ test('上传页拖进来即开传，没有「开始上传」按钮，传的时�
   assert.doesNotMatch(page, /startUpload|「开始上传」|>\s*开始上传/)
   assert.match(page, /updateItems\(current => \[\.\.\.current, \.\.\.added\.items\]\)\s*startQueue\(added\.items\)/)
   // 逐张的拖拽区不能因为"正在传"而禁用，否则又退回成"传完一批才能拖下一批"。
-  assert.match(page, /<Upload\.Dragger multiple accept="image\/jpeg,image\/png" showUploadList=\{false\}\s*disabled=\{!access\?\.allowUpload\}/)
+  assert.match(page, /<Upload\.Dragger multiple accept="image\/jpeg,image\/png,image\/gif" showUploadList=\{false\}\s*disabled=\{!access\?\.allowUpload\}/)
 })
 
 test('ZIP 的前端校验与后端同一套：只收 .zip，且不超过 1.5 GB', () => {

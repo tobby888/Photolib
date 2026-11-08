@@ -450,8 +450,8 @@ export default function PhotoSelectionPage() {
               aria-label={browserFullscreen ? '退出浏览器全屏' : '浏览器全屏'}
               onClick={toggleBrowserFullscreen} />
           </Tooltip>
-          <Tooltip title="关掉弹窗，在页面里裁切 / 旋转这张">
-            <Button icon={<ScissorOutlined />} disabled={!editable || !active.imageUrl}
+          <Tooltip title={active.animated ? '动图不支持裁切 / 旋转' : '关掉弹窗，在页面里裁切 / 旋转这张'}>
+            <Button icon={<ScissorOutlined />} disabled={!editable || !active.imageUrl || !!active.animated}
               onClick={() => { closeFocus(); setView('single'); setEditing(true) }}>裁切 / 旋转</Button>
           </Tooltip>
           <Tooltip title="关闭（Esc 或 F）">
@@ -555,7 +555,7 @@ export default function PhotoSelectionPage() {
 
           {view === 'single' && <>
             {!active && <Empty description={total ? '换个筛选条件看看' : '这个选题相册里还没有可选的图片'} />}
-            {active && editing && active.imageUrl && <Suspense
+            {active && editing && active.imageUrl && !active.animated && <Suspense
               fallback={<div className="empty-state">正在打开编辑器…</div>}>
               <PhotoCropEditor imageUrl={active.imageUrl} contentType={active.contentType}
                 refresh={() => refreshImageUrl(active.id as string)} saving={savingEdit}
@@ -583,8 +583,10 @@ export default function PhotoSelectionPage() {
                   {active.width && active.height ? ` · ${active.width}×${active.height}` : ''}
                 </Typography.Text>
               </div>
-              <Button icon={<ScissorOutlined />} disabled={!editable || !active.imageUrl}
-                onClick={() => { setView('single'); setEditing(true) }}>裁切 / 旋转</Button>
+              <Tooltip title={active.animated ? '动图不支持裁切 / 旋转' : undefined}>
+                <Button icon={<ScissorOutlined />} disabled={!editable || !active.imageUrl || !!active.animated}
+                  onClick={() => { setView('single'); setEditing(true) }}>裁切 / 旋转</Button>
+              </Tooltip>
             </div>
             {renderTagRow(active)}
           </div>}

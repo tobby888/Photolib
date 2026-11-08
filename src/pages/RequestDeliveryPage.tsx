@@ -11,6 +11,7 @@ import dayjs from 'dayjs'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, emptyPage } from '../api'
+import { AnimatedHoverLayer, useHoverPlayback } from '../AnimatedPhoto'
 import { readTakenAt } from '../exif'
 import { uploadToObjectStorage } from '../storageUpload'
 import { describeBytes } from '../uploadLimits'
@@ -55,6 +56,8 @@ export default function RequestDeliveryPage() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const { message, modal } = App.useApp()
+  // 动图格子：鼠标停住 3 秒播放（src/AnimatedPhoto.tsx）。
+  const hoverPlayback = useHoverPlayback()
   const uploadLimits = useUploadLimits()
   const placeholderImages = usePlaceholderImages()
   const [form] = Form.useForm<UploadValues>()
@@ -336,6 +339,7 @@ export default function RequestDeliveryPage() {
               <div className="delivery-gallery">
                 {photosState.data.items.map(photo => <article key={photo.id}>
                   <div
+                    {...hoverPlayback.bind(String(photo.id), !!photo.animated && !!photo.animationUrl)}
                     role={canSelectPhoto(photo) ? 'button' : undefined}
                     tabIndex={canSelectPhoto(photo) ? 0 : undefined}
                     aria-pressed={canSelectPhoto(photo) ? selectedPhotoIds.includes(photo.id) : undefined}
@@ -387,6 +391,8 @@ export default function RequestDeliveryPage() {
                       : <PhotoPlaceholder className="delivery-placeholder" seed={photo.id}>
                         <PictureOutlined />
                       </PhotoPlaceholder>}
+                    {photo.animated && <AnimatedHoverLayer src={photo.animationUrl} alt={photo.title}
+                      playing={hoverPlayback.playingKey === String(photo.id)} />}
                     <PhotoStatusTag photo={photo} />
                   </div>
                   <strong>{photo.title || '未命名图片'}</strong>
@@ -410,7 +416,7 @@ export default function RequestDeliveryPage() {
               initialValues={{ takenAt: dayjs() }}>
               <Form.Item name="files" valuePropName="fileList" getValueFromEvent={event => event.fileList}
                 rules={[{ required: true, message: '请选择图片' }]}>
-                <Upload.Dragger multiple accept=".jpg,.jpeg,.png" beforeUpload={async (file, fileList) => {
+                <Upload.Dragger multiple accept=".jpg,.jpeg,.png,.gif" beforeUpload={async (file, fileList) => {
                   if (file.size > uploadLimits.PHOTO_IMAGE_MAX_BYTES) {
                     message.error(`${file.name}：单张图片不得超过 ${describeBytes(uploadLimits.PHOTO_IMAGE_MAX_BYTES)}`)
                     return Upload.LIST_IGNORE
@@ -430,7 +436,7 @@ export default function RequestDeliveryPage() {
                   <p className="ant-upload-drag-icon"><InboxOutlined /></p>
                   <p className="ant-upload-text">拖入或选择需求图片</p>
                   <p className="ant-upload-hint">
-                    支持多张 JPG / PNG，单张不超过 {describeBytes(uploadLimits.PHOTO_IMAGE_MAX_BYTES)}
+                    支持多张 JPG / PNG / GIF（动图原样保存，不压缩），单张不超过 {describeBytes(uploadLimits.PHOTO_IMAGE_MAX_BYTES)}
                   </p>
                 </Upload.Dragger>
               </Form.Item>

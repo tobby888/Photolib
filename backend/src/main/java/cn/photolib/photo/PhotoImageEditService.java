@@ -242,6 +242,10 @@ public class PhotoImageEditService {
         if (photo.getStatus() != PhotoStatus.AVAILABLE) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "只有可用状态的图片可以编辑");
         }
+        // 浏览器端裁切只能导出单帧图片，编辑一张动图等于把它变成静态图。
+        if (Boolean.TRUE.equals(photo.getAnimated()) || AnimatedImages.GIF.equals(photo.getContentType())) {
+            throw new BusinessException(ErrorCode.UNSUPPORTED_FILE_TYPE, "动图不支持裁切和旋转");
+        }
         return photo;
     }
 

@@ -37,7 +37,7 @@ public class SafeImageZipExtractor {
      */
     public List<ExtractedImage> extract(InputStream source, DestinationFactory destinations)
             throws IOException {
-        return extract(source, destinations, Limits.gallery(), null);
+        return extract(source, destinations, Limits.gallery(), null, false);
     }
 
     /** Applies a caller-specific Unicode code-point display-name limit. */
@@ -47,7 +47,7 @@ public class SafeImageZipExtractor {
             throw new IllegalArgumentException("文件名长度上限必须大于 0");
         }
         return extract(source, destinations, Limits.gallery(),
-                Integer.valueOf(maxDisplayNameCodePoints));
+                Integer.valueOf(maxDisplayNameCodePoints), false);
     }
 
     /**
@@ -56,22 +56,24 @@ public class SafeImageZipExtractor {
      */
     public List<ExtractedImage> extract(InputStream source, DestinationFactory destinations,
                                         Limits limits) throws IOException {
-        return extract(source, destinations, limits, limits.maxFileNameCodePoints());
+        return extract(source, destinations, limits, limits.maxFileNameCodePoints(), false);
     }
 
     /**
      * Extracts under the administrator-managed gallery quota while keeping entry
      * display names whole, which is how the gallery path has always behaved (its
-     * own persistence decides what an over-long name means).
+     * own persistence decides what an over-long name means). The gallery also
+     * takes GIF entries; the other entry points (public recruitment) do not.
      */
     public List<ExtractedImage> extractKeepingNames(InputStream source, DestinationFactory destinations,
                                                     Limits limits) throws IOException {
-        return extract(source, destinations, limits, null);
+        return extract(source, destinations, limits, null, true);
     }
 
     private List<ExtractedImage> extract(InputStream source, DestinationFactory destinations,
                                          Limits limits,
-                                         Integer maxDisplayNameCodePoints) throws IOException {
+                                         Integer maxDisplayNameCodePoints,
+                                         boolean acceptGif) throws IOException {
         List<ExtractedImage> extracted = new ArrayList<>();
         long expandedTotal = 0;
         // ISO-8859-1 keeps non-UTF-8 entry names as raw bytes for decodeEntryName instead of
@@ -86,7 +88,9 @@ public class SafeImageZipExtractor {
                 String originalFileName = maxDisplayNameCodePoints == null
                         ? ImageUploadPolicy.safeDisplayFileName(baseName)
                         : ImageUploadPolicy.safeDisplayFileName(baseName, maxDisplayNameCodePoints);
-                String contentType = ImageUploadPolicy.contentTypeFromFileName(originalFileName);
+                String contentType = acceptGif
+                        ? ImageUploadPolicy.galleryContentTypeFromFileName(originalFileName)
+                        : ImageUploadPolicy.contentTypeFromFileName(originalFileName);
                 if (contentType == null) continue;
                 if (extracted.size() >= limits.maxImageCount()) {
                     throw new IllegalArgumentException(
@@ -113,7 +117,8 @@ public class SafeImageZipExtractor {
                 }
             }
             if (extracted.isEmpty()) {
-                throw new IllegalArgumentException("ZIP 中没有 JPG/PNG 图片");
+                throw new IllegalArgumentException(acceptGif
+                        ? "ZIP 中没有 JPG/PNG/GIF 图片" : "ZIP 中没有 JPG/PNG 图片");
             }
             return List.copyOf(extracted);
         } catch (IOException | RuntimeException exception) {

@@ -12,6 +12,7 @@ import { useEffect, useReducer, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { api, emptyPage, qs } from '../api'
+import { AnimatedHoverLayer, useHoverPlayback } from '../AnimatedPhoto'
 import { readTakenAt } from '../exif'
 import { uploadToObjectStorage } from '../storageUpload'
 import { describeBytes } from '../uploadLimits'
@@ -61,6 +62,8 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
   const libraryRoot = favoritesOnly ? '/favorites' : '/photos'
   const [searchParams, setSearchParams] = useSearchParams()
   const { message, modal } = App.useApp()
+  // 动图格子：鼠标停住 3 秒播放（src/AnimatedPhoto.tsx）。
+  const hoverPlayback = useHoverPlayback()
   const uploadLimits = useUploadLimits()
   const placeholderImages = usePlaceholderImages()
   const { user } = useAuth()
@@ -238,7 +241,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
       } else {
         message.error(photo.failureReason
           ? `这张图片没能处理完成：${photo.failureReason}`
-          : '这张图片没能处理完成，可能是文件损坏。换一张 JPG / PNG 再传一次。')
+          : '这张图片没能处理完成，可能是文件损坏。换一张 JPG / PNG / GIF 再传一次。')
       }
       setUploadOpen(false); uploadForm.resetFields(); await reload()
     } catch (e) { message.error((e as Error).message) }
@@ -582,6 +585,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
         {data.items.map(photo => <Col xs={24} sm={12} lg={8} xxl={6} key={photo.id}>
           <Card className={`photo-card${selectedIds.includes(photo.id) ? ' photo-card-selected' : ''}`} hoverable cover={<div
             className="photo-cover" role="button" tabIndex={0}
+            {...hoverPlayback.bind(String(photo.id), !!photo.animated && !!photo.animationUrl)}
             aria-pressed={selectedIds.includes(photo.id)}
             aria-label={`${canSelectPhoto(photo) ? '选择' : '查看'}图片：${photo.title || photo.id}`}
             title={canSelectPhoto(photo) ? photoCardHint(shortcuts, '查看详情') : '查看图片详情'}
@@ -624,6 +628,8 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
               : <PhotoPlaceholder seed={photo.id}>
                 <span>{photo.title?.slice(0, 1) || '图'}</span>
               </PhotoPlaceholder>}
+            {photo.animated && <AnimatedHoverLayer src={photo.animationUrl} alt={photo.title}
+              playing={hoverPlayback.playingKey === String(photo.id)} />}
             <div className="photo-overlay" onClick={event => event.stopPropagation()}
               onDoubleClick={event => event.stopPropagation()}
               onKeyDown={event => event.stopPropagation()}>
@@ -676,7 +682,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
       maskClosable={!uploading} closable={!uploading} cancelButtonProps={{ disabled: uploading }}>
       <Form form={uploadForm} layout="vertical" requiredMark={false}>
         <Form.Item name="file" valuePropName="fileList" getValueFromEvent={e => e.fileList} rules={[{ required: true, message: '请选择图片' }]}>
-          <Upload.Dragger accept=".jpg,.jpeg,.png" maxCount={1} beforeUpload={async file => {
+          <Upload.Dragger accept=".jpg,.jpeg,.png,.gif" maxCount={1} beforeUpload={async file => {
             if (file.size > uploadLimits.PHOTO_IMAGE_MAX_BYTES) {
               message.error(`单张图片不得超过 ${describeBytes(uploadLimits.PHOTO_IMAGE_MAX_BYTES)}`)
               return Upload.LIST_IGNORE
@@ -691,7 +697,7 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
             }
             return false
           }}>
-            <p className="ant-upload-drag-icon"><InboxOutlined /></p><p className="ant-upload-text">拖拽图片到这里，或点击选择</p><p className="ant-upload-hint">仅支持 JPG / PNG，单张不超过 {describeBytes(uploadLimits.PHOTO_IMAGE_MAX_BYTES)}</p>
+            <p className="ant-upload-drag-icon"><InboxOutlined /></p><p className="ant-upload-text">拖拽图片到这里，或点击选择</p><p className="ant-upload-hint">支持 JPG / PNG / GIF（动图原样保存，不压缩），单张不超过 {describeBytes(uploadLimits.PHOTO_IMAGE_MAX_BYTES)}</p>
           </Upload.Dragger>
         </Form.Item>
         <Row gutter={16}><Col span={12}><Form.Item label="图片标题" name="title" rules={[{ required: true }]}><Input /></Form.Item></Col>

@@ -217,7 +217,7 @@ class ProjectShareZipUploadTests {
                 uploadService.batchStatus(context, ticket.batchId());
         assertThat(failed.status()).isEqualTo(BatchStatus.FAILED);
         // 访客只知道"传完了"是不够的：这一包根本没进相册，必须把原因说出来。
-        assertThat(failed.failureReason()).contains("没有 JPG/PNG 图片");
+        assertThat(failed.failureReason()).contains("没有 JPG/PNG/GIF 图片");
         assertThatThrownBy(() -> uploadService.finishZip(context, ticket.batchId(), null, List.of()))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("尚未完成解压");

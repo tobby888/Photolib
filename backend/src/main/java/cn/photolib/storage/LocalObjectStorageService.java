@@ -365,6 +365,11 @@ public class LocalObjectStorageService implements ObjectStorageService {
                 && signature[10] == 0x42 && signature[11] == 0x50) {
             return "image/webp";
         }
+        if (length >= 6 && signature[0] == 'G' && signature[1] == 'I' && signature[2] == 'F'
+                && signature[3] == '8' && (signature[4] == '7' || signature[4] == '9')
+                && signature[5] == 'a') {
+            return "image/gif";
+        }
         return null;
     }
 

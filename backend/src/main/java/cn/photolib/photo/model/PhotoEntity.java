@@ -47,4 +47,9 @@ public class PhotoEntity extends BaseEntity {
      * （Flyway V53）。重新 complete 时清零。
      */
     private Integer processingRecoveries;
+    /**
+     * 是不是动图（多帧 GIF 或 APNG，Flyway V76）。动图的成品图是原样保存的原文件，
+     * 图库网格悬停播放、详情页带暂停按钮播放，不允许裁切编辑，也不画直方图。
+     */
+    private Boolean animated;
 }

@@ -155,6 +155,23 @@ class PhotoImageEditTests {
     }
 
     @Test
+    void refusesToEditAnAnimatedPhoto() {
+        // 浏览器裁切只能导出单帧图片：放行就等于把动图悄悄变成静态图。
+        jdbc.sql("UPDATE photo SET animated=TRUE WHERE id=:id").param("id", PHOTO_ID).update();
+
+        assertThatThrownBy(() -> edits.ticket(PHOTO_ID, "image/jpeg", editedBytes.length, admin))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("动图不支持");
+        assertThatThrownBy(() -> edits.apply(PHOTO_ID, new PhotoImageEditService.ApplyEdit(
+                editSourceKey, "image/jpeg", editedBytes.length, editedSha), admin))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("动图不支持");
+
+        jdbc.sql("UPDATE photo SET animated=FALSE WHERE id=:id").param("id", PHOTO_ID).update();
+        assertUnchanged();
+    }
+
+    @Test
     void refusesASourceKeyItDidNotIssue() {
         assertThatThrownBy(() -> edits.apply(PHOTO_ID, new PhotoImageEditService.ApplyEdit(
                 ORIGINAL_PHOTO_KEY, "image/jpeg", editedBytes.length, editedSha), admin))

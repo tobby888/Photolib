@@ -66,7 +66,8 @@ export function rejectReason(
   const name = file.name.toLowerCase()
   const jpeg = file.type === 'image/jpeg' && (name.endsWith('.jpg') || name.endsWith('.jpeg'))
   const png = file.type === 'image/png' && name.endsWith('.png')
-  if (!jpeg && !png) return `${file.name}：只能传 JPG 或 PNG 图片`
+  const gif = file.type === 'image/gif' && name.endsWith('.gif')
+  if (!jpeg && !png && !gif) return `${file.name}：只能传 JPG、PNG 或 GIF 图片`
   if (file.size <= 0) return `${file.name}：这个文件是空的`
   if (file.size > limits.PHOTO_IMAGE_MAX_BYTES) {
     return `${file.name}：单张不能超过 ${describeBytes(limits.PHOTO_IMAGE_MAX_BYTES)}`
@@ -232,7 +233,7 @@ export function describeBatchOutcome(batch: {
     return {
       tone: 'error',
       message: batch.failureReason
-        || '压缩包没能解开。请确认它是完整的 .zip，里面有 JPG / PNG 图片，然后重新上传。',
+        || '压缩包没能解开。请确认它是完整的 .zip，里面有 JPG / PNG / GIF 图片，然后重新上传。',
     }
   }
   // 还没跑完就被问到结果：后台仍在处理，不要说成失败。

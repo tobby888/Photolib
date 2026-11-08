@@ -44,7 +44,8 @@ public class ImageCompressor {
      */
     public ImageInfo validateStructure(Path source, String contentType) throws IOException {
         requireSafeInputSize(source);
-        NativeImageProcessor.Dimensions dimensions = nativeProcessor.dimensions(source, contentType);
+        NativeImageProcessor.Dimensions dimensions =
+                dimensions(source, contentType, AnimatedImages.inspect(source, contentType));
         if (dimensions.width() <= 0 || dimensions.height() <= 0) {
             throw new IOException("图片尺寸无效");
         }
@@ -70,6 +71,8 @@ public class ImageCompressor {
         }
         requireDistinctPaths(source, destination);
         long sourceSize = requireSafeInputSize(source);
+        AnimatedImages.Info animation = AnimatedImages.inspect(source, contentType);
+        if (animation.keepAsIs()) return doKeepAsIs(source, destination, contentType, animation);
         NativeImageProcessor.Dimensions dimensions = nativeProcessor.dimensions(source, contentType);
         if (sourceSize <= targetBytes) {
             Files.copy(source, destination, StandardCopyOption.REPLACE_EXISTING);
@@ -81,6 +84,40 @@ public class ImageCompressor {
         validateOutput(processed);
         return new FileResult(processed.path(), processed.length(), processed.width(),
                 processed.height(), contentType);
+    }
+
+    /**
+     * 动图的成品图：原样复制，不做质量压缩，也不受成品目标体积约束（上限仍是上传上限）。
+     * 尺寸照样过安全检查：GIF 由 {@link AnimatedImages} 读画布，APNG 由原生层读 IHDR。
+     */
+    public FileResult keepAsIs(Path source, Path destination, String contentType,
+                               AnimatedImages.Info animation) throws IOException {
+        long started = System.nanoTime();
+        FileResult result = null;
+        try {
+            requireDistinctPaths(source, destination);
+            requireSafeInputSize(source);
+            result = doKeepAsIs(source, destination, contentType, animation);
+            return result;
+        } finally {
+            report(PerformanceMonitor.IMAGE_COMPRESS, started, source, contentType, result);
+        }
+    }
+
+    private FileResult doKeepAsIs(Path source, Path destination, String contentType,
+                                  AnimatedImages.Info animation) throws IOException {
+        NativeImageProcessor.Dimensions dimensions = dimensions(source, contentType, animation);
+        Files.copy(source, destination, StandardCopyOption.REPLACE_EXISTING);
+        return new FileResult(destination, Files.size(destination), dimensions.width(),
+                dimensions.height(), contentType);
+    }
+
+    private NativeImageProcessor.Dimensions dimensions(Path source, String contentType,
+                                                       AnimatedImages.Info animation) throws IOException {
+        if (animation.gif()) {
+            return new NativeImageProcessor.Dimensions(animation.width(), animation.height());
+        }
+        return nativeProcessor.dimensions(source, contentType);
     }
 
     /**
@@ -140,12 +177,35 @@ public class ImageCompressor {
         }
         requireDistinctPaths(source, destination);
         requireSafeInputSize(source);
+        if (AnimatedImages.GIF.equals(contentType)) {
+            return gifThumbnail(source, destination, maxDimension, compressionRatio);
+        }
+        // APNG 不用特殊处理：libvips 只读 IDAT，也就是默认图像（通常就是第一帧）。
         NativeImageProcessor.ProcessedFile processed = nativeProcessor.thumbnail(
                 source, destination, contentType, PREVIEW_CONTENT_TYPE, maxDimension,
                 compressionRatio);
         validateOutput(processed);
         return new FileResult(processed.path(), processed.length(), processed.width(),
                 processed.height(), PREVIEW_CONTENT_TYPE);
+    }
+
+    /** GIF 的静态首帧缩略图：首帧先存成 PNG（见 {@link GifFirstFrame}），再走原生 WebP 编码。 */
+    private FileResult gifThumbnail(Path source, Path destination, int maxDimension,
+                                    double compressionRatio) throws IOException {
+        AnimatedImages.Info animation = AnimatedImages.inspectGif(source);
+        Path firstFrame = destination.resolveSibling(destination.getFileName() + ".first-frame.png");
+        try {
+            GifFirstFrame.writePng(source, animation, firstFrame);
+            requireSafeInputSize(firstFrame);
+            NativeImageProcessor.ProcessedFile processed = nativeProcessor.thumbnail(
+                    firstFrame, destination, AnimatedImages.PNG, PREVIEW_CONTENT_TYPE, maxDimension,
+                    compressionRatio);
+            validateOutput(processed);
+            return new FileResult(processed.path(), processed.length(), processed.width(),
+                    processed.height(), PREVIEW_CONTENT_TYPE);
+        } finally {
+            Files.deleteIfExists(firstFrame);
+        }
     }
 
     private void requireDistinctPaths(Path source, Path destination) throws IOException {
