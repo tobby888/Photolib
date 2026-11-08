@@ -148,7 +148,7 @@ export default function BatchUploadPage() {
         status => status === 'WAITING_METADATA' || status === 'FAILED')
       if (extracted.batch.status === 'FAILED') {
         throw new Error(extracted.batch.failureReason
-          || '压缩包没能解开。请确认它是完整的 .zip，且里面有 JPG / PNG 图片，然后重新上传。')
+          || '压缩包没能解开。请确认它是完整的 .zip，且里面有 JPG / PNG / GIF 图片，然后重新上传。')
       }
 
       setPhase('organizing')
@@ -199,7 +199,7 @@ export default function BatchUploadPage() {
       返回{requestId ? '需求交付' : '图片库'}
     </Button>
     <PageTitle eyebrow="BATCH UPLOAD" title="ZIP 批量上传"
-      description="后台自动解压 JPG / PNG，图片标题使用原文件名（不含扩展名）。" />
+      description="后台自动解压 JPG / PNG / GIF，图片标题使用原文件名（不含扩展名）。动图原样保存，不压缩。" />
     <Card loading={context.loading}>
       {context.data.request && <Alert showIcon type="info" style={{ marginBottom: 20 }}
         message={`上传到需求：${context.data.request.title}`}
@@ -219,7 +219,7 @@ export default function BatchUploadPage() {
             <p className="ant-upload-drag-icon"><InboxOutlined /></p>
             <p className="ant-upload-text">拖入 ZIP，或点击选择文件</p>
             <p className="ant-upload-hint">
-              最大 {describeBytes(uploadLimits.PHOTO_ZIP_MAX_BYTES)}；包内最多 {uploadLimits.PHOTO_ZIP_MAX_IMAGES} 张 JPG / PNG；
+              最大 {describeBytes(uploadLimits.PHOTO_ZIP_MAX_BYTES)}；包内最多 {uploadLimits.PHOTO_ZIP_MAX_IMAGES} 张 JPG / PNG / GIF；
               单张不超过 {describeBytes(uploadLimits.PHOTO_IMAGE_MAX_BYTES)}
             </p>
           </Upload.Dragger>

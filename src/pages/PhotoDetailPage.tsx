@@ -16,6 +16,7 @@ import { useLoad, useRefreshOnResume } from '../hooks'
 import { hasPermission, isAdministrator } from '../permissions'
 import PhotoMetadataModal from '../PhotoMetadataModal'
 import PhotoHistogram from '../PhotoHistogram'
+import { AnimatedPhotoStage } from '../AnimatedPhoto'
 import { useLocalImageUrl } from '../useLocalImageUrl'
 import { refreshPhotoPreviewUrl } from '../previewRefresh'
 import { PhotoPlaceholder } from '../photoPlaceholder'
@@ -313,17 +314,25 @@ export default function PhotoDetailPage({ favoritesOnly = false }: { favoritesOn
           <Space direction="vertical" size="large" style={{ width: '100%' }}>
             <Card className="photo-detail-preview-card">
               <div className="photo-detail-image">
-                {localImage.status === 'ready'
-                  ? <Image src={localImage.url} alt={photo.title || `图片 ${photo.id}`} />
-                  : localImage.status === 'loading'
-                    ? <Skeleton.Image active />
-                    : <PhotoPlaceholder seed={photo.id}
-                      note={localImage.status === 'error' ? localImage.message : undefined}>
-                      <span>{photo.title?.slice(0, 1) || '图'}</span>
-                    </PhotoPlaceholder>}
+                {(() => {
+                  const staticPreview = localImage.status === 'ready'
+                    ? <Image src={localImage.url} alt={photo.title || `图片 ${photo.id}`} />
+                    : localImage.status === 'loading'
+                      ? <Skeleton.Image active />
+                      : <PhotoPlaceholder seed={photo.id}
+                        note={localImage.status === 'error' ? localImage.message : undefined}>
+                        <span>{photo.title?.slice(0, 1) || '图'}</span>
+                      </PhotoPlaceholder>
+                  // 动图：进来就循环播放，暂停回到首帧；静态首帧预览在加载期间和失败时顶上。
+                  return photo.animated && photo.animationUrl
+                    ? <AnimatedPhotoStage key={photo.id} src={photo.animationUrl} poster={staticPreview}
+                      alt={photo.title || `图片 ${photo.id}`} />
+                    : staticPreview
+                })()}
               </div>
             </Card>
-            <Card title="曝光直方图" extra={<Typography.Text type="secondary">浏览器本地生成</Typography.Text>}>
+            {/* 动图不画直方图：首帧代表不了整段动画的曝光。 */}
+            {!photo.animated && <Card title="曝光直方图" extra={<Typography.Text type="secondary">浏览器本地生成</Typography.Text>}>
               {localImage.status === 'ready'
                 ? <PhotoHistogram imageUrl={localImage.url} alt={photo.title || `图片 ${photo.id}`} />
                 : localImage.status === 'loading'
@@ -331,7 +340,7 @@ export default function PhotoDetailPage({ favoritesOnly = false }: { favoritesOn
                   : localImage.status === 'error'
                     ? <Alert type="info" showIcon message={`${localImage.message}，无法生成曝光直方图。`} />
                     : <Alert type="info" showIcon message="预览图生成后即可分析曝光分布。" />}
-            </Card>
+            </Card>}
           </Space>
         </Col>
         <Col xs={24} xl={8}>
@@ -358,7 +367,8 @@ export default function PhotoDetailPage({ favoritesOnly = false }: { favoritesOn
                   : '无关联项目' },
               { key: 'photographer', label: '拍摄者', children: `${photo.photographerName} · ${photo.photographerStudentId}` },
               { key: 'taken', label: '拍摄时间', children: dayjs(photo.takenAt).format('YYYY-MM-DD HH:mm') },
-              { key: 'size', label: '文件信息', children: `${photo.width || '-'} × ${photo.height || '-'} · ${formatBytes(photo.size)}` },
+              { key: 'size', label: '文件信息', children: `${photo.width || '-'} × ${photo.height || '-'} · ${formatBytes(photo.size)}`
+                + (photo.animated ? ' · 动图（原样保存，未压缩）' : '') },
               { key: 'previewSize', label: '预览图体积', children: photo.thumbnailSize == null ? '-' : formatBytes(photo.thumbnailSize) },
               { key: 'file', label: '归档文件名', children: photo.storedFileName },
             ]} />

@@ -196,6 +196,8 @@ export interface SelectionPhoto {
   imageUrl?: string
   status: Photo['status']
   version: number
+  /** 动图（多帧 GIF、APNG）不能裁切 / 旋转。 */
+  animated?: boolean
 }
 
 /** 清理确认框里展示的一张待删图片。 */
@@ -291,6 +293,13 @@ export interface Photo extends BaseEntity {
   favorited: boolean
   relatedProjectIds?: EntityId[]
   relatedProjects?: { id: EntityId; title: string }[]
+  /**
+   * 动图（多帧 GIF、APNG）。成品图是原样保存的原文件，`thumbnailUrl` 只是静态首帧；
+   * 网格里鼠标停住播放，详情页带暂停按钮播放，不能编辑，也不画直方图。见 src/AnimatedPhoto.tsx。
+   */
+  animated?: boolean
+  /** 动图的播放地址（成品图的内联签名地址）；静态图没有。 */
+  animationUrl?: string
 }
 
 

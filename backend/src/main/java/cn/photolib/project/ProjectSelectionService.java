@@ -116,7 +116,7 @@ public class ProjectSelectionService {
         return new SelectionPhoto(photo.getId(), photo.getTitle(), photo.getPhotographerName(),
                 photo.getTakenAt(), PhotoTags.parse(photo.getTagsJson()), photo.getWidth(), photo.getHeight(),
                 photo.getSize(), photo.getContentType(), photos.previewUrl(photo), imageUrl,
-                photo.getStatus(), photo.getVersion());
+                photo.getStatus(), photo.getVersion(), Boolean.TRUE.equals(photo.getAnimated()));
     }
 
     /**
@@ -329,7 +329,7 @@ public class ProjectSelectionService {
     public record SelectionPhoto(Long id, String title, String photographerName, LocalDateTime takenAt,
                                  List<String> tags, Integer width, Integer height, Long size,
                                  String contentType, String thumbnailUrl, String imageUrl,
-                                 PhotoStatus status, Integer version) {
+                                 PhotoStatus status, Integer version, boolean animated) {
     }
 
     /**

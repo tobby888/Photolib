@@ -2,6 +2,7 @@ package cn.photolib.photo;
 
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.campus.CampusService;
+import cn.photolib.common.upload.ImageUploadPolicy;
 import cn.photolib.common.api.PageResponse;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.util.LikeFilter;
@@ -99,7 +100,7 @@ public class PhotoService {
         var photographer = PublicPhoto.resolve(command.publicPhoto(), command.photographerContactId(),
                 campusId, campusMemberService);
         projectService.requireAcceptsPhotographer(projectId, photographer.isPublic());
-        String extension = command.contentType().equals("image/png") ? "png" : "jpg";
+        String extension = ImageUploadPolicy.extension(command.contentType()).substring(1);
         String id = UUID.randomUUID().toString();
         String originalKey = "temporary/photos/" + id + "." + extension;
         String finalKey = "photos/" + LocalDateTime.now().getYear() + "/" + id + "." + extension;
@@ -979,11 +980,8 @@ public class PhotoService {
             throw new BusinessException(ErrorCode.FILE_TOO_LARGE,
                     "单张图片不得超过 " + uploadLimits.describe(UploadLimit.PHOTO_IMAGE_MAX_BYTES));
         }
-        boolean jpeg = contentType.equals("image/jpeg")
-                && (fileName.toLowerCase().endsWith(".jpg") || fileName.toLowerCase().endsWith(".jpeg"));
-        boolean png = contentType.equals("image/png") && fileName.toLowerCase().endsWith(".png");
-        if (!jpeg && !png) {
-            throw new BusinessException(ErrorCode.UNSUPPORTED_FILE_TYPE, "仅支持 JPG 和 PNG");
+        if (!ImageUploadPolicy.galleryFileNameMatchesContentType(fileName, contentType)) {
+            throw new BusinessException(ErrorCode.UNSUPPORTED_FILE_TYPE, "仅支持 JPG、PNG 和 GIF");
         }
     }
 
@@ -1190,7 +1188,22 @@ public class PhotoService {
                 p.getPhotographerStudentId(), p.getPhotographerName(), p.getUploadedBy(), p.getCampusId(),
                 p.getTakenAt(), PhotoTags.parse(p.getTagsJson()), p.getWidth(), p.getHeight(), p.getSize(), p.getContentType(),
                 p.getStoredFileName(), thumbnailUrl, p.getThumbnailSize(), p.getStatus(), p.getFailureReason(),
-                p.getCreatedAt(), p.getVersion(), adoptionCount, favorited, projectIds, projects);
+                p.getCreatedAt(), p.getVersion(), adoptionCount, favorited, projectIds, projects,
+                Boolean.TRUE.equals(p.getAnimated()), animationUrl(p));
+    }
+
+    /**
+     * 动图的播放地址：成品图（就是原样保存的原文件）的内联签名地址。静态图返回 {@code null}。
+     *
+     * <p>缩略图只是静态首帧，网格悬停和详情页要放动画就得拿成品图。能看到这张图的人
+     * 都能拿到它——和选片页列表里一起签出来的 {@code imageUrl} 同一个道理：签名只是一次
+     * HMAC，不访问存储。注意这意味着没有「下载原图」权限的人也能拿到动图原文件。</p>
+     */
+    private String animationUrl(PhotoEntity p) {
+        if (!Boolean.TRUE.equals(p.getAnimated())) return null;
+        if (p.getStatus() != PhotoStatus.AVAILABLE && p.getStatus() != PhotoStatus.ARCHIVED) return null;
+        if (!StringUtils.hasText(p.getObjectKey())) return null;
+        return storage.presignGet(p.getObjectKey(), null, properties.downloadUrlTtl()).url().toString();
     }
 
     /**
@@ -1314,7 +1327,8 @@ public class PhotoService {
                             Integer height, Long size, String contentType, String storedFileName,
                             String thumbnailUrl, Long thumbnailSize, PhotoStatus status, String failureReason,
                             LocalDateTime uploadedAt, Integer version, long adoptionCount, boolean favorited,
-                            List<Long> relatedProjectIds, List<ProjectLink> relatedProjects) {}
+                            List<Long> relatedProjectIds, List<ProjectLink> relatedProjects,
+                            boolean animated, String animationUrl) {}
     public record ProjectLink(Long id, String title) {}
     /** 图库上传者筛选的候选项。 */
 }

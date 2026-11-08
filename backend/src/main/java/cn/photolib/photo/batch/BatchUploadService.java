@@ -98,7 +98,7 @@ public class BatchUploadService {
         batchMapper.insert(batch);
         for (FileSpec file : command.files()) {
             validateFile(file);
-            String extension = file.contentType().equals("image/png") ? "png" : "jpg";
+            String extension = ImageUploadPolicy.extension(file.contentType()).substring(1);
             String key = "temporary/batches/" + batchId + "/" + UUID.randomUUID() + "." + extension;
             PhotoUploadItemEntity item = new PhotoUploadItemEntity();
             item.setBatchId(batchId);
@@ -330,7 +330,7 @@ public class BatchUploadService {
             markDuplicate(item, duplicate);
             return;
         }
-        String extension = item.getContentType().equals("image/png") ? "png" : "jpg";
+        String extension = ImageUploadPolicy.extension(item.getContentType()).substring(1);
         PhotoEntity photo = new PhotoEntity();
         photo.setRequestId(batch.getRequestId());
         photo.setProjectId(batch.getProjectId());
@@ -476,8 +476,8 @@ public class BatchUploadService {
             throw new BusinessException(ErrorCode.FILE_TOO_LARGE,
                     "单张图片不得超过 " + uploadLimits.describe(UploadLimit.PHOTO_IMAGE_MAX_BYTES));
         }
-        boolean valid = ImageUploadPolicy.fileNameMatchesContentType(file.fileName(), file.contentType());
-        if (!valid) throw new BusinessException(ErrorCode.UNSUPPORTED_FILE_TYPE, "仅支持 JPG 和 PNG");
+        boolean valid = ImageUploadPolicy.galleryFileNameMatchesContentType(file.fileName(), file.contentType());
+        if (!valid) throw new BusinessException(ErrorCode.UNSUPPORTED_FILE_TYPE, "仅支持 JPG、PNG 和 GIF");
     }
 
     /**

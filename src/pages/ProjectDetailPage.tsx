@@ -14,6 +14,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { useAuth } from '../auth'
 import { api, emptyPage } from '../api'
+import { AnimatedHoverLayer, useHoverPlayback } from '../AnimatedPhoto'
 import type {
   Adoption, BatchPublishResult, Campus, EntityId, PageData, Photo, PhotoRequest, Project, ProjectSelector,
   TaggedPhoto,
@@ -126,6 +127,8 @@ const ProjectPhotoCard = memo(function ProjectPhotoCard({
 }: ProjectPhotoCardProps) {
   const [previewOpen, setPreviewOpen] = useState(false)
   const shortcuts = usePhotoCardShortcuts()
+  // 动图：鼠标停住 3 秒播放（src/AnimatedPhoto.tsx）。
+  const hoverPlayback = useHoverPlayback()
   const selecting = selectable && !selectDisabled
   // 有详情权限去详情页，没有就打开大图预览（原先单击缩略图的行为）。
   const openPhoto = (item: Photo) => {
@@ -142,6 +145,7 @@ const ProjectPhotoCard = memo(function ProjectPhotoCard({
   return <Card
     className={`photo-card${selected ? ' photo-card-selected' : ''}`}
     cover={<div className="photo-cover"
+      {...hoverPlayback.bind(String(photo.id), !!photo.animated && !!photo.animationUrl)}
       role={selecting ? 'button' : undefined}
       tabIndex={selecting ? 0 : undefined}
       aria-pressed={selecting ? selected : undefined}
@@ -181,6 +185,8 @@ const ProjectPhotoCard = memo(function ProjectPhotoCard({
         : <PhotoPlaceholder seed={photo.id}>
           <span>{photo.title?.slice(0, 1) || '图'}</span>
         </PhotoPlaceholder>}
+      {photo.animated && <AnimatedHoverLayer src={photo.animationUrl} alt={photo.title || '需求图片'}
+        playing={hoverPlayback.playingKey === String(photo.id)} />}
       <div className="photo-overlay" onClick={event => event.stopPropagation()}
         onDoubleClick={event => event.stopPropagation()}
         onKeyDown={event => event.stopPropagation()}>

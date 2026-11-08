@@ -23,7 +23,7 @@ public interface PhotoMapper extends BaseMapper<PhotoEntity> {
     @Update("""
             UPDATE photo
             SET stored_file_name=#{storedFileName}, size=#{size}, width=#{width},
-                height=#{height}, thumbnail_object_key=#{thumbnailObjectKey,jdbcType=VARCHAR},
+                height=#{height}, animated=#{animated}, thumbnail_object_key=#{thumbnailObjectKey,jdbcType=VARCHAR},
                 thumbnail_size=#{thumbnailSize,jdbcType=BIGINT}, original_delete_after=#{originalDeleteAfter},
                 status='AVAILABLE', failure_reason=NULL,
                 version=version+1, updated_at=#{now}
@@ -62,6 +62,7 @@ public interface PhotoMapper extends BaseMapper<PhotoEntity> {
             @Param("size") long size,
             @Param("width") int width,
             @Param("height") int height,
+            @Param("animated") boolean animated,
             @Param("thumbnailObjectKey") String thumbnailObjectKey,
             @Param("thumbnailSize") Long thumbnailSize,
             @Param("originalDeleteAfter") LocalDateTime originalDeleteAfter,

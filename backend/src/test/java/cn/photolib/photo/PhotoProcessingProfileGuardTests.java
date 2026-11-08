@@ -81,7 +81,7 @@ class PhotoProcessingProfileGuardTests {
             // 只有 IllegalArgumentException 那一类"文件本身的毛病"照原样说，其余换成
             // 通用提示、原文进日志，见 UploadFailureMessage。
             assertThat(retryable).containsExactly("UPLOADING",
-                    "这张图片没能处理完成。请确认是完整的 JPG / PNG 后重新上传；如果反复失败，请联系管理员。", 2);
+                    "这张图片没能处理完成。请确认是完整的 JPG / PNG / GIF 后重新上传；如果反复失败，请联系管理员。", 2);
         } finally {
             cleanupRows();
             restoreProfile(original);

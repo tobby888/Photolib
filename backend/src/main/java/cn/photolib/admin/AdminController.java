@@ -36,7 +36,7 @@ public class AdminController {
                 "requestStatuses", RequestStatus.values(),
                 "photoStatuses", PhotoStatus.values(),
                 "worklogStatuses", WorklogStatus.values(),
-                "allowedImageTypes", List.of("image/jpeg", "image/png"),
+                "allowedImageTypes", List.of("image/jpeg", "image/png", "image/gif"),
                 "singleImageMaxBytes", uploadLimits.value(UploadLimit.PHOTO_IMAGE_MAX_BYTES),
                 "batchImageMaxCount", uploadLimits.count(UploadLimit.PHOTO_ZIP_MAX_IMAGES),
                 "zipMaxBytes", uploadLimits.value(UploadLimit.PHOTO_ZIP_MAX_BYTES),

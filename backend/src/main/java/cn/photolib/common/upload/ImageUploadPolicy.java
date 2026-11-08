@@ -15,6 +15,11 @@ public final class ImageUploadPolicy {
     public static final long MAX_ARCHIVE_BYTES = 1_500_000_000L;
 
     private static final Set<String> SUPPORTED_TYPES = Set.of("image/jpeg", "image/png");
+    /**
+     * 图库（单张、需求交付、批量、选题上传链接）另外收 GIF：动图原样保存，只生成静态首帧缩略图。
+     * 公开招募仍只收 JPG / PNG，它走的是另一条校验链，见 {@code RecruitmentUploadProcessor}。
+     */
+    private static final Set<String> GALLERY_TYPES = Set.of("image/jpeg", "image/png", "image/gif");
 
     private ImageUploadPolicy() {
     }
@@ -34,6 +39,22 @@ public final class ImageUploadPolicy {
 
     public static boolean fileNameMatchesContentType(String fileName, String contentType) {
         return contentType != null && contentType.equals(contentTypeFromFileName(fileName));
+    }
+
+    /** 图库能收的类型：JPG、PNG（含 APNG）和 GIF。 */
+    public static boolean galleryContentType(String contentType) {
+        return GALLERY_TYPES.contains(contentType);
+    }
+
+    /** 同 {@link #contentTypeFromFileName}，另外认 {@code .gif}。 */
+    public static String galleryContentTypeFromFileName(String fileName) {
+        String still = contentTypeFromFileName(fileName);
+        if (still != null) return still;
+        return fileName != null && fileName.toLowerCase(Locale.ROOT).endsWith(".gif") ? "image/gif" : null;
+    }
+
+    public static boolean galleryFileNameMatchesContentType(String fileName, String contentType) {
+        return contentType != null && contentType.equals(galleryContentTypeFromFileName(fileName));
     }
 
     /**
@@ -70,7 +91,8 @@ public final class ImageUploadPolicy {
         return switch (contentType) {
             case "image/jpeg" -> ".jpg";
             case "image/png" -> ".png";
-            default -> throw new IllegalArgumentException("仅支持 JPG 和 PNG");
+            case "image/gif" -> ".gif";
+            default -> throw new IllegalArgumentException("仅支持 JPG、PNG 和 GIF");
         };
     }
 

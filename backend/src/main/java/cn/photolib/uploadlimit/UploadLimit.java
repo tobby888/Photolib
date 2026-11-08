@@ -14,7 +14,8 @@ import cn.photolib.common.upload.ImageUploadPolicy;
  */
 public enum UploadLimit {
     PHOTO_IMAGE_MAX_BYTES(Group.PHOTO, Unit.BYTES, "单张图片",
-            "图库上传、需求交付、选题上传链接里每张 JPG / PNG 原图的大小，ZIP 里的每张图片同样受它约束。",
+            "图库上传、需求交付、选题上传链接里每张 JPG / PNG / GIF 原图的大小，ZIP 里的每张图片同样受它约束。"
+                    + "动图不压缩，存进去多大，看的人就要下载多大。",
             Sizes.MIB, 100 * Sizes.MIB, ImageUploadPolicy.MAX_IMAGE_BYTES),
     PHOTO_ZIP_MAX_BYTES(Group.PHOTO, Unit.BYTES, "ZIP 压缩包",
             "批量上传（含选题上传链接）时一个 ZIP 压缩包的大小。上限取自对象存储单次上传的能力。",

@@ -1181,8 +1181,12 @@ public class PreviewRegenerationService {
         boolean png = length >= 8 && (bytes[0] & 0xff) == 0x89
                 && bytes[1] == 0x50 && bytes[2] == 0x4e && bytes[3] == 0x47
                 && bytes[4] == 0x0d && bytes[5] == 0x0a && bytes[6] == 0x1a && bytes[7] == 0x0a;
+        boolean gif = length >= 6 && bytes[0] == 'G' && bytes[1] == 'I' && bytes[2] == 'F'
+                && bytes[3] == '8' && (bytes[4] == '7' || bytes[4] == '9') && bytes[5] == 'a';
         if (jpeg) return "image/jpeg";
         if (png) return "image/png";
+        // 动图的成品图就是原文件，重建预览时同样只取首帧（ImageCompressor#thumbnail）。
+        if (gif) return AnimatedImages.GIF;
         if ("image/jpeg".equals(declared) || "image/png".equals(declared)) return declared;
         throw new IllegalArgumentException("不支持的图片格式");
     }
