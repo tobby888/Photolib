@@ -442,10 +442,16 @@ public class ProjectShareService {
                         .orderByDesc(PhotoEntity::getCreatedAt));
         Set<Long> adopted = adoptedPhotoIds(link.getProjectId(),
                 result.getRecords().stream().map(PhotoEntity::getId).toList());
+        // 原图（选图台的「大图」）只签给开了下载的链接：能看到原图就能另存原图，
+        // 对只许浏览的链接等于绕过了下载开关。签名只是一次 HMAC，跟着列表一起签，
+        // 理由同站内选片页（ProjectSelectionService#toSelectionPhoto）。
+        boolean withImage = Boolean.TRUE.equals(link.getAllowDownload());
         return new PageResponse<>(result.getRecords().stream()
                 .map(photo -> new SharePhotoView(photo.getId(), photo.getTitle(), photo.getDescription(),
                         photo.getPhotographerName(), photo.getTakenAt(), photo.getWidth(), photo.getHeight(),
                         photo.getSize(), photo.getStoredFileName(), photoService.previewUrl(photo),
+                        withImage && StringUtils.hasText(photo.getObjectKey())
+                                ? photoService.fullImageUrl(photo).downloadUrl() : null,
                         adopted.contains(photo.getId()), PhotoTags.parse(photo.getTagsJson())))
                 .toList(),
                 result.getCurrent(), result.getSize(), result.getTotal(), result.getPages());
@@ -865,11 +871,12 @@ public class ProjectShareService {
     /**
      * @param tags 图片上的标签。访客页把它们画在卡片上、点一下就按它筛选，与选题详情页一致；
      *             标签名本来就出现在筛选候选和关键字搜索里，多给这一列不多泄露什么。
+     * @param imageUrl 成品图的内联签名地址（选图台看大图用）；链接没开下载时为 null。
      */
     public record SharePhotoView(Long id, String title, String description, String photographerName,
                                  LocalDateTime takenAt, Integer width, Integer height, Long size,
-                                 String storedFileName, String thumbnailUrl, boolean adopted,
-                                 List<String> tags) {}
+                                 String storedFileName, String thumbnailUrl, String imageUrl,
+                                 boolean adopted, List<String> tags) {}
 
     public record SharePhotoAdoption(Long photoId, boolean adopted) {}
 

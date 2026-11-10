@@ -1,8 +1,10 @@
 import {
-  App, Button, Card, Checkbox, Col, Empty, Form, Input, Result, Row, Skeleton, Space, Tag, Typography,
+  App, Button, Card, Checkbox, Col, Empty, Form, Input, Result, Row, Skeleton, Space, Tag, Tooltip, Typography,
 } from 'antd'
 import { useBatchDownloadProgress } from '../BatchDownloadModal'
-import { DownloadOutlined, EyeOutlined, KeyOutlined, LinkOutlined, LockOutlined } from '@ant-design/icons'
+import {
+  AppstoreOutlined, DownloadOutlined, EyeOutlined, KeyOutlined, LinkOutlined, LockOutlined,
+} from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useParams } from 'react-router-dom'
@@ -27,6 +29,7 @@ import { isPortalEvent, selectablePreview, usePhotoCardClick } from '../usePhoto
 import { matchPhotoCardShortcut, photoCardHint, usePhotoCardShortcuts } from '../photoCardShortcuts'
 
 const PhotoCardShortcutsModal = lazy(() => import('../PhotoCardShortcutsModal'))
+const SharedSelectionWorkbench = lazy(() => import('../SharedSelectionWorkbench'))
 import type { ShareGuestAccess, ShareLinkPurpose, SharePhoto } from '../types'
 
 const PAGE_SIZE = 60
@@ -79,6 +82,8 @@ export default function SharedProjectPage() {
   const [shortcutSettingsOpen, setShortcutSettingsOpen] = useState(false)
   const shortcuts = usePhotoCardShortcuts()
   const [selectingAll, setSelectingAll] = useState(false)
+  // 选图台（站内活动选题选片页的访客版）。和相册共用同一份勾选，来回切换不丢。
+  const [workbenchOpen, setWorkbenchOpen] = useState(false)
   const batchProgress = useBatchDownloadProgress()
   const batchDownloading = batchProgress.running
   const [markingPhotoId, setMarkingPhotoId] = useState<string | null>(null)
@@ -89,6 +94,7 @@ export default function SharedProjectPage() {
     setAccess(null)
     setPhotos([])
     setSelected([])
+    setWorkbenchOpen(false)
     if (notice) message.warning(notice)
   }, [message, token])
 
@@ -409,6 +415,23 @@ export default function SharedProjectPage() {
     <SiteFooter />
   </main>
 
+  // 选图台只给开了下载的链接：挑图就是为了打包下载，原图地址服务端也只签给这种链接。
+  // 链接的下载开关被关掉后，下一次取到的 access 会让这里自动退回相册。
+  if (workbenchOpen && access?.allowDownload) return <main className="share-page">{header}
+    <div className="share-body is-selecting">
+      <Suspense fallback={<Skeleton active paragraph={{ rows: 6 }} />}>
+        <SharedSelectionWorkbench token={token} session={session} projectTitle={access.projectTitle}
+          query={listQuery} searching={searching} selected={selected} selectedIds={selectedIds}
+          onToggle={toggleSelected} onClear={() => setSelected([])}
+          onBatchDownload={() => void batchDownload()} batchDownloading={batchDownloading}
+          onDownloadOne={photo => void downloadOne(photo)} onExit={() => setWorkbenchOpen(false)}
+          onError={handleGuestError} />
+      </Suspense>
+    </div>
+    <SiteFooter />
+    {batchProgress.modal}
+  </main>
+
   return <main className="share-page">{header}
     <div className="share-body">
       <Card
@@ -419,6 +442,10 @@ export default function SharedProjectPage() {
             onSearch={value => { setKeyword(value.trim()); setPage(1) }} />
           {searching && <Button type="link" onClick={clearAllFilters}>清空筛选和搜索</Button>}
           {access?.allowDownload && <>
+            <Tooltip title="像站内选片那样逐张或整墙看大图，边看边挑，挑完一起打包下载">
+              <Button icon={<AppstoreOutlined />} disabled={!photos.length || batchDownloading || selectingAll}
+                onClick={() => setWorkbenchOpen(true)}>选图</Button>
+            </Tooltip>
             {/* 访客没有账号菜单，快捷键设置从这里进。 */}
             <Button type="link" icon={<KeyOutlined />} onClick={() => setShortcutSettingsOpen(true)}>快捷键</Button>
             <Button type="link" disabled={!photos.length || batchDownloading || selectingAll}
