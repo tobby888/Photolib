@@ -10,8 +10,13 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.security.access.prepost.PreAuthorize;
 
+import cn.photolib.common.error.BusinessException;
+import cn.photolib.common.error.ErrorCode;
+
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/photos")
@@ -70,7 +75,7 @@ public class BatchUploadController {
         return ApiResponse.ok(service.setMetadataForAll(batchId,
                 new BatchUploadService.BatchMetadata(request.description(),
                         request.photographerContactId(), request.takenAt(), request.tags(),
-                        request.publicPhoto()), user));
+                        request.publicPhoto(), ItemTagsRequest.toMap(request.itemTags())), user));
     }
 
     record CreateRequest(@NotNull BatchMode mode, Long requestId, Long projectId,
@@ -86,9 +91,30 @@ public class BatchUploadController {
                            @NotNull @PastOrPresent LocalDateTime takenAt,
                            @Size(max = 30) List<@Size(max = 100) String> tags,
                            Boolean publicPhoto) {}
+    /**
+     * @param itemTags 逐张标签（「确认标签」对话框按压缩包文件夹识别、上传者改过的那份），
+     *                 列出的图片用自己的标签替换 {@code tags}；不传时整批共用 {@code tags}
+     */
     record BatchMetadataRequest(@Size(max = 5000) String description,
                                 Long photographerContactId,
                                 @NotNull @PastOrPresent LocalDateTime takenAt,
                                 @Size(max = 30) List<@Size(max = 100) String> tags,
-                                Boolean publicPhoto) {}
+                                Boolean publicPhoto,
+                                @Size(max = 1000) List<@Valid ItemTagsRequest> itemTags) {}
+
+    /** 一张图的完整标签。上传链接的 finish 也用这个形状。 */
+    public record ItemTagsRequest(@NotNull Long itemId,
+                                  @NotNull @Size(max = 30) List<@Size(max = 100) String> tags) {
+        /** 同一张图出现两次说明前端状态乱了，拒绝而不是挑一份。 */
+        public static Map<Long, List<String>> toMap(List<ItemTagsRequest> requests) {
+            if (requests == null || requests.isEmpty()) return Map.of();
+            Map<Long, List<String>> result = new HashMap<>();
+            for (ItemTagsRequest request : requests) {
+                if (result.put(request.itemId(), request.tags()) != null) {
+                    throw new BusinessException(ErrorCode.VALIDATION_ERROR, "同一张图片的标签提交了两次");
+                }
+            }
+            return result;
+        }
+    }
 }

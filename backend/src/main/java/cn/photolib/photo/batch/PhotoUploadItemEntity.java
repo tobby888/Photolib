@@ -14,6 +14,11 @@ public class PhotoUploadItemEntity {
     @TableId private Long id;
     private String batchId;
     private String originalFileName;
+    /**
+     * ZIP 条目所在的文件夹（不含文件名，{@code /} 分隔），根目录为 {@code null}（Flyway V77）。
+     * 前端把每一层识别成标签，见 {@code src/zipFolderTags.ts}。
+     */
+    private String folderPath;
     private String tempObjectKey;
     @JsonIgnore private String tempLocalPath;
     private String contentType;

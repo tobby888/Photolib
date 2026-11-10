@@ -53,7 +53,8 @@ public class BatchProcessingService {
                 String key = "temporary/batches/" + batchId + "/" + UUID.randomUUID()
                         + cn.photolib.common.upload.ImageUploadPolicy.extension(image.contentType());
                 extracted.add(new ExtractedItem(image.originalFileName(), key,
-                        image.localFile(), image.contentType(), image.size(), image.sha256()));
+                        image.localFile(), image.contentType(), image.size(), image.sha256(),
+                        image.folderPath()));
             }
         } catch (Exception ex) {
             failureReason = failureReason(batchId, ex);
@@ -83,6 +84,7 @@ public class BatchProcessingService {
                 PhotoUploadItemEntity item = new PhotoUploadItemEntity();
                 item.setBatchId(batchId);
                 item.setOriginalFileName(extractedItem.originalFileName());
+                item.setFolderPath(extractedItem.folderPath());
                 item.setTempObjectKey(extractedItem.tempObjectKey());
                 item.setTempLocalPath(extractedItem.localFile().toString());
                 item.setContentType(extractedItem.contentType());
@@ -161,7 +163,7 @@ public class BatchProcessingService {
     }
 
     private record ExtractedItem(String originalFileName, String tempObjectKey, Path localFile,
-                                 String contentType, long size, String sha256) {
+                                 String contentType, long size, String sha256, String folderPath) {
     }
 
     public record ZipProcessRequested(String batchId) {}

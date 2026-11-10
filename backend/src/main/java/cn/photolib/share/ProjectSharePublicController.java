@@ -7,6 +7,7 @@ import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.api.PageResponse;
 import cn.photolib.photo.PhotoService;
 import cn.photolib.photo.PhotoTags;
+import cn.photolib.photo.batch.BatchUploadController.ItemTagsRequest;
 import cn.photolib.photo.batch.BatchUploadService;
 import cn.photolib.statistics.ExportJobEntity;
 import cn.photolib.statistics.ExportService;
@@ -294,7 +295,8 @@ public class ProjectSharePublicController {
         rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.UPLOAD, token,
                 RateLimitAddress.of(servletRequest));
         return ApiResponse.ok(uploadService.finishZip(
-                service.resolveGuestContext(token, session), batchId, request.takenAt(), request.tags()));
+                service.resolveGuestContext(token, session), batchId, request.takenAt(), request.tags(),
+                ItemTagsRequest.toMap(request.itemTags())));
     }
 
     // ------------------------------------------------------------------ 申报工时
@@ -338,11 +340,12 @@ public class ProjectSharePublicController {
                               @NotNull @Min(1) Long archiveSize) {}
 
     /**
-     * 拍摄时间留空按当前时间算，与单张上传同一条规则。标签整包共用，只能是预设标签。
+     * 拍摄时间留空按当前时间算，与单张上传同一条规则。标签整包共用；{@code itemTags} 是按压缩包文件夹识别、访客确认过的逐张标签。
      * 单个标签的 {@code @Size(max = 100)} 是 UTF-16 粗上限，真正的 50 字由 {@code PhotoTags.normalize} 按字计。
      */
     record UploadBatchFinishRequest(LocalDateTime takenAt,
-                                    @Size(max = PhotoTags.MAX_TAGS) List<@Size(max = 100) String> tags) {}
+                                    @Size(max = PhotoTags.MAX_TAGS) List<@Size(max = 100) String> tags,
+                                    @Size(max = 1000) List<@Valid ItemTagsRequest> itemTags) {}
 
     record UploadTagsRequest(@NotNull @Size(max = PhotoTags.MAX_TAGS) List<@Size(max = 100) String> tags) {}
 

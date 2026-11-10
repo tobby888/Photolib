@@ -265,6 +265,65 @@ class BatchUploadServiceTests {
         assertThat(result.batch().getStatus()).isEqualTo(BatchStatus.PARTIALLY_SUCCEEDED);
     }
 
+    @Test
+    @Transactional
+    void batchMetadata_itemTagsReplaceTheSharedTagsForTheItemsTheyList() {
+        insertWaitingBatch("batch-item-tags", 3);
+        insertWaitingItem("batch-item-tags", "开幕.jpg", null);
+        insertWaitingItem("batch-item-tags", "合影.jpg", null);
+        insertWaitingItem("batch-item-tags", "根目录.jpg", null);
+        List<Long> ids = itemIds("batch-item-tags");
+
+        service.setMetadataForAll("batch-item-tags", new BatchUploadService.BatchMetadata(
+                null, 8102L, LocalDateTime.now(), List.of("运动会"), false,
+                java.util.Map.of(ids.get(0), List.of("运动会", "开幕式"),
+                        ids.get(1), List.of(" 合影 ", "合影"))), manager);
+
+        // 列出的条目整份替换整批的标签（规范化照旧：去空白、去重），没列出的用整批的。
+        assertThat(jdbc.sql("SELECT tags_json FROM photo ORDER BY id").query(String.class).list())
+                .extracting(cn.photolib.photo.PhotoTags::parse)
+                .containsExactly(List.of("运动会", "开幕式"), List.of("合影"), List.of("运动会"));
+    }
+
+    @Test
+    @Transactional
+    void batchMetadata_rejectsItemTagsForAnItemOutsideTheBatchBeforeTouchingIt() {
+        insertWaitingBatch("batch-item-tags-a", 1);
+        insertWaitingItem("batch-item-tags-a", "a.jpg", null);
+        insertWaitingBatch("batch-item-tags-b", 1);
+        insertWaitingItem("batch-item-tags-b", "b.jpg", null);
+        Long foreign = itemIds("batch-item-tags-b").getFirst();
+
+        assertThatThrownBy(() -> service.setMetadataForAll("batch-item-tags-a",
+                new BatchUploadService.BatchMetadata(null, 8102L, LocalDateTime.now(), List.of(), false,
+                        java.util.Map.of(foreign, List.of("串了批次"))), manager))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("不属于这个上传批次");
+        assertThat(jdbc.sql("SELECT status FROM photo_upload_batch WHERE id = 'batch-item-tags-a'")
+                .query(String.class).single()).isEqualTo("WAITING_METADATA");
+        assertThat(itemStatus("batch-item-tags-a", "a.jpg")).isEqualTo("WAITING_METADATA");
+    }
+
+    @Test
+    @Transactional
+    void batchMetadata_itemTagsObeyTheSameLengthRuleAsSharedTags() {
+        insertWaitingBatch("batch-item-tags-long", 1);
+        insertWaitingItem("batch-item-tags-long", "a.jpg", null);
+        Long id = itemIds("batch-item-tags-long").getFirst();
+
+        assertThatThrownBy(() -> service.setMetadataForAll("batch-item-tags-long",
+                new BatchUploadService.BatchMetadata(null, 8102L, LocalDateTime.now(), List.of(), false,
+                        java.util.Map.of(id, List.of("长".repeat(51)))), manager))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("50");
+        assertThat(itemStatus("batch-item-tags-long", "a.jpg")).isEqualTo("WAITING_METADATA");
+    }
+
+    private List<Long> itemIds(String batchId) {
+        return jdbc.sql("SELECT id FROM photo_upload_item WHERE batch_id = :batchId ORDER BY id")
+                .param("batchId", batchId).query(Long.class).list();
+    }
+
     private void insertPhoto(String objectKey, String sha, String status, String failureReason) {
         jdbc.sql("""
                 INSERT INTO photo
@@ -341,6 +400,12 @@ class BatchUploadServiceTests {
                 WHERE batch_id = 'batch-unzip-test' ORDER BY id
                 """).query(String.class).list())
                 .containsExactly("第一张.jpg", "第二张.png");
+        // 文件夹单独留着，前端据此识别标签（V77）。
+        assertThat(jdbc.sql("""
+                SELECT folder_path FROM photo_upload_item
+                WHERE batch_id = 'batch-unzip-test' ORDER BY id
+                """).query(String.class).list())
+                .containsExactly("活动", "活动");
         var localItems = jdbc.sql("""
                 SELECT temp_local_path, temp_object_key FROM photo_upload_item
                 WHERE batch_id = 'batch-unzip-test' ORDER BY id

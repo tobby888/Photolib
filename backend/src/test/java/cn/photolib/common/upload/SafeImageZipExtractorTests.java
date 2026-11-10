@@ -50,6 +50,51 @@ class SafeImageZipExtractorTests {
     }
 
     @Test
+    void keepsTheFoldersEachImageSitsInSoTheyCanBecomeTags() throws Exception {
+        byte[] jpeg = {(byte) 0xff, (byte) 0xd8, (byte) 0xff, 1};
+        Map<String, byte[]> entries = new LinkedHashMap<>();
+        entries.put("运动会/开幕式/1.jpg", jpeg);
+        entries.put("运动会/2.jpg", jpeg);
+        entries.put("根目录.jpg", jpeg);
+        // 空段和 "." 段不算一层文件夹；反斜杠分隔（老式 Windows 压缩工具）与正斜杠一致。
+        entries.put("合影//./班级\\3.jpg", jpeg);
+
+        var result = extractor.extractKeepingNames(new ByteArrayInputStream(zip(entries)),
+                extension -> temporaryDirectory.resolve(UUID.randomUUID() + extension),
+                SafeImageZipExtractor.Limits.gallery());
+
+        assertThat(result).extracting(SafeImageZipExtractor.ExtractedImage::folderPath)
+                .containsExactly("运动会/开幕式", "运动会", null, "合影/班级");
+        assertThat(result).extracting(SafeImageZipExtractor.ExtractedImage::originalFileName)
+                .containsExactly("1.jpg", "2.jpg", "根目录.jpg", "3.jpg");
+    }
+
+    @Test
+    void folderNamesZippedByChineseWindowsAreDecodedLikeFileNames() throws Exception {
+        Charset gbk = Charset.forName("GBK");
+        byte[] archive = zip(Map.of("毕业典礼/合影/1.jpg", new byte[] {(byte) 0xff, (byte) 0xd8, (byte) 0xff}), gbk);
+
+        var result = extractor.extractKeepingNames(new ByteArrayInputStream(archive),
+                extension -> temporaryDirectory.resolve(UUID.randomUUID() + extension),
+                SafeImageZipExtractor.Limits.gallery());
+
+        assertThat(result).singleElement()
+                .extracting(SafeImageZipExtractor.ExtractedImage::folderPath).isEqualTo("毕业典礼/合影");
+    }
+
+    @Test
+    void anOverlongFolderPathKeepsWholeOuterFoldersAndDropsTheDeepestOnes() {
+        String folder = "文".repeat(600);
+        assertThat(SafeImageZipExtractor.folderPath(folder + "/" + folder + "/a.jpg")).isEqualTo(folder);
+        String huge = "图".repeat(SafeImageZipExtractor.MAX_FOLDER_PATH_CODE_POINTS + 10);
+        assertThat(SafeImageZipExtractor.folderPath(huge + "/a.jpg"))
+                .hasSize(SafeImageZipExtractor.MAX_FOLDER_PATH_CODE_POINTS);
+        assertThat(SafeImageZipExtractor.folderPath("a.jpg")).isNull();
+        assertThat(SafeImageZipExtractor.folderPath("./ /a.jpg")).isNull();
+        assertThat(SafeImageZipExtractor.folderPath("活\u0007动/a.jpg")).isEqualTo("活_动");
+    }
+
+    @Test
     void skipsMacOsAppleDoubleFilesSoTheyNeverBecomePhotosOrCountAgainstTheQuota() throws Exception {
         byte[] jpeg = {(byte) 0xff, (byte) 0xd8, (byte) 0xff, 1, 2, 3, 4};
         // AppleDouble header: not a JPEG despite the extension.
