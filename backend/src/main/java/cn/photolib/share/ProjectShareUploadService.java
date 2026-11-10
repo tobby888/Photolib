@@ -34,9 +34,11 @@ import org.springframework.util.StringUtils;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -347,18 +349,30 @@ public class ProjectShareUploadService {
      *
      * <p>站内这一步是人工填元数据（拍摄者、拍摄时间、标签），访客这边几乎没有可填的：
      * 拍摄者来自会话身份，标题取包内的原文件名（访客和选片人之间唯一的共同语言）。
-     * 标签可以在上传前选好，整包共用，只能是选题的预设标签（{@link #guestTags}）；
-     * 包里的图访客在页面上看不到，逐张打不了。前端轮到 WAITING_METADATA 就直接调这里。</p>
+     * 标签可以在上传前选好整包共用；压缩包里有文件夹时，前端按文件夹识别出逐张的标签，
+     * 让访客在「确认标签」对话框里看过、改过之后随 {@code itemTags} 一起交上来（整份替换
+     * 整包那一份）。两种都按 {@link #guestTags} 校验：不限预设，只拒保留标签。</p>
      */
     @Transactional
     public GuestBatch finishZip(ProjectShareService.GuestContext context, String batchId,
                                 LocalDateTime takenAt, List<String> requestedTags) {
+        return finishZip(context, batchId, takenAt, requestedTags, Map.of());
+    }
+
+    @Transactional
+    public GuestBatch finishZip(ProjectShareService.GuestContext context, String batchId,
+                                LocalDateTime takenAt, List<String> requestedTags,
+                                Map<Long, List<String>> requestedItemTags) {
         ProjectShareLinkEntity link = shareService.requireUploadLink(context.link());
         requireOpenProject(link);
         requireOwnBatch(link, batchId);
         Uploader uploader = requireUploader(context);
         projectService.requireAcceptsPhotographer(link.getProjectId(), uploader.isPublic());
         List<String> tags = guestTags(requestedTags);
+        Map<Long, List<String>> itemTags = new HashMap<>();
+        if (requestedItemTags != null) {
+            requestedItemTags.forEach((itemId, value) -> itemTags.put(itemId, guestTags(value)));
+        }
         int waiting = batchService.waitingItems(batchId).size();
         requireCapacity(link, waiting);
 
@@ -366,7 +380,7 @@ public class ProjectShareUploadService {
                 new BatchUploadService.PhotoSnapshot(uploader.studentId(), uploader.name(),
                         // 选题不属于任何校区，访客也报不出，与单张上传一致地留空。
                         null, link.getCreatedBy(), link.getId(),
-                        takenAt == null ? LocalDateTime.now(clock) : takenAt, null, tags));
+                        takenAt == null ? LocalDateTime.now(clock) : takenAt, null, tags, itemTags));
         // 与单张上传同一个口径：算进来的是"真的交给了压缩管线"的张数。
         jdbc.sql("UPDATE project_share_link SET upload_count = upload_count + :count WHERE id = :id")
                 .param("count", waiting).param("id", link.getId()).update();
@@ -459,13 +473,23 @@ public class ProjectShareUploadService {
         return batch;
     }
 
-    /** 访客看到的批次比 {@code BatchView} 少：没有条目明细、没有创建者、没有对象键。 */
+    /**
+     * 访客看到的批次比 {@code BatchView} 少：没有创建者、没有对象键。条目只在待整理
+     * （{@code WAITING_METADATA}）时给，而且只有 id、包内文件名和所在文件夹——前端的
+     * 「确认标签」对话框靠它们按文件夹识别标签、对上本机压缩包里的缩略图；这些都是访客
+     * 自己压缩包里的东西。其余状态下批次每 2 秒轮询一次，不为它多查一次条目。
+     */
     private GuestBatch guestView(PhotoUploadBatchEntity batch) {
+        List<GuestBatchItem> items = batch.getStatus() != BatchStatus.WAITING_METADATA ? List.of()
+                : batchService.waitingItems(batch.getId()).stream()
+                        .map(item -> new GuestBatchItem(item.getId(), item.getOriginalFileName(),
+                                item.getFolderPath()))
+                        .toList();
         return new GuestBatch(batch.getId(), batch.getStatus(),
                 batch.getTotalCount() == null ? 0 : batch.getTotalCount(),
                 batch.getSuccessCount() == null ? 0 : batch.getSuccessCount(),
                 batch.getFailureCount() == null ? 0 : batch.getFailureCount(),
-                batch.getFailureReason());
+                batch.getFailureReason(), items);
     }
 
     private ProjectEntity requireOpenProject(ProjectShareLinkEntity link) {
@@ -557,7 +581,10 @@ public class ProjectShareUploadService {
     public record ZipCommand(String archiveFileName, Long archiveSize) {}
 
     public record GuestBatch(String batchId, BatchStatus status, int totalCount, int successCount,
-                             int failureCount, String failureReason) {}
+                             int failureCount, String failureReason, List<GuestBatchItem> items) {}
+
+    /** 待整理的一张图：{@code folderPath} 是它在压缩包里所在的文件夹，根目录为 {@code null}。 */
+    public record GuestBatchItem(Long itemId, String originalFileName, String folderPath) {}
 
     public record UploadTicket(Long photoId, String uploadUrl, String method, String contentType,
                                java.time.Instant expiresAt, String photographerName) {}

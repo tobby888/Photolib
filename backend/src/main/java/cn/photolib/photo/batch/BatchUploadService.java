@@ -195,7 +195,7 @@ public class BatchUploadService {
         projectService.requireAcceptsPhotographer(batch.getProjectId(), photographer.isPublic());
         return finishAllWithSnapshot(batchId, new PhotoSnapshot(
                 photographer.studentId(), photographer.name(), campusId, user.id(), null,
-                metadata.takenAt(), metadata.description(), metadata.tags()));
+                metadata.takenAt(), metadata.description(), metadata.tags(), metadata.itemTags()));
     }
 
     // ------------------------------------------------------------------ 中立接口
@@ -270,8 +270,10 @@ public class BatchUploadService {
     /**
      * 把批次里所有待整理的条目按同一份拍摄者快照落成照片，交给压缩管线。
      *
-     * <p>标签仍按批次所属选题的预设校验，并且**在任何状态迁移之前**——被拒时批次
-     * 原样留在待整理状态，可以改完再来一次。</p>
+     * <p>标签默认整批共用 {@code snapshot.tags()}；{@code snapshot.itemTags()} 里列出的条目
+     * 改用自己那一份（整份替换，不与整批的合并）——上传者在「确认标签」对话框里按压缩包
+     * 文件夹识别、逐张改过的就是这一份。所有标签都按批次所属选题的预设校验，并且**在任何
+     * 状态迁移之前**——被拒时批次原样留在待整理状态，可以改完再来一次。</p>
      */
     @Transactional
     public BatchView finishAllWithSnapshot(String batchId, PhotoSnapshot snapshot) {
@@ -281,6 +283,7 @@ public class BatchUploadService {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "批次尚未完成解压或已开始处理");
         }
         List<String> tags = allowedTags(batch, snapshot.tags());
+        Map<Long, List<String>> itemTags = allowedItemTags(batch, snapshot.itemTags());
         transitionBatch(batchId, BatchStatus.WAITING_METADATA, BatchStatus.PROCESSING);
         List<PhotoUploadItemEntity> waitingItems = waitingItems(batchId);
         if (waitingItems.isEmpty()) {
@@ -294,7 +297,7 @@ public class BatchUploadService {
                 .map(item -> normalizedSha256(item.getSha256())).toList()));
         for (PhotoUploadItemEntity item : waitingItems) {
             createPhoto(batch, item, titleFromFileName(item.getOriginalFileName()),
-                    snapshot.description(), snapshot.takenAt(), tags,
+                    snapshot.description(), snapshot.takenAt(), itemTags.getOrDefault(item.getId(), tags),
                     snapshot.photographerStudentId(), snapshot.photographerName(),
                     snapshot.campusId(), snapshot.uploadedBy(), snapshot.shareLinkId(), write);
         }
@@ -458,8 +461,32 @@ public class BatchUploadService {
      */
     private List<String> allowedTags(PhotoUploadBatchEntity batch, List<String> requested) {
         List<String> tags = PhotoTags.normalize(requested);
-        projectService.requireAllowedPhotoTags(batch.getProjectId(), tags);
+        // 上传链接开的批次不受预设限制：访客可以用预设以外的标签（AGENTS §2.21.3，2026-10 起），
+        // 保留标签由 ProjectShareUploadService.guestTags 在进来之前就拒了。单张上传那条路
+        // 本来就没有这道预设校验，ZIP 这条以前漏改，带着自定义标签的压缩包会整包被拒。
+        if (batch.getShareLinkId() == null) {
+            projectService.requireAllowedPhotoTags(batch.getProjectId(), tags);
+        }
         return tags;
+    }
+
+    /**
+     * 逐张标签：每张都过一遍与整批相同的校验，条目必须属于这个批次。不属于本批的 id
+     * 一律拒绝而不是悄悄忽略——那意味着前端拿错了批次，落下去的标签全是错的。
+     */
+    private Map<Long, List<String>> allowedItemTags(PhotoUploadBatchEntity batch,
+                                                    Map<Long, List<String>> requested) {
+        if (requested == null || requested.isEmpty()) return Map.of();
+        java.util.Set<Long> own = new java.util.HashSet<>(items(batch.getId()).stream()
+                .map(PhotoUploadItemEntity::getId).toList());
+        Map<Long, List<String>> result = new java.util.HashMap<>();
+        requested.forEach((itemId, tags) -> {
+            if (itemId == null || !own.contains(itemId)) {
+                throw new BusinessException(ErrorCode.VALIDATION_ERROR, "图片不属于这个上传批次");
+            }
+            result.put(itemId, allowedTags(batch, tags));
+        });
+        return result;
     }
 
     private String titleFromFileName(String fileName) {
@@ -633,10 +660,21 @@ public class BatchUploadService {
     /** 中立的 ZIP 批次建立参数；{@code shareLinkId} 非空表示这是一条上传链接开的批次。 */
     public record ZipBatch(Long requestId, Long projectId, Long createdBy, Long shareLinkId,
                            String archiveFileName, Long archiveSize) {}
-    /** 一个批次里所有照片共用的那份信息。拍摄者姓名/学号是快照，不落 contactId。 */
+    /**
+     * 一个批次里所有照片共用的那份信息。拍摄者姓名/学号是快照，不落 contactId。
+     *
+     * @param itemTags 条目 id → 这张图自己的完整标签（替换 {@code tags}）；没列出的条目用 {@code tags}
+     */
     public record PhotoSnapshot(String photographerStudentId, String photographerName, Long campusId,
                                 Long uploadedBy, Long shareLinkId, LocalDateTime takenAt,
-                                String description, List<String> tags) {}
+                                String description, List<String> tags, Map<Long, List<String>> itemTags) {
+        public PhotoSnapshot(String photographerStudentId, String photographerName, Long campusId,
+                             Long uploadedBy, Long shareLinkId, LocalDateTime takenAt,
+                             String description, List<String> tags) {
+            this(photographerStudentId, photographerName, campusId, uploadedBy, shareLinkId, takenAt,
+                    description, tags, Map.of());
+        }
+    }
     public record FileSpec(String fileName, String contentType, long size, String sha256) {}
     /** @param publicPhoto 拍摄者选「公共照片」；为真时不看 {@code photographerContactId} */
     public record ItemMetadata(String title, String description, Long photographerContactId,
@@ -646,8 +684,15 @@ public class BatchUploadService {
             this(title, description, photographerContactId, takenAt, tags, false);
         }
     }
+    /** @param itemTags 逐张标签，语义同 {@link PhotoSnapshot#itemTags()} */
     public record BatchMetadata(String description, Long photographerContactId,
-                                LocalDateTime takenAt, List<String> tags, Boolean publicPhoto) {
+                                LocalDateTime takenAt, List<String> tags, Boolean publicPhoto,
+                                Map<Long, List<String>> itemTags) {
+        public BatchMetadata(String description, Long photographerContactId,
+                             LocalDateTime takenAt, List<String> tags, Boolean publicPhoto) {
+            this(description, photographerContactId, takenAt, tags, publicPhoto, Map.of());
+        }
+
         public BatchMetadata(String description, Long photographerContactId,
                              LocalDateTime takenAt, List<String> tags) {
             this(description, photographerContactId, takenAt, tags, false);

@@ -324,6 +324,8 @@ export type BatchUploadStatus = 'UPLOADING' | 'PROCESSING' | 'WAITING_METADATA'
 export interface BatchUploadItem {
   id: EntityId
   originalFileName: string
+  /** ZIP 条目所在的文件夹（`/` 分隔），根目录为空；前端据此识别标签（V77）。 */
+  folderPath?: string | null
   title?: string | null
   status: 'UPLOADING' | 'WAITING_METADATA' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED'
   failureReason?: string | null
@@ -496,6 +498,14 @@ export interface ShareUploadBatch {
   successCount: number
   failureCount: number
   failureReason?: string | null
+  /** 只在待整理（WAITING_METADATA）时有：「确认标签」对话框按它识别标签、配缩略图。 */
+  items?: ShareUploadBatchItem[]
+}
+
+export interface ShareUploadBatchItem {
+  itemId: EntityId
+  originalFileName: string
+  folderPath?: string | null
 }
 
 /** 访客刚传的那一张当下的处理结果。失败时 status 会被打回 UPLOADING 并带上原因。 */

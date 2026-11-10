@@ -3,6 +3,7 @@ package cn.photolib.share;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.photo.PhotoProcessingWorkspace;
+import cn.photolib.photo.PhotoTags;
 import cn.photolib.photo.batch.BatchProcessingService;
 import cn.photolib.photo.batch.BatchStatus;
 import cn.photolib.photo.batch.BatchUploadService;
@@ -29,11 +30,13 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 
 /**
  * 上传链接的 ZIP 批量：解包这一步必须在事务之外跑（{@code BatchProcessingService.processZip}
@@ -192,6 +195,59 @@ class ProjectShareZipUploadTests {
                 .containsOnly("20230009");
         assertThat(jdbc.sql("SELECT upload_count FROM project_share_link WHERE id=:id")
                 .param("id", link.link().id()).query(Long.class).single()).isEqualTo(2);
+    }
+
+    @Test
+    void aGuestConfirmsFolderTagsPerPhotoEvenOutsideTheProjectsPresets() throws Exception {
+        // 选题设了预设标签；访客从文件夹识别出的标签不在预设里，照样能交（§2.21.3：访客不限预设）。
+        jdbc.sql("UPDATE project SET tags_json = '[\"合影\"]' WHERE id = :id")
+                .param("id", event.getId()).update();
+        ProjectShareService.GuestContext context = guest();
+        ByteArrayOutputStream archive = new ByteArrayOutputStream();
+        try (ZipOutputStream zip = new ZipOutputStream(archive)) {
+            zip.putNextEntry(new ZipEntry("运动会/开幕式/1.jpg"));
+            zip.write(new byte[] {1, 2, 3});
+            zip.closeEntry();
+            zip.putNextEntry(new ZipEntry("运动会/2.jpg"));
+            zip.write(new byte[] {4, 5, 6});
+            zip.closeEntry();
+            zip.putNextEntry(new ZipEntry("3.jpg"));
+            zip.write(new byte[] {7, 8, 9});
+            zip.closeEntry();
+        }
+        byte[] bytes = archive.toByteArray();
+        BatchUploadService.BatchTicket ticket = uploadService.createZipTicket(context,
+                new ProjectShareUploadService.ZipCommand("运动会.zip", (long) bytes.length));
+        String archiveKey = jdbc.sql("SELECT archive_object_key FROM photo_upload_batch WHERE id=:id")
+                .param("id", ticket.batchId()).query(String.class).single();
+        storage.put(archiveKey, new ByteArrayInputStream(bytes), bytes.length, "application/zip");
+        uploadService.completeZip(context, ticket.batchId());
+        processingService.processZip(ticket.batchId());
+
+        // 待整理时访客拿得到条目：id、包内文件名和所在文件夹，前端靠它们识别标签、配缩略图。
+        ProjectShareUploadService.GuestBatch extracted = uploadService.batchStatus(context, ticket.batchId());
+        assertThat(extracted.items())
+                .extracting(ProjectShareUploadService.GuestBatchItem::originalFileName,
+                        ProjectShareUploadService.GuestBatchItem::folderPath)
+                .containsExactly(tuple("1.jpg", "运动会/开幕式"), tuple("2.jpg", "运动会"), tuple("3.jpg", null));
+        List<Long> ids = extracted.items().stream().map(ProjectShareUploadService.GuestBatchItem::itemId).toList();
+
+        // 保留标签照样不许，整包原样留在待整理状态。
+        assertThatThrownBy(() -> uploadService.finishZip(context, ticket.batchId(), null, List.of(),
+                Map.of(ids.get(0), List.of("deprecated"))))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("保留标签");
+        assertThat(uploadService.batchStatus(context, ticket.batchId()).status())
+                .isEqualTo(BatchStatus.WAITING_METADATA);
+
+        ProjectShareUploadService.GuestBatch finished = uploadService.finishZip(context, ticket.batchId(), null,
+                List.of("合影"), Map.of(ids.get(0), List.of("运动会", "开幕式"), ids.get(1), List.of("运动会")));
+
+        assertThat(finished.items()).isEmpty();
+        assertThat(jdbc.sql("SELECT tags_json FROM photo WHERE share_link_id = :link ORDER BY id")
+                .param("link", link.link().id()).query(String.class).list())
+                .extracting(PhotoTags::parse)
+                .containsExactly(List.of("运动会", "开幕式"), List.of("运动会"), List.of("合影"));
     }
 
     @Test

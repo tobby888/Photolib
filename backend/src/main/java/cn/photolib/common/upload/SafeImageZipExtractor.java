@@ -106,7 +106,7 @@ public class SafeImageZipExtractor {
                                 "ZIP 解压总大小超过 " + ImageUploadPolicy.describe(limits.maxExpandedBytes()));
                     }
                     extracted.add(new ExtractedImage(originalFileName, destination,
-                            contentType, copied.size(), copied.sha256()));
+                            contentType, copied.size(), copied.sha256(), folderPath(entryName)));
                 } catch (ArithmeticException exception) {
                     deleteQuietly(destination);
                     throw new IllegalArgumentException(
@@ -204,6 +204,46 @@ public class SafeImageZipExtractor {
         return normalizedName.startsWith("._", slash + 1);
     }
 
+    /** Longest folder path kept per entry; matches {@code photo_upload_item.folder_path}. */
+    static final int MAX_FOLDER_PATH_CODE_POINTS = 1024;
+
+    /**
+     * The folders an entry sits in, e.g. {@code 运动会/开幕式} for {@code 运动会/开幕式/1.jpg};
+     * {@code null} at the archive root. Empty and {@code .} segments are dropped and control
+     * characters replaced, as with display names. Whole segments are kept until the path would
+     * exceed {@link #MAX_FOLDER_PATH_CODE_POINTS}, so an over-long path loses its deepest folders
+     * rather than ending in half a name. Display-only, like the file name: never resolved on disk.
+     */
+    static String folderPath(String normalizedName) {
+        int slash = normalizedName.lastIndexOf('/');
+        if (slash <= 0) return null;
+        StringBuilder path = new StringBuilder();
+        int length = 0;
+        for (String raw : normalizedName.substring(0, slash).split("/")) {
+            String segment = cleanSegment(raw);
+            if (segment.isEmpty() || segment.equals(".")) continue;
+            int points = segment.codePointCount(0, segment.length());
+            int needed = points + (path.isEmpty() ? 0 : 1);
+            if (length + needed > MAX_FOLDER_PATH_CODE_POINTS) {
+                if (path.isEmpty()) {
+                    path.append(segment, 0, segment.offsetByCodePoints(0, MAX_FOLDER_PATH_CODE_POINTS));
+                }
+                break;
+            }
+            if (!path.isEmpty()) path.append('/');
+            path.append(segment);
+            length += needed;
+        }
+        return path.isEmpty() ? null : path.toString();
+    }
+
+    private static String cleanSegment(String segment) {
+        StringBuilder cleaned = new StringBuilder();
+        segment.codePoints().forEach(codePoint ->
+                cleaned.appendCodePoint(Character.isISOControl(codePoint) ? '_' : codePoint));
+        return cleaned.toString().strip();
+    }
+
     private String baseName(String normalizedName) {
         int slash = normalizedName.lastIndexOf('/');
         String result = normalizedName.substring(slash + 1);
@@ -273,8 +313,9 @@ public class SafeImageZipExtractor {
         Path create(String extension) throws IOException;
     }
 
+    /** @param folderPath see {@link #folderPath}; {@code null} for an image at the archive root */
     public record ExtractedImage(String originalFileName, Path localFile,
-                                 String contentType, long size, String sha256) {
+                                 String contentType, long size, String sha256, String folderPath) {
     }
 
     private record CopiedFile(long size, String sha256) {

@@ -186,12 +186,13 @@ export const shareUploadApi = {
       url: `/public/shares/${token}/upload-batches/${batchId}`, ...guest(session),
     }),
 
-  // 标签整包共用，只能是预设标签：包里的图访客在页面上看不到，逐张打不了。
+  // tags 整包共用；itemTags 是按压缩包文件夹识别、访客在「确认标签」对话框里确认过的
+  // 逐张标签，列出的图整份替换 tags。
   finishBatch: (token: string, session: string, batchId: string, takenAt?: string | null,
-                tags: string[] = []) =>
+                tags: string[] = [], itemTags?: { itemId: EntityId; tags: string[] }[]) =>
     api<ShareUploadBatch>({
       method: 'POST', url: `/public/shares/${token}/upload-batches/${batchId}/finish`,
-      data: { takenAt: takenAt ?? null, tags }, ...guest(session),
+      data: { takenAt: takenAt ?? null, tags, itemTags: itemTags ?? null }, ...guest(session),
     }),
 
   // 传完图之后申报这次的工时：直接落成「待确认」，进部长和管理员的审核面板。

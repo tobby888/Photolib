@@ -34,6 +34,9 @@ import { uploadToObjectStorage } from '../storageUpload'
 import { describeBytes } from '../uploadLimits'
 import { useUploadLimits } from '../useUploadLimits'
 import type { ShareGuestAccess, ShareGuestWorklog, ShareUploadBatch } from '../types'
+import ZipTagReviewModal from '../ZipTagReviewModal'
+import { hasFolderTags, itemTagsPayload } from '../zipFolderTags'
+import type { ArchiveItem, ItemTags } from '../zipFolderTags'
 
 /** 处理结果的轮询上限。压缩一张相机原图通常几秒，超过这个就交给访客自己刷新。 */
 const PROCESSING_TIMEOUT_MS = 90_000
@@ -42,11 +45,12 @@ const BATCH_TIMEOUT_MS = 20 * 60_000
 
 type UploadMode = 'files' | 'archive'
 /** ZIP 的四个阶段，用来把"卡住了吗"这个问题回答清楚。 */
-type ArchivePhase = 'uploading' | 'extracting' | 'organizing' | 'processing'
+type ArchivePhase = 'uploading' | 'extracting' | 'reviewing' | 'organizing' | 'processing'
 
 const ARCHIVE_PHASE_TEXT: Record<ArchivePhase, string> = {
   uploading: '正在上传压缩包',
   extracting: '上传完成，后台正在安全解压并筛选出图片',
+  reviewing: '已按压缩包里的文件夹识别出标签，请在弹出的对话框里确认',
   organizing: '正在按包内文件名生成标题',
   processing: '正在生成成品图和缩略图',
 }
@@ -55,6 +59,16 @@ const ARCHIVE_PHASE_TEXT: Record<ArchivePhase, string> = {
 const UPLOADER_NAME_RULES: FormRule[] = [{ required: true, message: '请填写姓名' }, { max: 50 }]
 const UPLOADER_STUDENT_ID_RULES: FormRule[] = [{ required: true, message: '请填写学号' },
   { pattern: /^[A-Za-z0-9_-]{2,64}$/, message: '学号只能是字母、数字、下划线或连字符' }]
+
+/** 「确认标签」对话框打开期间的状态，见 uploadArchive。 */
+type TagReview = {
+  items: ArchiveItem[]
+  archive: File
+  sharedTags: string[]
+  finish: (tags: ItemTags) => Promise<void>
+  /** true：已提交；false：访客放弃了这一包，或者会话失效（已经退回密码页）。 */
+  resolve: (finished: boolean) => void
+}
 
 const describeUploader = (identity: ShareUploaderIdentity) =>
   `${identity.uploaderName}（${identity.uploaderStudentId}）`
@@ -112,6 +126,7 @@ export default function SharedUploadPage() {
   const [archivePhase, setArchivePhase] = useState<ArchivePhase | null>(null)
   const [archivePercent, setArchivePercent] = useState(0)
   const [archiveBatch, setArchiveBatch] = useState<ShareUploadBatch | null>(null)
+  const [review, setReview] = useState<TagReview | null>(null)
   const [worklogs, setWorklogs] = useState<ShareGuestWorklog[]>([])
   const [declaring, setDeclaring] = useState(false)
   const worklogDate = Form.useWatch('workDate', worklogForm)
@@ -471,11 +486,37 @@ export default function SharedUploadPage() {
         throw new Error(describeBatchOutcome(extracted).message)
       }
 
-      setArchivePhase('organizing')
       // 拍摄时间取压缩包自己的修改时间，与单张上传同一个道理：访客手上只有
       // 一堆相机导出来的文件，逐张问拍摄时间没人会填。
-      setArchiveBatch(await shareUploadApi.finishBatch(token, session, ticket.batchId,
-        dayjs(file.lastModified).format('YYYY-MM-DDTHH:mm:ss'), archiveTags))
+      const finish = async (itemTags?: { itemId: string; tags: string[] }[]) => {
+        setArchiveBatch(await shareUploadApi.finishBatch(token, session, ticket.batchId,
+          dayjs(file.lastModified).format('YYYY-MM-DDTHH:mm:ss'), archiveTags, itemTags))
+      }
+      // 压缩包里有文件夹：每层文件夹名识别成标签，先在对话框里让访客逐张确认，确认了才导入。
+      const archiveItems: ArchiveItem[] = (extracted.items ?? [])
+        .map(item => ({ id: item.itemId, fileName: item.originalFileName, folderPath: item.folderPath }))
+      if (hasFolderTags(archiveItems)) {
+        setArchivePhase('reviewing')
+        const finished = await new Promise<boolean>(resolve => setReview({
+          items: archiveItems, archive: file, sharedTags: archiveTags, resolve,
+          finish: async tags => {
+            setArchivePhase('organizing')
+            try {
+              await finish(itemTagsPayload(archiveItems, tags))
+            } catch (error) {
+              setArchivePhase('reviewing')
+              throw error
+            }
+          },
+        }))
+        if (!finished) {
+          setArchiveBatch(null)
+          return
+        }
+      } else {
+        setArchivePhase('organizing')
+        await finish()
+      }
 
       setArchivePhase('processing')
       const finished = await pollBatch(session, ticket.batchId,
@@ -656,11 +697,12 @@ export default function SharedUploadPage() {
             <Typography.Text type="secondary">
               {mode === 'files'
                 ? '改了之后只影响接下来放进来的照片；传完的可以在下面的列表里逐张改。'
-                : '整个压缩包共用这一组标签。'}
+                : '整个压缩包共用这一组标签；压缩包里的每一层文件夹名还会识别成标签，导入前可以逐张确认、修改。'}
             </Typography.Text>
           </Space>
 
-          {/* 几十上百张时打包传一次比逐张省事得多，所以两种方式都给，默认逐张。 */}
+          {/* 几十上百张时打包传一次比逐张省事得多，所以两种方式都给，默认逐张。
+              打包时每层文件夹名会识别成标签，导入前在对话框里逐张确认。 */}
           <Segmented value={mode} disabled={running || queueRunning}
             onChange={value => setMode(value as UploadMode)}
             options={[
@@ -891,6 +933,30 @@ export default function SharedUploadPage() {
         </Form>
       </Space>
     </Modal>
+    {review && <ZipTagReviewModal items={review.items} archive={review.archive} sharedTags={review.sharedTags}
+      candidates={tagCandidates}
+      rules={{ restricted: false, presets: access?.presetTags ?? [], forbidReserved: true }}
+      onConfirm={async tags => {
+        try {
+          await review.finish(tags)
+        } catch (error) {
+          // 会话失效：对话框留着也交不上去了，关掉，照常退回密码页。其余错误留在对话框里改完再交。
+          if (error instanceof ApiError && (error.status === 403 || error.status === 404)) {
+            setReview(null)
+            review.resolve(false)
+            handleGuestError(error)
+            return
+          }
+          throw error
+        }
+        setReview(null)
+        review.resolve(true)
+      }}
+      onCancel={() => {
+        setReview(null)
+        review.resolve(false)
+        message.info('已放弃这一包，里面的图片没有导入')
+      }} />}
     <SiteFooter />
   </main>
 }
