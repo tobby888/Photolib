@@ -168,6 +168,20 @@ class ProjectShareServiceTests {
                 .isInstanceOf(BusinessException.class).hasMessageContaining("没有开放下载");
     }
 
+    /** 选图台的原图地址只签给开了下载的链接：能看原图就能另存原图。 */
+    @Test
+    void originalImageUrlsAreOnlyHandedOutWhenDownloadIsAllowed() {
+        ProjectShareService.CreatedShareLink downloadable = service.create(project.getId(),
+                command(true, false), minister);
+        ProjectShareService.CreatedShareLink browseOnly = service.create(project.getId(),
+                command(false, false), minister);
+
+        assertThat(service.photos(guest(downloadable), 1, 30, null).items())
+                .allSatisfy(photo -> assertThat(photo.imageUrl()).isNotBlank());
+        assertThat(service.photos(guest(browseOnly), 1, 30, null).items())
+                .allSatisfy(photo -> assertThat(photo.imageUrl()).isNull());
+    }
+
     @Test
     void deletingTheLinkLocksOutEveryAlreadyOpenSession() {
         ProjectShareService.CreatedShareLink created = service.create(project.getId(),

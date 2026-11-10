@@ -17,6 +17,7 @@ import { PreviewPhotoImg } from '../PreviewPhoto'
 import { DEPRECATED_TAG, DEPRECATED_TAG_LABEL, isDeprecated } from '../photoTags'
 import { uploadToObjectStorage } from '../storageUpload'
 import { sha256Hex } from '../photoEdit'
+import { useSelectionFocus } from '../selectionFocus'
 
 const PhotoCropEditor = lazy(() => import('../PhotoCropEditor'))
 const ZoomableImage = lazy(() => import('../ZoomableImage'))
@@ -85,7 +86,6 @@ export default function PhotoSelectionPage() {
   const [taggingId, setTaggingId] = useState<string | null>(null)
   // 弹窗选图：把大图铺满整个浏览器窗口，外壳的侧边栏、顶栏和页头都让开。
   const [focusRequested, setFocusOpen] = useState(false)
-  const [browserFullscreen, setBrowserFullscreen] = useState(false)
   const focusRef = useRef<HTMLDivElement>(null)
   const focusStripRef = useRef<HTMLDivElement>(null)
   // 两种视角各有一个滚动容器，但「把当前这张滚进可视范围」是同一件事，
@@ -187,35 +187,13 @@ export default function PhotoSelectionPage() {
     }
   }, [active, view, focusOpen])
 
-  // 弹窗开着时锁住底下页面的滚动，并把焦点交给弹窗，读屏和键盘都从这里开始。
-  useEffect(() => {
-    if (!focusOpen) return
-    const previous = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    focusRef.current?.focus()
-    return () => { document.body.style.overflow = previous }
-  }, [focusOpen])
-
-  // 浏览器全屏是弹窗里的可选项：用户也可能自己按 F11 或 Esc 退出，状态以事件为准。
-  // 全屏的是整个 documentElement 而不是弹窗那个元素——antd 的提示和气泡都挂在 body 上，
-  // 只全屏弹窗的话，打标签失败的报错会被挡在全屏层后面看不见。
-  useEffect(() => {
-    const sync = () => setBrowserFullscreen(!!document.fullscreenElement)
-    document.addEventListener('fullscreenchange', sync)
-    return () => document.removeEventListener('fullscreenchange', sync)
-  }, [])
-
-  const toggleBrowserFullscreen = useCallback(() => {
-    const request = document.fullscreenElement
-      ? document.exitFullscreen()
-      : document.documentElement.requestFullscreen?.()
-    void request?.catch(() => message.warning('浏览器没有允许全屏，可以按 F11 手动切换'))
-  }, [message])
+  const { browserFullscreen, toggleBrowserFullscreen, exitBrowserFullscreen } =
+    useSelectionFocus(focusOpen, focusRef)
 
   const closeFocus = useCallback(() => {
     setFocusOpen(false)
-    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined)
-  }, [])
+    exitBrowserFullscreen()
+  }, [exitBrowserFullscreen])
 
   const step = useCallback((delta: number) => {
     if (!visible.length) return

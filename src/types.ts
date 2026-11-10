@@ -454,6 +454,8 @@ export interface SharePhoto {
   size: number
   storedFileName: string
   thumbnailUrl?: string
+  /** 成品图的内联签名地址，选图台看「大图（原图）」用；链接没开下载时为空。 */
+  imageUrl?: string | null
   adopted: boolean
   /** 图片上的标签；卡片上点一下就按它筛选，与选题详情页一致。 */
   tags?: string[]

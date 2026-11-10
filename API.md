@@ -2601,11 +2601,14 @@ interface SharePhoto {
   size: number
   storedFileName: string
   thumbnailUrl?: string   // 短期签名地址，与站内同一套（约 10 分钟）
+  imageUrl?: string | null // 成品图的内联签名地址（选图台看大图用），仅 allowDownload 的链接签发，否则为 null
   adopted: boolean        // 与项目内的被引记录是同一份数据
 }
 ```
 
 标记被引要求项目处于 `ACTIVE`，且图片仍在项目相册里；重复标记返回 `409 DUPLICATE_RESOURCE`。
+
+**选图台**（访客页的「选图」）：站内活动选题选片页的访客版——逐张 / 网格两种视角、小图 / 原图开关、弹窗选图、方向键翻图、空格选中。「选中」只是把图片放进打包下载的勾选集合（与相册页共用，单次上限 200），不写库、不改图片上的任何东西。只对 `allowDownload` 的链接开放：原图地址 `imageUrl` 也只签给这种链接——能看到原图就能另存原图，对只许浏览的链接等于绕过下载开关。
 
 ### 19.3 错误与限速
 

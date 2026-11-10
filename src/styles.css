@@ -2749,6 +2749,18 @@ body {
   justify-content: center;
   padding-top: 18px;
 }
+/* 选图台要的是大图区，主体放宽到 1600px。 */
+.share-body.is-selecting { width: min(1600px, calc(100% - 28px)); padding-bottom: 32px; }
+.share-selection-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px 12px;
+}
+/* 访客页没有站内外壳的侧栏和顶栏，只有品牌头（约 80px）、主体上下留白和页头，
+   工作区高度按这个重新算；站内那条 calc(100vh - 400px) 是按外壳量出来的。 */
+.share-selection .selection-workspace { height: calc(100vh - 300px); min-height: 460px; }
 
 /* ---------------------------------------------------------------------------
    活动选题的选片工作台（issue #94）
@@ -2825,6 +2837,21 @@ body {
   display: grid; place-items: center; width: 100%; height: 100%;
   color: var(--studio-muted); font-size: 12px;
 }
+/* 分享选图台：右上角的勾，点一下直接选中 / 取消，不改当前这张。
+   没选中时是半透明的空圈，选中后整块填色，整墙扫一眼就知道挑了哪些。 */
+.selection-thumb-pick {
+  position: absolute; right: 5px; top: 5px;
+  display: grid; place-items: center; width: 26px; height: 26px; padding: 0;
+  border: 2px solid rgba(255, 255, 255, .9); border-radius: 50%;
+  background: rgba(0, 0, 0, .35); color: transparent; font-size: 13px;
+  cursor: pointer; box-shadow: 0 1px 3px rgba(0, 0, 0, .35);
+}
+.selection-thumb-pick:not(:disabled):hover { background: rgba(0, 0, 0, .55); color: rgba(255, 255, 255, .8); }
+.selection-thumb-pick:disabled { cursor: not-allowed; opacity: .45; }
+.selection-thumb.is-picked { border-color: #1f8a5b; }
+.selection-thumb.is-picked .selection-thumb-pick { border-color: #fff; background: #1f8a5b; color: #fff; opacity: 1; }
+.selection-thumb.is-current.is-picked { border-color: #1d3f8f; }
+.selection-thumb:focus-visible { outline: 2px solid #1d3f8f; outline-offset: 2px; }
 .selection-filmstrip-more { padding: 6px 2px; text-align: center; }
 
 /* `min-height: 0` 不是可选的：grid 项默认 `min-height: auto`（= min-content），
@@ -2870,14 +2897,21 @@ body {
 
 /* 图墙。单元格统一比例、图片 object-fit: contain——选片要看的是整个画面，
    cover 会把边角裁掉，而被裁掉的地方恰恰常是「有没有穿帮」的答案。
-   竖图于是在格子里显示成一条窄的，正好也把画幅方向直接透出来。 */
+   竖图于是在格子里显示成一条窄的，正好也把画幅方向直接透出来。
+
+   `grid-auto-rows: max-content` 不是可选的：图墙是固定高度的格子容器，行高默认 auto，
+   而缩略图是 `overflow: hidden`，它的自动最小高度于是是 0。浏览器先把每行按 0 起算，
+   再把容器剩下的高度平均摊给所有行——一百多张图摊在几百像素里，每行只剩十几像素，
+   图片要么被压成细条、要么叠在一起，容器自己反而不溢出、也滚不动（和左列 flex 被压扁
+   是同一件事）。按 max-content 定行高，每行就是缩略图按 aspect-ratio 算出来的那么高。 */
 .selection-grid {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  grid-auto-rows: max-content;
   gap: 10px;
   align-content: start;
   padding: 2px;
@@ -3101,12 +3135,14 @@ body {
     grid-template-rows: minmax(0, 1fr);
     height: calc(100vh - 244px);
   }
-  .selection-grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
+  .selection-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
   /* 窄屏上缩略图改成横向一条，竖着摆会把大图挤没。
      这条必须限定在 .selection-filmstrip 里：.selection-thumb 网格视角也在用，
      不限定的话图墙的格子会被拉成 140px 宽的一条。 */
   .selection-filmstrip { flex-direction: row; overflow-x: auto; overflow-y: hidden; }
   .selection-filmstrip .selection-thumb { width: 140px; flex: 0 0 140px; height: 100%; aspect-ratio: auto; }
+  .share-selection .selection-workspace,
+  .share-selection .selection-workspace.view-grid { height: calc(100vh - 220px); min-height: 420px; }
 }
 
 /* 内容区的页面级错误（RouteErrorBoundary）：只换掉这一页，侧栏和顶栏照常可用。 */
