@@ -153,6 +153,42 @@ class SalaryCalculationServiceTests {
     }
 
     @Test
+    void customProjectsAreSettledByWorkDateAndMergedByName() {
+        long sports = project("运动会", "COMPLETED", LocalDateTime.of(2026, 10, 10, 18, 0));
+        long ongoing = project("进行中", "ACTIVE", null);
+        long sportsRequest = request(sports);
+        String title = "迎新晚会" + base;
+        // 填了自定义选题就算在它下面：站内的、链接申报的、需求所属选题还没结束的，同名合并成一组。
+        customWorklog(sportsRequest, null, 60, title, LocalDate.of(2026, 10, 5));
+        customWorklog(null, shareLink(sports), 30, title, LocalDate.of(2026, 10, 6));
+        customWorklog(request(ongoing), null, 30, title, LocalDate.of(2026, 10, 31));
+        // 工作日期在期外的不算。
+        customWorklog(sportsRequest, null, 600, title, LocalDate.of(2026, 9, 30));
+        // 运动会只剩没填自定义选题的 15 分钟和 1 张被引。
+        worklog(sportsRequest, null, "甲", "S-JIA", 15, 0, "CONFIRMED");
+        adoptions(sports, "甲", "S-JIA", 1);
+        isolateRange();
+
+        CalculationSummary summary = salaries.calculate(FROM, TO, null, minister);
+        assertThat(summary.projectCount()).isEqualTo(2);
+        assertThat(summary.memberCount()).isEqualTo(1);
+        assertThat(summary.totalAmount()).isEqualByComparingTo("50.00");
+
+        Detail detail = salaries.detail(summary.id(), minister);
+        // 自定义选题没有结束时间，排在真实选题后面；没有选题 id，被引和上传都是 0。
+        assertThat(detail.projects()).extracting(ProjectGroup::projectId, ProjectGroup::projectTitle,
+                        ProjectGroup::completedAt, ProjectGroup::confirmedMinutes, ProjectGroup::adoptedPhotos,
+                        ProjectGroup::salaryAmount)
+                .containsExactly(
+                        tuple(sports, "运动会", LocalDateTime.of(2026, 10, 10, 18, 0), 15, 1, money("10.00")),
+                        tuple(null, title, null, 120, 0, money("40.00")));
+        assertThat(detail.members()).extracting(MemberTotal::memberName, MemberTotal::projectCount,
+                        MemberTotal::salaryAmount)
+                .containsExactly(tuple("甲", 2, money("50.00")));
+        assertThat(SalaryWorkbook.write(detail)).isNotEmpty();
+    }
+
+    @Test
     void formulaCheckAndReferenceForTheEditor() {
         var reference = salaries.formulaReference(minister);
         assertThat(reference.defaultFormula()).isEqualTo(SalaryFormula.DEFAULT);
@@ -309,7 +345,8 @@ class SalaryCalculationServiceTests {
 
     /** 只留本测试造的选题（别的测试类留在库里的已完成选题也会被算进去）。 */
     private List<Line> mine(List<Line> all) {
-        return all.stream().filter(line -> line.projectId() > base && line.projectId() < base + 1000).toList();
+        return all.stream().filter(line -> line.projectId() != null
+                && line.projectId() > base && line.projectId() < base + 1000).toList();
     }
 
     /** 计算会落库，按全库算：把本测试以外、在清算期内结束的选题临时挪走（事务回滚后复原）。 */
@@ -372,6 +409,17 @@ class SalaryCalculationServiceTests {
     }
 
     /** {@code count} 张拍摄者为 {@code name} 的图片传进 {@code project} 并被引用。 */
+    private void customWorklog(Long request, Long shareLink, int minutes, String customProject, LocalDate workDate) {
+        jdbc.sql("""
+                INSERT INTO worklog(id, request_id, share_link_id, user_id, work_date, shooting_minutes,
+                                    retouching_minutes, member_name, member_student_id, status, custom_project_title)
+                VALUES (:id, :requestId, :shareLinkId, :userId, :workDate, :minutes, 0, '甲', 'S-JIA', 'CONFIRMED',
+                        :customProject)
+                """).param("id", base + sequence++).param("requestId", request).param("shareLinkId", shareLink)
+                .param("userId", ownerId).param("workDate", workDate).param("minutes", minutes)
+                .param("customProject", customProject).update();
+    }
+
     private List<Long> adoptions(long project, String name, String studentId, int count) {
         List<Long> photos = photos(project, name, studentId, count);
         for (long photoId : photos) {

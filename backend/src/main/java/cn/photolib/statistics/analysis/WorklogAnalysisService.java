@@ -52,10 +52,11 @@ public class WorklogAnalysisService {
             FROM worklog w
             LEFT JOIN photo_request r ON r.id = w.request_id
             LEFT JOIN project_share_link l ON l.id = w.share_link_id
-            JOIN project p ON p.id = COALESCE(r.project_id, l.project_id)
+            LEFT JOIN project p ON p.id = COALESCE(r.project_id, l.project_id) AND w.custom_project_title IS NULL
             LEFT JOIN campus c ON c.id = r.campus_id
             LEFT JOIN app_user u ON u.id = w.user_id
-            WHERE w.deleted = 0 AND p.deleted = 0 AND w.status <> 'DRAFT'
+            WHERE w.deleted = 0 AND w.status <> 'DRAFT'
+              AND (w.custom_project_title IS NOT NULL OR p.deleted = 0)
               AND w.work_date BETWEEN :fromDate AND :toDate
               AND (:campusScoped = FALSE OR r.campus_id IN (:campusIds))
             """;
@@ -77,15 +78,16 @@ public class WorklogAnalysisService {
         List<Row> rows = jdbc.sql("""
                         SELECT w.id, w.work_date, w.member_student_id, w.member_name,
                                w.shooting_minutes, w.retouching_minutes, w.status,
-                               w.request_id, r.title, p.id, p.title, r.campus_id, c.name,
-                               w.user_id, u.display_name, w.remark
+                               w.request_id, r.title, p.id, COALESCE(w.custom_project_title, p.title),
+                               r.campus_id, c.name,
+                               w.user_id, u.display_name, w.remark, w.share_link_id
                         """ + where + "ORDER BY w.work_date DESC, w.id DESC")
                 .params(params)
                 .query((rs, n) -> new Row(rs.getLong(1), rs.getObject(2, LocalDate.class),
                         rs.getString(3), rs.getString(4), rs.getInt(5), rs.getInt(6), rs.getString(7),
-                        rs.getObject(8, Long.class), rs.getString(9), rs.getLong(10), rs.getString(11),
+                        rs.getObject(8, Long.class), rs.getString(9), rs.getObject(10, Long.class), rs.getString(11),
                         rs.getObject(12, Long.class), rs.getString(13), rs.getLong(14), rs.getString(15),
-                        rs.getString(16)))
+                        rs.getString(16), rs.getObject(17, Long.class)))
                 .list();
 
         Dimension groupBy = request.groupBy() == null ? Dimension.MEMBER : request.groupBy();
@@ -114,7 +116,9 @@ public class WorklogAnalysisService {
         validateRange(from, to);
         Map<String, Object> params = baseParams(from, to, principal);
         Collator collator = Collator.getInstance(Locale.CHINA);
-        List<Option> projects = jdbc.sql("SELECT DISTINCT p.id, p.title " + FROM_CLAUSE).params(params)
+        // 自定义选题没有 id，条件里按选题 id 筛不到它们，候选里也就不列（汇总、图表、明细照常按名字分组）。
+        List<Option> projects = jdbc.sql("SELECT DISTINCT p.id, p.title " + FROM_CLAUSE + " AND p.id IS NOT NULL")
+                .params(params)
                 .query((rs, n) -> new Option(String.valueOf(rs.getLong(1)), rs.getString(2))).list();
         List<Option> campuses = jdbc.sql("SELECT DISTINCT c.id, c.name " + FROM_CLAUSE + " AND c.id IS NOT NULL")
                 .params(params)
@@ -163,13 +167,13 @@ public class WorklogAnalysisService {
         long shooting = 0;
         long retouching = 0;
         Set<String> members = new HashSet<>();
-        Set<Long> projects = new HashSet<>();
+        Set<String> projects = new HashSet<>();
         Set<LocalDate> days = new HashSet<>();
         for (Row row : rows) {
             shooting += row.shootingMinutes();
             retouching += row.retouchingMinutes();
             members.add(row.memberStudentId());
-            projects.add(row.projectId());
+            projects.add(row.projectKey());
             days.add(row.workDate());
         }
         return new Summary(rows.size(), shooting, retouching, shooting + retouching,
@@ -292,7 +296,8 @@ public class WorklogAnalysisService {
         MEMBER(Row::memberStudentId, row -> row.memberName() + "（" + row.memberStudentId() + "）"),
         CAMPUS(row -> row.campusId() == null ? "none" : String.valueOf(row.campusId()),
                 row -> row.campusId() == null ? "上传链接申报（无校区）" : nonNull(row.campusName(), "已删除的校区")),
-        PROJECT(row -> String.valueOf(row.projectId()), row -> nonNull(row.projectTitle(), "已删除的选题")),
+        PROJECT(Row::projectKey, row -> row.projectId() == null
+                ? nonNull(row.projectTitle(), "") + "（自定义）" : nonNull(row.projectTitle(), "已删除的选题")),
         SUBMITTER(row -> String.valueOf(row.userId()), row -> nonNull(row.userDisplayName(), "已删除的成员")),
         STATUS(Row::status, row -> switch (row.status()) {
             case "CONFIRMED" -> "已确认";
@@ -300,7 +305,7 @@ public class WorklogAnalysisService {
             case "REJECTED" -> "已退回";
             default -> row.status();
         }),
-        SOURCE(row -> row.requestId() == null ? "SHARE_LINK" : "IN_APP",
+        SOURCE(row -> row.shareLinkId() != null ? "SHARE_LINK" : "IN_APP",
                 row -> row.requestId() == null ? "上传链接申报" : "站内填报"),
         DAY(row -> row.workDate().toString(), row -> row.workDate().toString()),
         WEEK(row -> row.workDate().with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)).toString(),
@@ -353,11 +358,17 @@ public class WorklogAnalysisService {
     /** 一条命中的工时；{@code requestId} / {@code campusId} 为空的是通过上传链接申报的。 */
     public record Row(long worklogId, LocalDate workDate, String memberStudentId, String memberName,
                       int shootingMinutes, int retouchingMinutes, String status,
-                      Long requestId, String requestTitle, long projectId, String projectTitle,
-                      Long campusId, String campusName, long userId, String userDisplayName, String remark) {
+                      Long requestId, String requestTitle, Long projectId, String projectTitle,
+                      Long campusId, String campusName, long userId, String userDisplayName, String remark,
+                      Long shareLinkId) {
+        /** 选题分组键：自定义选题（{@code projectId} 为空）按名字分组，同名合并。 */
+        String projectKey() {
+            return projectId != null ? String.valueOf(projectId) : "custom:" + projectTitle;
+        }
+
         /** 只带日期的占位行，用来给趋势里没有数据的周期算 key 和 label。 */
         static Row on(LocalDate date) {
-            return new Row(0, date, "", "", 0, 0, "", null, null, 0, null, null, null, 0, null, null);
+            return new Row(0, date, "", "", 0, 0, "", null, null, 0L, null, null, null, 0, null, null, null);
         }
     }
 

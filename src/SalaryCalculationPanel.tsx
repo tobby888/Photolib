@@ -144,7 +144,7 @@ function SalaryHistory({ onOpen }: { onOpen: (id: string) => void }) {
         {formula !== null && <SalaryFormulaEditor reference={reference} value={formula} onChange={setFormula}
           onStatusChange={setFormulaStatus} />}
         <Typography.Paragraph type="secondary" style={{ margin: '8px 0 0' }}>
-          只算选题结束时间落在所选范围内（两端日期都含）的选题；成员按学号归并。计算结果连同公式存成快照，之后再审核工时不会改变它，需要时重新计算即可。
+          只算选题结束时间落在所选范围内（两端日期都含）的选题；管理员给工时填了自定义选题的，按工作日期落在范围内算，同名合并成一个选题。成员按学号归并。计算结果连同公式存成快照，之后再审核工时不会改变它，需要时重新计算即可。
         </Typography.Paragraph>
       </div>
     </Card>
@@ -183,9 +183,11 @@ function SalaryHistory({ onOpen }: { onOpen: (id: string) => void }) {
 
 const lineColumns = (withProject: boolean): TableColumnsType<SalaryLine> => [
   withProject
-    ? { title: '选题', dataIndex: 'projectTitle', render: (value, line) =>
-      <a href={`#/projects/${line.projectId}`} target="_blank" rel="noreferrer">
-        <TableEllipsisText value={value} maxWidth={220} /></a> }
+    ? { title: '选题', dataIndex: 'projectTitle', render: (value, line) => line.projectId
+      ? <a href={`#/projects/${line.projectId}`} target="_blank" rel="noreferrer">
+        <TableEllipsisText value={value} maxWidth={220} /></a>
+      // 自定义选题是管理员手写的名字，没有选题页可跳。
+      : <Space size={4}><Tag color="gold">自定义</Tag><TableEllipsisText value={value} maxWidth={180} /></Space> }
     : { title: '成员', dataIndex: 'memberName', fixed: 'left', render: value => <span className="nowrap">{value}</span> },
   ...(withProject ? [] : [
     { title: '学号', dataIndex: 'studentId', render: (value: string | null) => value || '—' },
@@ -263,12 +265,15 @@ function SalaryDetail({ id, onBack }: { id: string; onBack: () => void }) {
           description="公式里没用「待审核时长 / 待审核条数」的话，它们没有算进工资。审核完之后回到计算记录重新计算一次，新的结果会另存一份。" />}
         {view === 'projects'
           ? projects.length
-            ? <Collapse className="salary-projects" defaultActiveKey={projects.slice(0, 5).map(item => String(item.projectId))}
+            ? <Collapse className="salary-projects" defaultActiveKey={projects.slice(0, 5).map(item => item.key)}
               items={projects.map(project => ({
-                key: String(project.projectId),
+                key: project.key,
                 label: <Space wrap size={[12, 4]}>
                   <Typography.Text strong>{project.projectTitle}</Typography.Text>
-                  <Typography.Text type="secondary">{dayjs(project.completedAt).format('YYYY-MM-DD')} 结束</Typography.Text>
+                  {project.projectId
+                    ? <Typography.Text type="secondary">{dayjs(project.completedAt).format('YYYY-MM-DD')} 结束</Typography.Text>
+                    : <><Tag color="gold">自定义选题</Tag>
+                      <Typography.Text type="secondary">按工作日期计入</Typography.Text></>}
                   <Typography.Text type="secondary">{project.lines.length} 人</Typography.Text>
                   {project.pendingWorklogCount > 0 && <Tag color="orange">{project.pendingWorklogCount} 条待审核</Tag>}
                 </Space>,
@@ -283,7 +288,8 @@ function SalaryDetail({ id, onBack }: { id: string; onBack: () => void }) {
               pagination={clientTablePagination(members.length, { size: 'small' })}
               locale={{ emptyText: keyword ? '没有符合条件的成员' : '没有需要计算的成员' }}
               expandable={{ expandedRowRender: member => <ContentFitTable<SalaryLine> size="small"
-                rowKey={line => String(line.projectId)} dataSource={linesOfMember(data, member.memberKey)}
+                rowKey={line => line.projectId ? `p:${line.projectId}` : `c:${line.projectTitle}`}
+                dataSource={linesOfMember(data, member.memberKey)}
                 pagination={false} columns={lineColumns(true)} /> }}
               columns={[
                 { title: '成员', dataIndex: 'memberName', fixed: 'left', render: value => <span className="nowrap">{value}</span> },

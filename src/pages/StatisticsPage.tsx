@@ -44,10 +44,10 @@ type StatisticsTab = 'members' | 'adoptions' | 'analysis' | 'salary'
 const TABS: StatisticsTab[] = ['members', 'adoptions', 'analysis', 'salary']
 
 const DESCRIPTIONS: Record<StatisticsTab, string> = {
-  members: '按选题结束时间统计工时，并对应每位成员的被引张数；可按被引张数、校区、工时情况筛选。',
+  members: '按选题结束时间统计工时（管理员填了自定义选题的工时按工作日期算），并对应每位成员的被引张数；可按被引张数、校区、工时情况筛选。',
   adoptions: '看图片在什么时候、被哪些选题引用，谁的图被引得多；可按选题、校区、摄影师筛选。',
   analysis: '按工作日期筛选、汇总工时，条件可以自由组合，并用图表看走势与分布。',
-  salary: '按选题结算工资：所选时间内结束的选题，每人按工资公式算一次；公式可以用拍摄时长、修图时长、被引张数等字段和 max、min 等函数。',
+  salary: '按选题结算工资：所选时间内结束的选题（以及工作日期在所选时间内的自定义选题），每人按工资公式算一次；公式可以用拍摄时长、修图时长、被引张数等字段和 max、min 等函数。',
 }
 
 export default function StatisticsPage() {
@@ -281,7 +281,7 @@ export default function StatisticsPage() {
       <DataState loading={detailLoading} error={detailError}
         onRetry={() => { if (detailMember) void openDetail(detailMember) }}
         empty={details.length === 0} emptyText="这个时间范围内没有已确认的工时"
-        emptyHint="统计只看已确认工时，且需求所属选题要在所选结束时间范围内结束。">
+        emptyHint="统计只看已确认工时，且需求所属选题要在所选结束时间范围内结束；管理员填了自定义选题的按工作日期算。">
         <ContentFitTable rowKey={detail => detail.worklogId} dataSource={details}
           pagination={clientTablePagination(details.length, { size: 'small' })} columns={[
           { title: '工作日期', dataIndex: 'workDate' },
@@ -289,7 +289,10 @@ export default function StatisticsPage() {
           { title: '需求', dataIndex: 'requestTitle', render: (value, detail) => detail.viaShareLink
             ? <Tag color="purple">上传链接申报</Tag>
             : <TableEllipsisText value={value} maxWidth={220} /> },
-          { title: '所属选题', dataIndex: 'projectTitle', render: value => <TableEllipsisText value={value} maxWidth={220} /> },
+          { title: '所属选题', dataIndex: 'projectTitle', render: (value, detail) => <Space size={4}>
+            {detail.customProject && <Tag color="gold">自定义</Tag>}
+            <TableEllipsisText value={value} maxWidth={220} />
+          </Space> },
           { title: '校区', dataIndex: 'campus', render: value => value || '—' },
           { title: '拍摄（小时）', dataIndex: 'shootingMinutes', render: formatHours },
           { title: '修图（小时）', dataIndex: 'retouchingMinutes', render: formatHours },

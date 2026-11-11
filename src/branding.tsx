@@ -5,6 +5,9 @@ import type { BrandingSettings } from './types'
 
 export const BRANDING_UPDATED_EVENT = 'branding-updated'
 
+/** `public/favicon.svg`，打包后在站点根目录；与 index.html 里的 `<link rel="icon">` 同一个文件。 */
+const DEFAULT_FAVICON = '/favicon.svg'
+
 // Neutral placeholder used only until `/branding` answers, or when it fails: the
 // product identity on every screen belongs to whatever the administrator set.
 export const defaultBranding: BrandingSettings = {
@@ -48,6 +51,16 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     document.title = branding.slogan ? `${branding.title} · ${branding.slogan}` : branding.title
   }, [branding.title, branding.slogan])
+
+  // 浏览器标签页图标：上传了图片图标（含当天生效的定时图标）就用它，否则用 index.html 里的默认图标。
+  const faviconType = branding.displayIconType ?? branding.iconType
+  const faviconUrl = branding.displayIconUrl ?? branding.customIconUrl
+  useEffect(() => {
+    const link = document.querySelector<HTMLLinkElement>('link[rel="icon"]')
+    if (!link) return
+    link.href = faviconType === 'custom' && faviconUrl ? faviconUrl : DEFAULT_FAVICON
+    link.type = faviconType === 'custom' && faviconUrl ? '' : 'image/svg+xml'
+  }, [faviconType, faviconUrl])
 
   return <BrandingContext.Provider value={branding}>{children}</BrandingContext.Provider>
 }

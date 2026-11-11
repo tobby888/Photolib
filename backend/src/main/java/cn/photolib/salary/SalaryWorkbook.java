@@ -149,8 +149,9 @@ final class SalaryWorkbook {
     private static void projectSheet(Sheet sheet, Styles styles, CalculationSummary calculation, ProjectGroup project) {
         int width = PROJECT_HEADERS.size();
         int row = title(sheet, styles, project.projectTitle(), calculation, width);
-        info(sheet, styles, row++, "选题结束时间",
-                project.completedAt() == null ? "" : DATE_TIME.format(project.completedAt()), width);
+        info(sheet, styles, row++, "选题结束时间", project.projectId() == null
+                ? "自定义选题，按工时的工作日期计入本期"
+                : project.completedAt() == null ? "" : DATE_TIME.format(project.completedAt()), width);
         info(sheet, styles, row++, "参与人数", project.lines().size() + " 人", width);
         info(sheet, styles, row++, "本选题应发合计", plain(project.salaryAmount()) + " 元", width);
         row++;

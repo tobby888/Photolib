@@ -458,13 +458,25 @@ export default function WorklogsPage() {
             { title: '日期', dataIndex: 'workDate', width: 112,
               render: value => <span className="worklog-nowrap">{dayjs(value).format('YYYY-MM-DD')}</span> },
             // 通过上传链接申报的工时没有需求：标出来源和所属选题，审核的人才知道该对着哪批照片看。
-            { title: '需求 / 来源', dataIndex: 'requestTitle', width: 280, render: (value, item: Worklog) => item.shareLinkId
-              ? <div className="worklog-source">
-                <Tag color="purple" variant="filled">上传链接</Tag>
-                <TableEllipsisText maxWidth={250}
-                  value={`${item.projectTitle || '已删除的选题'}${item.shareLinkName ? ` · ${item.shareLinkName}` : ''}`} />
-              </div>
-              : <TableEllipsisText value={value} maxWidth={250} /> },
+            // 管理员填了自定义选题的，先写选题名（统计按它算），后面跟着原来的需求 / 来源。
+            { title: '需求 / 选题', dataIndex: 'requestTitle', width: 280, render: (value, item: Worklog) => {
+              const origin = item.shareLinkId
+                ? `${value || item.projectTitle || '已删除的选题'}${item.shareLinkName ? ` · ${item.shareLinkName}` : ''}`
+                : value
+              if (item.customProjectTitle) {
+                return <div className="worklog-source">
+                  <Tag color="gold" variant="filled">自定义选题</Tag>
+                  <TableEllipsisText maxWidth={200}
+                    value={`${item.customProjectTitle}${origin ? ` · ${origin}` : ''}`} />
+                </div>
+              }
+              return item.shareLinkId
+                ? <div className="worklog-source">
+                  <Tag color="purple" variant="filled">上传链接</Tag>
+                  <TableEllipsisText maxWidth={250} value={origin} />
+                </div>
+                : <TableEllipsisText value={value} maxWidth={250} />
+            } },
             { title: '成员', dataIndex: 'memberName', width: 130, render: (value, item: Worklog) =>
               <div className="worklog-member">
                 <span className="worklog-nowrap">{value || '—'}</span>
@@ -483,8 +495,8 @@ export default function WorklogsPage() {
               {canSubmit && !item.shareLinkId && item.userId === user?.id && ['DRAFT', 'REJECTED'].includes(item.status) && (
                 <Button onClick={() => void runAction(item, 'submit')}>提交</Button>
               )}
-              {/* 草稿还没交上来，由填报人自己改；其余状态管理员都能直接更正，状态不变。 */}
-              {isAdmin && item.status !== 'DRAFT' && (
+              {/* 管理员任何状态都能直接修改，包括改状态、改挂需求、写自定义选题。 */}
+              {isAdmin && (
                 <Button icon={<EditOutlined />} onClick={() => setCorrecting(item)}>修改</Button>
               )}
               {reviewer && item.status === 'SUBMITTED' && <>

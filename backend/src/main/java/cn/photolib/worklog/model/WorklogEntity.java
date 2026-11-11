@@ -28,6 +28,11 @@ public class WorklogEntity extends BaseEntity {
     private Integer shootingMinutes;
     private Integer retouchingMinutes;
     private String remark;
+    /**
+     * 管理员手写的选题名（Flyway V78）。非空时这条工时在统计、导出、清算单、工资计算里算在这个选题下，
+     * 不再算进需求 / 链接所属的真实选题，清算期按 {@link #workDate} 判断。见 {@code WorklogProjectSql}。
+     */
+    private String customProjectTitle;
     private WorklogStatus status;
     private String rejectReason;
     private Long confirmedBy;

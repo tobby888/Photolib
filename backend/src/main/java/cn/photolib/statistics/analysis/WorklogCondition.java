@@ -53,11 +53,13 @@ public record WorklogCondition(Logic logic, List<WorklogCondition> children,
     public enum Field {
         STATUS("w.status", ValueType.ENUM, false, List.of("SUBMITTED", "CONFIRMED", "REJECTED")),
         /** 来源：站内填报（挂在需求下）或通过上传链接申报。 */
-        SOURCE("CASE WHEN w.request_id IS NULL THEN 'SHARE_LINK' ELSE 'IN_APP' END",
+        // 看 share_link_id 而不是 request_id：管理员可以给链接申报的工时挂上一条需求，它仍是链接申报的。
+        SOURCE("CASE WHEN w.share_link_id IS NOT NULL THEN 'SHARE_LINK' ELSE 'IN_APP' END",
                 ValueType.ENUM, false, List.of("IN_APP", "SHARE_LINK")),
         CAMPUS("r.campus_id", ValueType.ID, true, List.of()),
-        PROJECT("p.id", ValueType.ID, false, List.of()),
-        PROJECT_STATUS("p.status", ValueType.ENUM, false, List.of("DRAFT", "ACTIVE", "COMPLETED", "CANCELLED")),
+        /** 管理员填了自定义选题的工时没有选题 id（Flyway V78），所以可空：「选题不是 X」要把它们算进来。 */
+        PROJECT("p.id", ValueType.ID, true, List.of()),
+        PROJECT_STATUS("p.status", ValueType.ENUM, true, List.of("DRAFT", "ACTIVE", "COMPLETED", "CANCELLED")),
         REQUEST("w.request_id", ValueType.ID, true, List.of()),
         /** 填报账号；链接申报的工时记的是开链接的成员。 */
         SUBMITTER("w.user_id", ValueType.ID, false, List.of()),

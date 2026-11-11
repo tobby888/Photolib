@@ -2,6 +2,7 @@ package cn.photolib.settlement;
 
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
+import cn.photolib.worklog.WorklogProjectSql;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
@@ -35,6 +36,9 @@ import java.util.Map;
  * 取消的选题不列。只算已经传完（处理中、可用、已归档）的图片。图片属于哪些选题见 {@link #projectPhotos}：
  * 除了上传时的来源选题，后来从图库 / 别的选题添加进相册的也算参与。每个选题再按 {@link UploadChannel}
  * 标出这些图是本人传的、通过上传链接传的、别人代传的，还是后来添加进选题的。</p>
+ *
+ * <p>工时的所属选题和清算期统一走 {@link WorklogProjectSql}：管理员填了自定义选题的工时算在那个名字下，
+ * 按工作日期落清算期（清算单上没有结束日期）。</p>
  *
  * <p>{@link #recipients} 和 {@link #statement} 两处 SQL 口径必须一致，改一处就改另一处。</p>
  */
@@ -115,10 +119,8 @@ public class SettlementStatementService {
                            SUM(CASE WHEN w.status='SUBMITTED' THEN 1 ELSE 0 END) AS pending_count,
                            SUM(CASE WHEN w.status='REJECTED' THEN 1 ELSE 0 END) AS rejected_count
                     FROM worklog w
-                    LEFT JOIN photo_request r ON r.id=w.request_id
-                    LEFT JOIN project_share_link l ON l.id=w.share_link_id
-                    JOIN project p ON p.id=COALESCE(r.project_id, l.project_id)
-                    WHERE w.deleted=0 AND w.status<>'DRAFT' AND w.member_name IS NOT NULL AND %1$s
+                    %4$s
+                    WHERE w.deleted=0 AND w.status<>'DRAFT' AND w.member_name IS NOT NULL AND %5$s
                     GROUP BY TRIM(w.member_name)
                 ),
                 ad AS (
@@ -161,7 +163,8 @@ public class SettlementStatementService {
                 LEFT JOIN names n ON n.name=TRIM(u.display_name)
                 WHERE u.deleted=0 AND u.enabled=TRUE
                 ORDER BY TRIM(u.display_name), u.id
-                """.formatted(SETTLED_PROJECT, PARTICIPATION, projectPhotos(UPLOADED_PHOTO)))
+                """.formatted(SETTLED_PROJECT, PARTICIPATION, projectPhotos(UPLOADED_PHOTO),
+                        WorklogProjectSql.joins(), WorklogProjectSql.settled()))
                 .param("fromDate", from).param("toExclusive", to.plusDays(1))
                 .query((rs, n) -> new Recipient(rs.getLong(1), rs.getString(2), rs.getString(3),
                         blankToNull(rs.getString(4)), rs.getString(5), rs.getString(6),
@@ -180,18 +183,18 @@ public class SettlementStatementService {
         validateRange(from, to);
         String name = recipient.displayName();
         List<WorklogLine> worklogs = new ArrayList<>(jdbc.sql("""
-                SELECT w.id, w.work_date, p.title, r.title, c.name, w.share_link_id, l.name,
+                SELECT w.id, w.work_date, %3$s, r.title, c.name, w.share_link_id, l.name,
                        w.shooting_minutes, w.retouching_minutes, w.status, w.remark, w.reject_reason,
                        w.created_at, w.confirmed_at, rv.display_name, w.member_student_id, p.completed_at
                 FROM worklog w
-                LEFT JOIN photo_request r ON r.id=w.request_id
-                LEFT JOIN project_share_link l ON l.id=w.share_link_id
-                JOIN project p ON p.id=COALESCE(r.project_id, l.project_id)
+                %1$s
                 LEFT JOIN campus c ON c.id=r.campus_id
                 LEFT JOIN app_user rv ON rv.id=w.confirmed_by
-                WHERE w.deleted=0 AND w.status<>'DRAFT' AND TRIM(w.member_name)=:name AND %s
-                ORDER BY p.completed_at, p.id, w.work_date, w.id
-                """.formatted(SETTLED_PROJECT))
+                WHERE w.deleted=0 AND w.status<>'DRAFT' AND TRIM(w.member_name)=:name AND %2$s
+                ORDER BY CASE WHEN p.id IS NULL THEN 1 ELSE 0 END, p.completed_at, p.id,
+                         w.custom_project_title, w.work_date, w.id
+                """.formatted(WorklogProjectSql.joins(), WorklogProjectSql.settled(),
+                        WorklogProjectSql.title("w", "p")))
                 .param("name", name).param("fromDate", from).param("toExclusive", to.plusDays(1))
                 .query((rs, n) -> new WorklogLine(rs.getLong(1), rs.getObject(2, LocalDate.class),
                         rs.getString(3), rs.getString(4), rs.getString(5), rs.getObject(6, Long.class) != null,
