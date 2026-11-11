@@ -531,6 +531,12 @@ export default function WorklogsPage() {
             options={requestSelectOptions(requestOptions, campuses)}
           />
         </Form.Item>
+        {/* 选填。填了之后这条工时在统计和工资结算里算在这个选题下（同名合并），按工作日期计入，不再算进需求所属选题。 */}
+        <Form.Item label="自定义选题（选填）" name="customProjectTitle"
+          rules={[{ max: 200, message: '自定义选题最多 200 个字' }]}
+          extra="不填就按关联需求所属的选题统计；填了则统计和工资结算都算在这个选题下（同名合并），按工作日期计入结算期。">
+          <Input allowClear placeholder="例如：迎新晚会" />
+        </Form.Item>
         <Form.Item label="工作人员" name="memberContactId" rules={[{ required: true, message: '请从校区通讯录选择工作人员' }]}
           extra={selectedRequest
             ? `只列出「${selectedCampusName}」通讯录中的成员，成员在「通讯录」页维护`

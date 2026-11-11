@@ -113,11 +113,13 @@ public class WorklogController {
                           @Min(0) @Max(1440) int shootingMinutes,
                           @Min(0) @Max(1440) int retouchingMinutes,
                           @Size(max = 1000) String remark,
-                          @NotNull WorklogStatus status) {
+                          @NotNull WorklogStatus status,
+                          // 可选：手写的自定义选题，填了就按它归属选题（WorklogProjectSql）。
+                          @Size(max = 200) String customProjectTitle) {
         WorklogService.WorklogCommand command() {
             return new WorklogService.WorklogCommand(
                     workDate, memberContactId,
-                    shootingMinutes, retouchingMinutes, remark, status);
+                    shootingMinutes, retouchingMinutes, remark, status, customProjectTitle);
         }
     }
 

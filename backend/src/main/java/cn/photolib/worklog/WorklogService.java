@@ -557,6 +557,17 @@ public class WorklogService {
         target.setShootingMinutes(command.shootingMinutes());
         target.setRetouchingMinutes(command.retouchingMinutes());
         target.setRemark(command.remark());
+        target.setCustomProjectTitle(customProjectTitle(command.customProjectTitle()));
+    }
+
+    /** 自定义选题去首尾空白，空串存 NULL（统计里只判 IS NULL）。 */
+    private static String customProjectTitle(String value) {
+        if (!StringUtils.hasText(value)) return null;
+        String title = value.strip();
+        if (title.length() > 200) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "自定义选题最多 200 个字");
+        }
+        return title;
     }
 
     // 项目一旦完成或取消就不再计发工时，因此填报侧（新建、编辑、提交）都要挡住已结束项目下的
@@ -672,9 +683,17 @@ public class WorklogService {
                              LocalDate from, LocalDate to, String keyword, WorklogSource source) {
     }
 
+    /**
+     * 站内填报 / 修改草稿的内容。{@code customProjectTitle}：填报人手写的自定义选题（可空），
+     * 填了这条工时就按它归属选题、按工作日期计入清算期，见 {@link WorklogProjectSql}。
+     */
     public record WorklogCommand(LocalDate workDate, Long memberContactId,
                                  int shootingMinutes, int retouchingMinutes,
-                                 String remark, WorklogStatus status) {
+                                 String remark, WorklogStatus status, String customProjectTitle) {
+        public WorklogCommand(LocalDate workDate, Long memberContactId, int shootingMinutes, int retouchingMinutes,
+                              String remark, WorklogStatus status) {
+            this(workDate, memberContactId, shootingMinutes, retouchingMinutes, remark, status, null);
+        }
     }
 
     /** 管理员更正工时的新值，见 {@link #correct}。 */

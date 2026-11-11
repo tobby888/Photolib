@@ -26,6 +26,7 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -107,6 +108,29 @@ class WorklogCorrectionHttpTests {
                 """).param("u", ADMIN_ID).param("id", String.valueOf(WORKLOG_ID)).query(String.class).single();
         assertThat(detail).contains("status").contains("CONFIRMED").contains("customProjectTitle")
                 .contains("requestId");
+    }
+
+    /** 填报接口同样收自定义选题（管理员有「向任意需求申报工时」，不用是参与人）。 */
+    @Test
+    void filingAcceptsACustomProject() throws Exception {
+        jdbc.sql("""
+                INSERT INTO campus_member(id, campus_id, student_id, name, enabled)
+                VALUES (9878, 9876, 'S2026-0009', '李四', TRUE)
+                """).update();
+        String body = """
+                {"workDate":"%s","memberContactId":9878,"shootingMinutes":30,"retouchingMinutes":0,
+                 "remark":"","status":"SUBMITTED","customProjectTitle":" 迎新晚会 "}
+                """.formatted(LocalDate.now().minusDays(1));
+
+        mvc.perform(as("admin", post("/api/v1/requests/" + REQUEST_ID + "/worklogs")
+                        .contentType(MediaType.APPLICATION_JSON).content(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.customProjectTitle").value("迎新晚会"))
+                .andExpect(jsonPath("$.data.memberName").value("李四"));
+        mvc.perform(as("admin", post("/api/v1/requests/" + REQUEST_ID + "/worklogs")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body.replace(" 迎新晚会 ", "选".repeat(201)))))
+                .andExpect(status().isBadRequest());
     }
 
     private MockHttpServletRequestBuilder as(String token, MockHttpServletRequestBuilder builder) {

@@ -1517,7 +1517,8 @@ UPLOADING -> PROCESSING -> WAITING_METADATA -> PROCESSING
   "shootingMinutes": 120,
   "retouchingMinutes": 60,
   "remark": "现场拍摄及基础调色",
-  "status": "SUBMITTED"
+  "status": "SUBMITTED",
+  "customProjectTitle": "迎新晚会"
 }
 ```
 
@@ -1526,6 +1527,7 @@ UPLOADING -> PROCESSING -> WAITING_METADATA -> PROCESSING
 - `workDate` 不能晚于今天。
 - 两类分钟均为 `0..1440`，且不能同时为 0。
 - `remark` 最多 1000。
+- `customProjectTitle` 选填，最多 200，去首尾空白，空串存为空。填了这条工时就算在这个自定义选题下（同名合并），按 `workDate` 计入清算期，不再算进需求所属选题；口径见下面「管理员更正」。`PUT /worklogs/{id}`（改草稿 / 被退回的）同样收这个字段，不传即清空。需求仍然必填，校区、参与人、选题是否结束的校验不变。
 - `memberContactId` 必须是需求校区的已启用通讯录成员；服务端把姓名/学号快照写入工时。
 - C 必须是需求参与人；A 可代建。
 - 创建时只有传 `DRAFT` 会保存为草稿，传其他任意工时枚举都会保存为 `SUBMITTED`。客户端只应发送 `DRAFT` 或 `SUBMITTED`。
