@@ -24,6 +24,12 @@ env:
   # README「环境要求」要求 Zig 0.16.x；校验值取自 https://ziglang.org/download/index.json。
   ZIG_VERSION: 0.16.0
   ZIG_SHA256: 70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00
+  # 原生组件构建用的 ninja / nasm 不走 apt（见「安装原生构建工具链」）。
+  # ninja 校验值取自 GitHub Release 资产的 digest；nasm.us 不发布校验文件，取自首次下载的 tarball。
+  NINJA_VERSION: 1.13.2
+  NINJA_SHA256: 5749cbc4e668273514150a80e387a957f933c6ed3f5f11e03fb30955e2bbead6
+  NASM_VERSION: 2.16.03
+  NASM_SHA256: 1412a1c760bbd05db026b6c0d1657affd6631cd0a63cddb6f73cc6d4aa616148
 
 jobs:
   frontend:
@@ -98,19 +104,34 @@ jobs:
           key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
           restore-keys: npm-${{ runner.os }}-
 
-      # runner 偶尔连不上 Ubuntu 软件源（DNS 解析失败，PR #192 就是在这一步红的），
-      # 整步重试几次，别让一次网络抖动把整条流水线判死。
+      # ninja / nasm 不再用 apt 装：runner 的 Ubuntu 软件源（azure.archive.ubuntu.com）会整段时间
+      # 解析不了，PR #192 连着两次红在这里，重试半小时也没恢复。改成从官方发布包安装并缓存：
+      # ninja 用 GitHub Release 的预编译版，nasm 从 nasm.us 的源码包编译（几十秒），都校验 sha256。
+      - name: 缓存原生构建工具
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/native-tools
+          key: native-tools-${{ runner.os }}-ninja-${{ env.NINJA_VERSION }}-nasm-${{ env.NASM_VERSION }}
+
       - name: 安装原生构建工具链
         run: |
-          for attempt in 1 2 3; do
-            if sudo apt-get update -o Acquire::Retries=3 \
-              && sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 ninja-build nasm; then
-              exit 0
-            fi
-            echo "::warning::apt 安装失败（第 $attempt 次），稍后重试"
-            sleep $((attempt * 30))
-          done
-          exit 1
+          set -euo pipefail
+          dir="$HOME/.local/native-tools"
+          if [ ! -x "$dir/ninja" ] || [ ! -x "$dir/nasm" ]; then
+            mkdir -p "$dir"
+            curl -fsSL --retry 5 --retry-all-errors -o "$RUNNER_TEMP/ninja.zip" \
+              "https://github.com/ninja-build/ninja/releases/download/v$NINJA_VERSION/ninja-linux.zip"
+            echo "$NINJA_SHA256  $RUNNER_TEMP/ninja.zip" | sha256sum -c -
+            unzip -o -q "$RUNNER_TEMP/ninja.zip" ninja -d "$dir"
+            curl -fsSL --retry 5 --retry-all-errors -o "$RUNNER_TEMP/nasm.tar.xz" \
+              "https://www.nasm.us/pub/nasm/releasebuilds/$NASM_VERSION/nasm-$NASM_VERSION.tar.xz"
+            echo "$NASM_SHA256  $RUNNER_TEMP/nasm.tar.xz" | sha256sum -c -
+            mkdir -p "$RUNNER_TEMP/nasm-src"
+            tar -xJf "$RUNNER_TEMP/nasm.tar.xz" -C "$RUNNER_TEMP/nasm-src" --strip-components=1
+            (cd "$RUNNER_TEMP/nasm-src" && ./configure --quiet && make -j"$(nproc)" nasm)
+            install -m 755 "$RUNNER_TEMP/nasm-src/nasm" "$dir/nasm"
+          fi
+          echo "$dir" >> "$GITHUB_PATH"
 
       - name: 缓存 Zig
         uses: actions/cache@v4
@@ -248,15 +269,19 @@ jobs:
       - name: 准备 SSH
         run: |
           set -euo pipefail
-          for attempt in 1 2 3; do
-            if sudo apt-get update -o Acquire::Retries=3 \
-              && sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 sshpass; then
-              break
-            fi
-            if [ "$attempt" = 3 ]; then exit 1; fi
-            echo "::warning::apt 安装失败（第 $attempt 次），稍后重试"
-            sleep $((attempt * 30))
-          done
+          # 平时用 apt 装 sshpass；Ubuntu 软件源解析不了时（PR #192 期间连续几小时）apt 会一直卡着，
+          # 所以最多等 2 分钟，装不上就换成 OpenSSH 自带的 SSH_ASKPASS：放一个同名的 sshpass 垫片，
+          # 只支持后面用到的 `sshpass -e <命令>`，密码照样从 $SSHPASS 读，不进进程参数。
+          if ! { timeout 120 sudo apt-get update -o Acquire::Retries=1 \
+                 && timeout 120 sudo apt-get install -y --no-install-recommends sshpass; }; then
+            echo "::warning::apt 装不上 sshpass，改用 SSH_ASKPASS"
+            shim="$RUNNER_TEMP/sshpass-shim"
+            mkdir -p "$shim"
+            printf '#!/bin/sh\nprintf "%%s\\n" "$SSHPASS"\n' > "$shim/askpass"
+            printf '#!/bin/sh\n[ "$1" = "-e" ] || { echo "sshpass 垫片只支持 -e" >&2; exit 2; }\nshift\nexport SSH_ASKPASS="%s/askpass" SSH_ASKPASS_REQUIRE=force\nexec "$@"\n' "$shim" > "$shim/sshpass"
+            chmod 700 "$shim/askpass" "$shim/sshpass"
+            echo "$shim" >> "$GITHUB_PATH"
+          fi
           jar=$(ls dist-jar/photolib-backend-*.jar)
           echo "JAR_PATH=$jar" >> "$GITHUB_ENV"
           echo "JAR_NAME=$(basename "$jar")" >> "$GITHUB_ENV"
