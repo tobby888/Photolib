@@ -42,7 +42,10 @@ export default function WorklogCorrectionModal({ worklog, currentUserId, onClose
   const [projects, setProjects] = useState<Project[]>([])
   const [optionsLoading, setOptionsLoading] = useState(true)
   const status = Form.useWatch('status', form) as Worklog['status'] | undefined
+  const customTitle = Form.useWatch('customProjectTitle', form) as string | undefined
   const viaShareLink = Boolean(worklog.shareLinkId)
+  // 需求、上传链接、自定义选题至少要有一样：链接申报的、或写了自定义选题的，需求可以不挂。
+  const requestOptional = viaShareLink || Boolean(customTitle?.trim())
 
   useEffect(() => {
     let alive = true
@@ -86,8 +89,8 @@ export default function WorklogCorrectionModal({ worklog, currentUserId, onClose
           remark: values.remark,
           status: values.status,
           requestId: values.requestId ? Number(values.requestId) : null,
-          // 链接申报的工时可以不挂需求；后端把 requestId 为空理解成「不改」，清掉要明说。
-          clearRequest: viaShareLink && !values.requestId,
+          // 后端把 requestId 为空理解成「不改」，清掉要明说（链接申报的、或写了自定义选题的才能不挂需求）。
+          clearRequest: !values.requestId,
           // 空串 = 清掉自定义选题（null 才是「不改」）。
           customProjectTitle: values.customProjectTitle ?? '',
           rejectReason: values.status === 'REJECTED' ? values.rejectReason : null,
@@ -129,10 +132,11 @@ export default function WorklogCorrectionModal({ worklog, currentUserId, onClose
         <Input.TextArea rows={2} placeholder="退回原因（选填）" />
       </Form.Item>}
       <Form.Item label="关联需求" name="requestId"
-        rules={viaShareLink ? [] : [{ required: true, message: '站内填报的工时必须关联一条需求' }]}
-        extra="可以选全站任意一条需求，不限校区、参与人和选题是否结束。">
-        <Select showSearch allowClear={viaShareLink} loading={optionsLoading} options={requestOptions}
-          optionFilterProp="label" placeholder={viaShareLink ? '不关联需求' : '选择需求'}
+        dependencies={['customProjectTitle']}
+        rules={requestOptional ? [] : [{ required: true, message: '不填自定义选题时必须关联一条需求' }]}
+        extra="可以选全站任意一条需求，不限校区、参与人和选题是否结束；填了自定义选题时可以不关联需求。">
+        <Select showSearch allowClear={requestOptional} loading={optionsLoading} options={requestOptions}
+          optionFilterProp="label" placeholder={requestOptional ? '不关联需求' : '选择需求'}
           notFoundContent={optionsLoading ? '正在加载需求…' : '没有匹配的需求'} />
       </Form.Item>
       <Form.Item label="自定义选题" name="customProjectTitle"

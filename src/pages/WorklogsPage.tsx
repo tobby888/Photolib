@@ -1,5 +1,5 @@
 import {
-  App, Button, Card, DatePicker, Form, Input, InputNumber, Modal, Select, Space, Tag,
+  App, Button, Card, DatePicker, Form, Input, InputNumber, Modal, Segmented, Select, Space, Tag,
 } from 'antd'
 import {
   CheckOutlined, ClockCircleOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, PlusOutlined, StopOutlined,
@@ -14,7 +14,9 @@ import { DataState, formatMinutes, PageTitle, StatusTag } from '../components'
 import { ContentFitTable, TableEllipsisText } from '../ContentFitTable'
 import { useLoad } from '../hooks'
 import { canViewProjects, hasPermission } from '../permissions'
-import { campusNameOf, membersForRequest, requestSelectOptions } from '../worklogForm'
+import {
+  campusNameOf, canFileWithoutRequest, membersForRequest, memberOptionsAnyCampus, requestSelectOptions,
+} from '../worklogForm'
 import {
   WORKLOG_OWNER_ACTION_MIN_WIDTH,
   WORKLOG_REVIEW_ACTION_MIN_WIDTH,
@@ -212,9 +214,18 @@ export default function WorklogsPage() {
   const selectedRequest = requestOptions.find(item => item.id === selectedRequestId)
   const selectedCampusName = selectedRequest ? campusNameOf(campuses, selectedRequest.campusId) : ''
   const memberOptions = membersForRequest(directory, selectedRequest)
+  // 不关联需求、只写自定义选题：系统里没有这个选题也就没有需求，工作人员从全部校区的通讯录里选。
+  const withoutRequestAllowed = canFileWithoutRequest(user)
+  const filingMode = Form.useWatch('mode', form) as 'request' | 'custom' | undefined
+  const customMode = withoutRequestAllowed && filingMode === 'custom'
 
   // 换了需求之后，已选的工作人员如果不在新需求的校区里就清掉，否则保存时才被后端拒掉。
-  const onFormValuesChange = (changed: { requestId?: EntityId }) => {
+  // 切换填报方式时候选名单整个换了，已选的人也清掉。
+  const onFormValuesChange = (changed: { requestId?: EntityId; mode?: string }) => {
+    if ('mode' in changed) {
+      form.setFieldValue('memberContactId', undefined)
+      return
+    }
     if (!('requestId' in changed)) return
     const request = requestOptions.find(item => item.id === changed.requestId)
     const memberId = form.getFieldValue('memberContactId') as EntityId | undefined
@@ -227,10 +238,10 @@ export default function WorklogsPage() {
     const values = await form.validateFields()
     setSaving(true)
     try {
-      const { requestId, workDate, ...rest } = values
+      const { requestId, workDate, mode, ...rest } = values
       await api({
         method: 'POST',
-        url: `/requests/${requestId}/worklogs`,
+        url: withoutRequestAllowed && mode === 'custom' ? '/worklogs' : `/requests/${requestId}/worklogs`,
         data: { ...rest, workDate: workDate.format('YYYY-MM-DD') },
       })
       message.success('工时记录已保存')
@@ -518,9 +529,16 @@ export default function WorklogsPage() {
       </DataState>
     </Card>
     <Modal title="填报工时" open={open} onCancel={() => setOpen(false)} onOk={create} okText="保存记录" confirmLoading={saving}>
-      <Form form={form} layout="vertical" initialValues={{ shootingMinutes: 0, retouchingMinutes: 0, status: 'SUBMITTED' }} requiredMark={false}
+      <Form form={form} layout="vertical" initialValues={{ shootingMinutes: 0, retouchingMinutes: 0, status: 'SUBMITTED', mode: 'request' }} requiredMark={false}
         onValuesChange={onFormValuesChange}>
-        <Form.Item label="关联需求" name="requestId" rules={[{ required: true, message: '请选择需求' }]}
+        {withoutRequestAllowed && <Form.Item label="填报方式" name="mode"
+          extra={customMode ? '系统里没有这个选题时用：不关联需求，直接写自定义选题，工作人员可以选任意校区通讯录里的同学。' : undefined}>
+          <Segmented block options={[
+            { value: 'request', label: '关联需求' },
+            { value: 'custom', label: '自定义选题（不关联需求）' },
+          ]} />
+        </Form.Item>}
+        {!customMode && <Form.Item label="关联需求" name="requestId" rules={[{ required: true, message: '请选择需求' }]}
           extra={selectedRequest ? <>需求所属校区：<strong>{selectedCampusName}</strong></> : undefined}>
           <Select
             showSearch
@@ -530,27 +548,37 @@ export default function WorklogsPage() {
             notFoundContent={requestsLoading ? '正在加载需求…' : canSubmitAny ? '暂无可填报工时的需求' : '暂无可填报工时的需求（已结束项目的需求不会出现在这里）'}
             options={requestSelectOptions(requestOptions, campuses)}
           />
-        </Form.Item>
-        {/* 选填。填了之后这条工时在统计和工资结算里算在这个选题下（同名合并），按工作日期计入，不再算进需求所属选题。 */}
-        <Form.Item label="自定义选题（选填）" name="customProjectTitle"
-          rules={[{ max: 200, message: '自定义选题最多 200 个字' }]}
-          extra="不填就按关联需求所属的选题统计；填了则统计和工资结算都算在这个选题下（同名合并），按工作日期计入结算期。">
+        </Form.Item>}
+        {/* 关联需求时选填；不关联需求时必填。填了之后这条工时在统计和工资结算里算在这个选题下（同名合并），按工作日期计入，不再算进需求所属选题。 */}
+        <Form.Item label={customMode ? '自定义选题' : '自定义选题（选填）'} name="customProjectTitle"
+          rules={[
+            { required: customMode, whitespace: true, message: '不关联需求时请填写自定义选题' },
+            { max: 200, message: '自定义选题最多 200 个字' },
+          ]}
+          extra={customMode
+            ? '统计和工资结算都算在这个选题下（同名合并），按工作日期计入结算期。'
+            : '不填就按关联需求所属的选题统计；填了则统计和工资结算都算在这个选题下（同名合并），按工作日期计入结算期。'}>
           <Input allowClear placeholder="例如：迎新晚会" />
         </Form.Item>
         <Form.Item label="工作人员" name="memberContactId" rules={[{ required: true, message: '请从校区通讯录选择工作人员' }]}
-          extra={selectedRequest
-            ? `只列出「${selectedCampusName}」通讯录中的成员，成员在「通讯录」页维护`
-            : '工作人员按需求所属校区的通讯录列出，请先选择关联需求'}>
+          extra={customMode
+            ? '列出全部校区的通讯录成员，成员在「通讯录」页维护'
+            : selectedRequest
+              ? `只列出「${selectedCampusName}」通讯录中的成员，成员在「通讯录」页维护`
+              : '工作人员按需求所属校区的通讯录列出，请先选择关联需求'}>
           <Select
             showSearch
             optionFilterProp="label"
             loading={directoryLoading}
-            disabled={!selectedRequest}
-            placeholder={!selectedRequest
-              ? '请先选择关联需求'
-              : memberOptions.length || directoryLoading ? '按姓名或学号选择' : '该校区通讯录为空，请先添加成员'}
-            notFoundContent={directoryLoading ? '正在加载通讯录…' : `「${selectedCampusName}」通讯录中没有可用成员`}
-            options={memberOptions.map(member => ({
+            disabled={!customMode && !selectedRequest}
+            placeholder={customMode
+              ? '按姓名、学号或校区选择'
+              : !selectedRequest
+                ? '请先选择关联需求'
+                : memberOptions.length || directoryLoading ? '按姓名或学号选择' : '该校区通讯录为空，请先添加成员'}
+            notFoundContent={directoryLoading ? '正在加载通讯录…'
+              : customMode ? '通讯录中没有可用成员' : `「${selectedCampusName}」通讯录中没有可用成员`}
+            options={customMode ? memberOptionsAnyCampus(directory, campuses) : memberOptions.map(member => ({
               value: member.id,
               label: `${member.name} · ${member.studentId}`,
             }))}

@@ -111,6 +111,19 @@ public class CampusMemberService {
         return member;
     }
 
+    /**
+     * 不挂需求的自定义选题工时：任意校区的启用成员都行（调用方已确认账号不限校区）。
+     * 停用的成员、停用的校区照样不能选。
+     */
+    public CampusMemberEntity getAnyForWorklog(Long id) {
+        CampusMemberEntity member = require(id);
+        requireEnabledCampus(member.getCampusId());
+        if (!Boolean.TRUE.equals(member.getEnabled())) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请选择通讯录中的有效成员");
+        }
+        return member;
+    }
+
     public CampusMemberEntity getForWorklog(Long id, Long requestCampusId) {
         CampusMemberEntity member = require(id);
         requireEnabledCampus(member.getCampusId());

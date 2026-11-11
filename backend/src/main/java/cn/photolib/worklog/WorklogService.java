@@ -79,6 +79,53 @@ public class WorklogService {
     }
 
     /**
+     * 不挂需求、只写自定义选题地填报一条工时（V79）。
+     *
+     * <p>自定义选题是给「系统里没有这个选题」的活动用的，这时也就没有对应的需求，工作人员可以从
+     * <b>任意校区</b>通讯录里选（{@link CampusMemberService#getAnyForWorklog}）。</p>
+     *
+     * <p>只给持有 {@link PermissionCode#WORKLOG_SUBMIT_ANY}（默认只有管理员）、且不限校区的账号：
+     * 这类工时和链接申报的一样不属于任何校区，校区范围账号在列表里看不到、凭 id 也碰不到
+     * （{@link #requireVisible}），让它们建出来只会建出自己再也找不到的记录。没有需求也就没有
+     * 参与人和「选题已结束」的校验。</p>
+     */
+    @Transactional
+    public WorklogEntity createWithoutRequest(WorklogCommand command, AuthenticatedUser user) {
+        requireWithoutRequestFiler(user);
+        validate(command);
+        WorklogEntity worklog = new WorklogEntity();
+        worklog.setUserId(user.id());
+        apply(worklog, command, campusMemberService.getAnyForWorklog(command.memberContactId()));
+        requireCustomProject(worklog);
+        worklog.setStatus(command.status() == WorklogStatus.DRAFT
+                ? WorklogStatus.DRAFT : WorklogStatus.SUBMITTED);
+        mapper.insert(worklog);
+        if (worklog.getStatus() == WorklogStatus.SUBMITTED) {
+            recordReview(worklog, WorklogStatus.SUBMITTED, null, user.id());
+        }
+        return worklog;
+    }
+
+    /** 没有需求也没有上传链接：只靠自定义选题说明来历的工时（V79）。 */
+    static boolean withoutRequest(WorklogEntity worklog) {
+        return worklog.getRequestId() == null && worklog.getShareLinkId() == null;
+    }
+
+    private void requireWithoutRequestFiler(AuthenticatedUser user) {
+        requirePermission(user, PermissionCode.WORKLOG_SUBMIT);
+        if (!user.hasPermission(PermissionCode.WORKLOG_SUBMIT_ANY) || user.isCampusScoped()) {
+            throw new BusinessException(ErrorCode.FORBIDDEN,
+                    "只有可以向任意需求申报工时、且不限校区的账号能不关联需求填报");
+        }
+    }
+
+    private static void requireCustomProject(WorklogEntity worklog) {
+        if (withoutRequest(worklog) && worklog.getCustomProjectTitle() == null) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "不关联需求时必须填写自定义选题");
+        }
+    }
+
+    /**
      * 通过上传链接申报一条工时，直接落成「待确认」。
      *
      * <p><b>这个方法不做授权</b>，与 {@code BatchUploadService} 上那几个中立接口同一个约定：
@@ -212,12 +259,19 @@ public class WorklogService {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "当前工时不可编辑");
         }
         validate(command);
-        PhotoRequestEntity request = requestService.get(worklog.getRequestId());
-        requireCampusAccess(request, user);
-        requireProjectOpen(request, user);
-        CampusMemberEntity member = campusMemberService.getForWorklog(
-                command.memberContactId(), request.getCampusId());
-        apply(worklog, command, member);
+        if (withoutRequest(worklog)) {
+            // 不挂需求的：同样从任意校区通讯录选人，自定义选题不能清掉。
+            requireWithoutRequestFiler(user);
+            apply(worklog, command, campusMemberService.getAnyForWorklog(command.memberContactId()));
+            requireCustomProject(worklog);
+        } else {
+            PhotoRequestEntity request = requestService.get(worklog.getRequestId());
+            requireCampusAccess(request, user);
+            requireProjectOpen(request, user);
+            CampusMemberEntity member = campusMemberService.getForWorklog(
+                    command.memberContactId(), request.getCampusId());
+            apply(worklog, command, member);
+        }
         worklog.setStatus(WorklogStatus.DRAFT);
         worklog.setRejectReason(null);
         worklog.setVersion(version);
@@ -233,7 +287,11 @@ public class WorklogService {
         if (worklog.getStatus() != WorklogStatus.DRAFT && worklog.getStatus() != WorklogStatus.REJECTED) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "当前工时不可提交");
         }
-        requireProjectOpen(requestService.get(worklog.getRequestId()), user);
+        if (withoutRequest(worklog)) {
+            requireWithoutRequestFiler(user);
+        } else {
+            requireProjectOpen(requestService.get(worklog.getRequestId()), user);
+        }
         worklog.setStatus(WorklogStatus.SUBMITTED);
         worklog.setRejectReason(null);
         worklog.setVersion(version);
@@ -326,9 +384,6 @@ public class WorklogService {
         WorklogStatus status = command.status() == null ? worklog.getStatus() : command.status();
         Long requestId = command.clearRequest() ? null
                 : command.requestId() == null ? worklog.getRequestId() : command.requestId();
-        if (requestId == null && worklog.getShareLinkId() == null) {
-            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "站内填报的工时必须关联一条需求");
-        }
         // 只在换需求时查：原来挂的需求可能已被删除，不改需求时不能因此改不了别的字段。
         boolean requestChanged = !Objects.equals(requestId, worklog.getRequestId());
         PhotoRequestEntity request = requestChanged && requestId != null ? requestService.get(requestId) : null;
@@ -336,6 +391,10 @@ public class WorklogService {
                 : StringUtils.hasText(command.customProjectTitle()) ? command.customProjectTitle().strip() : null;
         if (customProject != null && customProject.length() > 200) {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "自定义选题最多 200 个字");
+        }
+        // 一条工时要说得出来历：需求、上传链接、自定义选题至少一样（与 V79 的 chk_worklog_origin 一致）。
+        if (requestId == null && worklog.getShareLinkId() == null && customProject == null) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "站内填报的工时要么关联一条需求，要么填写自定义选题");
         }
 
         Map<String, Object> changes = new LinkedHashMap<>();
@@ -594,10 +653,12 @@ public class WorklogService {
      * <p>这两个入口都要一条需求（查项目状态、按需求校区取通讯录成员），而这类工时没有；
      * 更要紧的是，记在名下的账号是开链接的成员，他不是干活的人，替别人改时长不是他该做的事。
      * 被退回的由申报人在上传页重新申报一条。</p>
+     *
+     * <p>只看 {@code share_link_id}：管理员可以给链接申报的工时挂上一条需求（correct），它仍是链接申报的；
+     * 而不挂需求、只写自定义选题的站内工时（V79）可以在站内修改和提交。</p>
      */
     private void requireInAppWorklog(WorklogEntity worklog) {
-        // 管理员可以给链接申报的工时挂上一条需求（correct），它仍是链接申报的，所以也看 share_link_id。
-        if (worklog.getRequestId() == null || worklog.getShareLinkId() != null) {
+        if (worklog.getShareLinkId() != null) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
                     "通过上传链接申报的工时不能在站内修改，请让申报人在上传页重新申报");
         }

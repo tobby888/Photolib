@@ -33,6 +33,15 @@ public class WorklogController {
         return ApiResponse.ok(service.create(requestId, request.command(), user));
     }
 
+    /** 不关联需求、只写自定义选题地填报（任意校区通讯录选人）。权限见 WorklogService.createWithoutRequest。 */
+    @AuditAction("填写工时")
+    @PostMapping("/worklogs")
+    @PreAuthorize("hasAuthority('WORKLOG_SUBMIT')")
+    ApiResponse<WorklogEntity> createWithoutRequest(@Valid @RequestBody WorklogRequest request,
+                                                    @AuthenticationPrincipal AuthenticatedUser user) {
+        return ApiResponse.ok(service.createWithoutRequest(request.command(), user));
+    }
+
     @GetMapping("/worklogs")
     @PreAuthorize("hasAnyAuthority('WORKLOG_SUBMIT','WORKLOG_CONFIRM','WORKLOG_EXPORT')")
     ApiResponse<PageResponse<WorklogEntity>> list(
