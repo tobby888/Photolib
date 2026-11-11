@@ -1505,7 +1505,7 @@ UPLOADING -> PROCESSING -> WAITING_METADATA -> PROCESSING
 | `POST /worklogs/{id}/submit` | 本人或 A | `{ version }` | `WorklogEntity` |
 | `POST /worklogs/{id}/confirm` | A/M | `{ version }` | `WorklogEntity` |
 | `POST /worklogs/{id}/reject` | A/M | `{ reason, version }` | `WorklogEntity` |
-| `PUT /worklogs/{id}/correction` | 仅权限组 `ADMIN` | `CorrectionRequest` | `WorklogEntity`，状态不变 |
+| `PUT /worklogs/{id}/correction` | 仅权限组 `ADMIN` | `CorrectionRequest` | `WorklogEntity`（可改状态、关联需求、自定义选题） |
 | `DELETE /worklogs/{id}` | A/M/C | 无 | `data: null` |
 
 创建/编辑请求：
@@ -1546,12 +1546,21 @@ UPLOADING -> PROCESSING -> WAITING_METADATA -> PROCESSING
   "shootingMinutes": 90,
   "retouchingMinutes": 15,
   "remark": "补拍",
-  "version": 3
+  "version": 3,
+  "status": "CONFIRMED",
+  "requestId": 128,
+  "clearRequest": false,
+  "customProjectTitle": "迎新晚会",
+  "rejectReason": null
 }
 ```
 
 - 只给权限组 `ADMIN`（`hasRole('ADMIN')`，服务端再判一次），部长和其他持有工时权限的账号都是 `403`。
-- 用于修正已经报上来的工时：`SUBMITTED` / `CONFIRMED` / `REJECTED` 都可改，状态、审核人和审核时间保持不变，已确认的改完立即按新值计入统计和导出。`DRAFT` 返回 `409`（还没交上来，由填报人自己改）。
+- 四种状态的工时都能改（含 `DRAFT`）。`status`、`requestId`、`customProjectTitle` 不传（`null`）就保持原样：
+  - `status`：四种任选。改成 `CONFIRMED` / `REJECTED` 时审核人记为这位管理员、审核时间记现在，并在 `worklog_review_log` 补一行；改回 `SUBMITTED` / `DRAFT` 时清空审核人、审核时间和退回原因。状态不变时审核信息不动。改成 `REJECTED` 可带 `rejectReason`（最多 500），不带时记为「管理员修改为已退回」。
+  - `requestId`：换成任意一条没删除的需求（不限校区、参与人、选题是否结束），不存在返回 `404`。站内填报的工时必须挂需求；链接申报的可以挂上一条，也可以用 `clearRequest: true` 清掉。
+  - `customProjectTitle`：管理员手写的选题名（最多 200，去首尾空白），空串清掉。填了之后这条工时在成员核算、工时导出、清算单、工资计算、工时分析里都算在这个选题下（同名合并），按 `workDate` 落清算期，不再算进需求 / 链接所属的选题；`GET /worklogs?projectId=` 也不再把它算进原选题。
+- 已确认的改完立即按新值计入统计和导出。
 - 不看是否本人填报、所属选题是否已结束；站内填报和上传链接申报的都能改。
 - 姓名学号直接写入，不对照通讯录。学号按链接申报同一套格式校验（NFKC 全角转半角、去首尾空白，去空白后为 2~64 位字母/数字/下划线/连字符），保存去首尾空白后的写法。其余校验与填报相同：日期不晚于今天、两类分钟 `0..1440` 且不同时为 0、说明最多 1000。
 - 什么都没改时不写库、版本号不变。改了的字段（旧值 → 新值）写进审计日志详情 `changes`；填报账号不是管理员本人时收到一条 `WORKLOG_CORRECTED` 站内通知（说明只写"已修改"，原文在审计里）。

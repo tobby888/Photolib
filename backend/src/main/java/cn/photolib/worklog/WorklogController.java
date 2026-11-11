@@ -62,7 +62,7 @@ public class WorklogController {
     }
 
     /**
-     * 管理员更正已报上来的工时（姓名、学号、日期、时长、说明），状态不变。
+     * 管理员直接修改工时（姓名、学号、日期、时长、说明、状态、关联需求、自定义选题）。
      * 审计只看得到路径，改了哪些字段、从什么改成什么记进详情，事后能查到原值。
      */
     @AuditAction("直接修改已报工时")
@@ -127,10 +127,17 @@ public class WorklogController {
                              @Min(0) @Max(1440) int shootingMinutes,
                              @Min(0) @Max(1440) int retouchingMinutes,
                              @Size(max = 1000) String remark,
-                             @Min(1) int version) {
+                             @Min(1) int version,
+                             // 以下几项不传就保持原样，见 WorklogService.correct。
+                             WorklogStatus status,
+                             Long requestId,
+                             Boolean clearRequest,
+                             @Size(max = 200) String customProjectTitle,
+                             @Size(max = 500) String rejectReason) {
         WorklogService.CorrectionCommand command() {
             return new WorklogService.CorrectionCommand(memberName, memberStudentId, workDate,
-                    shootingMinutes, retouchingMinutes, remark);
+                    shootingMinutes, retouchingMinutes, remark, status, requestId,
+                    Boolean.TRUE.equals(clearRequest), customProjectTitle, rejectReason);
         }
     }
 

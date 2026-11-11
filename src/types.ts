@@ -550,6 +550,11 @@ export interface Worklog extends BaseEntity {
   shootingMinutes: number
   retouchingMinutes: number
   remark: string
+  /**
+   * 管理员手写的选题名。非空时这条工时在统计、导出、清算单、工资计算里算在这个选题下，
+   * 不再算进需求 / 链接所属的选题，按工作日期计入清算期。
+   */
+  customProjectTitle?: string | null
   status: 'DRAFT' | 'SUBMITTED' | 'CONFIRMED' | 'REJECTED'
   rejectReason?: string
 }
@@ -593,7 +598,9 @@ export interface MemberWorklogDetail {
   requestId?: EntityId | null
   requestTitle?: string | null
   viaShareLink: boolean
-  projectId: EntityId
+  /** 管理员写了自定义选题的工时：{@link projectId} 为空，{@link projectTitle} 是自定义选题名。 */
+  customProject?: boolean
+  projectId?: EntityId | null
   projectTitle: string
   campus: string
   shootingMinutes: number
@@ -1319,9 +1326,10 @@ export interface SalaryCalculationSummary {
 
 /** 一个选题里一位成员的工资，按这次计算的公式算出来。 */
 export interface SalaryLine {
-  projectId: EntityId
+  /** 自定义选题（管理员给工时手写的选题名）没有选题 id，也没有结束时间。 */
+  projectId?: EntityId | null
   projectTitle: string
-  projectCompletedAt: string
+  projectCompletedAt?: string | null
   /** `id:<学号>`，没有学号的老记录是 `name:<姓名>`。 */
   memberKey: string
   studentId?: string | null
@@ -1340,9 +1348,13 @@ export interface SalaryLine {
 }
 
 export interface SalaryProjectGroup {
-  projectId: EntityId
+  /** 分组键：真实选题 `p:<id>`，自定义选题 `c:<名字>`（同名合并）。 */
+  key: string
+  /** 自定义选题为空。 */
+  projectId?: EntityId | null
   projectTitle: string
-  completedAt: string
+  /** 自定义选题为空：它按工时的工作日期计入，没有结束时间。 */
+  completedAt?: string | null
   confirmedMinutes: number
   adoptedPhotos: number
   uploadedPhotos: number

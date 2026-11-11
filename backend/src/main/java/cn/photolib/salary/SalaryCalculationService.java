@@ -6,6 +6,7 @@ import cn.photolib.common.error.ErrorCode;
 import cn.photolib.salary.SalaryFormula.FormulaException;
 import cn.photolib.salary.SalaryFormula.Variable;
 import cn.photolib.settlement.SettlementStatementService;
+import cn.photolib.worklog.WorklogProjectSql;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
@@ -43,6 +44,8 @@ import java.util.TreeSet;
  *       （{@link SettlementStatementService#projectPhotos}：来源选题 + 后来添加进相册的，只算传完的）。</li>
  *   <li>「有记录」= 这个选题里有他的已确认或待审核工时，或者有他被引的图片。只有上传、没有工时也没被引的不算。</li>
  * </ul>
+ * <p><b>自定义选题</b>（管理员给工时手写的选题名，Flyway V78）同样一组一组地算：同名的工时合并成一个「选题」，
+ * 工作日期落在清算期里就算（它没有结束时间），没有选题 id，被引和上传张数都是 0。见 {@link WorklogProjectSql}。</p>
  * <p>公式结果小于 0 按 0 计，四舍五入到分。</p>
  *
  * <p><b>成员按学号归并</b>（与 {@code StatisticsService.members} 一致）：工时的 {@code member_student_id}、
@@ -135,7 +138,7 @@ public class SalaryCalculationService {
         SalaryFormula compiled = compile(formula);
         List<Line> lines = compute(from, to, compiled);
         BigDecimal total = lines.stream().map(Line::salaryAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
-        long projects = lines.stream().map(Line::projectId).distinct().count();
+        long projects = lines.stream().map(Line::groupKey).distinct().count();
         long members = lines.stream().map(Line::memberKey).distinct().count();
         int pending = lines.stream().mapToInt(Line::pendingWorklogCount).sum();
 
@@ -199,14 +202,15 @@ public class SalaryCalculationService {
      * 合并——一期结束的选题是几十到几百个、每个几个到几十人的量级。
      */
     List<Line> compute(LocalDate from, LocalDate to, SalaryFormula formula) {
-        record Project(String title, LocalDateTime completedAt) {}
-        Map<Long, Project> projects = new LinkedHashMap<>();
-        // key = projectId + 成员键
+        record Project(Long id, String title, LocalDateTime completedAt) {}
+        // key = 选题分组键（groupKey），真实选题 p:<id>，自定义选题 c:<名字>
+        Map<String, Project> projects = new LinkedHashMap<>();
+        // key = 选题分组键 + 成员键
         Map<String, Accumulator> byKey = new LinkedHashMap<>();
 
         String worklogKey = MEMBER_KEY.formatted("w.member_student_id", "COALESCE(w.member_name, u.display_name)");
         jdbc.sql("""
-                SELECT p.id, p.title, p.completed_at, %1$s AS member_key,
+                SELECT p.id, %4$s, p.completed_at, %1$s AS member_key,
                        MIN(NULLIF(TRIM(w.member_student_id), '')), MIN(TRIM(COALESCE(w.member_name, u.display_name))),
                        GROUP_CONCAT(DISTINCT c.name ORDER BY c.name SEPARATOR '、'),
                        SUM(CASE WHEN w.status='CONFIRMED' THEN w.shooting_minutes ELSE 0 END),
@@ -215,23 +219,25 @@ public class SalaryCalculationService {
                        SUM(CASE WHEN w.status='SUBMITTED' THEN 1 ELSE 0 END),
                        SUM(CASE WHEN w.status='SUBMITTED' THEN w.shooting_minutes + w.retouching_minutes ELSE 0 END)
                 FROM worklog w
-                LEFT JOIN photo_request r ON r.id=w.request_id
-                LEFT JOIN project_share_link l ON l.id=w.share_link_id
-                JOIN project p ON p.id=COALESCE(r.project_id, l.project_id)
+                %2$s
                 LEFT JOIN campus c ON c.id=r.campus_id
                 LEFT JOIN app_user u ON u.id=w.user_id
-                WHERE w.deleted=0 AND w.status IN ('CONFIRMED', 'SUBMITTED') AND %2$s
+                WHERE w.deleted=0 AND w.status IN ('CONFIRMED', 'SUBMITTED') AND %3$s
                   AND COALESCE(NULLIF(TRIM(w.member_student_id), ''), NULLIF(TRIM(COALESCE(w.member_name, u.display_name)), ''))
                       IS NOT NULL
-                GROUP BY p.id, p.title, p.completed_at, %1$s
-                """.formatted(worklogKey, SETTLED_PROJECT))
+                GROUP BY p.id, %4$s, p.completed_at, %1$s
+                """.formatted(worklogKey, WorklogProjectSql.joins(), WorklogProjectSql.settled(),
+                        WorklogProjectSql.title("w", "p")))
                 .param("fromDate", from).param("toExclusive", to.plusDays(1))
                 .query((rs, n) -> {
-                    long projectId = rs.getLong(1);
-                    projects.putIfAbsent(projectId, new Project(rs.getString(2), rs.getObject(3, LocalDateTime.class)));
+                    // 自定义选题没有选题 id（getLong 会把 NULL 读成 0），按名字分组。
+                    Long projectId = rs.getObject(1, Long.class);
+                    String title = rs.getString(2);
+                    String groupKey = groupKey(projectId, title);
+                    projects.putIfAbsent(groupKey, new Project(projectId, title, rs.getObject(3, LocalDateTime.class)));
                     String memberKey = rs.getString(4);
-                    Accumulator acc = byKey.computeIfAbsent(projectId + "\u0000" + memberKey,
-                            k -> new Accumulator(projectId, memberKey));
+                    Accumulator acc = byKey.computeIfAbsent(groupKey + "\u0000" + memberKey,
+                            k -> new Accumulator(groupKey, memberKey));
                     acc.studentId(rs.getString(5));
                     acc.name(rs.getString(6));
                     acc.campuses(rs.getString(7));
@@ -261,10 +267,12 @@ public class SalaryCalculationService {
                 .param("fromDate", from).param("toExclusive", to.plusDays(1))
                 .query((rs, n) -> {
                     long projectId = rs.getLong(1);
-                    projects.putIfAbsent(projectId, new Project(rs.getString(2), rs.getObject(3, LocalDateTime.class)));
+                    String groupKey = groupKey(projectId, null);
+                    projects.putIfAbsent(groupKey,
+                            new Project(projectId, rs.getString(2), rs.getObject(3, LocalDateTime.class)));
                     String memberKey = rs.getString(4);
-                    Accumulator acc = byKey.computeIfAbsent(projectId + "\u0000" + memberKey,
-                            k -> new Accumulator(projectId, memberKey));
+                    Accumulator acc = byKey.computeIfAbsent(groupKey + "\u0000" + memberKey,
+                            k -> new Accumulator(groupKey, memberKey));
                     acc.studentId(rs.getString(5));
                     acc.name(rs.getString(6));
                     acc.campuses(rs.getString(7));
@@ -285,7 +293,7 @@ public class SalaryCalculationService {
                         SETTLED_PROJECT))
                 .param("fromDate", from).param("toExclusive", to.plusDays(1))
                 .query((rs, n) -> {
-                    Accumulator acc = byKey.get(rs.getLong(1) + "\u0000" + rs.getString(2));
+                    Accumulator acc = byKey.get(groupKey(rs.getLong(1), null) + "\u0000" + rs.getString(2));
                     if (acc != null) acc.uploaded += rs.getInt(3);
                     return 0;
                 }).list();
@@ -293,7 +301,7 @@ public class SalaryCalculationService {
         List<Line> lines = new ArrayList<>();
         for (Accumulator acc : byKey.values()) {
             // 只有待审核工时、没有已确认工时也没有被引的人也列出来，提醒先审核。
-            Project project = projects.get(acc.projectId);
+            Project project = projects.get(acc.groupKey);
             String name = acc.name == null ? "" : acc.name;
             BigDecimal salary;
             try {
@@ -303,7 +311,7 @@ public class SalaryCalculationService {
                 throw new BusinessException(ErrorCode.VALIDATION_ERROR, "工资公式在「" + project.title() + "」的 "
                         + name + " 这一行算不下去：" + e.getMessage());
             }
-            lines.add(new Line(acc.projectId, project.title(), project.completedAt(), acc.memberKey, acc.studentId,
+            lines.add(new Line(project.id(), project.title(), project.completedAt(), acc.memberKey, acc.studentId,
                     name, acc.campusText(), acc.shooting, acc.retouching, acc.confirmedCount, acc.pendingCount,
                     acc.pendingMinutes, acc.adopted, acc.uploaded, salary, null));
         }
@@ -311,9 +319,16 @@ public class SalaryCalculationService {
         return lines;
     }
 
-    /** 选题按结束时间、同一选题里工资高的在前，再按姓名。 */
-    static final Comparator<Line> LINE_ORDER = Comparator.comparing(Line::projectCompletedAt)
-            .thenComparing(Line::projectId)
+    /** 选题分组键：真实选题 {@code p:<id>}，自定义选题 {@code c:<名字>}（同名合并）。 */
+    static String groupKey(Long projectId, String title) {
+        return projectId != null ? "p:" + projectId : "c:" + title;
+    }
+
+    /** 选题按结束时间（自定义选题没有结束时间，排在后面、按名字）、同一选题里工资高的在前，再按姓名。 */
+    static final Comparator<Line> LINE_ORDER = Comparator
+            .comparing(Line::projectCompletedAt, Comparator.nullsLast(Comparator.naturalOrder()))
+            .thenComparing(Line::projectId, Comparator.nullsLast(Comparator.naturalOrder()))
+            .thenComparing(Line::projectTitle)
             .thenComparing(Line::salaryAmount, Comparator.reverseOrder())
             .thenComparing(Line::memberName)
             .thenComparing(Line::memberKey);
@@ -346,7 +361,7 @@ public class SalaryCalculationService {
                     } catch (FormulaException e) {
                         process = e.getMessage();
                     }
-                    return new Line(rs.getLong(1), rs.getString(2), rs.getObject(3, LocalDateTime.class),
+                    return new Line(rs.getObject(1, Long.class), rs.getString(2), rs.getObject(3, LocalDateTime.class),
                             rs.getString(4), rs.getString(5), rs.getString(6), rs.getString(7), shooting, retouching,
                             confirmed, pending, pendingMinutes, adopted, uploaded, rs.getBigDecimal(15), process);
                 })
@@ -384,12 +399,12 @@ public class SalaryCalculationService {
 
     /** 按选题分组，组内顺序沿用 {@link #LINE_ORDER}。 */
     static List<ProjectGroup> projects(List<Line> sorted) {
-        Map<Long, List<Line>> grouped = new LinkedHashMap<>();
-        sorted.forEach(line -> grouped.computeIfAbsent(line.projectId(), id -> new ArrayList<>()).add(line));
+        Map<String, List<Line>> grouped = new LinkedHashMap<>();
+        sorted.forEach(line -> grouped.computeIfAbsent(line.groupKey(), key -> new ArrayList<>()).add(line));
         List<ProjectGroup> result = new ArrayList<>();
-        grouped.forEach((projectId, group) -> {
+        grouped.forEach((groupKey, group) -> {
             Line head = group.get(0);
-            result.add(new ProjectGroup(projectId, head.projectTitle(), head.projectCompletedAt(),
+            result.add(new ProjectGroup(groupKey, head.projectId(), head.projectTitle(), head.projectCompletedAt(),
                     group.stream().mapToInt(Line::confirmedMinutes).sum(),
                     group.stream().mapToInt(Line::adoptedPhotos).sum(),
                     group.stream().mapToInt(Line::uploadedPhotos).sum(),
@@ -424,7 +439,7 @@ public class SalaryCalculationService {
     }
 
     private static final class Accumulator {
-        final long projectId;
+        final String groupKey;
         final String memberKey;
         String studentId;
         String name;
@@ -437,8 +452,8 @@ public class SalaryCalculationService {
         int adopted;
         int uploaded;
 
-        Accumulator(long projectId, String memberKey) {
-            this.projectId = projectId;
+        Accumulator(String groupKey, String memberKey) {
+            this.groupKey = groupKey;
             this.memberKey = memberKey;
         }
 
@@ -464,13 +479,22 @@ public class SalaryCalculationService {
     /**
      * 一个选题里一位成员的工资。{@code memberKey}：{@code id:<学号>} 或 {@code name:<姓名>}。
      * {@code process}：计算过程（公式代入数值），只在查看明细时有，计算时为空。
+     * {@code projectId} / {@code projectCompletedAt} 为空的是自定义选题。
      */
-    public record Line(long projectId, String projectTitle, LocalDateTime projectCompletedAt, String memberKey,
+    public record Line(Long projectId, String projectTitle, LocalDateTime projectCompletedAt, String memberKey,
                        String studentId, String memberName, String campus, int shootingMinutes,
                        int retouchingMinutes, int confirmedWorklogCount, int pendingWorklogCount, int pendingMinutes,
                        int adoptedPhotos, int uploadedPhotos, BigDecimal salaryAmount, String process) {
         public int confirmedMinutes() {
             return shootingMinutes + retouchingMinutes;
+        }
+
+        public String groupKey() {
+            return SalaryCalculationService.groupKey(projectId, projectTitle);
+        }
+
+        public boolean customProject() {
+            return projectId == null;
         }
     }
 
@@ -478,7 +502,8 @@ public class SalaryCalculationService {
                                      int memberCount, int lineCount, BigDecimal totalAmount, int pendingWorklogCount,
                                      String createdByName, LocalDateTime createdAt) {}
 
-    public record ProjectGroup(long projectId, String projectTitle, LocalDateTime completedAt, int confirmedMinutes,
+    /** {@code key}：分组键（真实选题 {@code p:<id>}，自定义选题 {@code c:<名字>}）；自定义选题 {@code projectId} 为空。 */
+    public record ProjectGroup(String key, Long projectId, String projectTitle, LocalDateTime completedAt, int confirmedMinutes,
                                int adoptedPhotos, int uploadedPhotos, BigDecimal salaryAmount,
                                int pendingWorklogCount, List<Line> lines) {}
 

@@ -3,6 +3,7 @@ package cn.photolib.statistics;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
+import cn.photolib.worklog.WorklogProjectSql;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
@@ -78,11 +79,10 @@ public class StatisticsService {
                            COALESCE(SUM(w.shooting_minutes),0) AS shooting_minutes,
                            COALESCE(SUM(w.retouching_minutes),0) AS retouching_minutes
                     FROM worklog w
-                    LEFT JOIN photo_request r ON r.id=w.request_id
-                    LEFT JOIN project_share_link l ON l.id=w.share_link_id
-                    JOIN eligible_projects ep ON ep.id=COALESCE(r.project_id, l.project_id)
+                    %1$s
                     LEFT JOIN campus c ON c.id=r.campus_id
-                    WHERE w.deleted=0 AND w.status='CONFIRMED'
+                    WHERE w.deleted=0 AND w.status='CONFIRMED' AND %2$s
+                      AND (:projectId=0 OR p.id=:projectId)
                       AND (:campusId=0 OR r.campus_id=:campusId)
                       AND (:campusScoped=FALSE OR r.campus_id IN (:campusIds))
                       AND (:userId=0 OR w.user_id=:userId)
@@ -100,7 +100,8 @@ public class StatisticsService {
                   AND NOT EXISTS (SELECT 1 FROM worklog_totals wt
                                   WHERE wt.member_student_id=a.photographer_student_id)
                 ORDER BY 3, 2
-                """).param("fromDate", from == null ? LocalDate.of(1900,1,1) : from)
+                """.formatted(WorklogProjectSql.joins(), WorklogProjectSql.settled()))
+                .param("fromDate", from == null ? LocalDate.of(1900,1,1) : from)
                 .param("toExclusive", to == null ? LocalDate.of(3000,1,1) : to.plusDays(1))
                 .param("projectId", projectId == null ? 0L : projectId)
                 .param("campusId", campusId == null ? 0L : campusId)
@@ -140,22 +141,21 @@ public class StatisticsService {
         Set<Long> scopedIds = normalizedCampusIds(allowedCampusIds);
         boolean campusScoped = allowedCampusIds != null && !allowedCampusIds.isEmpty();
         return jdbc.sql("""
-                SELECT w.id, w.work_date, r.id, r.title, p.id, p.title, c.name,
-                       w.shooting_minutes, w.retouching_minutes
+                SELECT w.id, w.work_date, r.id, r.title, p.id, %3$s, c.name,
+                       w.shooting_minutes, w.retouching_minutes, w.share_link_id, w.custom_project_title
                 FROM worklog w
-                LEFT JOIN photo_request r ON r.id=w.request_id
-                LEFT JOIN project_share_link l ON l.id=w.share_link_id
-                JOIN project p ON p.id=COALESCE(r.project_id, l.project_id)
+                %1$s
                 LEFT JOIN campus c ON c.id=r.campus_id
                 WHERE w.deleted=0 AND w.status='CONFIRMED'
                   AND w.member_student_id=:studentId
-                  AND p.deleted=0 AND p.status='COMPLETED'
-                  AND p.completed_at >= :fromDate AND p.completed_at < :toExclusive
+                  AND %2$s
                   AND (:projectId=0 OR p.id=:projectId)
                   AND (:campusId=0 OR r.campus_id=:campusId)
                   AND (:campusScoped=FALSE OR r.campus_id IN (:campusIds))
                 ORDER BY w.work_date DESC, w.id DESC
-                """).param("studentId", studentId)
+                """.formatted(WorklogProjectSql.joins(), WorklogProjectSql.settled(),
+                        WorklogProjectSql.title("w", "p")))
+                .param("studentId", studentId)
                 .param("fromDate", from == null ? LocalDate.of(1900,1,1) : from)
                 .param("toExclusive", to == null ? LocalDate.of(3000,1,1) : to.plusDays(1))
                 .param("projectId", projectId == null ? 0L : projectId)
@@ -167,10 +167,11 @@ public class StatisticsService {
                     int retouching = rs.getInt(9);
                     // getLong 会把 NULL 读成 0：链接申报的工时没有需求，要如实回 null。
                     Long requestId = rs.getObject(3, Long.class);
+                    // 自定义选题没有选题 id，同样回 null。
                     return new MemberWorklogDetail(rs.getLong(1), rs.getObject(2, LocalDate.class),
-                            requestId, rs.getString(4), rs.getLong(5), rs.getString(6),
+                            requestId, rs.getString(4), rs.getObject(5, Long.class), rs.getString(6),
                             rs.getString(7), shooting, retouching, shooting + retouching,
-                            requestId == null);
+                            rs.getObject(10, Long.class) != null, rs.getString(11) != null);
                 }).list();
     }
 
@@ -212,14 +213,11 @@ public class StatisticsService {
                            SUM(w.shooting_minutes) AS shooting_minutes,
                            SUM(w.retouching_minutes) AS retouching_minutes
                     FROM worklog w
-                    LEFT JOIN photo_request r ON r.id=w.request_id
-                    LEFT JOIN project_share_link l ON l.id=w.share_link_id
-                    JOIN project p ON p.id=COALESCE(r.project_id, l.project_id)
+                    %1$s
                     LEFT JOIN campus c ON c.id=r.campus_id
                     WHERE w.deleted=0
                       AND w.status='CONFIRMED'
-                      AND p.deleted=0 AND p.status='COMPLETED'
-                      AND p.completed_at >= :fromDate AND p.completed_at < :toExclusive
+                      AND %2$s
                       AND (:campusScoped=FALSE OR r.campus_id IN (:campusIds))
                     GROUP BY w.member_student_id
                 ),
@@ -230,12 +228,9 @@ public class StatisticsService {
                            MAX(CASE WHEN w.status='REJECTED' THEN 1 ELSE 0 END) AS has_rejected,
                            MAX(CASE WHEN w.status='DRAFT' THEN 1 ELSE 0 END) AS has_draft
                     FROM worklog w
-                    LEFT JOIN photo_request status_r ON status_r.id=w.request_id
-                    LEFT JOIN project_share_link status_l ON status_l.id=w.share_link_id
-                    JOIN project status_p ON status_p.id=COALESCE(status_r.project_id, status_l.project_id)
+                    %3$s
                     WHERE w.deleted=0
-                      AND status_p.deleted=0 AND status_p.status='COMPLETED'
-                      AND status_p.completed_at >= :fromDate AND status_p.completed_at < :toExclusive
+                      AND %4$s
                       AND (:campusScoped=FALSE OR status_r.campus_id IN (:campusIds))
                     GROUP BY w.member_student_id
                 ),
@@ -279,7 +274,9 @@ public class StatisticsService {
                 LEFT JOIN worklog_statuses statuses
                   ON statuses.member_student_id=people.student_id
                 ORDER BY COALESCE(mw.member_name, a.photographer_name), people.student_id
-                """)
+                """.formatted(WorklogProjectSql.joins(), WorklogProjectSql.settled(),
+                        WorklogProjectSql.joins("w", "status_r", "status_l", "status_p"),
+                        WorklogProjectSql.settled("w", "status_p")))
                 .param("fromDate", from)
                 .param("toExclusive", to.plusDays(1))
                 .param("campusScoped", campusScoped)
@@ -370,18 +367,15 @@ public class StatisticsService {
                   AND (:campusScoped=FALSE OR ph.campus_id IN (:campusIds))
                   AND NOT EXISTS (
                       SELECT 1 FROM worklog w
-                      LEFT JOIN photo_request wr ON wr.id=w.request_id
-                      LEFT JOIN project_share_link wl ON wl.id=w.share_link_id
-                      JOIN project wp ON wp.id=COALESCE(wr.project_id, wl.project_id)
+                      %1$s
                       WHERE w.deleted=0
                         AND w.status='CONFIRMED'
-                        AND wp.deleted=0 AND wp.status='COMPLETED'
-                        AND wp.completed_at >= :fromDate AND wp.completed_at < :toExclusive
+                        AND %2$s
                         AND w.member_student_id=a.photographer_student_id
                   )
                 GROUP BY a.photographer_student_id
                 ORDER BY adopted_count DESC, a.photographer_student_id
-                """)
+                """.formatted(WorklogProjectSql.joins("w", "wr", "wl", "wp"), WorklogProjectSql.settled("w", "wp")))
                 .param("fromDate", from)
                 .param("toExclusive", to.plusDays(1))
                 .param("campusScoped", campusScoped)
@@ -398,11 +392,14 @@ public class StatisticsService {
     public record MemberStatistics(Long userId, String studentId, String displayName, String campus,
                                    int shootingMinutes, int retouchingMinutes, int totalMinutes,
                                    long adoptedCount) {}
-    /** {@code viaShareLink}：这条工时是通过上传链接申报的，没有需求也没有校区。 */
+    /**
+     * {@code viaShareLink}：这条工时是通过上传链接申报的。{@code customProject}：所属选题是管理员手写的
+     * 自定义选题（{@code projectId} 为空、{@code projectTitle} 是那个名字）。
+     */
     public record MemberWorklogDetail(Long worklogId, LocalDate workDate, Long requestId,
                                       String requestTitle, Long projectId, String projectTitle,
                                       String campus, int shootingMinutes, int retouchingMinutes,
-                                      int totalMinutes, boolean viaShareLink) {}
+                                      int totalMinutes, boolean viaShareLink, boolean customProject) {}
     public record AdoptionStatistics(String photographerStudentId, String photographerName,
                                      long adoptedCount) {}
     public record WorklogExportRow(String memberName, String studentId, String campus,

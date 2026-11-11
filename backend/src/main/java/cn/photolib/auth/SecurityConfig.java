@@ -31,7 +31,7 @@ public class SecurityConfig {
                         // 页面里的数据依旧要过 /api/v1/** 的鉴权。清单要和
                         // SpaForwardController（以及 src/App.tsx 的 <Route>）保持一致，
                         // 否则深链会被 401 的 JSON 顶掉而不是渲染成应用。
-                        .requestMatchers("/", "/index.html", "/assets/**", "/favicon.ico",
+                        .requestMatchers("/", "/index.html", "/assets/**", "/favicon.ico", "/favicon.svg",
                                 "/login", "/register", "/initial-password", "/projects/**", "/requests/**",
                                 "/photos", "/photos/**", "/favorites", "/favorites/**",
                                 "/worklogs", "/directory", "/featured", "/featured/**",

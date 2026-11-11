@@ -169,6 +169,7 @@ public class WorklogService {
                                 .apply(LikeFilter.contains("member_name"), likeKeyword)
                                 .or().apply(LikeFilter.contains("member_student_id"), likeKeyword)
                                 .or().apply(LikeFilter.contains("remark"), likeKeyword)
+                                .or().apply(LikeFilter.contains("custom_project_title"), likeKeyword)
                                 .or().apply("request_id IN (SELECT id FROM photo_request WHERE "
                                         + LikeFilter.contains("title") + ")", likeKeyword))
                         // 按需求所属校区筛；链接申报的工时没有校区，选了校区就不会出现。
@@ -178,6 +179,8 @@ public class WorklogService {
                         .isNotNull(source == WorklogSource.SHARE_LINK, WorklogEntity::getShareLinkId)
                         // {0} 由 MyBatis-Plus 绑定成参数，不拼进 SQL 文本。链接是软删的，撤销之后
                         // 申报的工时仍属于这个选题，所以链接那一侧不看 deleted。
+                        // 管理员填了自定义选题的工时算在自定义选题下（WorklogProjectSql），不再属于这个选题。
+                        .isNull(projectId != null, WorklogEntity::getCustomProjectTitle)
                         .and(projectId != null, q -> q
                                 .apply("request_id IN (SELECT id FROM photo_request WHERE project_id = {0})",
                                         projectId)
@@ -286,16 +289,20 @@ public class WorklogService {
     }
 
     /**
-     * 管理员更正一条已经报上来的工时：姓名、学号、工作日期、两项时长和说明都可以直接改。
+     * 管理员直接修改一条工时：姓名、学号、工作日期、两项时长、说明，以及状态、关联需求和自定义选题都可以改。
      *
      * <p>和填报侧的 {@link #update} 是两回事，刻意不复用：</p>
      * <ul>
-     *   <li>只给管理员（权限组 {@code ADMIN}），不看是不是本人填的、选题是否已结束——
+     *   <li>只给管理员（权限组 {@code ADMIN}），不看是不是本人填的、选题是否已结束、需求是否在本人参与范围里——
      *       发现报错了的时候选题往往早就结束了，这正是要更正的场景；</li>
-     *   <li>不改状态：已确认的改完仍是已确认，统计和导出立刻按新值算，不用再走一遍审核；</li>
+     *   <li>状态可以改成四种里的任意一种。改成已确认 / 已退回时审核人记成这位管理员、审核时间记现在，
+     *       并在审核记录（{@code worklog_review_log}）里补一行；改回待确认 / 草稿时清掉审核人、审核时间和退回原因。
+     *       状态不变时审核信息原样保留，已确认的改完仍是已确认，统计和导出立刻按新值算；</li>
+     *   <li>关联需求可以换成任意一条没删除的需求（不限校区、参与人、选题是否结束）。站内填报的必须挂需求；
+     *       链接申报的可以挂上一条需求，也可以清掉；</li>
+     *   <li>自定义选题（V78）是手写的选题名，填了就按它归属选题，见 {@link WorklogProjectSql}；</li>
      *   <li>姓名学号直接写，不走通讯录。站内填报的工时从通讯录取身份快照，链接申报的是访客自报，
      *       两种报错了都只能在这里改；学号用和链接申报同一套格式校验（全角转半角、去首尾空白）。</li>
-     *   <li>草稿不能改：它还没交上来，是填报人自己的东西。</li>
      * </ul>
      *
      * <p>返回值里带着改了哪些字段（旧值 → 新值），控制器把它写进审计日志；
@@ -307,9 +314,6 @@ public class WorklogService {
             throw new BusinessException(ErrorCode.FORBIDDEN, "只有管理员可以修改已报上来的工时");
         }
         WorklogEntity worklog = require(id);
-        if (worklog.getStatus() == WorklogStatus.DRAFT) {
-            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "草稿还没提交，由填报人自己修改");
-        }
         validate(command.workDate(), command.shootingMinutes(), command.retouchingMinutes());
         String name = command.memberName() == null ? "" : command.memberName().strip();
         if (name.isEmpty()) {
@@ -317,6 +321,22 @@ public class WorklogService {
         }
         String studentId = RecruitmentStudentId.normalize(command.memberStudentId()).display();
         String remark = StringUtils.hasText(command.remark()) ? command.remark().strip() : null;
+        // 没传的项保持原样：状态为空不改状态，需求为空不改需求（要清掉链接申报工时上的需求用 clearRequest），
+        // 自定义选题为 null 不改、空串清掉。
+        WorklogStatus status = command.status() == null ? worklog.getStatus() : command.status();
+        Long requestId = command.clearRequest() ? null
+                : command.requestId() == null ? worklog.getRequestId() : command.requestId();
+        if (requestId == null && worklog.getShareLinkId() == null) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "站内填报的工时必须关联一条需求");
+        }
+        // 只在换需求时查：原来挂的需求可能已被删除，不改需求时不能因此改不了别的字段。
+        boolean requestChanged = !Objects.equals(requestId, worklog.getRequestId());
+        PhotoRequestEntity request = requestChanged && requestId != null ? requestService.get(requestId) : null;
+        String customProject = command.customProjectTitle() == null ? worklog.getCustomProjectTitle()
+                : StringUtils.hasText(command.customProjectTitle()) ? command.customProjectTitle().strip() : null;
+        if (customProject != null && customProject.length() > 200) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "自定义选题最多 200 个字");
+        }
 
         Map<String, Object> changes = new LinkedHashMap<>();
         track(changes, "memberName", worklog.getMemberName(), name);
@@ -325,24 +345,66 @@ public class WorklogService {
         track(changes, "shootingMinutes", worklog.getShootingMinutes(), command.shootingMinutes());
         track(changes, "retouchingMinutes", worklog.getRetouchingMinutes(), command.retouchingMinutes());
         track(changes, "remark", worklog.getRemark(), remark);
+        track(changes, "status", worklog.getStatus() == null ? null : worklog.getStatus().name(), status.name());
+        track(changes, "requestId", worklog.getRequestId(), requestId);
+        track(changes, "customProjectTitle", worklog.getCustomProjectTitle(), customProject);
+
+        // 状态变了才动审核信息：改成已确认 / 已退回记这位管理员，改回待确认 / 草稿清空。
+        boolean statusChanged = status != worklog.getStatus();
+        Long confirmedBy = worklog.getConfirmedBy();
+        LocalDateTime confirmedAt = worklog.getConfirmedAt();
+        String rejectReason = worklog.getRejectReason();
+        if (statusChanged) {
+            boolean reviewed = status == WorklogStatus.CONFIRMED || status == WorklogStatus.REJECTED;
+            confirmedBy = reviewed ? admin.id() : null;
+            confirmedAt = reviewed ? LocalDateTime.now() : null;
+            rejectReason = null;
+        }
+        if (status == WorklogStatus.REJECTED) {
+            String reason = StringUtils.hasText(command.rejectReason()) ? command.rejectReason().strip() : null;
+            if (statusChanged || reason != null) {
+                rejectReason = reason == null ? "管理员修改为已退回" : reason;
+            }
+            if (rejectReason != null && rejectReason.length() > 500) {
+                throw new BusinessException(ErrorCode.VALIDATION_ERROR, "退回原因最多 500 字");
+            }
+            track(changes, "rejectReason", worklog.getRejectReason(), rejectReason);
+        }
         if (changes.isEmpty()) {
             return new Correction(worklog, changes);
         }
-        worklog.setMemberName(name);
-        worklog.setMemberStudentId(studentId);
-        worklog.setWorkDate(command.workDate());
-        worklog.setShootingMinutes(command.shootingMinutes());
-        worklog.setRetouchingMinutes(command.retouchingMinutes());
-        worklog.setRemark(remark);
-        worklog.setVersion(version);
-        updateChecked(worklog);
+        // 用 set 逐列写：实体上的 null 字段 updateById 会跳过，而这里要能把审核人、需求、自定义选题清空。
+        int updated = mapper.update(null, Wrappers.<WorklogEntity>lambdaUpdate()
+                .eq(WorklogEntity::getId, id)
+                .eq(WorklogEntity::getVersion, version)
+                .set(WorklogEntity::getMemberName, name)
+                .set(WorklogEntity::getMemberStudentId, studentId)
+                .set(WorklogEntity::getWorkDate, command.workDate())
+                .set(WorklogEntity::getShootingMinutes, command.shootingMinutes())
+                .set(WorklogEntity::getRetouchingMinutes, command.retouchingMinutes())
+                .set(WorklogEntity::getRemark, remark)
+                .set(WorklogEntity::getStatus, status)
+                .set(WorklogEntity::getRequestId, requestId)
+                .set(WorklogEntity::getCustomProjectTitle, customProject)
+                .set(WorklogEntity::getConfirmedBy, confirmedBy)
+                .set(WorklogEntity::getConfirmedAt, confirmedAt)
+                .set(WorklogEntity::getRejectReason, rejectReason)
+                .set(WorklogEntity::getVersion, version + 1)
+                .set(WorklogEntity::getUpdatedAt, LocalDateTime.now()));
+        if (updated != 1) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "工时已被其他操作修改");
+        }
+        WorklogEntity saved = mapper.selectById(id);
+        if (statusChanged && status != WorklogStatus.DRAFT) {
+            recordReview(saved, status, status == WorklogStatus.REJECTED ? rejectReason : null, admin.id());
+        }
         if (!worklog.getUserId().equals(admin.id())) {
             notifications.notifyUser(worklog.getUserId(), "WORKLOG_CORRECTED", "工时被管理员修改",
                     NotificationService.paragraphs(
                             "工时记录 #" + worklog.getId() + declaredBy(worklog) + " 已由管理员 "
-                                    + admin.displayName() + " 修改：" + describe(changes)));
+                                    + admin.displayName() + " 修改：" + describe(changes, worklog, request)));
         }
-        return new Correction(mapper.selectById(id), changes);
+        return new Correction(saved, changes);
     }
 
     private static void track(Map<String, Object> changes, String field, Object before, Object after) {
@@ -355,18 +417,47 @@ public class WorklogService {
         }
     }
 
-    private static final Map<String, String> CORRECTION_LABELS = Map.of(
-            "memberName", "姓名", "memberStudentId", "学号", "workDate", "工作日期",
-            "shootingMinutes", "拍摄（分钟）", "retouchingMinutes", "修图（分钟）", "remark", "说明");
+    private static final Map<String, String> CORRECTION_LABELS = Map.ofEntries(
+            Map.entry("memberName", "姓名"), Map.entry("memberStudentId", "学号"),
+            Map.entry("workDate", "工作日期"), Map.entry("shootingMinutes", "拍摄（分钟）"),
+            Map.entry("retouchingMinutes", "修图（分钟）"), Map.entry("remark", "说明"),
+            Map.entry("status", "状态"), Map.entry("requestId", "关联需求"),
+            Map.entry("customProjectTitle", "自定义选题"), Map.entry("rejectReason", "退回原因"));
 
-    private static String describe(Map<String, Object> changes) {
+    private static final Map<String, String> STATUS_LABELS = Map.of(
+            "DRAFT", "草稿", "SUBMITTED", "待确认", "CONFIRMED", "已确认", "REJECTED", "已退回");
+
+    private String describe(Map<String, Object> changes, WorklogEntity before, PhotoRequestEntity after) {
         return changes.entrySet().stream().map(entry -> {
+            String key = entry.getKey();
             // 说明最长 1000 字，新旧两段拼进来会撑爆通知正文（同样 1000 字）；原文在审计详情里。
-            if (entry.getKey().equals("remark")) return "说明已修改";
+            if (key.equals("remark")) return "说明已修改";
+            if (key.equals("rejectReason")) return "退回原因已修改";
             Map<?, ?> change = (Map<?, ?>) entry.getValue();
-            return CORRECTION_LABELS.get(entry.getKey()) + " " + display(change.get("from"))
-                    + " → " + display(change.get("to"));
+            Object from = change.get("from");
+            Object to = change.get("to");
+            if (key.equals("status")) {
+                from = from == null ? null : STATUS_LABELS.get(from.toString());
+                to = STATUS_LABELS.get(to.toString());
+            } else if (key.equals("requestId")) {
+                // 通知里写需求标题，id 只进审计详情。
+                from = requestTitle(before.getRequestId());
+                to = after == null ? null : after.getTitle();
+            }
+            return CORRECTION_LABELS.get(key) + " " + display(abbreviate(from)) + " → " + display(abbreviate(to));
         }).collect(Collectors.joining("；"));
+    }
+
+    private String requestTitle(Long requestId) {
+        if (requestId == null) return null;
+        PhotoRequestEntity request = requestMapper.selectById(requestId);
+        return request == null ? "已删除的需求" : request.getTitle();
+    }
+
+    /** 标题和自定义选题最长 200 字，通知正文只有 1000 字，拼进来时截短；原文在审计详情里。 */
+    private static Object abbreviate(Object value) {
+        if (value instanceof String text && text.length() > 40) return text.substring(0, 40) + "…";
+        return value;
     }
 
     private static String display(Object value) {
@@ -402,16 +493,17 @@ public class WorklogService {
         worklogs.forEach(worklog -> {
             UserEntity member = users.get(worklog.getUserId());
             worklog.setUserDisplayName(member == null ? "已删除的成员" : member.getDisplayName());
-            if (worklog.getRequestId() == null) {
-                // requestTitle 如实留空：这条工时没有需求，前端按 shareLinkId 显示成「上传链接」。
+            if (worklog.getShareLinkId() != null) {
+                // 前端按 shareLinkId 显示成「上传链接」。管理员可能给它挂上了一条需求，那时下面照样补需求标题。
                 ShareLinkOrigin origin = origins.get(worklog.getShareLinkId());
                 if (origin != null) {
                     worklog.setProjectId(origin.projectId());
                     worklog.setProjectTitle(origin.projectTitle());
                     worklog.setShareLinkName(origin.linkName());
                 }
-                return;
             }
+            // requestTitle 如实留空：这条工时没有需求。
+            if (worklog.getRequestId() == null) return;
             PhotoRequestEntity request = requests.get(worklog.getRequestId());
             worklog.setRequestTitle(request == null ? "已删除的需求" : request.getTitle());
         });
@@ -493,7 +585,8 @@ public class WorklogService {
      * 被退回的由申报人在上传页重新申报一条。</p>
      */
     private void requireInAppWorklog(WorklogEntity worklog) {
-        if (worklog.getRequestId() == null) {
+        // 管理员可以给链接申报的工时挂上一条需求（correct），它仍是链接申报的，所以也看 share_link_id。
+        if (worklog.getRequestId() == null || worklog.getShareLinkId() != null) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
                     "通过上传链接申报的工时不能在站内修改，请让申报人在上传页重新申报");
         }
@@ -586,7 +679,15 @@ public class WorklogService {
 
     /** 管理员更正工时的新值，见 {@link #correct}。 */
     public record CorrectionCommand(String memberName, String memberStudentId, LocalDate workDate,
-                                    int shootingMinutes, int retouchingMinutes, String remark) {
+                                    int shootingMinutes, int retouchingMinutes, String remark,
+                                    WorklogStatus status, Long requestId, boolean clearRequest,
+                                    String customProjectTitle, String rejectReason) {
+        /** 只改身份、日期、时长、说明；状态、需求、自定义选题都不动。 */
+        public CorrectionCommand(String memberName, String memberStudentId, LocalDate workDate,
+                                 int shootingMinutes, int retouchingMinutes, String remark) {
+            this(memberName, memberStudentId, workDate, shootingMinutes, retouchingMinutes, remark,
+                    null, null, false, null, null);
+        }
     }
 
     /** @param changes 改了的字段，{@code 字段名 → {from, to}}；什么都没改时为空，也不写库 */

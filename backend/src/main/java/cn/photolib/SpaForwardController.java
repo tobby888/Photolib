@@ -62,4 +62,13 @@ public class SpaForwardController {
     String forwardToApplication() {
         return "forward:/index.html";
     }
+
+    /**
+     * 站点图标只有 {@code favicon.svg}（前端 {@code public/}，打包后在 static 根目录）。
+     * 不读 {@code <link rel="icon">} 的客户端仍会直接请求 {@code /favicon.ico}，转过去而不是回 404。
+     */
+    @GetMapping("/favicon.ico")
+    String favicon() {
+        return "redirect:/favicon.svg";
+    }
 }

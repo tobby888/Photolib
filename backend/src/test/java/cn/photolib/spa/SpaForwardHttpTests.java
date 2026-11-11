@@ -15,7 +15,9 @@ import java.util.stream.Stream;
 
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.forwardedUrl;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
@@ -84,6 +86,17 @@ class SpaForwardHttpTests {
         return SPA_PATHS.stream().map(path -> DynamicTest.dynamicTest(path, () -> mvc.perform(get(path))
                 .andExpect(status().isOk())
                 .andExpect(forwardedUrl("/index.html"))));
+    }
+
+    /** 站点图标对匿名可读：登录页就要显示。/favicon.ico 转到唯一的 favicon.svg，不再 404。 */
+    @Test
+    void faviconIsServedAnonymously() throws Exception {
+        mvc.perform(get("/favicon.ico"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/favicon.svg"));
+        // favicon.svg 是打包时才进 static 的前端文件，测试 classpath 里可能没有；这里只验它不被鉴权挡住。
+        mvc.perform(get("/favicon.svg"))
+                .andExpect(result -> assertThat(result.getResponse().getStatus()).isNotEqualTo(401));
     }
 
     /**

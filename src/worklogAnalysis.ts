@@ -190,7 +190,8 @@ export interface AnalysisRow {
   status: string
   requestId?: string | number | null
   requestTitle?: string | null
-  projectId: string | number
+  /** 管理员写了自定义选题的工时没有选题 id，{@link projectTitle} 是自定义选题名。 */
+  projectId?: string | number | null
   projectTitle?: string | null
   campusId?: string | number | null
   campusName?: string | null
