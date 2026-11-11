@@ -133,6 +133,29 @@ class WorklogCorrectionHttpTests {
                 .andExpect(status().isBadRequest());
     }
 
+    /** 不关联需求：POST /worklogs，自定义选题必填，工作人员可以是任意校区的。部长没有「向任意需求申报」，403。 */
+    @Test
+    void filingWithoutARequest() throws Exception {
+        jdbc.sql("INSERT INTO campus(id, code, name) VALUES (9879, 'CORR-HTTP-2', '另一个校区')").update();
+        jdbc.sql("""
+                INSERT INTO campus_member(id, campus_id, student_id, name, enabled)
+                VALUES (9880, 9879, 'S2026-0010', '王五', TRUE)
+                """).update();
+        String body = """
+                {"workDate":"%s","memberContactId":9880,"shootingMinutes":30,"retouchingMinutes":0,
+                 "remark":"","status":"SUBMITTED","customProjectTitle":"迎新晚会"}
+                """.formatted(LocalDate.now().minusDays(1));
+
+        mvc.perform(as("admin", post("/api/v1/worklogs").contentType(MediaType.APPLICATION_JSON).content(body)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.requestId").doesNotExist())
+                .andExpect(jsonPath("$.data.memberName").value("王五"))
+                .andExpect(jsonPath("$.data.customProjectTitle").value("迎新晚会"));
+        mvc.perform(as("admin", post("/api/v1/worklogs").contentType(MediaType.APPLICATION_JSON)
+                        .content(body.replace("迎新晚会", ""))))
+                .andExpect(status().isBadRequest());
+    }
+
     private MockHttpServletRequestBuilder as(String token, MockHttpServletRequestBuilder builder) {
         return builder.header("Authorization", "Bearer " + token).with(request -> {
             request.setServletPath(request.getRequestURI());

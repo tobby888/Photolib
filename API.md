@@ -1500,6 +1500,7 @@ UPLOADING -> PROCESSING -> WAITING_METADATA -> PROCESSING
 | 方法与路径 | 权限 | 请求/查询 | 返回 |
 | --- | --- | --- | --- |
 | `POST /requests/{requestId}/worklogs` | A/C | `WorklogRequest` | `WorklogEntity` |
+| `POST /worklogs` | 持有 `WORKLOG_SUBMIT_ANY` 且不限校区（默认管理员） | `WorklogRequest`，`customProjectTitle` 必填 | `WorklogEntity`（不关联需求） |
 | `GET /worklogs` | A/M/C | 分页和筛选 | `PageData<WorklogEntity>` |
 | `PUT /worklogs/{id}?version=1` | 本人或 A | `WorklogRequest` | `WorklogEntity`，状态重置为 `DRAFT` |
 | `POST /worklogs/{id}/submit` | 本人或 A | `{ version }` | `WorklogEntity` |
@@ -1527,7 +1528,8 @@ UPLOADING -> PROCESSING -> WAITING_METADATA -> PROCESSING
 - `workDate` 不能晚于今天。
 - 两类分钟均为 `0..1440`，且不能同时为 0。
 - `remark` 最多 1000。
-- `customProjectTitle` 选填，最多 200，去首尾空白，空串存为空。填了这条工时就算在这个自定义选题下（同名合并），按 `workDate` 计入清算期，不再算进需求所属选题；口径见下面「管理员更正」。`PUT /worklogs/{id}`（改草稿 / 被退回的）同样收这个字段，不传即清空。需求仍然必填，校区、参与人、选题是否结束的校验不变。
+- `customProjectTitle` 选填，最多 200，去首尾空白，空串存为空。填了这条工时就算在这个自定义选题下（同名合并），按 `workDate` 计入清算期，不再算进需求所属选题；口径见下面「管理员更正」。`PUT /worklogs/{id}`（改草稿 / 被退回的）同样收这个字段，不传即清空。走 `POST /requests/{id}/worklogs` 时需求必填，校区、参与人、选题是否结束的校验不变。
+- **不关联需求（`POST /worklogs`，V79）**：系统里没有这个选题、也就没有需求时用。`customProjectTitle` 必填；`memberContactId` 可以是**任意校区**的启用通讯录成员（停用成员 / 停用校区仍然拒绝）。只给持有 `WORKLOG_SUBMIT_ANY` 且不限校区的账号（默认管理员），其他账号 `403`：这类工时和链接申报的一样没有校区，校区范围账号看不到。之后改草稿（`PUT /worklogs/{id}`）同样从任意校区选人、不能清掉自定义选题；提交不查选题状态。管理员更正时，填了自定义选题的站内工时也可以 `clearRequest` 清掉需求，需求、链接、自定义选题至少要留一样。
 - `memberContactId` 必须是需求校区的已启用通讯录成员；服务端把姓名/学号快照写入工时。
 - C 必须是需求参与人；A 可代建。
 - 创建时只有传 `DRAFT` 会保存为草稿，传其他任意工时枚举都会保存为 `SUBMITTED`。客户端只应发送 `DRAFT` 或 `SUBMITTED`。

@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
-import { campusNameOf, membersForRequest, requestSelectOptions } from '../src/worklogForm.ts'
+import {
+  campusNameOf, canFileWithoutRequest, membersForRequest, memberOptionsAnyCampus, requestSelectOptions,
+} from '../src/worklogForm.ts'
 import type { Campus, CampusMember, PhotoRequest } from '../src/types.ts'
 
 const base = { createdAt: '', updatedAt: '', version: 1 }
@@ -51,11 +53,26 @@ test('候选需求跨校区时标题后带校区名，只有一个校区时不�
 test('工时表单的工作人员下拉按所选需求的校区取数', async () => {
   const page = await readFile(new URL('../src/pages/WorklogsPage.tsx', import.meta.url), 'utf8')
   // 回归点：之前直接把整个通讯录塞进下拉，管多个校区的负责人会看到重复的人并可能选错校区。
-  assert.match(page, /options=\{memberOptions\.map\(/)
+  assert.match(page, /: memberOptions\.map\(/)
   assert.doesNotMatch(page, /options=\{directory\.map\(/)
   assert.match(page, /const memberOptions = membersForRequest\(directory, selectedRequest\)/)
   // 需求所属校区要显示出来，换需求时要清掉不属于新校区的已选成员。
   assert.match(page, /需求所属校区：/)
   assert.match(page, /onValuesChange=\{onFormValuesChange\}/)
   assert.match(page, /form\.setFieldValue\('memberContactId', undefined\)/)
+})
+
+test('不关联需求的工作人员候选是全部校区的通讯录，标签带校区名', () => {
+  assert.deepEqual(memberOptionsAnyCampus(directory, campuses), [
+    { value: '22', label: '李四 · 2023002 · 东校区' },
+    { value: '21', label: '张三 · 2023001 · 东校区' },
+    { value: '11', label: '张三 · 2023001 · 主校区' },
+  ])
+})
+
+test('只有能向任意需求申报、且不限校区的账号能不关联需求填报', () => {
+  assert.equal(canFileWithoutRequest({ dataScope: 'GLOBAL', permissions: ['WORKLOG_SUBMIT', 'WORKLOG_SUBMIT_ANY'] }), true)
+  assert.equal(canFileWithoutRequest({ dataScope: 'CAMPUS', permissions: ['WORKLOG_SUBMIT', 'WORKLOG_SUBMIT_ANY'] }), false)
+  assert.equal(canFileWithoutRequest({ dataScope: 'GLOBAL', permissions: ['WORKLOG_SUBMIT'] }), false)
+  assert.equal(canFileWithoutRequest(null), false)
 })

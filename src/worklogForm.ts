@@ -25,3 +25,20 @@ export const requestSelectOptions = (requests: PhotoRequest[], campuses: Campus[
     label: showCampus ? `${request.title} · ${campusNameOf(campuses, request.campusId)}` : request.title,
   }))
 }
+
+/**
+ * 能不能「不关联需求、只写自定义选题」地填报：要能向任意需求申报工时（默认只有管理员），而且不限校区。
+ * 这类工时不属于任何校区，校区范围账号建了也看不到；后端 `createWithoutRequest` 是同一条判断。
+ */
+export const canFileWithoutRequest = (user: { dataScope?: string; permissions?: readonly string[] } | null | undefined) =>
+  Boolean(user && user.dataScope !== 'CAMPUS' && user.permissions?.includes('WORKLOG_SUBMIT_ANY'))
+
+/**
+ * 不关联需求时的工作人员候选：全部校区的通讯录。同一个学生在几个校区各有一行，标签里一律带校区名，
+ * 选哪一行都行（后端 `getAnyForWorklog` 只要求是启用成员），按姓名、校区排。
+ */
+export const memberOptionsAnyCampus = (directory: CampusMember[], campuses: Campus[]) =>
+  directory
+    .map(member => ({ member, campus: campusNameOf(campuses, member.campusId) }))
+    .sort((a, b) => a.member.name.localeCompare(b.member.name, 'zh-CN') || a.campus.localeCompare(b.campus, 'zh-CN'))
+    .map(({ member, campus }) => ({ value: member.id, label: `${member.name} · ${member.studentId} · ${campus}` }))

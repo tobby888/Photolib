@@ -214,13 +214,14 @@ class WorklogCorrectionTests {
     }
 
     @Test
-    void inAppWorklogsKeepARequest() {
+    void inAppWorklogsKeepARequestUnlessTheyHaveACustomProject() {
         long id = insertWorklog("CONFIRMED");
 
+        // 不填自定义选题就不能清掉需求；填了可以（见 WorklogWithoutRequestTests）。
         assertThatThrownBy(() -> worklogs.correct(id, new WorklogService.CorrectionCommand(
                 "张三", "S2021-0001", LocalDate.now().minusDays(1), 60, 30, null,
-                null, null, true, "迎新晚会", null), 1, admin))
-                .isInstanceOf(BusinessException.class).hasMessageContaining("必须关联一条需求");
+                null, null, true, null, null), 1, admin))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("要么关联一条需求");
         assertThatThrownBy(() -> worklogs.correct(id, new WorklogService.CorrectionCommand(
                 "张三", "S2021-0001", LocalDate.now().minusDays(1), 60, 30, null,
                 null, base + 999, false, null, null), 1, admin))
