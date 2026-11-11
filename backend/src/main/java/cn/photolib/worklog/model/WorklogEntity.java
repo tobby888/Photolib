@@ -1,6 +1,7 @@
 package cn.photolib.worklog.model;
 
 import cn.photolib.common.model.BaseEntity;
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Getter;
@@ -31,7 +32,9 @@ public class WorklogEntity extends BaseEntity {
     /**
      * 管理员手写的选题名（Flyway V78）。非空时这条工时在统计、导出、清算单、工资计算里算在这个选题下，
      * 不再算进需求 / 链接所属的真实选题，清算期按 {@link #workDate} 判断。见 {@code WorklogProjectSql}。
+     * 填报人填报时可写，管理员修改时可改。{@code ALWAYS}：填报人改草稿时清空它，{@code updateById} 也要写进 NULL。
      */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String customProjectTitle;
     private WorklogStatus status;
     private String rejectReason;
