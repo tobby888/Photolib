@@ -98,10 +98,19 @@ jobs:
           key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
           restore-keys: npm-${{ runner.os }}-
 
+      # runner 偶尔连不上 Ubuntu 软件源（DNS 解析失败，PR #192 就是在这一步红的），
+      # 整步重试几次，别让一次网络抖动把整条流水线判死。
       - name: 安装原生构建工具链
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build nasm
+          for attempt in 1 2 3; do
+            if sudo apt-get update -o Acquire::Retries=3 \
+              && sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 ninja-build nasm; then
+              exit 0
+            fi
+            echo "::warning::apt 安装失败（第 $attempt 次），稍后重试"
+            sleep $((attempt * 30))
+          done
+          exit 1
 
       - name: 缓存 Zig
         uses: actions/cache@v4
@@ -218,7 +227,7 @@ jobs:
     needs: [frontend, package]
     if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45  # 上传最多重试 3 次 × 12 分钟
     # 部署串行执行，且不取消正在进行的部署，避免半途停服。
     concurrency:
       group: deploy-production
@@ -239,20 +248,36 @@ jobs:
       - name: 准备 SSH
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends sshpass
+          for attempt in 1 2 3; do
+            if sudo apt-get update -o Acquire::Retries=3 \
+              && sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 sshpass; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then exit 1; fi
+            echo "::warning::apt 安装失败（第 $attempt 次），稍后重试"
+            sleep $((attempt * 30))
+          done
           jar=$(ls dist-jar/photolib-backend-*.jar)
           echo "JAR_PATH=$jar" >> "$GITHUB_ENV"
           echo "JAR_NAME=$(basename "$jar")" >> "$GITHUB_ENV"
-          echo "SSH_OPTS=-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$RUNNER_TEMP/known_hosts -o ServerAliveInterval=15" >> "$GITHUB_ENV"
+          echo "SSH_OPTS=-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$RUNNER_TEMP/known_hosts -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=4" >> "$GITHUB_ENV"
 
       # 先把新 JAR 传到部署目录下的临时文件名（不匹配 photolib-backend*），
       # 这样上传失败时线上服务完全不受影响，停服窗口也只剩替换文件的那一下。
+      # 到服务器的上行带宽时好时坏（同一个 JAR 有时 17 秒，有时 6 分钟，#191 的部署卡在这里被取消）：
+      # 每次最多传 12 分钟，失败或超时就重传。传的是临时文件名，重传期间线上服务不受影响。
       - name: 上传新 JAR
         run: |
-          set -euo pipefail
-          sshpass -e scp $SSH_OPTS "$JAR_PATH" \
-            "$SERVER_USER@$SERVER_HOST:$DEPLOY_DIR/.upload-$GITHUB_RUN_ID.jar"
+          set -uo pipefail
+          for attempt in 1 2 3; do
+            if timeout 720 sshpass -e scp $SSH_OPTS "$JAR_PATH" \
+              "$SERVER_USER@$SERVER_HOST:$DEPLOY_DIR/.upload-$GITHUB_RUN_ID.jar"; then
+              exit 0
+            fi
+            echo "::warning::上传 JAR 失败或超时（第 $attempt 次），重试"
+            sleep 15
+          done
+          exit 1
 
       - name: 切换版本并重启服务
         run: |
