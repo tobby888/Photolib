@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Navigate, useParams } from 'react-router-dom'
 import { ApiError } from '../api'
 import { BrandGlyph, useBranding } from '../branding'
+import SharedOwnUploads from '../SharedOwnUploads'
 import SiteFooter from '../SiteFooter'
 import TagSelect from '../TagSelect'
 import {
@@ -129,6 +130,8 @@ export default function SharedUploadPage() {
   const [review, setReview] = useState<TagReview | null>(null)
   const [worklogs, setWorklogs] = useState<ShareGuestWorklog[]>([])
   const [declaring, setDeclaring] = useState(false)
+  /** 每有一张（或一包）处理完就加一，「我传的图片」跟着刷新。 */
+  const [ownUploadsSignal, setOwnUploadsSignal] = useState(0)
   const worklogDate = Form.useWatch('workDate', worklogForm)
   /** 「这批照片的标签」：入队时抄到每一张上，ZIP 整包共用。 */
   const [batchTags, setBatchTags] = useState<string[]>([])
@@ -347,6 +350,7 @@ export default function SharedUploadPage() {
       const status = await shareUploadApi.status(token, guestSession, photoId)
       if (status.status === 'AVAILABLE' || status.status === 'ARCHIVED') {
         patch(item.key, { stage: 'done', percent: 100 })
+        setOwnUploadsSignal(current => current + 1)
         return
       }
       if (status.status === 'UPLOADING') {
@@ -522,6 +526,7 @@ export default function SharedUploadPage() {
       const finished = await pollBatch(session, ticket.batchId,
         batch => isTerminalBatchStatus(batch.status))
       const outcome = describeBatchOutcome(finished)
+      if (finished.successCount) setOwnUploadsSignal(current => current + 1)
       if (outcome.tone === 'success') message.success(outcome.message)
       else if (outcome.tone === 'warning') message.warning(outcome.message)
       else message.error(outcome.message)
@@ -717,7 +722,7 @@ export default function SharedUploadPage() {
               : `一个压缩包最大 ${describeBytes(uploadLimits.PHOTO_ZIP_MAX_BYTES)}，`
                 + `里面最多 ${uploadLimits.PHOTO_ZIP_MAX_IMAGES} 张 JPG / PNG / GIF，`
                 + `单张不超过 ${describeBytes(uploadLimits.PHOTO_IMAGE_MAX_BYTES)}；包里的其他文件会被自动跳过。`}
-            照片会直接进入这个选题的图库，由选题负责人后续处理；这里看不到别人传了什么。
+            照片会直接进入这个选题的图库，由选题负责人后续处理；自己传的可以在下面「我传的图片」里查看和删除，看不到别人传了什么。
           </Typography.Paragraph>
 
           {mode === 'files' ? <>
@@ -821,6 +826,12 @@ export default function SharedUploadPage() {
           </>}
         </Space>
       </Card>
+
+      {/* 用户反馈要能删掉自己传错的图：按学号认人，只列当前拍摄者通过这条链接传成功的。
+          要等确认了是上传链接再挂：浏览链接调它一律 403，而这一页对 403 的处理是清会话。 */}
+      {access?.purpose === 'UPLOAD' && session &&
+        <SharedOwnUploads token={token} session={session} access={access}
+          onGuestError={handleGuestError} refreshSignal={ownUploadsSignal} />}
 
       {/* 最后一步：传完图申报这次的工时。排在上传之后，是因为它本来就是上传之后的事——
           服务端也要求先通过这条链接交过图。选题只收公共照片时没有人能报，整张卡片不出现。 */}

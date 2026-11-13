@@ -3,7 +3,8 @@ import { waitForExportJob, type ExportJobView, type WaitOptions } from './batchD
 import type { ProjectPhotoFilters } from './photoTags'
 import type {
   EntityId, PageData, ShareGuestAccess, ShareGuestSession, SharePhoto, ShareLinkPurpose,
-  ShareArchiveTicket, ShareGuestWorklog, ShareUploadBatch, ShareUploadTicket, ShareUploadedPhoto,
+  ShareArchiveTicket, ShareGuestWorklog, ShareOwnUpload, ShareOwnUploadsDeleted, ShareUploadBatch,
+  ShareUploadTicket, ShareUploadedPhoto,
 } from './types'
 
 /** 访客图片列表的查询条件：分页、关键字，加上与选题详情页同一组筛选。 */
@@ -17,6 +18,16 @@ export interface SharePhotoQuery extends Partial<ProjectPhotoFilters> {
 export interface ShareFilterOptions {
   tags: string[]
   photographers: string[]
+}
+
+/** 「我传的图片」的查询条件：分页、关键字（标题、标签）、标签同时包含、拍摄日期两端含整天。 */
+export interface ShareOwnUploadQuery {
+  page: number
+  pageSize: number
+  keyword?: string
+  tags?: string[]
+  takenFrom?: string | null
+  takenTo?: string | null
 }
 
 /** 与后端 `ProjectSharePublicController.SESSION_HEADER` 必须一致。 */
@@ -202,6 +213,26 @@ export const shareUploadApi = {
   }) =>
     api<ShareGuestWorklog>({
       method: 'POST', url: `/public/shares/${token}/worklogs`, data: declaration, ...guest(session),
+    }),
+
+  // 「我传的图片」：只有这条链接上、记在当前拍摄者学号名下、处理完的图片。切换拍摄者后看到的是那个人的。
+  ownUploads: (token: string, session: string, query: ShareOwnUploadQuery) =>
+    api<PageData<ShareOwnUpload>>({
+      url: `/public/shares/${token}/my-uploads`,
+      params: qs({ ...query, tags: query.tags?.length ? query.tags : undefined }),
+      // 与相册列表同理：Spring 的 List 参数只认 tags=a&tags=b。
+      paramsSerializer: { indexes: null },
+      ...guest(session),
+    }),
+
+  ownUploadFilterOptions: (token: string, session: string) =>
+    api<{ tags: string[] }>({ url: `/public/shares/${token}/my-uploads/filter-options`, ...guest(session) }),
+
+  // 删除自己的图片（多选，一次最多 MAX_OWN_DELETE 张）。被采用的、已加入其他选题的跳过并计数。
+  deleteOwnUploads: (token: string, session: string, photoIds: EntityId[]) =>
+    api<ShareOwnUploadsDeleted>({
+      method: 'POST', url: `/public/shares/${token}/my-uploads/delete`,
+      data: { photoIds }, ...guest(session),
     }),
 
   // 自己在这条链接上申报过的工时和审核结果。退回原因只有从这里才到得了申报人手上：

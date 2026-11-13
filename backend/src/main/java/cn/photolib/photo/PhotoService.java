@@ -822,6 +822,19 @@ public class PhotoService {
     }
 
     /**
+     * 上传链接的访客删除自己传的图片。
+     *
+     * <p>同样绕开 {@link #validateDelete}：访客没有账号，凭据是「这条链接 + 会话当前拍摄者的学号」，
+     * 归属、已被采用、已加入其他选题、选题是否还开着都由
+     * {@code ProjectShareUploadService.deleteOwnUploads} 在调这里之前判完。删除本身与站内同一套：
+     * 软删行，再删成品图、缩略图和原图。</p>
+     */
+    @Transactional
+    public void deleteForShareUploader(PhotoEntity photo) {
+        performDelete(photo);
+    }
+
+    /**
      * 展示用的短期签名「大图」地址：指向成品图，不带 {@code Content-Disposition}，
      * 因此浏览器会内联渲染而不是当附件下载（{@link #download} 恰恰相反）。
      *

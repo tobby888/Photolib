@@ -508,6 +508,33 @@ export interface ShareUploadBatchItem {
   folderPath?: string | null
 }
 
+/**
+ * 上传链接「我传的图片」里的一张：这条链接上、记在会话当前拍摄者学号名下、已经处理完的图片。
+ * 对应后端 `ProjectShareUploadService.OwnUpload`；没有学号、上传账号和对象键。
+ */
+export interface ShareOwnUpload {
+  id: EntityId
+  title?: string | null
+  thumbnailUrl?: string | null
+  takenAt?: string | null
+  createdAt?: string | null
+  size?: number | null
+  width?: number | null
+  height?: number | null
+  /** 除保留标签以外的标签。 */
+  tags: string[]
+  /** 现在能不能删；不能删时 lockedReason 说明原因（已被采用 / 已加入其他选题）。 */
+  deletable: boolean
+  lockedReason?: string | null
+}
+
+/** 删除自己的图片的结果：删掉、跳过（被采用 / 在其他选题 / 处理中）、之前就删掉了的张数。 */
+export interface ShareOwnUploadsDeleted {
+  deleted: number
+  skipped: number
+  alreadyDeleted: number
+}
+
 /** 访客刚传的那一张当下的处理结果。失败时 status 会被打回 UPLOADING 并带上原因。 */
 export interface ShareUploadedPhoto {
   photoId: EntityId

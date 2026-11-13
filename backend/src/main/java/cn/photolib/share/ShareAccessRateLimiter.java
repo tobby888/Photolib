@@ -94,7 +94,12 @@ public class ShareAccessRateLimiter {
          * 切换上传链接会话的拍摄者。一个人替两三个人交图，来回切几次就够了；
          * 额度不必像上传那么宽，但也不能紧到让人在两个身份之间切换时撞上。
          */
-        UPLOADER(300, 60, Duration.ofMinutes(10));
+        UPLOADER(300, 60, Duration.ofMinutes(10)),
+        /**
+         * 上传者删除自己传的图片。一次请求最多删 200 张，删错了、传重了才会用到，
+         * 额度与切换拍摄者同一档：够一个人分几批删干净，不够把这个匿名写入口当成批量清空工具。
+         */
+        DELETE_OWN(300, 60, Duration.ofMinutes(10));
 
         private final int linkLimit;
         private final int addressLimit;
