@@ -334,6 +334,101 @@ class ProjectShareHttpTests {
     }
 
     /**
+     * 「我传的图片」：列表、筛选参数绑定、多选删除和审计详情都在完整过滤器链上过一遍。
+     * 业务规则的细节在 {@code ProjectShareOwnUploadsTests}。
+     */
+    @Test
+    void anAnonymousUploaderListsFiltersAndDeletesTheirOwnPhotos() throws Exception {
+        AuthenticatedUser minister = new AuthenticatedUser(MINISTER_ID, "share-http-minister",
+                "分享部长", UserRole.MINISTER, null, false);
+        ProjectEntity eventProject = projectService.create("HTTP 自管选题", "说明",
+                ProjectStatus.ACTIVE, List.of("舞台"), ProjectType.EVENT, minister);
+        ProjectShareService.ShareLinkView link = shareService.create(eventProject.getId(),
+                new ProjectShareService.CreateCommand(ShareLinkPurpose.UPLOAD, "摄影组",
+                        "share-pass", false, false, null), minister).link();
+        String base = "/api/v1/public/shares/" + link.token();
+        long mine = PHOTO_ID + 10;
+        long other = PHOTO_ID + 11;
+        long theirs = PHOTO_ID + 12;
+        insertLinkPhoto(mine, eventProject.getId(), link.id(), "20230001", "[\"舞台\"]", "2026-06-02 10:00:00");
+        insertLinkPhoto(other, eventProject.getId(), link.id(), "20230001", "[]", "2026-06-05 10:00:00");
+        insertLinkPhoto(theirs, eventProject.getId(), link.id(), "20230002", "[\"舞台\"]", "2026-06-02 10:00:00");
+
+        String body = mvc.perform(anonymous(post(base + "/sessions"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"password\":\"share-pass\",\"uploaderName\":\"张小拍\","
+                                + "\"uploaderStudentId\":\"20230001\"}"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        String session = json.readTree(body).path("data").path("sessionToken").asText();
+
+        mvc.perform(anonymous(get(base + "/my-uploads")))
+                .andExpect(status().isForbidden());
+        mvc.perform(anonymous(get(base + "/my-uploads"))
+                        .header(ProjectSharePublicController.SESSION_HEADER, session))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(2))
+                .andExpect(jsonPath("$.data.items[0].thumbnailUrl").isNotEmpty())
+                .andExpect(jsonPath("$.data.items[0].deletable").value(true))
+                // 学号和对象键不出现在访客视图里。
+                .andExpect(jsonPath("$.data.items[0].photographerStudentId").doesNotExist())
+                .andExpect(jsonPath("$.data.items[0].objectKey").doesNotExist());
+        mvc.perform(anonymous(get(base + "/my-uploads"))
+                        .queryParam("tags", "舞台")
+                        .queryParam("takenFrom", "2026-06-02").queryParam("takenTo", "2026-06-02")
+                        .header(ProjectSharePublicController.SESSION_HEADER, session))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(1))
+                .andExpect(jsonPath("$.data.items[0].id").value(mine));
+        mvc.perform(anonymous(get(base + "/my-uploads/filter-options"))
+                        .header(ProjectSharePublicController.SESSION_HEADER, session))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.tags[0]").value("舞台"));
+
+        // 空选择是 400；混进别人名下的图整批 409（不是 403，访客页不会因此退回密码页）。
+        mvc.perform(anonymous(post(base + "/my-uploads/delete"))
+                        .header(ProjectSharePublicController.SESSION_HEADER, session)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"photoIds\":[]}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(anonymous(post(base + "/my-uploads/delete"))
+                        .header(ProjectSharePublicController.SESSION_HEADER, session)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"photoIds\":[" + mine + "," + theirs + "]}"))
+                .andExpect(status().isConflict());
+        mvc.perform(anonymous(post(base + "/my-uploads/delete"))
+                        .header(ProjectSharePublicController.SESSION_HEADER, session)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"photoIds\":[" + mine + "," + other + "]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.deleted").value(2))
+                .andExpect(jsonPath("$.data.skipped").value(0));
+
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM photo WHERE id IN (:ids) AND deleted = 0")
+                .param("ids", List.of(mine, other, theirs)).query(Integer.class).single()).isEqualTo(1);
+        var details = jdbc.sql("""
+                SELECT detail_json FROM audit_log
+                WHERE action_name = '通过上传链接删除自己的图片' AND success = TRUE
+                """).query(String.class).list();
+        assertThat(details).hasSize(1);
+        assertThat(details.getFirst()).contains("photoIds").contains(String.valueOf(mine)).contains("deleted");
+    }
+
+    private void insertLinkPhoto(long id, Long projectId, Long linkId, String studentId, String tagsJson,
+                                 String takenAt) {
+        jdbc.sql("""
+                INSERT INTO photo (id, title, project_id, photographer_student_id, photographer_name, uploaded_by,
+                    share_link_id, taken_at, size, content_type, object_key, sha256, status, tags_json)
+                VALUES (:id, 'link.jpg', :project, :student, '某同学', :user, :link, CAST(:takenAt AS TIMESTAMP),
+                    2048, 'image/jpeg', :key, :sha, 'AVAILABLE', :tags)
+                """).param("id", id).param("project", projectId).param("student", studentId)
+                .param("user", MINISTER_ID).param("link", linkId).param("takenAt", takenAt)
+                .param("key", "photos/2026/http-own-" + id + ".jpg").param("sha", String.format("%064x", id))
+                .param("tags", tagsJson).update();
+        jdbc.sql("INSERT INTO photo_project (photo_id, project_id) VALUES (:photo, :project)")
+                .param("photo", id).param("project", projectId).update();
+    }
+
+    /**
      * 申报工时走的也是不带令牌的访客通道：创作选题的上传链接、permitAll、会话头、
      * 字段校验，以及「先交图再申报」这条线，都在完整过滤器链上过一遍。
      */

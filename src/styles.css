@@ -2749,6 +2749,15 @@ body {
   justify-content: center;
   padding-top: 18px;
 }
+/* 上传页「我传的图片」：缩略图比相册墙小，手机上两列也看得清是哪张。 */
+/* 标题和操作按钮在手机上排不下一行：换行，别把标题挤成「我传…」。 */
+.own-uploads-card > .ant-card-head .ant-card-head-wrapper { flex-wrap: wrap; gap: 8px 16px; padding: 10px 0; }
+.own-uploads-card > .ant-card-head .ant-card-head-title { flex: 1 0 auto; }
+.own-uploads-card > .ant-card-head .ant-card-extra { margin-inline-start: auto; }
+.own-upload-grid { margin-bottom: 0; }
+.own-upload-grid .photo-cover { height: 150px; cursor: pointer; }
+.own-upload-grid .photo-card .ant-card-body { padding: 10px 12px; }
+.own-upload-grid .photo-card-tags { margin: 6px 0 4px; }
 /* 选图台要的是大图区，主体放宽到 1600px。 */
 .share-body.is-selecting { width: min(1600px, calc(100% - 28px)); padding-bottom: 32px; }
 .share-selection-actions {

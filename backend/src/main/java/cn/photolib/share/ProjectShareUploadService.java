@@ -1,6 +1,8 @@
 package cn.photolib.share;
 
+import cn.photolib.common.api.PageResponse;
 import cn.photolib.common.upload.ImageUploadPolicy;
+import cn.photolib.common.util.LikeFilter;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.uploadlimit.UploadLimit;
@@ -31,14 +33,19 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.text.Collator;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
@@ -78,6 +85,9 @@ import java.util.UUID;
  *   <li><b>上传者只能打选题的预设标签，只能动预设范围内的那部分。</b> 上传时整批选好，
  *       或者传完之后逐张改（只限记在当前拍摄者名下、已经处理完的图）。选题没设预设就不能打，
  *       保留标签 {@code deprecated} 也不能打——那是选片人的结论。见 {@link #guestTags}。</li>
+ *   <li><b>上传者能看到、能删的只有「这条链接 + 学号等于会话当前身份」的图片。</b> 这是上传链接上唯一
+ *       露出图片的地方，范围不能放宽到相册。已被采用的、已加入其他选题的跳过不删；选题不再收图后不能删。
+ *       见 {@link #ownUploads} / {@link #deleteOwnUploads}。</li>
  * </ol>
  */
 @Service
@@ -85,6 +95,10 @@ import java.util.UUID;
 public class ProjectShareUploadService {
     /** 一条上传链接最多收多少张。活动量级给得宽，但不能是无限——这是个匿名写入口。 */
     static final long MAX_UPLOADS_PER_LINK = 5_000L;
+    /** 「我传的图片」一次最多删多少张，与访客打包下载的上限一致。 */
+    static final int MAX_DELETE_PER_REQUEST = 200;
+    static final String LOCKED_ADOPTED = "已被采用，不能删除";
+    static final String LOCKED_ELSEWHERE = "已被加入其他选题，不能删除";
 
     private final ProjectShareService shareService;
     private final ProjectService projectService;
@@ -387,6 +401,182 @@ public class ProjectShareUploadService {
         return guestView(view.batch());
     }
 
+    // ------------------------------------------------------------------ 管理自己传的图片
+
+    /**
+     * 「我传的图片」：通过这条链接传进来、拍摄者学号等于会话当前身份、已经处理完（{@code AVAILABLE}）的图片，
+     * 带缩略图，按上传时间倒序分页。
+     *
+     * <p>这是上传链接上唯一能看到图片的地方，范围卡死在「本人 + 本链接」：上传链接被授权的是「往里放」，
+     * 不是「看相册里有什么」（{@code ProjectShareService.requireBrowseLink}），别人传的、站内传的一张都不出现。
+     * 学号是自报的，所以这道门与 {@link #updateTags} 一样挡的是同一条链接上的别人顺手动我的图，
+     * 不是冒名——链接和密码才是真正的凭据。公共照片不属于任何人，列表为空（删除时回 409）。</p>
+     *
+     * <p>筛选：关键字（标题、标签）、标签同时包含、拍摄日期两端都含整天，与相册访客页同一口径。
+     * 一个人在一条链接上最多几千张（{@link #MAX_UPLOADS_PER_LINK}），所以先取出 id 和标签在内存里按标签筛、
+     * 分页，只给当前这一页签缩略图地址。</p>
+     */
+    public PageResponse<OwnUpload> ownUploads(ProjectShareService.GuestContext context, int page, int pageSize,
+                                              OwnUploadFilter requested) {
+        ProjectShareLinkEntity link = shareService.requireUploadLink(context.link());
+        Uploader uploader = requireUploader(context);
+        if (uploader.isPublic()) return new PageResponse<>(List.of(), page, pageSize, 0, 0);
+        OwnUploadFilter filter = requested == null ? OwnUploadFilter.NONE : requested;
+        List<String> tags = PhotoTags.normalize(filter.tags());
+        List<Long> matches = ownAvailable(link, uploader, filter).stream()
+                .filter(photo -> tags.isEmpty() || PhotoTags.parse(photo.getTagsJson()).containsAll(tags))
+                .map(PhotoEntity::getId)
+                .toList();
+        long total = matches.size();
+        long totalPages = (total + pageSize - 1) / pageSize;
+        long from = Math.min((long) (page - 1) * pageSize, total);
+        List<Long> pageIds = matches.subList((int) from, (int) Math.min(from + pageSize, total));
+        if (pageIds.isEmpty()) return new PageResponse<>(List.of(), page, pageSize, total, totalPages);
+
+        Map<Long, PhotoEntity> rows = new HashMap<>();
+        photoMapper.selectBatchIds(pageIds).forEach(photo -> rows.put(photo.getId(), photo));
+        Set<Long> adopted = adoptedAnywhere(pageIds);
+        Set<Long> elsewhere = inOtherAlbums(link.getProjectId(), pageIds);
+        List<OwnUpload> items = new ArrayList<>();
+        for (Long id : pageIds) {
+            PhotoEntity photo = rows.get(id);
+            if (photo == null) continue;
+            String locked = adopted.contains(id) ? LOCKED_ADOPTED
+                    : elsewhere.contains(id) ? LOCKED_ELSEWHERE : null;
+            items.add(new OwnUpload(photo.getId(), photo.getTitle(), photoService.previewUrl(photo),
+                    photo.getTakenAt(), photo.getCreatedAt(), photo.getSize(), photo.getWidth(), photo.getHeight(),
+                    visibleTags(PhotoTags.parse(photo.getTagsJson())), locked == null, locked));
+        }
+        return new PageResponse<>(items, page, pageSize, total, totalPages);
+    }
+
+    /** 「我传的图片」标签筛选的候选：这些图片上用过的标签（不含保留标签），按出现次数、再按中文排序。 */
+    public OwnUploadFilterOptions ownUploadFilterOptions(ProjectShareService.GuestContext context) {
+        ProjectShareLinkEntity link = shareService.requireUploadLink(context.link());
+        Uploader uploader = requireUploader(context);
+        if (uploader.isPublic()) return new OwnUploadFilterOptions(List.of());
+        Map<String, Integer> counts = new HashMap<>();
+        ownAvailable(link, uploader, OwnUploadFilter.NONE).forEach(photo ->
+                visibleTags(PhotoTags.parse(photo.getTagsJson())).forEach(tag -> counts.merge(tag, 1, Integer::sum)));
+        Collator chinese = Collator.getInstance(Locale.CHINA);
+        return new OwnUploadFilterOptions(counts.keySet().stream()
+                .sorted(Comparator.<String>comparingInt(counts::get).reversed().thenComparing(chinese::compare))
+                .toList());
+    }
+
+    /**
+     * 删除自己通过这条链接传的图片（用户反馈：传错了、传重了要能自己删）。
+     *
+     * <p>先整批校验再删：任何一张不是这条链接传的、或记在别人名下（学号不等于会话当前身份），
+     * 整批 409——不能回 403/404，访客页会当成会话失效退回密码页。公共照片不属于任何人，不能在这里删。
+     * 选题不再收图之后也不能删：活动选题结束后就是选片和清理，那时候图片再少几张会让选片人的结论对不上。</p>
+     *
+     * <p>三类图片<b>跳过并计数</b>而不是整批失败（列表上已经标明了不能删）：已被采用的（任何选题，
+     * 与站内「已被采用的图片只能归档」一致）、已被加入其他选题相册的（那是站内的人另外挑过的，
+     * 删图会把那边一起删掉）、此刻不是 {@code AVAILABLE} 的（处理中途删掉会和压缩管线写成品撞上）。
+     * 已经删掉的算已删除（幂等，重复点一次不报错）。</p>
+     *
+     * <p>删除走站内同一套（{@link PhotoService#deleteForShareUploader}）。链接的已收张数
+     * （{@code upload_count}）不退：它是这个匿名写入口的硬上限，删了重传不该无限循环。</p>
+     */
+    @Transactional
+    public DeletedUploads deleteOwnUploads(ProjectShareService.GuestContext context, List<Long> photoIds) {
+        ProjectShareLinkEntity link = shareService.requireUploadLink(context.link());
+        requireOpenProject(link);
+        Uploader uploader = requireUploader(context);
+        if (uploader.isPublic()) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
+                    "公共照片不属于任何人，不能在这里删除；要管理自己传的图片，请先切换成本人");
+        }
+        List<Long> ids = photoIds == null ? List.of()
+                : photoIds.stream().filter(Objects::nonNull).distinct().toList();
+        if (ids.isEmpty()) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "请先选择要删除的图片");
+        }
+        if (ids.size() > MAX_DELETE_PER_REQUEST) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR,
+                    "一次最多删除 " + MAX_DELETE_PER_REQUEST + " 张");
+        }
+        // 连已软删的行一起查：删过的再点一次算已删除，而不是报「不是你的」。
+        // 只查这条链接的行，别的链接 / 站内的图片和不存在的 id 一律落进「不是这条链接传的」，不区分。
+        List<OwnRow> rows = jdbc.sql("""
+                        SELECT id, photographer_student_id, photographer_name, status, deleted
+                        FROM photo WHERE share_link_id = :link AND id IN (:ids)
+                        """)
+                .param("link", link.getId()).param("ids", ids)
+                .query((rs, n) -> new OwnRow(rs.getLong("id"), rs.getString("photographer_student_id"),
+                        rs.getString("photographer_name"), rs.getString("status"), rs.getBoolean("deleted")))
+                .list();
+        if (rows.size() != ids.size()) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
+                    "有图片不是通过这条链接上传的，请刷新列表后重试");
+        }
+        List<OwnRow> live = rows.stream().filter(row -> !row.deleted()).toList();
+        boolean someoneElses = live.stream().anyMatch(row ->
+                !uploader.studentId().equals(row.studentId()) || PublicPhoto.isPublic(row.name()));
+        if (someoneElses) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
+                    "只能删除记在当前拍摄者名下的图片，请先切换到这些图片的拍摄者");
+        }
+        List<Long> liveIds = live.stream().map(OwnRow::id).toList();
+        Set<Long> adopted = adoptedAnywhere(liveIds);
+        Set<Long> elsewhere = inOtherAlbums(link.getProjectId(), liveIds);
+        int deleted = 0;
+        int skipped = 0;
+        for (OwnRow row : live) {
+            if (adopted.contains(row.id()) || elsewhere.contains(row.id())
+                    || !PhotoStatus.AVAILABLE.name().equals(row.status())) {
+                skipped++;
+                continue;
+            }
+            PhotoEntity photo = photoMapper.selectById(row.id());
+            if (photo == null) continue;
+            photoService.deleteForShareUploader(photo);
+            deleted++;
+        }
+        return new DeletedUploads(deleted, skipped, rows.size() - live.size());
+    }
+
+    /** 本人在这条链接上已处理完的图片，只取 id 和标签（筛选、计数用），按上传时间倒序。 */
+    private List<PhotoEntity> ownAvailable(ProjectShareLinkEntity link, Uploader uploader, OwnUploadFilter filter) {
+        String keyword = filter.keyword() == null ? null : filter.keyword().strip();
+        String likeKeyword = LikeFilter.escape(keyword);
+        LocalDate takenFrom = filter.takenFrom();
+        LocalDate takenTo = filter.takenTo();
+        return photoMapper.selectList(Wrappers.<PhotoEntity>lambdaQuery()
+                .select(PhotoEntity::getId, PhotoEntity::getTagsJson)
+                .eq(PhotoEntity::getShareLinkId, link.getId())
+                .eq(PhotoEntity::getPhotographerStudentId, uploader.studentId())
+                .eq(PhotoEntity::getStatus, PhotoStatus.AVAILABLE)
+                .and(StringUtils.hasText(keyword), q -> q
+                        .apply(LikeFilter.contains("title"), likeKeyword)
+                        .or().apply(LikeFilter.contains("tags_json"), likeKeyword))
+                .ge(takenFrom != null, PhotoEntity::getTakenAt,
+                        takenFrom == null ? null : takenFrom.atStartOfDay())
+                .lt(takenTo != null, PhotoEntity::getTakenAt,
+                        takenTo == null ? null : takenTo.plusDays(1).atStartOfDay())
+                .orderByDesc(PhotoEntity::getCreatedAt)
+                .orderByDesc(PhotoEntity::getId));
+    }
+
+    /** 在任何选题里被采用过的（与站内删除的「已被采用的图片只能归档」同一口径）。 */
+    private Set<Long> adoptedAnywhere(List<Long> photoIds) {
+        if (photoIds.isEmpty()) return Set.of();
+        return new HashSet<>(jdbc.sql("SELECT DISTINCT photo_id FROM adoption WHERE deleted = 0 AND photo_id IN (:ids)")
+                .param("ids", photoIds).query(Long.class).list());
+    }
+
+    /** 还在本选题以外的相册里的：删图会把那边一起删掉。 */
+    private Set<Long> inOtherAlbums(Long projectId, List<Long> photoIds) {
+        if (photoIds.isEmpty()) return Set.of();
+        return new HashSet<>(jdbc.sql("""
+                        SELECT DISTINCT photo_id FROM photo_project
+                        WHERE project_id <> :project AND photo_id IN (:ids)
+                        """).param("project", projectId).param("ids", photoIds).query(Long.class).list());
+    }
+
+    private record OwnRow(Long id, String studentId, String name, String status, boolean deleted) {}
+
     // ------------------------------------------------------------------ 申报工时
 
     /**
@@ -590,6 +780,30 @@ public class ProjectShareUploadService {
                                java.time.Instant expiresAt, String photographerName) {}
 
     public record UploadedPhoto(Long photoId, String title, PhotoStatus status, String failureReason) {}
+
+    /** 「我传的图片」的筛选条件；{@code null} 的项不筛。 */
+    public record OwnUploadFilter(String keyword, List<String> tags, LocalDate takenFrom, LocalDate takenTo) {
+        public static final OwnUploadFilter NONE = new OwnUploadFilter(null, List.of(), null, null);
+    }
+
+    /**
+     * 「我传的图片」里的一张。比站内的图片视图少得多：没有学号、上传账号和对象键。
+     *
+     * @param deletable    现在能不能删；不能删时 {@code lockedReason} 说明原因（已被采用 / 已加入其他选题）
+     * @param tags         图片上除保留标签以外的标签
+     */
+    public record OwnUpload(Long id, String title, String thumbnailUrl, LocalDateTime takenAt,
+                            LocalDateTime createdAt, Long size, Integer width, Integer height,
+                            List<String> tags, boolean deletable, String lockedReason) {}
+
+    public record OwnUploadFilterOptions(List<String> tags) {}
+
+    /**
+     * @param deleted        这次删掉的张数
+     * @param skipped        跳过的张数：已被采用、已加入其他选题，或此刻不是可用状态
+     * @param alreadyDeleted 之前就已经删掉了的张数
+     */
+    public record DeletedUploads(int deleted, int skipped, int alreadyDeleted) {}
 
     /** 访客申报的一条工时：没有姓名学号（取会话身份），没有草稿（交上来就是提交）。 */
     public record WorklogDeclaration(LocalDate workDate, int shootingMinutes, int retouchingMinutes,

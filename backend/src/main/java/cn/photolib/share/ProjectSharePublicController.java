@@ -1,6 +1,7 @@
 package cn.photolib.share;
 
 import cn.photolib.audit.AuditAction;
+import cn.photolib.audit.AuditInterceptor;
 import cn.photolib.audit.AuditSkip;
 import cn.photolib.common.ratelimit.RateLimitAddress;
 import cn.photolib.common.api.ApiResponse;
@@ -27,7 +28,9 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 分享链接的访客端，整条链路不需要登录。
@@ -298,6 +301,66 @@ public class ProjectSharePublicController {
                 service.resolveGuestContext(token, session), batchId, request.takenAt(), request.tags(),
                 ItemTagsRequest.toMap(request.itemTags())));
     }
+
+    // ------------------------------------------------------------------ 管理自己传的图片
+
+    /**
+     * 「我传的图片」：通过这条链接传的、记在会话当前拍摄者学号名下、已经处理完的图片，带缩略图。
+     * 范围与规则见 {@link ProjectShareUploadService#ownUploads}。
+     */
+    @GetMapping("/my-uploads")
+    ApiResponse<PageResponse<ProjectShareUploadService.OwnUpload>> ownUploads(
+            @PathVariable String token,
+            @RequestHeader(value = SESSION_HEADER, required = false) String session,
+            @RequestParam(defaultValue = "1") @Min(1) @Max(10_000) int page,
+            @RequestParam(defaultValue = "24") @Min(1) @Max(100) int pageSize,
+            @RequestParam(required = false) @Size(max = 200) String keyword,
+            @RequestParam(required = false) @Size(max = PhotoTags.MAX_TAGS) List<String> tags,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate takenFrom,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate takenTo,
+            HttpServletRequest servletRequest) {
+        rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.UPLOAD_STATUS, token,
+                RateLimitAddress.of(servletRequest));
+        return ApiResponse.ok(uploadService.ownUploads(service.resolveGuestContext(token, session),
+                page, pageSize, new ProjectShareUploadService.OwnUploadFilter(keyword, tags, takenFrom, takenTo)));
+    }
+
+    /** 「我传的图片」标签筛选的候选。 */
+    @GetMapping("/my-uploads/filter-options")
+    ApiResponse<ProjectShareUploadService.OwnUploadFilterOptions> ownUploadFilterOptions(
+            @PathVariable String token,
+            @RequestHeader(value = SESSION_HEADER, required = false) String session,
+            HttpServletRequest servletRequest) {
+        rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.UPLOAD_STATUS, token,
+                RateLimitAddress.of(servletRequest));
+        return ApiResponse.ok(uploadService.ownUploadFilterOptions(service.resolveGuestContext(token, session)));
+    }
+
+    /**
+     * 删除自己传的图片（多选）。用 POST 而不是带体的 DELETE；URL 里没有图片 id，
+     * 所以 {@code photoIds} 和结果计数写进审计详情。规则见 {@link ProjectShareUploadService#deleteOwnUploads}。
+     */
+    @AuditAction("通过上传链接删除自己的图片")
+    @PostMapping("/my-uploads/delete")
+    ApiResponse<ProjectShareUploadService.DeletedUploads> deleteOwnUploads(
+            @PathVariable String token,
+            @RequestHeader(value = SESSION_HEADER, required = false) String session,
+            @Valid @RequestBody DeleteOwnUploadsRequest request, HttpServletRequest servletRequest) {
+        rateLimiter.requireAllowed(ShareAccessRateLimiter.Action.DELETE_OWN, token,
+                RateLimitAddress.of(servletRequest));
+        ProjectShareUploadService.DeletedUploads result = uploadService.deleteOwnUploads(
+                service.resolveGuestContext(token, session), request.photoIds());
+        Map<String, Object> audit = new LinkedHashMap<>();
+        audit.put("photoIds", request.photoIds());
+        audit.put("deleted", result.deleted());
+        audit.put("skipped", result.skipped());
+        audit.put("alreadyDeleted", result.alreadyDeleted());
+        servletRequest.setAttribute(AuditInterceptor.DETAIL_ATTRIBUTE, audit);
+        return ApiResponse.ok(result);
+    }
+
+    record DeleteOwnUploadsRequest(
+            @NotEmpty @Size(max = ProjectShareUploadService.MAX_DELETE_PER_REQUEST) List<@NotNull Long> photoIds) {}
 
     // ------------------------------------------------------------------ 申报工时
 
