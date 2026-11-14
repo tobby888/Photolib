@@ -466,10 +466,11 @@ export interface SharePhoto {
 /** 上传链接签出来的一次性上传票据，与站内单张上传同一条流水线。 */
 export interface ShareUploadTicket {
   photoId: EntityId
-  uploadUrl: string
-  method: string
+  uploadUrl: string | null
+  method: string | null
   contentType: string
-  expiresAt: string
+  expiresAt: string | null
+  status: 'UPLOADING' | 'PROCESSING' | 'AVAILABLE' | 'ARCHIVED'
   /** 这张记在谁名下：会话中途可以切换拍摄者，列表里每一张要写清楚。 */
   photographerName?: string | null
 }

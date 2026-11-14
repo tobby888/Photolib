@@ -69,7 +69,7 @@ import java.util.UUID;
  *   <li><b>责任人记在 {@code uploaded_by}，口子记在 {@code share_link_id}。</b>
  *       {@code uploaded_by} 落的是链接创建者（站内唯一可追责的成员，与打包下载任务
  *       的 {@code created_by} 同一个道理），{@code share_link_id} 才是"这张图从哪条
- *       链接进来的"。完成上传的归属判定只认后者。</li>
+ *       链接进来的"。单图票据另记签发会话，续签时还要匹配原拍摄者。</li>
  *   <li><b>每一次上传都重判选题还收不收图。</b> 链接没过期不等于选题还开着：活动结束
  *       把选题置为完成之后，已经拿着链接和会话的人必须立刻传不进来，而不是等会话过期。</li>
  *   <li><b>ZIP 批量走站内那条批次通道，限额一份不改。</b> 建批次、解包、落照片全部是
@@ -118,21 +118,50 @@ public class ProjectShareUploadService {
     /**
      * 签一张上传票据，并在库里占好这一行（状态 UPLOADING）。
      *
-     * <p>顺序与站内 {@code PhotoService.createTicket} 保持一致：先文件校验、再业务上下文
-     * 授权、最后才做全库哈希查重——查重的报错里带着既有图片的标题，不能让一个连选题都
-     * 还没通过校验的请求把它读出去。</p>
+     * <p>同一会话重试同一个文件时，复用未完成的票据或返回已提交的处理状态。</p>
      */
     @Transactional
     public UploadTicket createTicket(ProjectShareService.GuestContext context, TicketCommand command) {
         ProjectShareLinkEntity link = shareService.requireUploadLink(context.link());
+        Uploader uploader = requireUploader(context);
+        String sessionId = context.session().getId();
+        // 同一会话的并发请求先拿锁再查重。锁定读必须在事务的第一条普通查询之前，
+        // 这样查重能读到前一个请求刚提交的票据。
+        jdbc.sql("""
+                        SELECT id FROM project_share_session
+                        WHERE id = :id AND link_id = :linkId AND expires_at > :now
+                        FOR UPDATE
+                        """).param("id", sessionId).param("linkId", link.getId())
+                .param("now", LocalDateTime.now(clock)).query(String.class).optional()
+                .orElseThrow(() -> new BusinessException(ErrorCode.FORBIDDEN, "分享访问已过期，请重新输入密码"));
+
         photoService.validateUploadFile(command.fileName(), command.contentType(), command.size());
         ProjectEntity project = requireOpenProject(link);
-        Uploader uploader = requireUploader(context);
         projectService.requireAcceptsPhotographer(project.getId(), uploader.isPublic());
+        String sha256Lower = command.sha256().toLowerCase(Locale.ROOT);
+        List<PhotoEntity> duplicates = photoService.findDuplicates(sha256Lower);
+        if (!duplicates.isEmpty()) {
+            PhotoEntity existing = duplicates.getFirst();
+            if (duplicates.size() == 1 && link.getId().equals(existing.getShareLinkId())
+                    && project.getId().equals(existing.getProjectId())
+                    && sessionId.equals(existing.getShareUploadSessionId())
+                    && uploader.studentId().equals(existing.getPhotographerStudentId())
+                    && uploader.isPublic() == PublicPhoto.isPublic(existing)) {
+                if (existing.getStatus() == PhotoStatus.UPLOADING
+                        && StringUtils.hasText(existing.getOriginalObjectKey())) {
+                    requireCapacity(link);
+                    return renewTicket(existing, sessionId);
+                }
+                if (existing.getStatus() == PhotoStatus.PROCESSING
+                        || existing.getStatus() == PhotoStatus.AVAILABLE
+                        || existing.getStatus() == PhotoStatus.ARCHIVED) {
+                    return new UploadTicket(existing.getId(), null, null, existing.getContentType(),
+                            null, existing.getPhotographerName(), existing.getStatus());
+                }
+            }
+            throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE, "图库里已经有一张一模一样的图片");
+        }
         requireCapacity(link);
-
-        String sha256Lower = command.sha256().toLowerCase();
-        photoService.requireUniqueSha256(sha256Lower, null);
 
         String extension = ImageUploadPolicy.extension(command.contentType()).substring(1);
         String id = UUID.randomUUID().toString();
@@ -146,6 +175,7 @@ public class ProjectShareUploadService {
         // 站内唯一可追责的人是开这条链接的成员；访客没有账号，也不该凭一条链接获得一个。
         photo.setUploadedBy(link.getCreatedBy());
         photo.setShareLinkId(link.getId());
+        photo.setShareUploadSessionId(sessionId);
         // 选题不属于任何校区，访客也报不出校区，所以这里如实留空，而不是挑一个看着像的。
         photo.setCampusId(null);
         photo.setTakenAt(command.takenAt() == null ? LocalDateTime.now(clock) : command.takenAt());
@@ -156,7 +186,7 @@ public class ProjectShareUploadService {
         photo.setSha256(sha256Lower);
         photo.setStatus(PhotoStatus.UPLOADING);
         // 与站内一致：记下直传地址的有效期，供清理任务判断何时能删（Flyway V50）。
-        photo.setUploadUrlExpiresAt(LocalDateTime.now(clock).plus(storageProperties.uploadUrlTtl()));
+        photo.setUploadUrlExpiresAt(abandonedUploads.uploadUrlExpiresAt());
         photoMapper.insert(photo);
         // 归属链接与站内一致：项目相册以 photo_project 为准。
         jdbc.sql("INSERT INTO photo_project (photo_id, project_id) VALUES (:photoId, :projectId)")
@@ -164,13 +194,31 @@ public class ProjectShareUploadService {
                 .param("projectId", project.getId())
                 .update();
 
+        return signTicket(photo);
+    }
+
+    private UploadTicket renewTicket(PhotoEntity pending, String sessionId) {
+        // 续签只延后清理时间，保留 complete 使用的版本号。
+        int updated = jdbc.sql("""
+                        UPDATE photo SET upload_url_expires_at = :expiresAt
+                        WHERE id = :id AND deleted = 0 AND status = 'UPLOADING' AND failure_reason IS NULL
+                          AND share_upload_session_id = :sessionId AND original_object_key = :originalKey
+                        """).param("expiresAt", abandonedUploads.uploadUrlExpiresAt())
+                .param("id", pending.getId()).param("sessionId", sessionId)
+                .param("originalKey", pending.getOriginalObjectKey()).update();
+        if (updated != 1) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
+                    "这张图片上一次没传完的记录刚刚发生了变化，请重新上传");
+        }
+        return signTicket(pending);
+    }
+
+    private UploadTicket signTicket(PhotoEntity photo) {
         ObjectStorageService.SignedUrl signed = storage.presignPut(
-                originalKey, command.contentType(), storageProperties.uploadUrlTtl());
-        // 这条路不经过 PhotoService.createTicket，清理任务得自己捅（它内部节流）。
+                photo.getOriginalObjectKey(), photo.getContentType(), storageProperties.uploadUrlTtl());
         abandonedUploads.nudge();
-        // 拍摄者回给页面：会话中途可以切换拍摄者，列表上每一张要写清楚它记在谁名下。
         return new UploadTicket(photo.getId(), signed.url().toString(), signed.method(),
-                command.contentType(), signed.expiresAt(), uploader.name());
+                photo.getContentType(), signed.expiresAt(), photo.getPhotographerName(), PhotoStatus.UPLOADING);
     }
 
     /**
@@ -185,6 +233,10 @@ public class ProjectShareUploadService {
         ProjectShareLinkEntity link = shareService.requireUploadLink(context.link());
         requireOpenProject(link);
         PhotoEntity photo = requireOwnUpload(link, photoId);
+        requireTicketSession(context, photo);
+        if (photo.getStatus() != PhotoStatus.UPLOADING) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "这张图片已经提交过了");
+        }
         List<String> tags = guestTags(command.tags());
 
         ObjectStorageService.ObjectInfo info = storage.stat(photo.getOriginalObjectKey());
@@ -223,7 +275,8 @@ public class ProjectShareUploadService {
      */
     public UploadedPhoto status(ProjectShareService.GuestContext context, Long photoId) {
         ProjectShareLinkEntity link = shareService.requireUploadLink(context.link());
-        PhotoEntity photo = requireOwnUpload(link, photoId, null);
+        PhotoEntity photo = requireOwnUpload(link, photoId);
+        requireTicketSession(context, photo);
         return new UploadedPhoto(photo.getId(), photo.getTitle(), photo.getStatus(),
                 photo.getFailureReason());
     }
@@ -250,7 +303,7 @@ public class ProjectShareUploadService {
         ProjectShareLinkEntity link = shareService.requireUploadLink(context.link());
         requireOpenProject(link);
         Uploader uploader = requireUploader(context);
-        PhotoEntity photo = requireOwnUpload(link, photoId, null);
+        PhotoEntity photo = requireOwnUpload(link, photoId);
         if (!uploader.studentId().equals(photo.getPhotographerStudentId())
                 || uploader.isPublic() != PublicPhoto.isPublic(photo)) {
             // 409 而不是 404：访客页把 403/404 一律当成会话失效、退回密码页，
@@ -722,22 +775,21 @@ public class ProjectShareUploadService {
         }
     }
 
-    private PhotoEntity requireOwnUpload(ProjectShareLinkEntity link, Long photoId) {
-        return requireOwnUpload(link, photoId, PhotoStatus.UPLOADING);
+    private void requireTicketSession(ProjectShareService.GuestContext context, PhotoEntity photo) {
+        String sessionId = photo.getShareUploadSessionId();
+        if (sessionId != null && !sessionId.equals(context.session().getId())) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "这张图片由另一场上传会话提交");
+        }
     }
 
     /**
      * 只有"这条链接自己建的那一行"才轮得到访客写。少了 {@code share_link_id} 这一比，
      * 拿到任意一个 photoId 就能改别人的图片。
      */
-    private PhotoEntity requireOwnUpload(ProjectShareLinkEntity link, Long photoId,
-                                         PhotoStatus requiredStatus) {
+    private PhotoEntity requireOwnUpload(ProjectShareLinkEntity link, Long photoId) {
         PhotoEntity photo = photoId == null ? null : photoMapper.selectById(photoId);
         if (photo == null || !link.getId().equals(photo.getShareLinkId())) {
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "这张图片不是通过这条链接上传的");
-        }
-        if (requiredStatus != null && photo.getStatus() != requiredStatus) {
-            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "这张图片已经提交过了");
         }
         return photo;
     }
@@ -777,7 +829,7 @@ public class ProjectShareUploadService {
     public record GuestBatchItem(Long itemId, String originalFileName, String folderPath) {}
 
     public record UploadTicket(Long photoId, String uploadUrl, String method, String contentType,
-                               java.time.Instant expiresAt, String photographerName) {}
+                               java.time.Instant expiresAt, String photographerName, PhotoStatus status) {}
 
     public record UploadedPhoto(Long photoId, String title, PhotoStatus status, String failureReason) {}
 
