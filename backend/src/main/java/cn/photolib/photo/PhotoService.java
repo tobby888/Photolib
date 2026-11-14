@@ -890,7 +890,7 @@ public class PhotoService {
     }
 
     /** 同一条查重规则下的全部候选，新的在前；签票据时要逐条判断能不能续用。 */
-    private List<PhotoEntity> findDuplicates(String sha256Lower) {
+    public List<PhotoEntity> findDuplicates(String sha256Lower) {
         return mapper.selectList(duplicateQuery(sha256Lower, null)
                 .orderByDesc(PhotoEntity::getId).last("LIMIT 20"));
     }

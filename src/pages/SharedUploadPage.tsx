@@ -366,7 +366,7 @@ export default function SharedUploadPage() {
   }
 
   const uploadOne = async (guestSession: string, item: ShareUploadItem) => {
-    // 失败重传会签一张新票据，记在当时的拍摄者名下：旧的那份先清掉，别让列表说错。
+    // 续签保留原拍摄者，重新发票时以服务端返回的拍摄者为准。
     patch(item.key, {
       stage: 'uploading', percent: 0, error: undefined,
       photographerName: undefined, photographerStudentId: undefined,
@@ -387,14 +387,25 @@ export default function SharedUploadPage() {
         photographerName: ticket.photographerName ?? accessRef.current?.uploaderName ?? undefined,
         photographerStudentId: uploaderKey(accessRef.current),
       })
-      await uploadToObjectStorage(ticket, item.file,
-        percent => patch(item.key, { percent }))
-      patch(item.key, { stage: 'processing', percent: 100 })
-      await shareUploadApi.complete(token, guestSession, ticket.photoId, {
-        // 原始文件名是访客和选片人之间唯一的共同语言，留作标题好让人对得上。
-        title: item.file.name.slice(0, 200),
-        tags: item.tags,
-      })
+      if (ticket.status === 'AVAILABLE' || ticket.status === 'ARCHIVED') {
+        patch(item.key, { stage: 'done', percent: 100 })
+        setOwnUploadsSignal(current => current + 1)
+        return
+      }
+      if (ticket.uploadUrl) {
+        await uploadToObjectStorage(
+          { ...ticket, uploadUrl: ticket.uploadUrl, method: ticket.method ?? undefined },
+          item.file, percent => patch(item.key, { percent }),
+        )
+        patch(item.key, { stage: 'processing', percent: 100 })
+        await shareUploadApi.complete(token, guestSession, ticket.photoId, {
+          // 原始文件名是访客和选片人之间唯一的共同语言，留作标题好让人对得上。
+          title: item.file.name.slice(0, 200),
+          tags: item.tags,
+        })
+      } else {
+        patch(item.key, { stage: 'processing', percent: 100 })
+      }
       await waitForProcessing(guestSession, item, String(ticket.photoId))
     } catch (reason) {
       if (reason instanceof ApiError && (reason.status === 403 || reason.status === 404)) throw reason

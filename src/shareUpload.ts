@@ -15,7 +15,7 @@ export const UPLOAD_CONCURRENCY = 3
 export type ShareUploadStage = 'waiting' | 'uploading' | 'processing' | 'done' | 'failed'
 
 export interface ShareUploadItem {
-  /** 队列内的稳定标识，与服务端的 photoId 无关（失败重传时 photoId 会换）。 */
+  /** 队列内的稳定标识，与服务端的 photoId 无关。 */
   key: string
   file: File
   stage: ShareUploadStage

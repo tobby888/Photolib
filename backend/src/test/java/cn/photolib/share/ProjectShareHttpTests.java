@@ -24,6 +24,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.context.WebApplicationContext;
 
+import java.net.URI;
 import java.util.List;
 import java.util.Set;
 
@@ -249,13 +250,40 @@ class ProjectShareHttpTests {
                 .andReturn().getResponse().getContentAsString();
         String session = json.readTree(body).path("data").path("sessionToken").asText();
 
-        mvc.perform(anonymous(post("/api/v1/public/shares/" + uploadToken + "/upload-tickets"))
+        String ticketPath = "/api/v1/public/shares/" + uploadToken + "/upload-tickets";
+        String file = "{\"fileName\":\"field.jpg\",\"contentType\":\"image/jpeg\","
+                + "\"size\":2048,\"sha256\":\"" + "f".repeat(64) + "\"}";
+        String ticketBody = mvc.perform(anonymous(post(ticketPath))
                         .header(ProjectSharePublicController.SESSION_HEADER, session)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"fileName\":\"field.jpg\",\"contentType\":\"image/jpeg\","
-                                + "\"size\":2048,\"sha256\":\"" + "f".repeat(64) + "\"}"))
+                        .content(file))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.uploadUrl").isNotEmpty());
+                .andExpect(jsonPath("$.data.uploadUrl").isNotEmpty())
+                .andReturn().getResponse().getContentAsString();
+        String photoId = json.readTree(ticketBody).path("data").path("photoId").asText();
+
+        // 第一张票据签出后没有 PUT，重新拖入同一个文件应拿到可用的地址和原 photoId。
+        String renewedBody = mvc.perform(anonymous(post(ticketPath))
+                        .header(ProjectSharePublicController.SESSION_HEADER, session)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(file))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.photoId").value(photoId))
+                .andExpect(jsonPath("$.data.status").value("UPLOADING"))
+                .andExpect(jsonPath("$.data.uploadUrl").isNotEmpty())
+                .andReturn().getResponse().getContentAsString();
+
+        URI uploadUrl = URI.create(json.readTree(renewedBody).path("data").path("uploadUrl").asText());
+        mvc.perform(anonymous(put(uploadUrl.getPath()))
+                        .contentType(MediaType.IMAGE_JPEG)
+                        .content("original photo bytes"))
+                .andExpect(status().isNoContent());
+        mvc.perform(anonymous(post("/api/v1/public/shares/" + uploadToken + "/uploads/" + photoId + "/complete"))
+                        .header(ProjectSharePublicController.SESSION_HEADER, session)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"field.jpg\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("PROCESSING"));
 
         // 这条上传链接同样翻不到相册——两种用途的能力互斥。
         mvc.perform(anonymous(get("/api/v1/public/shares/" + uploadToken + "/photos"))

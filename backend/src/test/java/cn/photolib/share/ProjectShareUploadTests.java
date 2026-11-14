@@ -2,6 +2,7 @@ package cn.photolib.share;
 
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.common.error.BusinessException;
+import cn.photolib.common.error.ErrorCode;
 import cn.photolib.common.upload.ImageUploadPolicy;
 import cn.photolib.common.util.PublicId;
 import cn.photolib.photo.model.PhotoStatus;
@@ -20,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -43,6 +45,7 @@ class ProjectShareUploadTests {
     @Autowired private ProjectService projectService;
     @Autowired private ObjectStorageService storage;
     @Autowired private JdbcClient jdbc;
+    @Autowired private Clock clock;
 
     private AuthenticatedUser minister;
     private ProjectEntity event;
@@ -145,6 +148,78 @@ class ProjectShareUploadTests {
         assertThat(shareService.list(event.getId(), minister).stream()
                 .filter(link -> link.id().equals(created.link().id()))
                 .findFirst().orElseThrow().uploadCount()).isEqualTo(1);
+    }
+
+    @Test
+    void theOriginalSessionCanRenewAnInterruptedTicketAndFinishItOnce() {
+        var created = uploadLink();
+        var context = guest(created);
+        var first = uploadService.createTicket(context, file("c"));
+        jdbc.sql("UPDATE photo SET upload_url_expires_at = :expiry, version = 3 WHERE id = :id")
+                .param("expiry", LocalDateTime.now(clock).minusMinutes(5)).param("id", first.photoId()).update();
+        String originalKey = jdbc.sql("SELECT original_object_key FROM photo WHERE id = :id")
+                .param("id", first.photoId()).query(String.class).single();
+
+        var retry = uploadService.createTicket(context, new ProjectShareUploadService.TicketCommand(
+                "field.png", "image/png", 2_048L, "C".repeat(64), LocalDateTime.now()));
+
+        assertThat(retry.photoId()).isEqualTo(first.photoId());
+        assertThat(retry.status()).isEqualTo(PhotoStatus.UPLOADING);
+        assertThat(retry.contentType()).isEqualTo("image/jpeg");
+        assertThat(retry.uploadUrl()).isNotBlank();
+        assertThat(jdbc.sql("SELECT original_object_key FROM photo WHERE id = :id AND version = 3")
+                .param("id", first.photoId()).query(String.class).single()).isEqualTo(originalKey);
+        assertThat(jdbc.sql("SELECT upload_url_expires_at FROM photo WHERE id = :id")
+                .param("id", first.photoId()).query(LocalDateTime.class).single()).isAfter(LocalDateTime.now(clock));
+
+        putOriginal(retry.photoId());
+        uploadService.complete(context, retry.photoId(),
+                new ProjectShareUploadService.CompleteCommand("入场式", null));
+
+        // 模拟 complete 已写入，客户端没收到响应，又用原文件走了一次重试。
+        var afterCompletion = uploadService.createTicket(context, file("c"));
+        assertThat(afterCompletion.photoId()).isEqualTo(first.photoId());
+        assertThat(afterCompletion.status()).isEqualTo(PhotoStatus.PROCESSING);
+        assertThat(afterCompletion.uploadUrl()).isNull();
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM photo_project WHERE project_id = :id")
+                .param("id", event.getId()).query(Long.class).single()).isOne();
+        assertThat(jdbc.sql("SELECT upload_count FROM project_share_link WHERE id = :id")
+                .param("id", created.link().id()).query(Long.class).single()).isOne();
+    }
+
+    @Test
+    void aDifferentSessionCannotRenewATicketEvenWithTheSameNameAndStudentId() {
+        var created = uploadLink();
+        var context = guest(created);
+        var original = uploadService.createTicket(context, file("d"));
+
+        var otherSession = guest(created);
+        assertThatThrownBy(() -> uploadService.createTicket(otherSession, file("d")))
+                .isInstanceOfSatisfying(BusinessException.class, error -> {
+                    assertThat(error.getCode()).isEqualTo(ErrorCode.DUPLICATE_RESOURCE);
+                    assertThat(error.getMessage()).doesNotContain("标题");
+                });
+        assertThatThrownBy(() -> uploadService.status(otherSession, original.photoId()))
+                .isInstanceOfSatisfying(BusinessException.class, error ->
+                        assertThat(error.getCode()).isEqualTo(ErrorCode.RESOURCE_STATE_CONFLICT));
+        assertThatThrownBy(() -> uploadService.complete(otherSession, original.photoId(),
+                new ProjectShareUploadService.CompleteCommand(null, null)))
+                .isInstanceOfSatisfying(BusinessException.class, error ->
+                        assertThat(error.getCode()).isEqualTo(ErrorCode.RESOURCE_STATE_CONFLICT));
+    }
+
+    @Test
+    void switchingPhotographersDoesNotRenewTheOldPhotographersTicket() {
+        var context = guest(uploadLink());
+        var original = uploadService.createTicket(context, file("d"));
+
+        shareService.switchUploader(context, new ProjectShareService.GuestIdentity("李同学", "20230002"));
+        assertThatThrownBy(() -> uploadService.createTicket(context, file("d")))
+                .isInstanceOfSatisfying(BusinessException.class, error ->
+                        assertThat(error.getCode()).isEqualTo(ErrorCode.DUPLICATE_RESOURCE));
+
+        shareService.switchUploader(context, new ProjectShareService.GuestIdentity("张小拍", "20230001"));
+        assertThat(uploadService.createTicket(context, file("d")).photoId()).isEqualTo(original.photoId());
     }
 
     @Test

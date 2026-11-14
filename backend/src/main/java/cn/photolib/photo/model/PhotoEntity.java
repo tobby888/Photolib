@@ -2,6 +2,7 @@ package cn.photolib.photo.model;
 
 import cn.photolib.common.model.BaseEntity;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -36,6 +37,9 @@ public class PhotoEntity extends BaseEntity {
     private LocalDateTime originalDeleteAfter;
     /** 经由哪条上传链接传进来的；站内上传为 {@code null}。 */
     private Long shareLinkId;
+    /** 签发访客单图票据的会话，用于续签及查询上传结果。 */
+    @JsonIgnore
+    private String shareUploadSessionId;
     /**
      * 这张照片的直传地址什么时候过期。只对还没 complete 的行有意义：
      * {@code AbandonedUploadCleanupJob} 要等它过期之后才敢删 {@code original_object_key}
