@@ -7,6 +7,7 @@ import cn.photolib.common.api.ApiResponse;
 import cn.photolib.photo.model.PhotoStatus;
 import cn.photolib.project.model.ProjectStatus;
 import cn.photolib.request.model.RequestStatus;
+import cn.photolib.storage.OssAccessMonitor;
 import cn.photolib.uploadlimit.UploadLimit;
 import cn.photolib.uploadlimit.UploadLimitService;
 import cn.photolib.user.model.UserRole;
@@ -51,6 +52,16 @@ public class AdminController {
         return ApiResponse.ok(alertMapper.selectList(Wrappers.<AdminAlertEntity>lambdaQuery()
                 .eq(AdminAlertEntity::getResolved, resolved)
                 .orderByDesc(AdminAlertEntity::getCreatedAt).last("LIMIT 500")));
+    }
+
+    @GetMapping("/admin-alerts/oss")
+    @PreAuthorize("hasRole('ADMIN')")
+    @RequiresStepUp
+    ApiResponse<List<AdminAlertEntity>> ossAlerts() {
+        return ApiResponse.ok(alertMapper.selectList(Wrappers.<AdminAlertEntity>lambdaQuery()
+                .eq(AdminAlertEntity::getResolved, false)
+                .in(AdminAlertEntity::getType, OssAccessMonitor.CREDENTIAL_ALERT, OssAccessMonitor.CONVERSION_ALERT)
+                .orderByDesc(AdminAlertEntity::getCreatedAt)));
     }
 
     @AuditAction("处理系统告警")

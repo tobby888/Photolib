@@ -190,7 +190,7 @@ export interface SelectionPhoto {
   height?: number
   size: number
   contentType: string
-  /** 480px 预览图（省流量）。 */
+  /** 签名预览图（省流量）。 */
   thumbnailUrl?: string
   /** 成品图的内联签名地址，就是选片时要看的「原图」。 */
   imageUrl?: string

@@ -449,7 +449,7 @@ public class ProjectShareService {
         return new PageResponse<>(result.getRecords().stream()
                 .map(photo -> new SharePhotoView(photo.getId(), photo.getTitle(), photo.getDescription(),
                         photo.getPhotographerName(), photo.getTakenAt(), photo.getWidth(), photo.getHeight(),
-                        photo.getSize(), photo.getStoredFileName(), photoService.previewUrl(photo),
+                        photo.getSize(), photo.getStoredFileName(), photoService.previewUrl(photo, withImage),
                         withImage && StringUtils.hasText(photo.getObjectKey())
                                 ? photoService.fullImageUrl(photo).downloadUrl() : null,
                         adopted.contains(photo.getId()), PhotoTags.parse(photo.getTagsJson())))

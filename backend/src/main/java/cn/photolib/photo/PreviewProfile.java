@@ -23,11 +23,12 @@ public record PreviewProfile(BigDecimal compressionRatio, String generatorFinger
      */
     public static final String CURRENT_GENERATOR_FINGERPRINT =
             "hybrid-v6/max480/webp-q-effort6-smartsubsample-strip";
+    private static final String OSS_GENERATOR = "oss-avif-v1/max1600x1200";
+    static final String OSS_KEY_PREFIX = "thumbnails/generations/oss-avif-v1/";
+    static final String AVIF_CONTENT_TYPE = "image/avif";
 
     /**
-     * The one container every preview is encoded into. It is part of the profile
-     * identity: a preview object whose own MIME is anything else belongs to an
-     * older generation, however well the rest of its metadata matches.
+     * Container used by the local preview encoder. OSS previews use AVIF.
      */
     public static final String PREVIEW_CONTENT_TYPE = ImageCompressor.PREVIEW_CONTENT_TYPE;
 
@@ -70,6 +71,14 @@ public record PreviewProfile(BigDecimal compressionRatio, String generatorFinger
         return new PreviewProfile(BigDecimal.valueOf(ratio), CURRENT_GENERATOR_FINGERPRINT);
     }
 
+    static PreviewProfile ossAvif() {
+        return new PreviewProfile(BigDecimal.ONE, OSS_GENERATOR);
+    }
+
+    boolean cloud() {
+        return OSS_GENERATOR.equals(generatorFingerprint);
+    }
+
     public static BigDecimal normalizeRatio(BigDecimal ratio) {
         Objects.requireNonNull(ratio, "compressionRatio");
         if (ratio.signum() <= 0 || ratio.compareTo(BigDecimal.ONE) > 0) {
@@ -89,7 +98,16 @@ public record PreviewProfile(BigDecimal compressionRatio, String generatorFinger
     }
 
     public boolean isCurrentGenerator() {
-        return CURRENT_GENERATOR_FINGERPRINT.equals(generatorFingerprint);
+        return CURRENT_GENERATOR_FINGERPRINT.equals(generatorFingerprint) || cloud();
+    }
+
+    public boolean matchesStored(String key, ObjectStorageService.ObjectInfo object) {
+        // OSS saveas inherits the bucket ACL and does not accept custom metadata.
+        // The server-assigned namespace identifies the encoder for immutable AVIF objects.
+        return cloud()
+                ? key != null && key.startsWith(OSS_KEY_PREFIX) && key.endsWith(".avif")
+                    && object != null && object.size() > 0 && AVIF_CONTENT_TYPE.equals(object.contentType())
+                : object != null && matches(object, object.contentType());
     }
 
     public String ratioText() {

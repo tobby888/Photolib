@@ -59,7 +59,7 @@ function matchesFilter(photo: SelectionPhoto, filter: SelectionFilter) {
  * 右边是真正干活的地方——大图加打标签。当前这张在左列里用深色标出来。
  *
  * ## 大图和小图
- * 「画质」开关同时管左列和大图区：`preview` 用 480px 的 WebP 预览（省流量，
+ * 「画质」开关同时管左列和大图区：`preview` 使用压缩预览（省流量，
  * 翻图快），`original` 直接渲染成品图，也就是选片要看的那张原图。默认是预览，
  * 因为 issue 自己就提了原图会吃流量；真要判虚焦、看细节时再切过去。
  * 左列的图一律 `loading="lazy"`，切到原图也只有屏幕上那几张会真的下载。
@@ -382,7 +382,7 @@ export default function PhotoSelectionPage() {
           message={`创作选题结束时不会删除任何图片，${DEPRECATED_TAG_LABEL}只是一个标记`} />)}
   </>
 
-  const qualitySwitch = <Tooltip title="原图按成品图渲染，看得清细节但更费流量；预览图是 480px 的压缩图">
+  const qualitySwitch = <Tooltip title="原图按成品图渲染，适合检查细节；压缩预览更省流量">
     <Segmented<QualityMode> value={quality} onChange={setQuality} options={[
       { value: 'preview', label: '小图（预览）', icon: <CheckCircleOutlined /> },
       { value: 'original', label: '大图（原图）', icon: <ExpandOutlined /> },
@@ -395,7 +395,7 @@ export default function PhotoSelectionPage() {
         refresh={() => refreshImageUrl(photo.id as string)}
         resetKey={`${photo.id}-${quality}`}
         previewHint={quality === 'preview'
-          ? '当前是 480px 预览图，放大后会糊；要判清晰度请切到「大图（原图）」'
+          ? '当前是压缩预览，检查像素级细节请切到「大图（原图）」'
           : undefined} />
     </Suspense>
     : <Empty description="这张图片暂时没有可展示的画面" />

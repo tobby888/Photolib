@@ -45,6 +45,7 @@ public class PhotoProcessingService {
     private final PhotoUploadBatchMapper batchMapper;
     private final PreviewProfilePolicy previewProfiles;
     private final TransactionTemplate transactions;
+    private final OssThumbnailJobs ossThumbnails;
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onRequested(PhotoProcessRequested event) {
@@ -92,6 +93,7 @@ public class PhotoProcessingService {
         PhotoUploadItemEntity batchItem = findBatchItem(photoId);
         Path batchSource = null;
         Path taskDirectory = null;
+        OssThumbnailJobs.Pending pending = null;
         Error fatal = null;
         try {
             taskDirectory = workspace.createTaskDirectory(photoId);
@@ -121,6 +123,11 @@ public class PhotoProcessingService {
             // 动图（GIF、APNG）原样保存，不压缩，也不受成品目标体积约束：见 AnimatedImages。
             AnimatedImages.Info animation = AnimatedImages.inspect(source, photo.getContentType());
             photo.setAnimated(animation.animated());
+            PreviewProfilePolicy.CommitPermit cloudPermit = properties.usesOss()
+                    ? previewProfiles.permitForNewPreview() : null;
+            if (cloudPermit != null && cloudPermit.profile().cloud()) {
+                pending = ossThumbnails.begin(photoId, source, photo.getContentType(), sourceSize, cloudPermit);
+            }
             ImageCompressor.FileResult result = animation.keepAsIs()
                     ? compressor.keepAsIs(source, processedPath, photo.getContentType(), animation)
                     : compressor.compress(source, processedPath, photo.getContentType(),
@@ -130,14 +137,14 @@ public class PhotoProcessingService {
             }
             upload(photo.getObjectKey(), result.path(), result.size(), result.contentType());
 
-            Path thumbnailPath = workspace.taskFile(taskDirectory,
-                    "thumbnail" + ImageCompressor.PREVIEW_EXTENSION);
-            PreviewProfilePolicy.CommitPermit previewPermit =
-                    previewProfiles.permitForNewPreview();
+            PreviewProfilePolicy.CommitPermit previewPermit = cloudPermit == null
+                    ? previewProfiles.permitForNewPreview() : cloudPermit;
             PreviewProfile previewProfile = previewPermit.profile();
             String thumbnailKey = null;
             ImageCompressor.FileResult thumbnail = null;
-            try {
+            if (!properties.usesOss()) try {
+                Path thumbnailPath = workspace.taskFile(taskDirectory,
+                        "thumbnail" + ImageCompressor.PREVIEW_EXTENSION);
                 thumbnail = compressor.thumbnail(
                         result.path(), thumbnailPath, result.contentType(), 480,
                         previewProfile.compressionRatio().doubleValue());
@@ -164,6 +171,8 @@ public class PhotoProcessingService {
                     photo.getPhotographerName(), photo.getTakenAt(), extension);
             completeProcessing(photo, result, thumbnail, thumbnailKey, storedFileName,
                     originalDeleteAfter, previewPermit);
+            if (pending != null) pending.publish(
+                    new OssThumbnailJobs.Source(photo.getObjectKey(), result.contentType(), result.size()));
         } catch (Exception ex) {
             photo = markProcessingFailed(photo, ex);
         } catch (Error error) {
@@ -174,6 +183,7 @@ public class PhotoProcessingService {
             fatal = error;
             photo = markProcessingFailed(photo, error);
         } finally {
+            if (pending != null) pending.discard();
             if (batchSource != null && batchItem != null && cleanupBatchSource(batchSource)) {
                 batchItem.setTempLocalPath(null);
                 batchItemMapper.clearTempLocalPath(batchItem.getId(), LocalDateTime.now());

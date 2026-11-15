@@ -158,7 +158,7 @@ export default function ZoomableImage({ src, alt, refresh, resetKey, previewHint
     return measured && natural ? scaleForActualPixels(natural, measured.content) : MIN_SCALE
   })()
   const zoomed = isZoomed(zoom)
-  // 预览图只有 480px 长边，放大过头就只是在放大压缩块。提示语由调用方给，
+  // 超过预览图的可用分辨率时提示。提示语由调用方给，
   // 它才知道当前是不是预览画质。
   const beyondPreview = !!previewHint && zoom.scale > 1.5
 

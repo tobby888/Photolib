@@ -61,6 +61,10 @@ public record StorageProperties(
                 && accessKeySecret != null && !accessKeySecret.isBlank();
     }
 
+    public boolean usesOss() {
+        return !local() && ossConfigured();
+    }
+
     public String signingEndpoint() {
         return publicEndpoint == null || publicEndpoint.isBlank() ? endpoint : publicEndpoint;
     }
