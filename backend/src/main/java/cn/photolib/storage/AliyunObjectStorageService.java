@@ -13,17 +13,23 @@ import com.aliyun.oss.model.ObjectListing;
 import com.aliyun.oss.model.OSSObject;
 import com.aliyun.oss.model.OSSObjectSummary;
 import com.aliyun.oss.model.PutObjectRequest;
+import com.aliyun.oss.model.ProcessObjectRequest;
 import com.aliyun.oss.model.SetBucketCORSRequest;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.UncheckedIOException;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Date;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -37,13 +43,19 @@ public class AliyunObjectStorageService implements ObjectStorageService, AutoClo
     private final OSS signingClient;
 
     public AliyunObjectStorageService(StorageProperties properties) {
+        this(properties, buildClient(properties, properties.endpoint()),
+                properties.endpoint().equals(properties.signingEndpoint()) ? null
+                        : buildClient(properties, properties.signingEndpoint()));
+    }
+
+    AliyunObjectStorageService(StorageProperties properties, OSS client, OSS signingClient) {
         this.properties = properties;
-        this.client = new OSSClientBuilder().build(properties.endpoint(),
-                properties.accessKeyId(), properties.accessKeySecret());
-        this.signingClient = properties.endpoint().equals(properties.signingEndpoint())
-                ? client
-                : new OSSClientBuilder().build(properties.signingEndpoint(),
-                        properties.accessKeyId(), properties.accessKeySecret());
+        this.client = client;
+        this.signingClient = signingClient == null ? client : signingClient;
+    }
+
+    private static OSS buildClient(StorageProperties properties, String endpoint) {
+        return new OSSClientBuilder().build(endpoint, properties.accessKeyId(), properties.accessKeySecret());
     }
 
     @Override
@@ -218,6 +230,35 @@ public class AliyunObjectStorageService implements ObjectStorageService, AutoClo
     @Override
     public void delete(String objectKey) {
         client.deleteObject(properties.bucket(), objectKey);
+    }
+
+    @Override
+    public void checkAccess() {
+        if (!client.doesBucketExist(properties.bucket())) {
+            throw new IllegalStateException("配置的 OSS Bucket 不存在");
+        }
+    }
+
+    @Override
+    public void saveAvifPreview(String sourceKey, String destinationKey) {
+        if (sourceKey.equals(destinationKey)) {
+            throw new IllegalArgumentException("预览转存不能覆盖来源对象");
+        }
+        String bucket = properties.bucket();
+        // Bound both axes while preserving aspect ratio and orientation.
+        String process = "image/resize,m_lfit,l_1600,s_1200,limit_1/format,avif"
+                + "|sys/saveas,o_" + base64(destinationKey) + ",b_" + base64(bucket);
+        ProcessObjectRequest request = new ProcessObjectRequest(bucket, sourceKey, process);
+        var result = client.processObject(request);
+        try (InputStream response = result.getResponse().getContent()) {
+            if (response != null) response.transferTo(OutputStream.nullOutputStream());
+        } catch (IOException exception) {
+            throw new UncheckedIOException("读取 OSS 图片转存响应失败", exception);
+        }
+    }
+
+    private static String base64(String value) {
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(value.getBytes(StandardCharsets.UTF_8));
     }
 
     /**

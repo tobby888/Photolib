@@ -93,6 +93,39 @@ class PreviewRegenerationServiceTests {
     }
 
     @Test
+    void ossMigrationPersistsAvifWithoutReadingTheFinishedJpegIntoTheNativeEncoder() {
+        long id = 93792L;
+        String source = "photos/preview-regeneration/avif-migration.jpg";
+        byte[] preview = "small cloud generated AVIF".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        insertUserAndPhoto(93791L, id, source, 900, null, null, "preview-avif-migration-user");
+        storage.put(source, new ByteArrayInputStream(new byte[]{1, 2, 3}), 3, "image/jpeg");
+        ObjectStorageService cloudStorage = spy(storage);
+        doAnswer(call -> {
+            storage.put(call.getArgument(1), new ByteArrayInputStream(preview), preview.length, "image/avif");
+            return null;
+        }).when(cloudStorage).saveAvifPreview(eq(source), anyString());
+        StorageProperties cloud = mock(StorageProperties.class);
+        when(cloud.usesOss()).thenReturn(true);
+        ImageCompressor nativeEncoder = mock(ImageCompressor.class);
+        PreviewProfilePolicy policy = new PreviewProfilePolicy(cloud, profileRepository);
+        PreviewRegenerationService service = new PreviewRegenerationService(
+                jdbc, cloudStorage, cloud, nativeEncoder, workspace, transactions,
+                profileRepository, policy, new PreviewMaintenanceLock(),
+                new OssAvifPreview(cloudStorage, workspace, mock(cn.photolib.storage.OssAccessMonitor.class)));
+
+        assertThat(service.synchronizeCompressionRatio().regeneratedCount()).isEqualTo(1);
+        String key = jdbc.sql("SELECT thumbnail_object_key FROM photo WHERE id=:id")
+                .param("id", id).query(String.class).single();
+        assertThat(key).startsWith(PreviewProfile.OSS_KEY_PREFIX).endsWith(".avif");
+        assertThat(storage.stat(key).size()).isEqualTo(preview.length);
+        assertThat(profileRepository.requireCurrent()).isEqualTo(PreviewProfile.ossAvif());
+        assertThat(service.synchronizeCompressionRatio().regeneratedCount()).isZero();
+        verify(cloudStorage).saveAvifPreview(source, key);
+        verify(cloudStorage, never()).open(source);
+        verifyNoInteractions(nativeEncoder);
+    }
+
+    @Test
     void rejectsAmbientTransactionsBeforeTouchingObjectStorage() {
         ObjectStorageService untouchedStorage = mock(ObjectStorageService.class);
         PreviewRegenerationService isolated = new PreviewRegenerationService(
@@ -224,7 +257,7 @@ class PreviewRegenerationServiceTests {
         PreviewProfilePolicy policy = new PreviewProfilePolicy(properties, repository);
         PreviewRegenerationService isolated = new PreviewRegenerationService(
                 jdbc, tamperedStorage, properties, compressor, workspace, transactions,
-                repository, policy, new PreviewMaintenanceLock());
+                repository, policy, new PreviewMaintenanceLock(), null);
 
         PreviewRegenerationService.Result result = isolated.synchronizeCompressionRatio();
 
@@ -275,7 +308,7 @@ class PreviewRegenerationServiceTests {
         PreviewProfilePolicy policy = new PreviewProfilePolicy(properties, repository);
         PreviewRegenerationService isolated = new PreviewRegenerationService(
                 jdbc, tamperedStorage, properties, compressor, workspace, transactions,
-                repository, policy, new PreviewMaintenanceLock());
+                repository, policy, new PreviewMaintenanceLock(), null);
 
         PreviewRegenerationService.Result result = isolated.synchronizeCompressionRatio();
 
@@ -1199,7 +1232,7 @@ class PreviewRegenerationServiceTests {
         PreviewProfilePolicy policy = new PreviewProfilePolicy(properties, repository);
         PreviewRegenerationService newInstance = new PreviewRegenerationService(
                 jdbc, storage, properties, compressor, workspace, transactions,
-                repository, policy, new PreviewMaintenanceLock());
+                repository, policy, new PreviewMaintenanceLock(), null);
         AtomicInteger cleanupRuns = new AtomicInteger();
         doAnswer(invocation -> {
             cleanupRuns.incrementAndGet();

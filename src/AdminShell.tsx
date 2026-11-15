@@ -1,5 +1,5 @@
 import {
-  App as AntApp, Button, Card, Dropdown, Grid, Layout, Menu, Space, Typography,
+  Alert, App as AntApp, Button, Card, Dropdown, Grid, Layout, Menu, Space, Typography,
 } from 'antd'
 import type { MenuProps } from 'antd'
 import {
@@ -19,6 +19,7 @@ import { ADMIN_SECTION_ICONS as ICONS } from './adminIcons'
 import RouteErrorBoundary from './RouteErrorBoundary'
 import TwoFactorVerify from './TwoFactorVerify'
 import UserAvatar from './UserAvatar'
+import { api, withoutStepUpPrompt } from './api'
 
 const AdminDashboardPage = lazy(() => import('./pages/admin/AdminDashboardPage'))
 const BrandingSettingsPage = lazy(() => import('./pages/admin/BrandingSettingsPage'))
@@ -48,6 +49,26 @@ function SectionPage({ section, children }: { section: AdminSection; children: R
 }
 
 const section = (key: string) => ADMIN_SECTIONS.find(item => item.key === key)!
+
+function OssAlerts() {
+  const [alerts, setAlerts] = useState<{ id: string; message: string }[]>([])
+  useEffect(() => {
+    const controller = new AbortController()
+    const refresh = () => {
+      void api<typeof alerts>({
+        ...withoutStepUpPrompt, url: '/admin-alerts/oss', signal: controller.signal,
+      }).then(result => {
+        if (!controller.signal.aborted) setAlerts(result)
+      }).catch(() => { /* 已经显示的告警保留到下一次成功核对。 */ })
+    }
+    refresh()
+    const timer = window.setInterval(refresh, 30_000)
+    return () => { controller.abort(); window.clearInterval(timer) }
+  }, [])
+
+  return alerts.map(alert => <Alert key={alert.id} type="error" showIcon
+    className="dashboard-alert" title="OSS 存储异常" description={alert.message} />)
+}
 
 /**
  * 进入管理员面板前先验证两步验证（对管理员生效时）。验证一次 15 分钟内有效；
@@ -177,7 +198,7 @@ export default function AdminShell() {
       </Header>
       <Content className="content admin-content">
         {/* 门放在按地址重挂的 route-stage 外面：切换管理页不必每次重查一遍再验证状态。 */}
-        <StepUpGate><div className="route-stage" key={location.pathname}>
+        <StepUpGate><OssAlerts /><div className="route-stage" key={location.pathname}>
           <RouteErrorBoundary><Suspense fallback={<div className="route-loading">正在打开管理员面板…</div>}><Routes>
             <Route index element={<AdminDashboardPage />} />
             <Route path="branding" element={<SectionPage section={section('branding')}><BrandingSettingsPage /></SectionPage>} />

@@ -80,6 +80,7 @@ public class PhotoImageEditService {
     private final TransactionTemplate transactions;
     private final AbandonedUploadCleanupJob abandonedUploads;
     private final UploadLimitService uploadLimits;
+    private final OssThumbnailJobs ossThumbnails;
 
     /**
      * 为一次编辑签发直传地址。
@@ -154,6 +155,7 @@ public class PhotoImageEditService {
     private void replace(PhotoEntity photo, ApplyEdit command, String sha256, String extension,
                          ImageCompressor compressor) throws Exception {
         Path taskDirectory = null;
+        OssThumbnailJobs.Pending pending = null;
         try {
             taskDirectory = workspace.createTaskDirectory(photo.getId());
             Path source = workspace.taskFile(taskDirectory, "edited." + extension);
@@ -167,6 +169,11 @@ public class PhotoImageEditService {
                 throw new IllegalArgumentException("编辑结果 SHA-256 校验失败");
             }
 
+            PreviewProfilePolicy.CommitPermit cloudPermit = properties.usesOss()
+                    ? previewProfiles.permitForNewPreview() : null;
+            if (cloudPermit != null && cloudPermit.profile().cloud()) {
+                pending = ossThumbnails.begin(photo.getId(), source, command.contentType(), sourceSize, cloudPermit);
+            }
             Path processedPath = workspace.taskFile(taskDirectory, "processed." + extension);
             ImageCompressor.FileResult result = compressor.compress(
                     source, processedPath, command.contentType(), properties.imageTargetBytes());
@@ -179,12 +186,13 @@ public class PhotoImageEditService {
                     + UUID.randomUUID() + "." + extension;
             upload(finishedKey, result.path(), result.size(), result.contentType());
 
-            PreviewProfilePolicy.CommitPermit permit = previewProfiles.permitForNewPreview();
-            Path thumbnailPath = workspace.taskFile(taskDirectory,
-                    "thumbnail" + ImageCompressor.PREVIEW_EXTENSION);
+            PreviewProfilePolicy.CommitPermit permit = cloudPermit == null
+                    ? previewProfiles.permitForNewPreview() : cloudPermit;
             String previewKey = null;
             Long previewSize = null;
-            try {
+            if (!properties.usesOss()) try {
+                Path thumbnailPath = workspace.taskFile(taskDirectory,
+                        "thumbnail" + ImageCompressor.PREVIEW_EXTENSION);
                 ImageCompressor.FileResult thumbnail = compressor.thumbnail(
                         result.path(), thumbnailPath, result.contentType(), 480,
                         permit.profile().compressionRatio().doubleValue());
@@ -227,12 +235,15 @@ public class PhotoImageEditService {
                 throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
                         "图片或预览设置在保存期间发生了变化，请刷新后重新编辑");
             }
+            if (pending != null) pending.publish(
+                    new OssThumbnailJobs.Source(finishedKey, result.contentType(), result.size()));
             // 到这里数据库已经指向新对象，旧对象删失败只是留下垃圾，不能让整次编辑报错。
             deleteQuietly(photo.getId(), "旧成品图", oldFinishedKey);
             deleteQuietly(photo.getId(), "旧预览图", oldPreviewKey);
             deleteQuietly(photo.getId(), "旧原图", oldOriginalKey);
             log.info("图片编辑已替换成品图: photoId={}, objectKey={}", photo.getId(), finishedKey);
         } finally {
+            if (pending != null) pending.discard();
             cleanupTaskDirectory(taskDirectory);
         }
     }

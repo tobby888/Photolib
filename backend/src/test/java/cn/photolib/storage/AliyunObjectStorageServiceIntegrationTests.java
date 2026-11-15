@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -17,11 +18,50 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 @EnabledIf("hasConfiguredDotEnv")
 class AliyunObjectStorageServiceIntegrationTests {
+
+    @Test
+    @EnabledIf("allowsAvifRequests")
+    void sendsARealAvifSaveAsRequestAndReadsTheNewObject() throws Exception {
+        Properties env = loadDotEnv();
+        StorageProperties config = new StorageProperties("aliyun", env.getProperty("OSS_BUCKET"),
+                env.getProperty("OSS_ENDPOINT"), null, env.getProperty("OSS_ACCESS_KEY_ID"),
+                env.getProperty("OSS_ACCESS_KEY_SECRET"), null, null, null, java.util.List.of("*"),
+                Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofMinutes(5),
+                Duration.ofDays(30), 10_485_760, 104_857_600, 0.6);
+        String prefix = "photolib-integration-test/" + UUID.randomUUID();
+        String source = prefix + ".jpg";
+        String preview = prefix + ".avif";
+        ByteArrayOutputStream jpeg = new ByteArrayOutputStream();
+        assertTrue(ImageIO.write(new BufferedImage(1920, 1440, BufferedImage.TYPE_INT_RGB), "jpeg", jpeg));
+        try (AliyunObjectStorageService storage = new AliyunObjectStorageService(config)) {
+            storage.checkAccess();
+            try {
+                storage.put(source, new ByteArrayInputStream(jpeg.toByteArray()), jpeg.size(), "image/jpeg");
+                storage.saveAvifPreview(source, preview);
+
+                var info = storage.stat(preview);
+                assertEquals("image/avif", info.contentType());
+                try (InputStream input = storage.open(preview)) {
+                    byte[] header = input.readNBytes(12);
+                    assertEquals("ftypavif", new String(header, 4, 8, StandardCharsets.US_ASCII));
+                }
+                assertEquals(jpeg.size(), storage.stat(source).size());
+            } finally {
+                try {
+                    storage.delete(preview);
+                } finally {
+                    storage.delete(source);
+                }
+            }
+        }
+    }
 
     @Test
     void storageServiceRoundTripsUserMetadataWithoutHeaderPrefix() throws Exception {
@@ -106,6 +146,10 @@ class AliyunObjectStorageServiceIntegrationTests {
                 && configured(dotEnv, "OSS_BUCKET")
                 && configured(dotEnv, "OSS_ACCESS_KEY_ID")
                 && configured(dotEnv, "OSS_ACCESS_KEY_SECRET");
+    }
+
+    static boolean allowsAvifRequests() {
+        return "true".equalsIgnoreCase(loadDotEnv().getProperty("OSS_AVIF_INTEGRATION_TEST"));
     }
 
     private static boolean configured(Properties properties, String name) {

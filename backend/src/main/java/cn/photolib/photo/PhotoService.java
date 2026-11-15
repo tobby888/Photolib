@@ -1109,9 +1109,15 @@ public class PhotoService {
      * 与图库列表用的是同一份回退规则（见 {@link #renderableObjectKey}）。
      */
     public String previewUrl(PhotoEntity photo) {
+        return previewUrl(photo, true);
+    }
+
+    /** Browse-only share links must never use a finished object in place of a pending preview. */
+    public String previewUrl(PhotoEntity photo, boolean allowFinishedFallback) {
         if (photo.getStatus() != PhotoStatus.AVAILABLE && photo.getStatus() != PhotoStatus.ARCHIVED) {
             return null;
         }
+        if (!allowFinishedFallback && !hasThumbnail(photo)) return null;
         String previewKey = renderableObjectKey(photo);
         if (previewKey == null) return null;
         // Previews are immutable and re-rendered on every gallery view, so this
@@ -1272,10 +1278,13 @@ public class PhotoService {
      * OriginalCleanupJob} deletes it once the retention window passes.</p>
      */
     public String renderableObjectKey(PhotoEntity p) {
-        boolean previewUsable = StringUtils.hasText(p.getThumbnailObjectKey())
-                && p.getThumbnailSize() != null && p.getThumbnailSize() > 0;
-        if (previewUsable) return p.getThumbnailObjectKey();
+        if (hasThumbnail(p)) return p.getThumbnailObjectKey();
         return StringUtils.hasText(p.getObjectKey()) ? p.getObjectKey() : null;
+    }
+
+    private boolean hasThumbnail(PhotoEntity photo) {
+        return StringUtils.hasText(photo.getThumbnailObjectKey())
+                && photo.getThumbnailSize() != null && photo.getThumbnailSize() > 0;
     }
 
     private long adoptionCount(Long photoId) {

@@ -219,8 +219,7 @@ public class PhotoStorageReconciliationService {
                 && photo.thumbnailSize() != null
                 && thumbnail.get().size() == photo.thumbnailSize()
                 && thumbnail.get().size() <= MAX_PREVIEW_BYTES
-                && supportedPreviewContentType(thumbnail.get().contentType())
-                && expected.matches(thumbnail.get(), thumbnail.get().contentType());
+                && expected.matchesStored(photo.thumbnailObjectKey(), thumbnail.get());
         return new Observation(photo, healthy ? Verdict.HEALTHY : Verdict.PREVIEW_INVALID);
     }
 
@@ -386,19 +385,6 @@ public class PhotoStorageReconciliationService {
             statement = statement.param("thumbnailSize", photo.thumbnailSize());
         }
         return statement.update() == 1;
-    }
-
-    /**
-     * A preview is judged by its own MIME rather than by {@code photo.content_type}.
-     * That column describes the source and is not trustworthy — legacy migration
-     * copies the old system's {@code mime_type} verbatim and falls back to
-     * {@code application/octet-stream} — so deriving the expectation from it would
-     * clear a perfectly good preview reference on every hourly pass. Previews are
-     * re-encoded into one container regardless of the source, so the only MIME a
-     * current preview can have is {@link PreviewProfile#PREVIEW_CONTENT_TYPE}.
-     */
-    private boolean supportedPreviewContentType(String contentType) {
-        return PreviewProfile.PREVIEW_CONTENT_TYPE.equals(contentType);
     }
 
     private void synchronizePreviewProfileAlert(String error) {

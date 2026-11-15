@@ -21,6 +21,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
@@ -32,8 +33,14 @@ import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @SpringBootTest
 class PhotoProcessingFilePipelineTests {
@@ -139,6 +146,58 @@ class PhotoProcessingFilePipelineTests {
     }
 
     @Test
+    void ossUploadSchedulesPreviewBeforeNativeCompressionAndPublishesWithoutWaiting() throws Exception {
+        Path source = workspace.createBatchFile(BATCH_ID, ".jpg");
+        writeJpeg(source);
+        long size = Files.size(source);
+        insertRows(source, size);
+        StorageProperties cloud = spy(properties);
+        when(cloud.usesOss()).thenReturn(true);
+        PreviewProfilePolicy cloudPolicy = new PreviewProfilePolicy(cloud, new PreviewProfileRepository(jdbc));
+        OssThumbnailJobs previewJobs = mock(OssThumbnailJobs.class);
+        var pending = new OssThumbnailJobs.Pending(new CompletableFuture<>());
+        when(previewJobs.begin(eq(PHOTO_ID), any(Path.class), eq("image/jpeg"), eq(size), any()))
+                .thenReturn(pending);
+        ImageCompressor finishedEncoder = spy(compressor);
+        doAnswer(call -> {
+            verify(previewJobs).begin(eq(PHOTO_ID), any(Path.class), eq("image/jpeg"), eq(size), any());
+            assertThat(pending.committed()).isNotCompleted();
+            return call.callRealMethod();
+        }).when(finishedEncoder).compress(any(Path.class), any(Path.class), anyString(), anyLong());
+        PhotoProcessingService service = new PhotoProcessingService(
+                photoMapper, userMapper, storage, cloud,
+                new NativeImageTaskPool(processingExecutor, finishedEncoder), workspace,
+                batchItemMapper, batchMapper, cloudPolicy, transactions, previewJobs);
+
+        try {
+            service.submit(PHOTO_ID).get(10, TimeUnit.SECONDS);
+
+            var photo = photoMapper.selectById(PHOTO_ID);
+            assertThat(photo.getStatus()).isEqualTo(cn.photolib.photo.model.PhotoStatus.AVAILABLE);
+            assertThat(photo.getThumbnailObjectKey()).isNull();
+            assertThat(pending.committed().join().key()).isEqualTo(PHOTO_KEY);
+            verify(finishedEncoder, never()).thumbnail(any(), any(), anyString(), anyInt(), anyDouble());
+
+            String preview = OssAvifPreview.key("uploads", PHOTO_ID);
+            assertThat(photoMapper.attachCloudThumbnail(PHOTO_ID, "photos/replaced.jpg", preview, 73,
+                    LocalDateTime.now())).isZero();
+            assertThat(photoMapper.attachCloudThumbnail(PHOTO_ID, PHOTO_KEY, preview, 73,
+                    LocalDateTime.now())).isEqualTo(1);
+            assertThat(photoMapper.attachCloudThumbnail(PHOTO_ID, PHOTO_KEY, "thumbnails/other.avif", 80,
+                    LocalDateTime.now())).isZero();
+            assertThat(photoMapper.selectById(PHOTO_ID).getThumbnailObjectKey()).isEqualTo(preview);
+        } finally {
+            deleteObject(PHOTO_KEY);
+            deleteObject(ORIGINAL_KEY);
+            jdbc.sql("DELETE FROM photo_upload_item WHERE batch_id=:id").param("id", BATCH_ID).update();
+            jdbc.sql("DELETE FROM photo_upload_batch WHERE id=:id").param("id", BATCH_ID).update();
+            jdbc.sql("DELETE FROM photo WHERE id=:id").param("id", PHOTO_ID).update();
+            jdbc.sql("DELETE FROM app_user WHERE id=:id").param("id", USER_ID).update();
+            if (Files.exists(source)) workspace.deleteBatchFile(source);
+        }
+    }
+
+    @Test
     void publishesThePhotoWithoutAPreviewWhenThumbnailEncodingFails() throws Exception {
         Path source = workspace.createBatchFile(BATCH_ID, ".jpg");
         writeJpeg(source);
@@ -152,7 +211,7 @@ class PhotoProcessingFilePipelineTests {
         PhotoProcessingService isolated = new PhotoProcessingService(
                 photoMapper, userMapper, storage, properties,
                 new NativeImageTaskPool(processingExecutor, failingThumbnails),
-                workspace, batchItemMapper, batchMapper, previewProfiles, transactions);
+                workspace, batchItemMapper, batchMapper, previewProfiles, transactions, null);
 
         try {
             isolated.submit(PHOTO_ID).get(30, TimeUnit.SECONDS);
@@ -206,7 +265,7 @@ class PhotoProcessingFilePipelineTests {
         PhotoProcessingService isolated = new PhotoProcessingService(
                 photoMapper, userMapper, storage, properties,
                 new NativeImageTaskPool(processingExecutor, brokenCompressor),
-                workspace, batchItemMapper, batchMapper, previewProfiles, transactions);
+                workspace, batchItemMapper, batchMapper, previewProfiles, transactions, null);
 
         try {
             // Error 不能被吞掉：任务的 future 以它结束，onRequested 会把它记进日志。

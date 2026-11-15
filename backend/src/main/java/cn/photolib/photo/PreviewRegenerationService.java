@@ -52,6 +52,7 @@ public class PreviewRegenerationService {
     private final PreviewProfileRepository profiles;
     private final PreviewProfilePolicy profilePolicy;
     private final PreviewMaintenanceLock maintenanceLock;
+    private final OssAvifPreview ossAvif;
 
     PreviewRegenerationService(JdbcClient jdbc, ObjectStorageService storage,
                                StorageProperties properties, ImageCompressor compressor,
@@ -67,6 +68,7 @@ public class PreviewRegenerationService {
         this.profiles = repository;
         this.profilePolicy = new PreviewProfilePolicy(properties, repository);
         this.maintenanceLock = new PreviewMaintenanceLock();
+        this.ossAvif = null;
     }
 
     public Result synchronizeCompressionRatio() {
@@ -261,11 +263,9 @@ public class PreviewRegenerationService {
         // system's mime_type verbatim and falls back to application/octet-stream —
         // while the preview format follows the finished object's real bytes. Using
         // the column would mark a perfectly good preview unhealthy on every pass.
-        String objectContentType = object.get().contentType();
-        if (!supportedPreviewContentType(objectContentType)) return false;
         return object.get().size() == photo.thumbnailSize()
                 && object.get().size() <= MAX_STAGED_PREVIEW_BYTES
-                && expected.matches(object.get(), objectContentType);
+                && expected.matchesStored(photo.thumbnailObjectKey(), object.get());
     }
 
     private Result repairUnhealthyPreviews(PreviewProfile expected, List<PreviewPhoto> unhealthy,
@@ -496,12 +496,6 @@ public class PreviewRegenerationService {
         // by the finished object's real bytes. A legacy PNG whose column said
         // anything other than exactly image/png could never pass, and regenerating
         // produced the same MIME, so every retry failed identically forever.
-        if (!supportedPreviewContentType(checkpoint.stagedContentType())) {
-            log.warn("暂存预览对象 MIME 不是受支持的预览类型：photoId={}, contentType={}",
-                    photoId, checkpoint.stagedContentType());
-            return false;
-        }
-
         Optional<ObjectStorageService.ObjectInfo> object;
         try {
             object = storage.find(checkpoint.stagedObjectKey());
@@ -523,8 +517,11 @@ public class PreviewRegenerationService {
             return false;
         }
         try {
-            if (!expected.matches(object.get(), checkpoint.stagedContentType(),
-                    checkpoint.stagedSha256())) {
+            boolean matches = expected.cloud()
+                    ? PreviewProfile.AVIF_CONTENT_TYPE.equals(checkpoint.stagedContentType())
+                        && expected.matchesStored(checkpoint.stagedObjectKey(), object.get())
+                    : expected.matches(object.get(), checkpoint.stagedContentType(), checkpoint.stagedSha256());
+            if (!matches) {
                 log.warn("暂存预览对象的 MIME 或 profile 元数据与本轮 profile 不一致："
                                 + "photoId={}, objectContentType={}, stagedContentType={}, "
                                 + "expectedRatio={}",
@@ -546,11 +543,6 @@ public class PreviewRegenerationService {
             return false;
         }
         return true;
-    }
-
-    /** The only format the preview encoder emits. */
-    private boolean supportedPreviewContentType(String contentType) {
-        return PreviewProfile.PREVIEW_CONTENT_TYPE.equals(contentType);
     }
 
     private StagedPreview toCheckpoint(PreviewProfile expected, GeneratedPreview preview) {
@@ -817,6 +809,7 @@ public class PreviewRegenerationService {
     private GeneratedPreview generateDirectly(PreviewPhoto photo, String generation,
                                               PreviewProfile expected,
                                               Consumer<GeneratedPreview> beforeUpload) throws Exception {
+        if (expected.cloud()) return generateOssPreview(photo, generation, beforeUpload);
         Path taskDirectory = workspace.createTaskDirectory(photo.id());
         try {
             Path source = workspace.taskFile(taskDirectory, "source.img");
@@ -868,6 +861,35 @@ public class PreviewRegenerationService {
             return generated;
         } finally {
             cleanupTaskDirectory(taskDirectory);
+        }
+    }
+
+    private GeneratedPreview generateOssPreview(PreviewPhoto photo, String generation,
+                                                Consumer<GeneratedPreview> checkpoint) throws Exception {
+        ObjectStorageService.ObjectInfo source = storage.stat(photo.objectKey());
+        String type = source.contentType();
+        if ((type == null || !type.startsWith("image/")) && AnimatedImages.GIF.equals(photo.contentType())) {
+            type = photo.contentType();
+        }
+        String key = OssAvifPreview.key(generation, photo.id());
+        OssAvifPreview.Thumbnail saved;
+        try {
+            saved = ossAvif.generate(photo.id(), photo.objectKey(), type, source.size(), key);
+        } catch (OssAvifPreview.UnusableImage failure) {
+            throw new PreviewSourceUnusableException(photo.id(), failure);
+        }
+        try {
+            String digest;
+            try (InputStream input = storage.open(key)) {
+                digest = sha256(input, saved.size());
+            }
+            GeneratedPreview result = new GeneratedPreview(photo, key, saved.size(),
+                    PreviewProfile.AVIF_CONTENT_TYPE, digest);
+            if (checkpoint != null) checkpoint.accept(result);
+            return result;
+        } catch (Exception failure) {
+            ossAvif.delete(key);
+            throw failure;
         }
     }
 

@@ -22,7 +22,8 @@ public class PreviewProfilePolicy {
     private final AtomicReference<Phase> phase = new AtomicReference<>(Phase.BOOTSTRAPPING);
 
     public PreviewProfile bootstrapTarget() {
-        return PreviewProfile.configured(properties.previewCompressionRatio());
+        return properties.usesOss() ? PreviewProfile.ossAvif()
+                : PreviewProfile.configured(properties.previewCompressionRatio());
     }
 
     public PreviewProfile profileForNewPreview() {

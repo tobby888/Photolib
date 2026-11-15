@@ -301,7 +301,7 @@ export default function SharedSelectionWorkbench({
   </>
 
   const qualitySwitch = hasOriginals && <Tooltip
-    title="原图按成品图渲染，看得清细节但更费流量；预览图是 480px 的压缩图">
+    title="原图按成品图渲染，适合检查细节；压缩预览更省流量">
     <Segmented<QualityMode> value={quality} onChange={setQuality} options={[
       { value: 'preview', label: '小图（预览）', icon: <CheckCircleOutlined /> },
       { value: 'original', label: '大图（原图）', icon: <ExpandOutlined /> },
@@ -317,7 +317,7 @@ export default function SharedSelectionWorkbench({
         refresh={() => refreshUrl(photo.id, original)}
         resetKey={`${photo.id}-${original ? 'original' : 'preview'}`}
         previewHint={original ? undefined
-          : `当前是 480px 预览图，放大后会糊${hasOriginals ? '；要看清细节请切到「大图（原图）」' : ''}`} />
+          : `当前是压缩预览${hasOriginals ? '，检查像素级细节请切到「大图（原图）」' : ''}`} />
     </Suspense>
   }
 

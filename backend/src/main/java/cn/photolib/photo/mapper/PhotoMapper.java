@@ -9,6 +9,17 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 public interface PhotoMapper extends BaseMapper<PhotoEntity> {
+    @Update("""
+            UPDATE photo
+            SET thumbnail_object_key=#{previewKey}, thumbnail_size=#{size},
+                version=version+1, updated_at=#{now}
+            WHERE id=#{id} AND deleted=0 AND status IN ('AVAILABLE', 'ARCHIVED')
+              AND object_key=#{finishedKey} AND thumbnail_object_key IS NULL
+            """)
+    int attachCloudThumbnail(@Param("id") long id, @Param("finishedKey") String finishedKey,
+                             @Param("previewKey") String previewKey, @Param("size") long size,
+                             @Param("now") LocalDateTime now);
+
     /**
      * Publishes all derived photo fields in one row/profile CAS. The profile
      * predicate is evaluated by the database in the same statement as the

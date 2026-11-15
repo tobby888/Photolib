@@ -121,6 +121,22 @@ public class TimedObjectStorageService implements ObjectStorageService, AutoClos
         });
     }
 
+    @Override
+    public void checkAccess() {
+        timed("checkAccess", null, null, () -> {
+            delegate.checkAccess();
+            return null;
+        });
+    }
+
+    @Override
+    public void saveAvifPreview(String sourceKey, String destinationKey) {
+        timed("saveAvifPreview", sourceKey, null, () -> {
+            delegate.saveAvifPreview(sourceKey, destinationKey);
+            return null;
+        });
+    }
+
     private <T> T timed(String operation, String objectKey, Long bytes, Supplier<T> action) {
         if (!recorder.active()) return action.get();
         long started = System.nanoTime();

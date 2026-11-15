@@ -4,6 +4,7 @@ import cn.photolib.auth.AuthService;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.permission.DataScope;
 import cn.photolib.permission.PermissionCode;
+import cn.photolib.photo.mapper.PhotoMapper;
 import cn.photolib.project.ProjectService;
 import cn.photolib.project.model.ProjectEntity;
 import cn.photolib.project.model.ProjectStatus;
@@ -25,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.context.WebApplicationContext;
 
 import java.net.URI;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
 
@@ -57,6 +59,7 @@ class ProjectShareHttpTests {
     @Autowired private WebApplicationContext context;
     @Autowired private ProjectShareService shareService;
     @Autowired private ProjectService projectService;
+    @Autowired private PhotoMapper photoMapper;
     @Autowired private JdbcClient jdbc;
     /** 只为了给过滤器发一个"有效令牌"，不真的建会话。 */
     @MockitoBean private AuthService authService;
@@ -115,6 +118,26 @@ class ProjectShareHttpTests {
      * 刻意不是 401——401 会撞上前端 api.ts 的令牌刷新拦截器，给一个从没登录过的
      * 访客发一次注定失败的 /auth/refresh，还会广播一次"会话过期"。
      */
+    @Test
+    void browseOnlyShareWaitsForTheThumbnailWithoutExposingTheFinishedImage() throws Exception {
+        jdbc.sql("UPDATE project_share_link SET allow_download=0 WHERE token=:token")
+                .param("token", token).update();
+        String session = openSession("share-pass", false);
+        String path = "/api/v1/public/shares/" + token + "/photos";
+
+        mvc.perform(anonymous(get(path)).header(ProjectSharePublicController.SESSION_HEADER, session))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].thumbnailUrl").doesNotExist())
+                .andExpect(jsonPath("$.data.items[0].imageUrl").doesNotExist());
+
+        assertThat(photoMapper.attachCloudThumbnail(PHOTO_ID, "photos/http.jpg",
+                "thumbnails/test.avif", 300, LocalDateTime.now())).isEqualTo(1);
+        mvc.perform(anonymous(get(path)).header(ProjectSharePublicController.SESSION_HEADER, session))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].thumbnailUrl").isNotEmpty())
+                .andExpect(jsonPath("$.data.items[0].imageUrl").doesNotExist());
+    }
+
     @Test
     void browsingWithoutASessionIsForbiddenRatherThanUnauthorized() throws Exception {
         mvc.perform(anonymous(get("/api/v1/public/shares/" + token + "/photos")))
@@ -532,13 +555,17 @@ class ProjectShareHttpTests {
     }
 
     private String openSession(String password) throws Exception {
+        return openSession(password, true);
+    }
+
+    private String openSession(String password, boolean allowDownload) throws Exception {
         String body = mvc.perform(anonymous(post("/api/v1/public/shares/" + token + "/sessions"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"password\":\"" + password + "\"}"))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
         JsonNode session = json.readTree(body).path("data");
-        assertThat(session.path("access").path("allowDownload").asBoolean()).isTrue();
+        assertThat(session.path("access").path("allowDownload").asBoolean()).isEqualTo(allowDownload);
         return session.path("sessionToken").asText();
     }
 

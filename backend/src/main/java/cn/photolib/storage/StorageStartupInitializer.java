@@ -14,13 +14,15 @@ import org.springframework.stereotype.Component;
 public class StorageStartupInitializer implements ApplicationRunner {
     private static final Logger log = LoggerFactory.getLogger(StorageStartupInitializer.class);
     private final ObjectStorageService storage;
+    private final OssAccessMonitor ossAccess;
 
     @Override
     public void run(ApplicationArguments args) {
         try {
             storage.initialize();
         } catch (Exception e) {
-            log.error("存储服务初始化失败，部分功能可能不可用", e);
+            log.error("存储服务初始化失败，错误类型 {}，部分功能可能不可用", e.getClass().getSimpleName());
         }
+        ossAccess.check();
     }
 }

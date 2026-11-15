@@ -58,6 +58,14 @@ public interface ObjectStorageService {
 
     void delete(String objectKey);
 
+    /** Validates the credentials against the active bucket without changing bucket state. */
+    default void checkAccess() {}
+
+    /** Renders and persists an AVIF preview within the backing store. */
+    default void saveAvifPreview(String sourceKey, String destinationKey) {
+        throw new UnsupportedOperationException("当前存储不支持 AVIF 转存");
+    }
+
     record SignedUrl(URL url, String method, java.time.Instant expiresAt) {
     }
 
