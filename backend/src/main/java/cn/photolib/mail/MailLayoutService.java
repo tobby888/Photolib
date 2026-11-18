@@ -19,6 +19,7 @@ public class MailLayoutService {
     private static final String RESOURCE = "shared-layout.html";
     private static final String SLOT = "{{content}}";
     private static final Pattern FULL_DOCUMENT = Pattern.compile("(?is)^\\s*(?:<!doctype\\s+html\\b|<html\\b)");
+    private static final Pattern TABLE_ROWS = Pattern.compile("(?is)^\\s*<tr\\b");
     static final Map<String, String> VARIABLES = Map.of(
             "siteName", "品牌名称", "siteSlogan", "品牌标语", "logo", "品牌图标（内嵌图片）",
             "logoSrc", "品牌图标地址", "content", "邮件正文（必填，放在表格的行位置）");
@@ -47,7 +48,8 @@ public class MailLayoutService {
     }
 
     public static String wrap(String layout, String content) {
-        return layout.replace(SLOT, content);
+        String rows = TABLE_ROWS.matcher(content).find() ? content : "<tr><td>" + content + "</td></tr>";
+        return layout.replace(SLOT, rows);
     }
 
     public static String settlement(String layout, String content) {
