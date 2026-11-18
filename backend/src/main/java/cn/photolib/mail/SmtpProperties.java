@@ -27,6 +27,14 @@ public record SmtpProperties(String host, Integer port, String username, String 
         return notBlank(host) && notBlank(username) && notBlank(password);
     }
 
+    public String siteUrl() {
+        if (!notBlank(siteBaseUrl)) return null;
+        String url = siteBaseUrl.trim();
+        if (!url.startsWith("http://") && !url.startsWith("https://")) url = "https://" + url;
+        while (url.endsWith("/")) url = url.substring(0, url.length() - 1);
+        return url + "/#/";
+    }
+
     private static boolean notBlank(String value) {
         return value != null && !value.isBlank();
     }

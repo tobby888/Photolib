@@ -130,7 +130,9 @@ class SettlementMailRendererTests {
     @Test
     void defaultTemplateHasNoLeftoverPlaceholders() {
         String template = new MailTemplateService(new MailTemplateStore(null)).defaultHtml();
-        String html = SettlementMailRenderer.render(MailTemplateService.DEFAULT_SUBJECT, template,
+        String layout = new MailTemplateStore(null).defaultHtml("shared-layout.html");
+        String html = SettlementMailRenderer.render(MailTemplateService.DEFAULT_SUBJECT,
+                cn.photolib.mail.MailLayoutService.settlement(layout, template),
                 statement(List.of(), List.of()), BRAND, "部长", "https://photo.example.cn/#/", NOW, Target.EMAIL).html();
 
         assertThat(html).doesNotContain("{{").contains("光影&lt;工作站&gt;").contains("cid:brand-logo")
