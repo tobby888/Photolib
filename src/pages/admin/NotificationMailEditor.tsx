@@ -11,17 +11,22 @@ import type { MailTemplateView, SettlementStatus } from '../../settlementMail'
 type WorklogKind = 'WORKLOG_SUBMITTED' | 'WORKLOG_APPROVED'
 type Preview = { subject: string; html: string }
 
-export default function NotificationMailEditor({ kind }: { kind?: WorklogKind }) {
+export default function NotificationMailEditor({ kind, layoutRevision = 0, onLayoutSaved }: {
+  kind?: WorklogKind; layoutRevision?: number; onLayoutSaved?: () => void
+}) {
   const url = kind ? `/mail-templates/worklog/${kind}` : '/mail-templates/layout'
   const template = useLoad(() => api<MailTemplateView>({ url }), null as MailTemplateView | null, [url])
   return <DataState loading={template.loading} error={template.error} onRetry={template.reload}>
     {template.data && <Editor key={`${template.data.template.version}-${template.data.template.customized}`}
-      view={template.data} kind={kind} url={url} onSaved={template.setData} />}
+      view={template.data} kind={kind} url={url} layoutRevision={layoutRevision} onSaved={next => {
+        template.setData(next)
+        onLayoutSaved?.()
+      }} />}
   </DataState>
 }
 
-function Editor({ view, kind, url, onSaved }: {
-  view: MailTemplateView; kind?: WorklogKind; url: string; onSaved: (view: MailTemplateView) => void
+function Editor({ view, kind, url, layoutRevision, onSaved }: {
+  view: MailTemplateView; kind?: WorklogKind; url: string; layoutRevision: number; onSaved: (view: MailTemplateView) => void
 }) {
   const { message } = App.useApp()
   const [subject, setSubject] = useState(view.template.subject)
@@ -50,7 +55,7 @@ function Editor({ view, kind, url, onSaved }: {
       }
     }, 600)
     return () => { controller.abort(); window.clearTimeout(timer) }
-  }, [valid, sampleUrl, kind, subject, html])
+  }, [valid, sampleUrl, kind, subject, html, layoutRevision])
 
   const insert = (name: string) => {
     const area = editor.current?.resizableTextArea?.textArea
