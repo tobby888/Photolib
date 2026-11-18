@@ -7,6 +7,7 @@ import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.mail.MailDeliveryException;
 import cn.photolib.mail.MailSender;
+import cn.photolib.mail.MailTemplateStore;
 import cn.photolib.mail.OutgoingMail;
 import cn.photolib.mail.SmtpProperties;
 import cn.photolib.notification.NotificationService;
@@ -125,7 +126,7 @@ public class SettlementMailService {
                                                    String html, AuthenticatedUser principal) {
         requireGlobal(principal);
         Recipient recipient = statements.recipient(userId, from, to);
-        MailTemplateService.Template template = templates.current();
+        MailTemplateStore.Template template = templates.current();
         return SettlementMailRenderer.render(subject != null ? subject : template.subject(),
                 html != null ? html : template.html(), statements.statement(recipient, from, to),
                 brands.current(), principal.displayName(), siteUrl(), LocalDateTime.now(), Target.PREVIEW);
@@ -143,7 +144,7 @@ public class SettlementMailService {
         }
         Recipient recipient = statements.recipient(userId, from, to);
         BrandSnapshot brand = brands.current();
-        MailTemplateService.Template template = templates.current();
+        MailTemplateStore.Template template = templates.current();
         SettlementMailRenderer.Rendered rendered = SettlementMailRenderer.render(
                 subject != null ? subject : template.subject(), html != null ? html : template.html(),
                 statements.statement(recipient, from, to), brand, principal.displayName(), siteUrl(),
@@ -244,7 +245,7 @@ public class SettlementMailService {
                 """).param("batchId", batchId).query(Long.class).list());
         BatchContext context;
         try {
-            MailTemplateService.Template template = templates.current();
+            MailTemplateStore.Template template = templates.current();
             context = new BatchContext(batch, template.subject(), template.html(), brands.current(), siteUrl());
         } catch (RuntimeException ex) {
             log.error("清算单批次 {} 无法开始：读取模板或品牌信息失败", batchId, ex);

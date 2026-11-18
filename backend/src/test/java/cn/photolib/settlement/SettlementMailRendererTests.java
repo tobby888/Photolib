@@ -1,6 +1,7 @@
 package cn.photolib.settlement;
 
 import cn.photolib.admin.BrandSnapshotService.BrandSnapshot;
+import cn.photolib.mail.MailTemplateStore;
 import cn.photolib.settlement.SettlementMailRenderer.Target;
 import cn.photolib.settlement.SettlementStatementService.AdoptionLine;
 import cn.photolib.settlement.SettlementStatementService.ProjectLine;
@@ -128,7 +129,7 @@ class SettlementMailRendererTests {
 
     @Test
     void defaultTemplateHasNoLeftoverPlaceholders() {
-        String template = new MailTemplateService(null).defaultHtml();
+        String template = new MailTemplateService(new MailTemplateStore(null)).defaultHtml();
         String html = SettlementMailRenderer.render(MailTemplateService.DEFAULT_SUBJECT, template,
                 statement(List.of(), List.of()), BRAND, "部长", "https://photo.example.cn/#/", NOW, Target.EMAIL).html();
 
