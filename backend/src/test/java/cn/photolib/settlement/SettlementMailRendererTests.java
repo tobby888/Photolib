@@ -1,6 +1,7 @@
 package cn.photolib.settlement;
 
 import cn.photolib.admin.BrandSnapshotService.BrandSnapshot;
+import cn.photolib.mail.MailLayoutService;
 import cn.photolib.mail.MailTemplateStore;
 import cn.photolib.settlement.SettlementMailRenderer.Target;
 import cn.photolib.settlement.SettlementStatementService.AdoptionLine;
@@ -132,7 +133,7 @@ class SettlementMailRendererTests {
         String template = new MailTemplateService(new MailTemplateStore(null)).defaultHtml();
         String layout = new MailTemplateStore(null).defaultHtml("shared-layout.html");
         String html = SettlementMailRenderer.render(MailTemplateService.DEFAULT_SUBJECT,
-                cn.photolib.mail.MailLayoutService.settlement(layout, template),
+                MailLayoutService.settlement(layout, template),
                 statement(List.of(), List.of()), BRAND, "部长", "https://photo.example.cn/#/", NOW, Target.EMAIL).html();
 
         assertThat(html).doesNotContain("{{").contains("光影&lt;工作站&gt;").contains("cid:brand-logo")
