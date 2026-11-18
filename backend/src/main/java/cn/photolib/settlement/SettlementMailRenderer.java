@@ -1,6 +1,7 @@
 package cn.photolib.settlement;
 
 import cn.photolib.admin.BrandSnapshotService.BrandSnapshot;
+import cn.photolib.mail.MailRendering;
 import cn.photolib.mail.OutgoingMail;
 import cn.photolib.settlement.SettlementStatementService.AdoptionLine;
 import cn.photolib.settlement.SettlementStatementService.ProjectLine;
@@ -10,19 +11,14 @@ import cn.photolib.settlement.SettlementStatementService.Totals;
 import cn.photolib.settlement.SettlementStatementService.UploadChannel;
 import cn.photolib.settlement.SettlementStatementService.UploadSource;
 import cn.photolib.settlement.SettlementStatementService.WorklogLine;
-import org.springframework.web.util.HtmlUtils;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.Base64;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * 把一份清算单套进邮件模板。
@@ -37,7 +33,7 @@ import java.util.regex.Pattern;
  * <p>同一份模板套出三种成品，见 {@link Target}。</p>
  */
 public final class SettlementMailRenderer {
-    public static final String LOGO_CONTENT_ID = "brand-logo";
+    public static final String LOGO_CONTENT_ID = MailRendering.LOGO_CONTENT_ID;
     static final Set<String> HTML_VARIABLES = Set.of("logo", "summaryCards", "projectTable", "worklogTable",
             "adoptionTable");
     /** 站内信和预览里的链接用站内路径：放在 srcdoc iframe 里时按外层页面的地址解析，换个域名访问也不会断。 */
@@ -45,8 +41,6 @@ public final class SettlementMailRenderer {
     /** 模板编辑器里列出来的变量说明，顺序即展示顺序。 */
     public static final Map<String, String> VARIABLES = variables();
 
-    private static final Pattern SECTION = Pattern.compile("\\{\\{#\\s*([A-Za-z]+)\\s*}}(.*?)\\{\\{/\\s*\\1\\s*}}", Pattern.DOTALL);
-    private static final Pattern VARIABLE = Pattern.compile("\\{\\{\\s*([A-Za-z]+)\\s*}}");
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private static final String[] WEEKDAYS = {"周一", "周二", "周三", "周四", "周五", "周六", "周日"};
@@ -74,16 +68,10 @@ public final class SettlementMailRenderer {
     public static Rendered render(String subjectTemplate, String htmlTemplate, Statement statement,
                                   BrandSnapshot brand, String senderName, String siteUrl,
                                   LocalDateTime generatedAt, Target target) {
-        String logoSrc = target == Target.PREVIEW ? dataUri(brand) : "cid:" + LOGO_CONTENT_ID;
         String linkBase = target == Target.EMAIL ? blankToNull(siteUrl) : IN_APP_LINK_BASE;
         if (target == Target.INBOX) siteUrl = null;
         Totals totals = statement.totals();
-        Map<String, String> values = new HashMap<>();
-        values.put("siteName", brand.title());
-        values.put("siteSlogan", brand.slogan());
-        values.put("logoSrc", logoSrc);
-        values.put("logo", "<img src=\"" + escape(logoSrc) + "\" width=\"44\" height=\"44\" alt=\"" + escape(brand.title())
-                + "\" style=\"display:block;border:0;outline:none;border-radius:10px;width:44px;height:44px;\">");
+        Map<String, String> values = MailRendering.branding(brand, target == Target.PREVIEW);
         values.put("recipientName", statement.recipient().displayName());
         values.put("recipientEmail", nullToEmpty(statement.recipient().email()));
         values.put("periodFrom", DATE.format(statement.from()));
@@ -110,46 +98,19 @@ public final class SettlementMailRenderer {
         values.put("worklogTable", worklogTable(statement));
         values.put("adoptionTable", adoptionTable(statement, linkBase));
 
-        String subject = fill(subjectTemplate, values, false).replaceAll("[\\r\\n]+", " ").trim();
-        if (subject.length() > 200) subject = subject.substring(0, 200);
+        String subject = MailRendering.subject(subjectTemplate, values, HTML_VARIABLES);
         String html = fill(htmlTemplate, values, true);
-        List<OutgoingMail.InlineImage> images = target != Target.EMAIL ? List.of()
-                : List.of(new OutgoingMail.InlineImage(LOGO_CONTENT_ID, brand.icon(), brand.iconContentType()));
+        List<OutgoingMail.InlineImage> images = target != Target.EMAIL ? List.of() : MailRendering.images(brand);
         return new Rendered(subject, html, plainText(statement, brand, siteUrl), images);
     }
 
     /** 站内信快照里的 {@code cid:brand-logo} 换成当前品牌图标，iframe 里才显示得出来。 */
     public static String inlineLogo(String html, BrandSnapshot brand) {
-        return html == null ? "" : html.replace("cid:" + LOGO_CONTENT_ID, dataUri(brand));
-    }
-
-    private static String dataUri(BrandSnapshot brand) {
-        return "data:" + brand.iconContentType() + ";base64," + Base64.getEncoder().encodeToString(brand.icon());
+        return MailRendering.inlineLogo(html, brand);
     }
 
     static String fill(String template, Map<String, String> values, boolean html) {
-        if (template == null) return "";
-        Matcher sections = SECTION.matcher(template);
-        StringBuilder withSections = new StringBuilder();
-        while (sections.find()) {
-            String value = values.get(sections.group(1));
-            sections.appendReplacement(withSections,
-                    Matcher.quoteReplacement(value == null || value.isBlank() ? "" : sections.group(2)));
-        }
-        sections.appendTail(withSections);
-        Matcher variables = VARIABLE.matcher(withSections);
-        StringBuilder out = new StringBuilder();
-        while (variables.find()) {
-            String name = variables.group(1);
-            String value = values.get(name);
-            String replacement;
-            if (value == null) replacement = variables.group(0);
-            else if (!html) replacement = HTML_VARIABLES.contains(name) ? "" : value;
-            else replacement = HTML_VARIABLES.contains(name) ? value : escape(value);
-            variables.appendReplacement(out, Matcher.quoteReplacement(replacement));
-        }
-        variables.appendTail(out);
-        return out.toString();
+        return MailRendering.fill(template, values, html, HTML_VARIABLES);
     }
 
     // ---- 汇总卡片 ----
@@ -563,7 +524,7 @@ public final class SettlementMailRenderer {
     }
 
     static String escape(String value) {
-        return value == null ? "" : HtmlUtils.htmlEscape(value, "UTF-8");
+        return MailRendering.escape(value);
     }
 
     private static Map<String, String> variables() {
