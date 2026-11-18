@@ -27,6 +27,7 @@ public final class AuditResources {
             Map.entry("FEATURED-COLLECTIONS", "好图精选"),
             Map.entry("FEEDBACK", "问题反馈"),
             Map.entry("LOCAL-STORAGE", "本地存储"),
+            Map.entry("MAIL-TEMPLATES", "邮件模板"),
             Map.entry("MFA-SETTINGS", "两步验证设置"),
             Map.entry("NOTIFICATION-LOGS", "通知投递"),
             Map.entry("NOTIFICATIONS", "消息中心"),

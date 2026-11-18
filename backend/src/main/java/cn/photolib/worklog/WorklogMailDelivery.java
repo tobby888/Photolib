@@ -57,13 +57,14 @@ class WorklogMailDelivery {
             Recipient recipient = matches.getFirst();
             if (recipient.email() == null || recipient.email().isBlank()) return;
 
-            String projectTitle = jdbc.sql("SELECT " + WorklogProjectSql.title("w", "p")
+            var project = jdbc.sql("SELECT " + WorklogProjectSql.title("w", "p")
                             + " FROM worklog w " + WorklogProjectSql.joins()
                             + " WHERE w.id=:id AND w.deleted=0 AND w.member_name=:name")
                     .param("id", event.worklogId()).param("name", event.memberName())
-                    .query((rs, row) -> new ProjectTitle(rs.getString(1))).optional().map(ProjectTitle::value).orElse(null);
+                    .query((rs, row) -> new ProjectTitle(rs.getString(1))).optional();
+            if (project.isEmpty()) return;
             var brand = brands.current();
-            var details = new Details(recipient.name(), projectTitle, event.workDate(), event.shootingMinutes(),
+            var details = new Details(recipient.name(), project.get().value(), event.workDate(), event.shootingMinutes(),
                     event.retouchingMinutes(), event.reason(), event.submitIp(), event.userAgent(), event.reviewerName());
             var rendered = templates.render(event.kind(), details, brand, false, null, null, null);
             sender.send(new OutgoingMail(recipient.email().strip(), recipient.name(), brand.title(), rendered.subject(),
