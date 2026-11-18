@@ -1835,6 +1835,19 @@ max(工时 * 20, 被引张数 * 10)
 
 **清算单预留字段**（V73，暂不写入）：`settlement_mail_batch.salary_calculation_id`、`settlement_statement.salary_calculation_id` / `salary_amount`，用于以后在清算单里附上对应那次工资计算的应发金额。
 
+### 12.8 公共邮件版式与工时邮件内容
+
+以下路径相对于 `/api/v1`，仅管理员可用。`kind` 为 `WORKLOG_SUBMITTED`（上传链接工时申报回执）或 `WORKLOG_APPROVED`（审核通过通知）。清算单内容仍使用 §12.6 的接口。
+
+| 方法 | 路径 | 请求与行为 |
+|---|---|---|
+| GET、PUT、DELETE | `/mail-templates/layout` | 读取、用 `{ html, version }` 保存、或恢复默认公共版式。版式需要保留 `{{content}}` |
+| GET、PUT、DELETE | `/mail-templates/worklog/{kind}` | 读取、用 `{ subject, html, version }` 保存、或恢复该类邮件的默认内容 |
+| POST | `/mail-templates/worklog/{kind}/preview` | 用示例数据返回 `{ subject, html }`。请求可选 `{ subject, html, layout }` 临时覆盖已保存的设置 |
+| POST | `/mail-templates/worklog/{kind}/test` | 请求同预览。发送到当前管理员绑定的邮箱并返回 `{ email }` |
+
+读取、保存、恢复接口返回 `{ template, defaultSubject, defaultHtml, variables }`；保存使用读取到的版本号做并发保护，保存和恢复需要敏感操作再验证。工时邮件按事务提交后异步发送，仅向姓名唯一匹配的启用且绑定邮箱的账号投递；工时接口返回成功不代表邮件已送达。
+
 ## 13. 站内通知、管理消息与邮件日志
 
 ### 13.1 当前用户通知

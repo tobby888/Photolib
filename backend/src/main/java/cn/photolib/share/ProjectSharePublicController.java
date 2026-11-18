@@ -1,6 +1,7 @@
 package cn.photolib.share;
 
 import cn.photolib.audit.AuditAction;
+import cn.photolib.common.util.ClientIp;
 import cn.photolib.audit.AuditInterceptor;
 import cn.photolib.audit.AuditSkip;
 import cn.photolib.common.ratelimit.RateLimitAddress;
@@ -379,7 +380,13 @@ public class ProjectSharePublicController {
         return ApiResponse.ok(uploadService.declareWorklog(
                 service.resolveGuestContext(token, session),
                 new ProjectShareUploadService.WorklogDeclaration(request.workDate(),
-                        request.shootingMinutes(), request.retouchingMinutes(), request.remark())));
+                        request.shootingMinutes(), request.retouchingMinutes(), request.remark(),
+                        ClientIp.of(servletRequest), worklogUserAgent(servletRequest))));
+    }
+
+    private static String worklogUserAgent(HttpServletRequest request) {
+        String value = request.getHeader("User-Agent");
+        return value == null || value.length() <= 1024 ? value : value.substring(0, 1024);
     }
 
     /** 回看自己在这条链接上申报过的工时：退回原因只有从这里才到得了申报人手上。 */

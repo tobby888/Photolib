@@ -99,13 +99,35 @@ class SettlementMailHttpTests {
         mvc.perform(as("admin", post("/api/v1/settlement-mails/preview")
                         .contentType(MediaType.APPLICATION_JSON).content(custom)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.html").value("<p>清算接口成员</p>"));
+                .andExpect(jsonPath("$.data.html").value(containsString("<tr><td><p>清算接口成员</p></td></tr>")));
         mvc.perform(as("minister", get("/api/v1/settlement-mails/template")))
                 .andExpect(status().isForbidden());
         mvc.perform(as("admin", get("/api/v1/settlement-mails/template")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.defaultHtml").value(containsString("{{worklogTable}}")))
                 .andExpect(jsonPath("$.data.variables.recipientName").exists());
+    }
+
+    @Test
+    void onlyAdminsCanReadAndPreviewTheNotificationTemplates() throws Exception {
+        String layout = "/api/v1/mail-templates/layout";
+        String content = "/api/v1/mail-templates/worklog/WORKLOG_SUBMITTED";
+        mvc.perform(as("minister", get(layout))).andExpect(status().isForbidden());
+        mvc.perform(as("minister", get(content))).andExpect(status().isForbidden());
+        mvc.perform(as("admin", get(layout))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.variables.content").exists());
+        mvc.perform(as("admin", get(content))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.variables.userAgent").exists());
+        String sample = """
+                {"subject":"回执：{{projectTitle}}","html":"<p>{{totalTime}}</p>",
+                 "layout":"<table>{{content}}</table>"}
+                """;
+        mvc.perform(as("minister", post(content + "/preview").contentType(MediaType.APPLICATION_JSON).content(sample)))
+                .andExpect(status().isForbidden());
+        mvc.perform(as("admin", post(content + "/preview").contentType(MediaType.APPLICATION_JSON).content(sample)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.subject").value("回执：校园运动会（示例）"))
+                .andExpect(jsonPath("$.data.html").value("<table><tr><td><p>2 小时</p></td></tr></table>"));
     }
 
     @Test

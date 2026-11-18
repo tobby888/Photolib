@@ -659,7 +659,7 @@ public class ProjectShareUploadService {
                 link.getId(), link.getProjectId(), link.getCreatedBy(),
                 uploader.name(), uploader.studentId(), declaration.workDate(),
                 declaration.shootingMinutes(), declaration.retouchingMinutes(),
-                declaration.remark())));
+                declaration.remark(), declaration.submitIp(), declaration.userAgent())));
     }
 
     /**
@@ -859,7 +859,11 @@ public class ProjectShareUploadService {
 
     /** 访客申报的一条工时：没有姓名学号（取会话身份），没有草稿（交上来就是提交）。 */
     public record WorklogDeclaration(LocalDate workDate, int shootingMinutes, int retouchingMinutes,
-                                     String remark) {}
+                                     String remark, String submitIp, String userAgent) {
+        public WorklogDeclaration(LocalDate workDate, int shootingMinutes, int retouchingMinutes, String remark) {
+            this(workDate, shootingMinutes, retouchingMinutes, remark, null, null);
+        }
+    }
 
     public record GuestWorklog(Long id, LocalDate workDate, int shootingMinutes, int retouchingMinutes,
                                String remark, WorklogStatus status, String rejectReason,

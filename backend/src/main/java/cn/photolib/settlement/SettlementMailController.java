@@ -1,6 +1,7 @@
 package cn.photolib.settlement;
 
 import cn.photolib.audit.AuditAction;
+import cn.photolib.mail.MailTemplateStore;
 import cn.photolib.audit.AuditSkip;
 import cn.photolib.auth.AuthenticatedUser;
 import cn.photolib.auth.mfa.RequiresStepUp;
@@ -89,7 +90,7 @@ public class SettlementMailController {
 
     @GetMapping("/template")
     @PreAuthorize("hasRole('ADMIN')")
-    ApiResponse<MailTemplateService.TemplateView> template() {
+    ApiResponse<MailTemplateStore.View> template() {
         return ApiResponse.ok(templates.view());
     }
 
@@ -97,7 +98,7 @@ public class SettlementMailController {
     @PutMapping("/template")
     @PreAuthorize("hasRole('ADMIN')")
     @RequiresStepUp
-    ApiResponse<MailTemplateService.TemplateView> saveTemplate(@Valid @RequestBody TemplateRequest request,
+    ApiResponse<MailTemplateStore.View> saveTemplate(@Valid @RequestBody TemplateRequest request,
                                                                @AuthenticationPrincipal AuthenticatedUser principal) {
         return ApiResponse.ok(templates.save(request.subject(), request.html(),
                 request.version() == null ? 0 : request.version(), principal));
@@ -107,7 +108,7 @@ public class SettlementMailController {
     @DeleteMapping("/template")
     @PreAuthorize("hasRole('ADMIN')")
     @RequiresStepUp
-    ApiResponse<MailTemplateService.TemplateView> resetTemplate() {
+    ApiResponse<MailTemplateStore.View> resetTemplate() {
         return ApiResponse.ok(templates.reset());
     }
 
@@ -121,8 +122,8 @@ public class SettlementMailController {
     }
 
     record PreviewRequest(@NotNull Long userId, @NotNull LocalDate from, @NotNull LocalDate to,
-                          @Size(max = MailTemplateService.MAX_SUBJECT) String subject,
-                          @Size(max = MailTemplateService.MAX_HTML) String html) {}
+                          @Size(max = MailTemplateStore.MAX_SUBJECT) String subject,
+                          @Size(max = MailTemplateStore.MAX_HTML) String html) {}
 
     record PreviewResponse(String subject, String html) {}
 

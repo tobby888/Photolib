@@ -7,6 +7,7 @@ import cn.photolib.common.error.ErrorCode;
 import cn.photolib.common.util.LikeFilter;
 import cn.photolib.directory.CampusMemberEntity;
 import cn.photolib.directory.CampusMemberService;
+import cn.photolib.mail.WorklogMailTemplates.Kind;
 import cn.photolib.project.ProjectService;
 import cn.photolib.project.model.ProjectEntity;
 import cn.photolib.project.model.ProjectStatus;
@@ -27,6 +28,7 @@ import cn.photolib.worklog.model.WorklogStatus;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -54,6 +56,7 @@ public class WorklogService {
     private final CampusMemberService campusMemberService;
     private final NotificationService notifications;
     private final JdbcClient jdbc;
+    private final ApplicationEventPublisher events;
 
     @Transactional
     public WorklogEntity create(Long requestId, WorklogCommand command, AuthenticatedUser user) {
@@ -163,6 +166,7 @@ public class WorklogService {
         worklog.setStatus(WorklogStatus.SUBMITTED);
         mapper.insert(worklog);
         recordReview(worklog, WorklogStatus.SUBMITTED, null, command.responsibleUserId());
+        publishShareMail(worklog, Kind.WORKLOG_SUBMITTED, command.submitIp(), command.userAgent(), null);
         return worklog;
     }
 
@@ -314,6 +318,7 @@ public class WorklogService {
         worklog.setVersion(version);
         updateChecked(worklog);
         recordReview(worklog, WorklogStatus.CONFIRMED, null, confirmer.id());
+        publishShareMail(worklog, Kind.WORKLOG_APPROVED, null, null, confirmer.displayName());
         notifications.notifyUser(worklog.getUserId(), "WORKLOG_CONFIRMED",
                 "工时已确认", NotificationService.paragraphs(
                         "工时记录 #" + worklog.getId() + declaredBy(worklog) + " 已确认"));
@@ -456,6 +461,9 @@ public class WorklogService {
         WorklogEntity saved = mapper.selectById(id);
         if (statusChanged && status != WorklogStatus.DRAFT) {
             recordReview(saved, status, status == WorklogStatus.REJECTED ? rejectReason : null, admin.id());
+            if (status == WorklogStatus.CONFIRMED) {
+                publishShareMail(saved, Kind.WORKLOG_APPROVED, null, null, admin.displayName());
+            }
         }
         if (!worklog.getUserId().equals(admin.id())) {
             notifications.notifyUser(worklog.getUserId(), "WORKLOG_CORRECTED", "工时被管理员修改",
@@ -464,6 +472,13 @@ public class WorklogService {
                                     + admin.displayName() + " 修改：" + describe(changes, worklog, request)));
         }
         return new Correction(saved, changes);
+    }
+
+    private void publishShareMail(WorklogEntity worklog, Kind kind, String submitIp, String userAgent, String reviewer) {
+        if (worklog.getShareLinkId() == null) return;
+        events.publishEvent(new WorklogMailDelivery.Event(kind, worklog.getId(), worklog.getMemberName(),
+                worklog.getWorkDate(), worklog.getShootingMinutes(), worklog.getRetouchingMinutes(),
+                worklog.getRemark(), submitIp, userAgent, reviewer));
     }
 
     private static void track(Map<String, Object> changes, String field, Object before, Object after) {
@@ -784,7 +799,8 @@ public class WorklogService {
      */
     public record ShareLinkWorklog(Long shareLinkId, Long projectId, Long responsibleUserId,
                                    String memberName, String memberStudentId, LocalDate workDate,
-                                   int shootingMinutes, int retouchingMinutes, String remark) {
+                                   int shootingMinutes, int retouchingMinutes, String remark,
+                                   String submitIp, String userAgent) {
     }
 
     private record ShareLinkOrigin(String linkName, Long projectId, String projectTitle) {

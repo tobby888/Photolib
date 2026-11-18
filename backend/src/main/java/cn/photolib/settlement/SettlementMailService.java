@@ -7,6 +7,8 @@ import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
 import cn.photolib.mail.MailDeliveryException;
 import cn.photolib.mail.MailSender;
+import cn.photolib.mail.MailLayoutService;
+import cn.photolib.mail.MailTemplateStore;
 import cn.photolib.mail.OutgoingMail;
 import cn.photolib.mail.SmtpProperties;
 import cn.photolib.notification.NotificationService;
@@ -75,6 +77,7 @@ public class SettlementMailService {
     private final TransactionTemplate transactions;
     private final SettlementStatementService statements;
     private final MailTemplateService templates;
+    private final MailLayoutService layouts;
     private final BrandSnapshotService brands;
     private final MailSender mailSender;
     private final SmtpProperties smtp;
@@ -83,12 +86,13 @@ public class SettlementMailService {
 
     public SettlementMailService(JdbcClient jdbc, TransactionTemplate transactions,
                                  SettlementStatementService statements, MailTemplateService templates,
-                                 BrandSnapshotService brands, MailSender mailSender, SmtpProperties smtp,
+                                 MailLayoutService layouts, BrandSnapshotService brands, MailSender mailSender, SmtpProperties smtp,
                                  NotificationService notifications) {
         this.jdbc = jdbc;
         this.transactions = transactions;
         this.statements = statements;
         this.templates = templates;
+        this.layouts = layouts;
         this.brands = brands;
         this.mailSender = mailSender;
         this.smtp = smtp;
@@ -125,9 +129,10 @@ public class SettlementMailService {
                                                    String html, AuthenticatedUser principal) {
         requireGlobal(principal);
         Recipient recipient = statements.recipient(userId, from, to);
-        MailTemplateService.Template template = templates.current();
+        MailTemplateStore.Template template = templates.current();
         return SettlementMailRenderer.render(subject != null ? subject : template.subject(),
-                html != null ? html : template.html(), statements.statement(recipient, from, to),
+                MailLayoutService.settlement(layouts.current().html(), html != null ? html : template.html()),
+                statements.statement(recipient, from, to),
                 brands.current(), principal.displayName(), siteUrl(), LocalDateTime.now(), Target.PREVIEW);
     }
 
@@ -143,9 +148,10 @@ public class SettlementMailService {
         }
         Recipient recipient = statements.recipient(userId, from, to);
         BrandSnapshot brand = brands.current();
-        MailTemplateService.Template template = templates.current();
+        MailTemplateStore.Template template = templates.current();
         SettlementMailRenderer.Rendered rendered = SettlementMailRenderer.render(
-                subject != null ? subject : template.subject(), html != null ? html : template.html(),
+                subject != null ? subject : template.subject(),
+                MailLayoutService.settlement(layouts.current().html(), html != null ? html : template.html()),
                 statements.statement(recipient, from, to), brand, principal.displayName(), siteUrl(),
                 LocalDateTime.now(), Target.EMAIL);
         try {
@@ -244,8 +250,9 @@ public class SettlementMailService {
                 """).param("batchId", batchId).query(Long.class).list());
         BatchContext context;
         try {
-            MailTemplateService.Template template = templates.current();
-            context = new BatchContext(batch, template.subject(), template.html(), brands.current(), siteUrl());
+            MailTemplateStore.Template template = templates.current();
+            context = new BatchContext(batch, template.subject(), MailLayoutService.settlement(layouts.current().html(), template.html()),
+                    brands.current(), siteUrl());
         } catch (RuntimeException ex) {
             log.error("清算单批次 {} 无法开始：读取模板或品牌信息失败", batchId, ex);
             failRemaining(batchId, "读取清算单模板失败：" + ex.getMessage());
@@ -548,12 +555,7 @@ public class SettlementMailService {
     }
 
     String siteUrl() {
-        String base = smtp.siteBaseUrl();
-        if (base == null || base.isBlank()) return null;
-        String url = base.trim();
-        if (!url.startsWith("http://") && !url.startsWith("https://")) url = "https://" + url;
-        while (url.endsWith("/")) url = url.substring(0, url.length() - 1);
-        return url + "/#/";
+        return smtp.siteUrl();
     }
 
     private static String clip(String value) {
