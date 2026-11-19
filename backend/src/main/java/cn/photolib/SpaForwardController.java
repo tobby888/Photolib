@@ -53,6 +53,7 @@ public class SpaForwardController {
             // MCP 客户端的批准页。链接由客户端打印在终端里，成员多半是复制到浏览器
             // 地址栏直接打开的，所以这条路径式深链必须能 forward 到应用。
             "/mcp/authorize",
+            "/deplyt/authorize",
             // 两步验证的绑定 / 建议页。登录后由前端跳过去，路径式深链同样要能落到应用。
             "/two-factor",
             // 管理员面板：数据面板在 /admin，各项管理功能各占一页。

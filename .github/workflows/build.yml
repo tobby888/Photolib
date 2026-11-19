@@ -290,6 +290,7 @@ jobs:
             --header 'Expect: 100-continue' \
             --header "X-Artifact-Name: ${jar##*/}" \
             --header "X-Artifact-SHA256: $digest" \
+            --header "X-Deploy-Commit: $GITHUB_SHA" \
             --header "X-Deploy-Run-ID: $GITHUB_RUN_ID" \
             --output "$response" --write-out '%{http_code}' \
             "${PHOTOLIB_DEPLOY_URL%/}/v1/deploy/photolib" \

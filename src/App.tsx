@@ -60,6 +60,7 @@ const SurveysPage = lazy(() => import('./pages/SurveysPage'))
 const SurveyDetailPage = lazy(() => import('./pages/SurveyDetailPage'))
 const SurveyFillPage = lazy(() => import('./pages/SurveyFillPage'))
 const SurveyResponseDetailPage = lazy(() => import('./pages/SurveyResponseDetailPage'))
+const DeplytAuthorizePage = lazy(() => import('./pages/DeplytAuthorizePage'))
 const McpAuthorizePage = lazy(() => import('./pages/McpAuthorizePage'))
 // 管理员面板是独立的一套外壳（侧栏、顶栏都不同），挂在 /admin/* 上，不在图库外壳里。
 const AdminShell = lazy(() => import('./AdminShell'))
@@ -429,6 +430,7 @@ function Shell() {
               就是这个成员自己的会话，能做的事由他原本的权限决定。放在外壳里是为了
               借外壳那道登录守卫——批准必须由一个真实的登录会话做出。
             */}
+            <Route path="/deplyt/authorize" element={<DeplytAuthorizePage />} />
             <Route path="/mcp/authorize" element={<McpAuthorizePage />} />
             <Route path="*" element={<NotFound />} />
           </Routes></Suspense></RouteErrorBoundary>

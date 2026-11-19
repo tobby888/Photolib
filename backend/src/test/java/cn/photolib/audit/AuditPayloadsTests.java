@@ -34,6 +34,16 @@ class AuditPayloadsTests {
     }
 
     @Test
+    void deplytAuthorizationCodeAndVerifierAreMasked() {
+        JsonNode cleaned = body("""
+                {"code":"authorization-code","verifier":"pkce-verifier"}
+                """, "/api/v1/auth/deplyt/token");
+
+        assertThat(cleaned.path("code").asText()).isEqualTo(AuditPayloads.MASK);
+        assertThat(cleaned.path("verifier").asText()).isEqualTo(AuditPayloads.MASK);
+    }
+
+    @Test
     void publicCodesStayReadable() {
         assertThat(body("{\"code\":\"EAST\"}", "/api/v1/campuses").path("code").asText()).isEqualTo("EAST");
         assertThat(body("{\"code\":\"EDITOR\"}", "/api/v1/permission-groups/3").path("code").asText())
