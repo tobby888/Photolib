@@ -24,7 +24,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-@RequestMapping("/api/v1/auth/deplyt")
+@RequestMapping("/auth/deplyt")
 public class DeplytAuthorizationController {
     private static final Pattern TOKEN = Pattern.compile("[A-Za-z0-9_-]{43}");
     private static final Base64.Encoder BASE64 = Base64.getUrlEncoder().withoutPadding();

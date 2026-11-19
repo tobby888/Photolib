@@ -1,5 +1,6 @@
 package cn.photolib.auth;
 
+import cn.photolib.WebRoutingConfig;
 import cn.photolib.common.error.GlobalExceptionHandler;
 import cn.photolib.user.model.UserRole;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -10,7 +11,7 @@ import java.util.Base64;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.Configuration;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Import;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.test.context.TestPropertySource;
@@ -35,11 +36,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "DEPLYT_SSO_SECRET=example-deplyt-sso-key-for-test-only"
 })
 class DeplytAuthorizationHttpTests {
-    @Configuration
+    @TestConfiguration
     @EnableWebMvc
     @EnableWebSecurity
     @Import({SecurityConfig.class, AccessTokenFilter.class, DeplytAuthorizationController.class,
-            GlobalExceptionHandler.class})
+            GlobalExceptionHandler.class, WebRoutingConfig.class})
     static class WebConfig {}
 
     private static final String ROOT = "/api/v1/auth/deplyt";
