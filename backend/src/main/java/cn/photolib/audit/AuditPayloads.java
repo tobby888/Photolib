@@ -44,6 +44,7 @@ final class AuditPayloads {
     static boolean sensitive(String key, String path) {
         if (key == null) return false;
         if (SENSITIVE.matcher(key).matches()) return true;
+        if ("/api/v1/auth/deplyt/token".equals(path) && "verifier".equalsIgnoreCase(key)) return true;
         if (!key.equalsIgnoreCase("code")) return false;
         return path == null || PUBLIC_CODE_PATHS.stream().noneMatch(path::startsWith);
     }

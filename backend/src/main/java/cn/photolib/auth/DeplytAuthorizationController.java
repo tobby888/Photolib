@@ -1,5 +1,6 @@
 package cn.photolib.auth;
 
+import cn.photolib.audit.AuditAction;
 import cn.photolib.common.api.ApiResponse;
 import cn.photolib.common.error.BusinessException;
 import cn.photolib.common.error.ErrorCode;
@@ -51,6 +52,7 @@ public class DeplytAuthorizationController {
     }
 
     @PostMapping("/authorize")
+    @AuditAction("批准 Deplyt 登录")
     @PreAuthorize("hasRole('ADMIN')")
     public synchronized ApiResponse<Authorization> authorize(@AuthenticationPrincipal AuthenticatedUser user,
                                                                @RequestBody AuthorizationRequest request) {
@@ -75,6 +77,7 @@ public class DeplytAuthorizationController {
     }
 
     @PostMapping("/token")
+    @AuditAction("兑换 Deplyt 授权码")
     public synchronized ApiResponse<Identity> exchange(
             @RequestHeader(value = "X-Deplyt-Client-Secret", defaultValue = "") String secret,
             @RequestBody ExchangeRequest request) {
