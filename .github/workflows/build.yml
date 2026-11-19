@@ -247,18 +247,12 @@ jobs:
     # 直接用 package job 上传的 JAR，不重新构建，保证上线的就是跑过测试和产物校验的那一个。
     needs: [frontend, package]
     if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45  # 上传最多重试 3 次 × 12 分钟
+    runs-on: ${{ vars.PHOTOLIB_DEPLOY_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 65  # 等待中转机完成接收、SSH 上传和重启
     # 部署串行执行，且不取消正在进行的部署，避免半途停服。
     concurrency:
       group: deploy-production
       cancel-in-progress: false
-    env:
-      DEPLOY_DIR: /opt/Photolib
-      SERVER_HOST: ${{ secrets.SERVER_HOST }}
-      SERVER_USER: ${{ secrets.SERVER_USER || 'root' }}
-      # sshpass -e 从环境变量读密码，不会出现在进程参数里。
-      SSHPASS: ${{ secrets.SSH_SECRET }}
     steps:
       - name: 下载打包产物
         uses: actions/download-artifact@v4
@@ -266,80 +260,42 @@ jobs:
           name: photolib-backend-jar
           path: dist-jar
 
-      - name: 准备 SSH
+      - name: 通过中转机部署 JAR
+        shell: bash
+        env:
+          PHOTOLIB_DEPLOY_URL: ${{ vars.PHOTOLIB_DEPLOY_URL }}
+          PHOTOLIB_DEPLOY_TOKEN: ${{ secrets.PHOTOLIB_DEPLOY_TOKEN }}
         run: |
           set -euo pipefail
-          # 平时用 apt 装 sshpass；Ubuntu 软件源解析不了时（PR #192 期间连续几小时）apt 会一直卡着，
-          # 所以最多等 2 分钟，装不上就换成 OpenSSH 自带的 SSH_ASKPASS：放一个同名的 sshpass 垫片，
-          # 只支持后面用到的 `sshpass -e <命令>`，密码照样从 $SSHPASS 读，不进进程参数。
-          if ! { timeout 120 sudo apt-get update -o Acquire::Retries=1 \
-                 && timeout 120 sudo apt-get install -y --no-install-recommends sshpass; }; then
-            echo "::warning::apt 装不上 sshpass，改用 SSH_ASKPASS"
-            shim="$RUNNER_TEMP/sshpass-shim"
-            mkdir -p "$shim"
-            printf '#!/bin/sh\nprintf "%%s\\n" "$SSHPASS"\n' > "$shim/askpass"
-            printf '#!/bin/sh\n[ "$1" = "-e" ] || { echo "sshpass 垫片只支持 -e" >&2; exit 2; }\nshift\nexport SSH_ASKPASS="%s/askpass" SSH_ASKPASS_REQUIRE=force\nexec "$@"\n' "$shim" > "$shim/sshpass"
-            chmod 700 "$shim/askpass" "$shim/sshpass"
-            echo "$shim" >> "$GITHUB_PATH"
-          fi
-          jar=$(ls dist-jar/photolib-backend-*.jar)
-          echo "JAR_PATH=$jar" >> "$GITHUB_ENV"
-          echo "JAR_NAME=$(basename "$jar")" >> "$GITHUB_ENV"
-          echo "SSH_OPTS=-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$RUNNER_TEMP/known_hosts -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=4" >> "$GITHUB_ENV"
-
-      # 先把新 JAR 传到部署目录下的临时文件名（不匹配 photolib-backend*），
-      # 这样上传失败时线上服务完全不受影响，停服窗口也只剩替换文件的那一下。
-      # 到服务器的上行带宽时好时坏（同一个 JAR 有时 17 秒，有时 6 分钟，#191 的部署卡在这里被取消）：
-      # 每次最多传 12 分钟，失败或超时就重传。传的是临时文件名，重传期间线上服务不受影响。
-      - name: 上传新 JAR
-        run: |
-          set -uo pipefail
-          for attempt in 1 2 3; do
-            if timeout 720 sshpass -e scp $SSH_OPTS "$JAR_PATH" \
-              "$SERVER_USER@$SERVER_HOST:$DEPLOY_DIR/.upload-$GITHUB_RUN_ID.jar"; then
-              exit 0
-            fi
-            echo "::warning::上传 JAR 失败或超时（第 $attempt 次），重试"
-            sleep 15
-          done
-          exit 1
-
-      - name: 切换版本并重启服务
-        run: |
-          set -euo pipefail
-          sshpass -e ssh $SSH_OPTS "$SERVER_USER@$SERVER_HOST" \
-            "DEPLOY_DIR='$DEPLOY_DIR' JAR_NAME='$JAR_NAME' RUN_ID='$GITHUB_RUN_ID' bash -s" <<'REMOTE'
-          set -euo pipefail
-          # maint-on/maint-off 定义在 ~/.bashrc 里，非交互 shell 不会加载，
-          # 所以用交互式 bash 调用；</dev/null 防止它吃掉本脚本的 stdin。
-          echo ">>> maint-on"
-          bash -ic 'maint-on' </dev/null
-
-          echo ">>> systemctl stop photolib"
-          systemctl stop photolib
-
-          echo ">>> 删除旧 JAR"
-          rm -fv "$DEPLOY_DIR"/photolib-backend*
-
-          echo ">>> 放入新 JAR: $JAR_NAME"
-          mv "$DEPLOY_DIR/.upload-$RUN_ID.jar" "$DEPLOY_DIR/$JAR_NAME"
-          # 上传是以 SSH 用户（默认 root）身份进行的，而服务以 photolib 用户运行；
-          # 显式改属主和权限，免得服务读不到 JAR。
-          chown photolib:photolib "$DEPLOY_DIR/$JAR_NAME"
-          chmod 644 "$DEPLOY_DIR/$JAR_NAME"
-
-          echo ">>> systemctl start photolib"
-          systemctl start photolib
-
-          sleep 10
-
-          echo ">>> maint-off"
-          bash -ic 'maint-off' </dev/null
-
-          if ! systemctl is-active --quiet photolib; then
-            echo "photolib 服务启动后未处于 active 状态" >&2
-            journalctl -u photolib -n 80 --no-pager >&2 || true
+          : "${PHOTOLIB_DEPLOY_URL:?请设置 Actions 变量 PHOTOLIB_DEPLOY_URL}"
+          : "${PHOTOLIB_DEPLOY_TOKEN:?请设置 Actions Secret PHOTOLIB_DEPLOY_TOKEN}"
+          shopt -s nullglob
+          jars=(dist-jar/photolib-backend-*.jar)
+          if (( ${#jars[@]} != 1 )); then
+            echo "::error::期望恰好一个 PhotoLib JAR"
             exit 1
           fi
-          systemctl status photolib --no-pager | head -n 5
-          REMOTE
+          jar="${jars[0]}"
+          digest=$(sha256sum < "$jar")
+          digest="${digest%% *}"
+          response=$(mktemp)
+          trap 'rm -f "$response"' EXIT
+
+          # 中转机完成重启后才返回 200，避免 HTTP 自动重试重复触发重启。
+          status=$(curl --silent --show-error --proto '=https' \
+            --connect-timeout 20 --max-time 3600 \
+            --request POST --upload-file "$jar" \
+            --header @- \
+            --header 'Content-Type: application/java-archive' \
+            --header 'Expect: 100-continue' \
+            --header "X-Artifact-Name: ${jar##*/}" \
+            --header "X-Artifact-SHA256: $digest" \
+            --header "X-Deploy-Run-ID: $GITHUB_RUN_ID" \
+            --output "$response" --write-out '%{http_code}' \
+            "${PHOTOLIB_DEPLOY_URL%/}/v1/deploy/photolib" \
+            <<< "Authorization: Bearer $PHOTOLIB_DEPLOY_TOKEN")
+          cat "$response"
+          if [[ "$status" != 200 ]]; then
+            echo "::error::中转部署失败，HTTP $status（run ID $GITHUB_RUN_ID）"
+            exit 1
+          fi
