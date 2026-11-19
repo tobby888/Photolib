@@ -39,7 +39,7 @@ public class SecurityConfig {
                                 "/recruitment", "/recruitments/**", "/recruitment-applications/**",
                                 "/docs", "/docs/**", "/documents", "/documents/**",
                                 "/teaching", "/teaching/**",
-                                "/share/**", "/upload/**", "/mcp/authorize", "/two-factor",
+                                "/share/**", "/upload/**", "/mcp/authorize", "/deplyt/authorize", "/two-factor",
                                 "/api", "/api/",
                                 "/api/v1/auth/login", "/api/v1/auth/refresh",
                                 // 登录第二步：凭据是密码登录换来的一次性票据，此时还没有会话。
@@ -64,6 +64,7 @@ public class SecurityConfig {
                         // 选题上传链接、公开招募的访客页面按管理员设的上传限额做提示和预检；
                         // 只放行这一个只读端点，/upload-limits/settings 和 PUT 仍要管理员。
                         .requestMatchers(HttpMethod.GET, "/api/v1/upload-limits").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/deplyt/token").permitAll()
                         .requestMatchers(HttpMethod.GET,
                                 "/api/v1/public/recruitments",
                                 "/api/v1/public/recruitments/*/drafts/*/batches/*").permitAll()
