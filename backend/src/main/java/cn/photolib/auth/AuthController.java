@@ -17,6 +17,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -50,6 +51,14 @@ public class AuthController {
     private final LoginThrottle loginThrottle;
     private final MfaService mfaService;
     private final WebAuthnSupport webAuthn;
+    private final ObjectProvider<IdpAuthController> idpAuth;
+
+    private void requireLocalLoginAllowed() {
+        IdpAuthController idp = idpAuth.getIfAvailable();
+        if (idp != null && idp.isIdpOnlyLogin()) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "已启用统一身份认证中心登录，请使用统一认证中心 (PhotolibIdp) 单点登录");
+        }
+    }
 
     /**
      * Throttling lives here rather than inside {@link AuthService#login} because a
@@ -67,6 +76,7 @@ public class AuthController {
         // that was targeted, so a guessing run is legible afterwards. Never the password.
         servletRequest.setAttribute(AuditInterceptor.DETAIL_ATTRIBUTE,
                 Map.of("identifier", auditIdentifier(identifier)));
+        requireLocalLoginAllowed();
         loginThrottle.requireNotLocked(identifier, remoteAddress);
         AuthService.LoginOutcome outcome;
         try {
@@ -101,6 +111,7 @@ public class AuthController {
     ApiResponse<LoginResponse> verifyLogin(@RequestBody MfaLoginRequest request,
                                            HttpServletRequest servletRequest,
                                            HttpServletResponse response) {
+        requireLocalLoginAllowed();
         Long userId = mfaService.loginTicketUser(request.ticket());
         servletRequest.setAttribute(AuditInterceptor.DETAIL_ATTRIBUTE, Map.of("userId", userId));
         loginThrottle.requireMfaNotLocked(userId, LoginThrottle.MfaAttempt.LOGIN);
