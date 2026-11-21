@@ -57,7 +57,19 @@ public class IdpAuthController {
     private final String internalUrl;
     private final String clientId;
     private final String clientSecret;
+    private final boolean idpOnlyLogin;
     private HttpClient httpClient;
+
+    public IdpAuthController(
+            AuthService authService,
+            AuthProperties authProperties,
+            UserService userService,
+            String publicUrl,
+            String internalUrl,
+            String clientId,
+            String clientSecret) {
+        this(authService, authProperties, userService, publicUrl, internalUrl, clientId, clientSecret, "true");
+    }
 
     @Autowired
     public IdpAuthController(
@@ -67,7 +79,8 @@ public class IdpAuthController {
             @Value("${IDP_PUBLIC_URL:}") String publicUrl,
             @Value("${IDP_INTERNAL_URL:}") String internalUrl,
             @Value("${IDP_CLIENT_ID:photolib}") String clientId,
-            @Value("${IDP_CLIENT_SECRET:}") String clientSecret) {
+            @Value("${IDP_CLIENT_SECRET:}") String clientSecret,
+            @Value("${IDP_ONLY_LOGIN:true}") String idpOnlyLogin) {
         this.authService = authService;
         this.authProperties = authProperties;
         this.userService = userService;
@@ -77,6 +90,7 @@ public class IdpAuthController {
         this.clientId = DeplytAuthorizationController.stripQuotes(clientId).isEmpty()
                 ? "photolib" : DeplytAuthorizationController.stripQuotes(clientId);
         this.clientSecret = DeplytAuthorizationController.stripQuotes(clientSecret);
+        this.idpOnlyLogin = !"false".equalsIgnoreCase(DeplytAuthorizationController.stripQuotes(idpOnlyLogin));
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(8))
                 .followRedirects(HttpClient.Redirect.NEVER)
@@ -91,12 +105,17 @@ public class IdpAuthController {
         return !publicUrl.isEmpty() && clientSecret.length() >= 32;
     }
 
+    public boolean isIdpOnlyLogin() {
+        return isEnabled() && idpOnlyLogin;
+    }
+
     @GetMapping("/config")
     public ApiResponse<IdpConfigView> config() {
         boolean enabled = isEnabled();
         String base = enabled ? publicUrl : "";
         return ApiResponse.ok(new IdpConfigView(
                 enabled,
+                isIdpOnlyLogin(),
                 base,
                 enabled ? base + "/#register" : "",
                 enabled ? base + "/#users" : "",
@@ -327,7 +346,7 @@ public class IdpAuthController {
         }
     }
 
-    public record IdpConfigView(boolean enabled, String publicUrl, String registerUrl,
+    public record IdpConfigView(boolean enabled, boolean idpOnly, String publicUrl, String registerUrl,
                                 String usersUrl, String codesUrl, String reviewsUrl, String clientId) {}
     public record StartRequest(String redirectUri) {}
     public record StartResponse(String authorizeUrl) {}

@@ -20,15 +20,16 @@ export default function LoginPage() {
   const location = useLocation()
   const [loading, setLoading] = useState(false)
   const [idpLoading, setIdpLoading] = useState(false)
-  const [idpConfig, setIdpConfig] = useState<{ enabled: boolean; registerUrl: string } | null>(null)
+  const [idpConfig, setIdpConfig] = useState<{ enabled: boolean; idpOnly?: boolean; registerUrl: string } | null>(null)
   /** 密码对了、还差两步验证时的票据与可用方式。 */
   const [challenge, setChallenge] = useState<{ ticket: string; methods: ('TOTP' | 'WEBAUTHN')[] } | null>(null)
   const [trustDevice, setTrustDevice] = useState(false)
   useEffect(() => {
-    void api<{ enabled: boolean; registerUrl: string }>({ url: '/auth/idp/config' })
+    void api<{ enabled: boolean; idpOnly?: boolean; registerUrl: string }>({ url: '/auth/idp/config' })
       .then(setIdpConfig)
       .catch(() => setIdpConfig(null))
   }, [])
+  const idpOnly = Boolean(idpConfig?.enabled && idpConfig?.idpOnly)
   const startIdpLogin = async () => {
     setIdpLoading(true)
     try {
@@ -117,20 +118,31 @@ export default function LoginPage() {
         </> : <>
         <Typography.Text className="eyebrow">欢迎回来</Typography.Text>
         <Typography.Title level={2}>登录{branding.title}</Typography.Title>
-        <Typography.Paragraph type="secondary">使用你的账号或邮箱继续工作。</Typography.Paragraph>
+        <Typography.Paragraph type="secondary">
+          {idpOnly ? '请通过统一身份认证中心 (PhotolibIdp) 登录工作台。' : '使用你的账号或邮箱继续工作。'}
+        </Typography.Paragraph>
         {sessionNotice && <Alert className="login-notice" type="info" showIcon title={sessionNotice} />}
-        <Form layout="vertical" size="large" onFinish={submit} requiredMark={false}>
-          <Form.Item label="账号或邮箱" name="identifier" rules={[{ required: true, message: '请输入账号或邮箱' }]}>
-            <Input prefix={<UserOutlined />} placeholder="请输入账号或邮箱" autoComplete="username" />
-          </Form.Item>
-          <Form.Item label="密码" name="password" rules={[{ required: true, message: '请输入密码' }]}>
-            <Input.Password prefix={<LockOutlined />} placeholder="请输入密码" autoComplete="current-password" />
-          </Form.Item>
-          <div className="form-between"><Checkbox>记住账号</Checkbox><Typography.Text type="secondary">忘记密码请联系管理员</Typography.Text></div>
-          <Button block type="primary" htmlType="submit" loading={loading}>登录 <ArrowRightOutlined /></Button>
-        </Form>
-        {idpConfig?.enabled && <Button block size="large" style={{ marginTop: 10 }} loading={idpLoading}
-          onClick={() => void startIdpLogin()}>使用统一认证中心 (PhotolibIdp) 单点登录</Button>}
+        {idpOnly ? (
+          <Button block type="primary" size="large" loading={idpLoading}
+            onClick={() => void startIdpLogin()}>
+            使用统一认证中心 (PhotolibIdp) 单点登录 <ArrowRightOutlined />
+          </Button>
+        ) : (
+          <>
+            <Form layout="vertical" size="large" onFinish={submit} requiredMark={false}>
+              <Form.Item label="账号或邮箱" name="identifier" rules={[{ required: true, message: '请输入账号或邮箱' }]}>
+                <Input prefix={<UserOutlined />} placeholder="请输入账号或邮箱" autoComplete="username" />
+              </Form.Item>
+              <Form.Item label="密码" name="password" rules={[{ required: true, message: '请输入密码' }]}>
+                <Input.Password prefix={<LockOutlined />} placeholder="请输入密码" autoComplete="current-password" />
+              </Form.Item>
+              <div className="form-between"><Checkbox>记住账号</Checkbox><Typography.Text type="secondary">忘记密码请联系管理员</Typography.Text></div>
+              <Button block type="primary" htmlType="submit" loading={loading}>登录 <ArrowRightOutlined /></Button>
+            </Form>
+            {idpConfig?.enabled && <Button block size="large" style={{ marginTop: 10 }} loading={idpLoading}
+              onClick={() => void startIdpLogin()}>使用统一认证中心 (PhotolibIdp) 单点登录</Button>}
+          </>
+        )}
         <Button block type="link" className="register-entry" icon={<IdcardOutlined />}
           onClick={() => idpConfig?.registerUrl ? window.location.assign(idpConfig.registerUrl) : navigate('/register')}>
           有注册码？前往统一认证中心申请注册账号
