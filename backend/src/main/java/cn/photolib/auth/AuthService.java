@@ -191,6 +191,12 @@ public class AuthService {
         return issue(user, null, toPrincipal(user).mfa().active());
     }
 
+    @Transactional
+    public TokenPair issueForIdpUser(Long userId) {
+        UserEntity user = requireEnabledUser(userId);
+        return issue(user, LocalDateTime.now().plusMinutes(15), true);
+    }
+
     public SessionAuthentication authenticate(String rawAccessToken) {
         AuthSessionEntity session = sessionMapper.selectOne(Wrappers.<AuthSessionEntity>lambdaQuery()
                 .eq(AuthSessionEntity::getAccessTokenHash, TokenSupport.hash(rawAccessToken)));

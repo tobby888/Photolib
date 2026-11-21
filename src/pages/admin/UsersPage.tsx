@@ -53,6 +53,24 @@ export default function UsersPage() {
   const { data: permissionGroups } = useLoad(
     () => api<PermissionGroup[]>({ url: '/permission-groups' }), [] as PermissionGroup[], [],
   )
+  const { data: idpConfig } = useLoad(
+    () => api<{ enabled: boolean; usersUrl: string }>({ url: '/auth/idp/config' }),
+    { enabled: false, usersUrl: '' },
+    [],
+  )
+  const [syncingIdp, setSyncingIdp] = useState(false)
+  const syncFromIdp = async () => {
+    setSyncingIdp(true)
+    try {
+      const res = await api<{ synced: number }>({ method: 'POST', url: '/auth/idp/sync' })
+      message.success(`已从统一认证中心同步 ${res.synced} 个账号`)
+      await reload()
+    } catch (e) {
+      message.error((e as Error).message)
+    } finally {
+      setSyncingIdp(false)
+    }
+  }
   const createUser = async () => {
     try {
       const result = await api<{ user: User; initialPassword: string }>({ method: 'POST', url: '/users', data: await userForm.validateFields() })
@@ -144,6 +162,8 @@ export default function UsersPage() {
           }}
           onSearch={value => setUserKeyword(value.trim())}
         />
+        {idpConfig.enabled && <Button loading={syncingIdp} onClick={() => void syncFromIdp()}>从认证中心同步账号</Button>}
+        {idpConfig.usersUrl && <Button href={idpConfig.usersUrl} target="_blank" rel="noreferrer">前往 PhotolibIdp 管理账号</Button>}
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setUserOpen(true)}>创建账号</Button>
       </Space></div>
     <DataState loading={loading} error={error} empty={!users.items.length} onRetry={reload}

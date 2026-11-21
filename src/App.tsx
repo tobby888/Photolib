@@ -61,6 +61,7 @@ const SurveyDetailPage = lazy(() => import('./pages/SurveyDetailPage'))
 const SurveyFillPage = lazy(() => import('./pages/SurveyFillPage'))
 const SurveyResponseDetailPage = lazy(() => import('./pages/SurveyResponseDetailPage'))
 const DeplytAuthorizePage = lazy(() => import('./pages/DeplytAuthorizePage'))
+const IdpCallbackPage = lazy(() => import('./pages/IdpCallbackPage'))
 const McpAuthorizePage = lazy(() => import('./pages/McpAuthorizePage'))
 // 管理员面板是独立的一套外壳（侧栏、顶栏都不同），挂在 /admin/* 上，不在图库外壳里。
 const AdminShell = lazy(() => import('./AdminShell'))
@@ -460,6 +461,7 @@ export default function App() {
   const location = useLocation()
   return <Suspense fallback={<div className="route-loading">正在进入{branding.title}…</div>}><Routes>
     <Route path="/login" element={user ? <Navigate to={afterLoginRoute(user, location.state)} replace /> : <LoginPage />} />
+    <Route path="/auth/callback" element={<IdpCallbackPage />} />
     {/* 注册页和报名页同理：只把后端确认过的成员弹回去，光看乐观读出的 `user` 会把访客也弹走。 */}
     <Route path="/register" element={user && sessionVerified
       ? <Navigate to={afterLoginRoute(user, null)} replace />

@@ -68,27 +68,6 @@ class UserRenameTests {
     }
 
     @Test
-    void cannotTakeANamePendingInARegistrationApplication() {
-        UserService.UserView user = users.get(create("rename-applicant").user().id());
-        jdbc.sql("""
-                INSERT INTO registration_code(code, name, permission_group_id, max_uses, valid_from, valid_until, created_by)
-                VALUES ('RENAMETEST', '测试码', (SELECT id FROM permission_group WHERE code = 'ADMIN'), 1,
-                        :from, :until, :user)
-                """).param("from", LocalDateTime.of(2020, 1, 1, 0, 0))
-                .param("until", LocalDateTime.of(2099, 1, 1, 0, 0)).param("user", user.id()).update();
-        jdbc.sql("""
-                INSERT INTO registration_application(code_id, username, display_name, email, password_hash, status,
-                                                     pending_username, pending_email)
-                VALUES ((SELECT id FROM registration_code WHERE code = 'RENAMETEST'), 'rename-pending', '申请人',
-                        'pending@example.com', 'hash', 'PENDING', 'rename-pending', 'pending@example.com')
-                """).update();
-
-        assertThatThrownBy(() -> users.updateTracked(user.id(), rename(user, "rename-pending")))
-                .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("注册申请");
-    }
-
-    @Test
     void theDeletedAccountPrefixAndMalformedNamesAreRejected() {
         UserService.UserView user = users.get(create("rename-format").user().id());
 

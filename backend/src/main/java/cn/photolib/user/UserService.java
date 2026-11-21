@@ -17,8 +17,6 @@ import cn.photolib.user.model.UserRole;
 import cn.photolib.permission.DataScope;
 import cn.photolib.permission.PermissionGroupEntity;
 import cn.photolib.permission.PermissionGroupService;
-import cn.photolib.registration.mapper.RegistrationApplicationMapper;
-import cn.photolib.registration.model.RegistrationApplicationEntity;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.RequiredArgsConstructor;
@@ -49,7 +47,6 @@ public class UserService {
     private final PermissionGroupService permissionGroups;
     private final UserAvatarService avatars;
     private final MfaService mfa;
-    private final RegistrationApplicationMapper registrationApplications;
     private final SecureRandom random = new SecureRandom();
 
     @Transactional
@@ -261,12 +258,73 @@ public class UserService {
         long existing = userMapper.selectCount(Wrappers.<UserEntity>lambdaQuery()
                 .eq(UserEntity::getUsername, username)
                 .ne(UserEntity::getId, excludedUserId));
-        if (existing > 0 || registrationApplications.selectCount(
-                Wrappers.<RegistrationApplicationEntity>lambdaQuery()
-                        .eq(RegistrationApplicationEntity::getPendingUsername, username)) > 0) {
+        if (existing > 0) {
             throw new BusinessException(ErrorCode.DUPLICATE_RESOURCE,
-                    "登录账号「" + username + "」已被其他用户或待审核的注册申请使用");
+                    "登录账号「" + username + "」已被其他用户使用");
         }
+    }
+
+    @Transactional
+    public UserEntity syncFromIdp(IdpUserProfile profile) {
+        String sub = StringUtils.hasText(profile.sub()) ? profile.sub().trim() : null;
+        String username = LoginIdentifiers.clean(profile.username());
+        String displayName = StringUtils.hasText(profile.displayName()) ? profile.displayName().trim() : username;
+        String email = normalizeEmail(profile.email());
+        String phone = StringUtils.hasText(profile.phone()) ? profile.phone().trim() : null;
+        String wecom = normalizeWecomUserid(profile.wecomUserid());
+        boolean enabled = profile.enabled();
+
+        UserEntity existing = null;
+        if (sub != null) {
+            existing = userMapper.selectOne(Wrappers.<UserEntity>lambdaQuery().eq(UserEntity::getIdpSub, sub));
+        }
+        if (existing == null && StringUtils.hasText(username)) {
+            existing = userMapper.selectOne(Wrappers.<UserEntity>lambdaQuery().eq(UserEntity::getUsername, username));
+        }
+        if (existing == null && email != null) {
+            existing = userMapper.selectOne(Wrappers.<UserEntity>lambdaQuery().eq(UserEntity::getEmail, email));
+        }
+        if (existing == null) {
+            PermissionGroupEntity group = permissionGroups.requireByCode(profile.admin() ? "ADMIN" : "NO_ACCESS");
+            UserEntity created = new UserEntity();
+            created.setIdpSub(sub);
+            created.setUsername(username);
+            created.setPasswordHash(passwordEncoder.encode(randomPassword()));
+            created.setDisplayName(displayName);
+            created.setRole(permissionGroups.compatibleRole(group));
+            created.setPermissionGroupId(group.getId());
+            created.setEmail(email);
+            created.setPhone(phone);
+            created.setWecomUserid(wecom);
+            created.setEnabled(enabled);
+            created.setMustChangePassword(false);
+            userMapper.insert(created);
+            return created;
+        }
+        existing.setIdpSub(sub);
+        if (StringUtils.hasText(username)) {
+            existing.setUsername(username);
+        }
+        existing.setDisplayName(displayName);
+        existing.setEmail(email);
+        if (phone != null) existing.setPhone(phone);
+        if (wecom != null) existing.setWecomUserid(wecom);
+        existing.setEnabled(enabled);
+        existing.setMustChangePassword(false);
+        if (profile.admin()) {
+            PermissionGroupEntity adminGroup = permissionGroups.requireByCode("ADMIN");
+            existing.setPermissionGroupId(adminGroup.getId());
+            existing.setRole(UserRole.ADMIN);
+        }
+        userMapper.updateById(existing);
+        if (!enabled) {
+            authService.revokeAll(existing.getId());
+        }
+        return existing;
+    }
+
+    public record IdpUserProfile(String sub, String username, String displayName, String email,
+                                 String phone, String wecomUserid, boolean admin, boolean enabled) {
     }
 
     @Transactional
