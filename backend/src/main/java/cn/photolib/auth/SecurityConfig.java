@@ -39,9 +39,10 @@ public class SecurityConfig {
                                 "/recruitment", "/recruitments/**", "/recruitment-applications/**",
                                 "/docs", "/docs/**", "/documents", "/documents/**",
                                 "/teaching", "/teaching/**",
-                                "/share/**", "/upload/**", "/mcp/authorize", "/deplyt/authorize", "/two-factor",
+                                "/share/**", "/upload/**", "/mcp/authorize", "/deplyt/authorize", "/auth/callback", "/two-factor",
                                 "/api", "/api/",
                                 "/api/v1/auth/login", "/api/v1/auth/refresh",
+                                "/api/v1/auth/idp/config", "/api/v1/auth/idp/start", "/api/v1/auth/idp/exchange",
                                 // 登录第二步：凭据是密码登录换来的一次性票据，此时还没有会话。
                                 "/api/v1/auth/login/mfa", "/api/v1/auth/login/mfa/webauthn-options",
                                 // MCP 客户端的配对通道。三条都由"还没有身份"的客户端调用，
@@ -89,8 +90,6 @@ public class SecurityConfig {
                         .requestMatchers(
                                 "/api/v1/public/shares/*",
                                 "/api/v1/public/shares/*/**").permitAll()
-                        // 持注册码的同学提交注册申请，此时还没有账号。
-                        .requestMatchers(HttpMethod.POST, "/api/v1/public/registrations").permitAll()
                         .requestMatchers(HttpMethod.POST,
                                 "/api/v1/public/recruitments/*/drafts",
                                 "/api/v1/public/recruitments/*/drafts/*/submit",

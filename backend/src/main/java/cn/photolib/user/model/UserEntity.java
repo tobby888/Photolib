@@ -11,6 +11,8 @@ import lombok.Setter;
 @Setter
 @TableName("app_user")
 public class UserEntity extends BaseEntity {
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String idpSub;
     private String username;
     private String passwordHash;
     private String displayName;

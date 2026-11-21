@@ -36,6 +36,8 @@ public class DeplytAuthorizationController {
     public DeplytAuthorizationController(
             @Value("${DEPLYT_PUBLIC_URL:}") String origin,
             @Value("${DEPLYT_SSO_SECRET:}") String secret) {
+        origin = stripQuotes(origin);
+        secret = stripQuotes(secret);
         if (origin.isEmpty() && secret.isEmpty()) {
             callback = null;
             secretHash = null;
@@ -49,6 +51,17 @@ public class DeplytAuthorizationController {
         }
         callback = "https://" + uri.getRawAuthority() + "/auth/callback";
         secretHash = sha256(secret);
+    }
+
+    static String stripQuotes(String value) {
+        if (value == null) return "";
+        String trimmed = value.trim();
+        if (trimmed.length() >= 2
+                && ((trimmed.startsWith("'") && trimmed.endsWith("'"))
+                || (trimmed.startsWith("\"") && trimmed.endsWith("\"")))) {
+            return trimmed.substring(1, trimmed.length() - 1).trim();
+        }
+        return trimmed;
     }
 
     @PostMapping("/authorize")
@@ -82,6 +95,7 @@ public class DeplytAuthorizationController {
             @RequestHeader(value = "X-Deplyt-Client-Secret", defaultValue = "") String secret,
             @RequestBody ExchangeRequest request) {
         requireEnabled();
+        secret = stripQuotes(secret);
         if (!MessageDigest.isEqual(secretHash, sha256(secret)) || !isToken(request.code())
                 || !isToken(request.verifier())) {
             throw invalidGrant();

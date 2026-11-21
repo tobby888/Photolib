@@ -95,6 +95,18 @@ async function errorCode(data: unknown): Promise<string | undefined> {
   return (data as Envelope<unknown> | undefined)?.code
 }
 
+function isUnauthenticatedAuthRequest(url?: string): boolean {
+  if (!url) return false
+  return url.includes('/auth/login')
+    || url.includes('/auth/refresh')
+    || url.includes('/auth/logout')
+    || url.includes('/auth/idp/config')
+    || url.includes('/auth/idp/start')
+    || url.includes('/auth/idp/exchange')
+    || url.includes('/auth/deplyt/token')
+    || url.includes('/auth/mcp/token')
+}
+
 let refreshing: Promise<string> | null = null
 http.interceptors.response.use(
   (response) => response,
@@ -111,7 +123,7 @@ http.interceptors.response.use(
       if (code === 'MFA_ENROLLMENT_REQUIRED') window.dispatchEvent(new Event(MFA_ENROLLMENT_REQUIRED_EVENT))
       return Promise.reject(error)
     }
-    if (error.response?.status !== 401 || original._retry || original.url?.includes('/auth/')) {
+    if (error.response?.status !== 401 || original._retry || isUnauthenticatedAuthRequest(original.url)) {
       return Promise.reject(error)
     }
     original._retry = true

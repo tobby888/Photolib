@@ -54,6 +54,7 @@ public class SpaForwardController {
             // 地址栏直接打开的，所以这条路径式深链必须能 forward 到应用。
             "/mcp/authorize",
             "/deplyt/authorize",
+            "/auth/callback",
             // 两步验证的绑定 / 建议页。登录后由前端跳过去，路径式深链同样要能落到应用。
             "/two-factor",
             // 管理员面板：数据面板在 /admin，各项管理功能各占一页。

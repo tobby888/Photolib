@@ -71,6 +71,8 @@ class SpaForwardHttpTests {
             "/documents",
             "/documents/abc123",
             "/mcp/authorize",
+            "/deplyt/authorize",
+            "/auth/callback",
             "/two-factor",
             "/admin",
             "/admin/users",

@@ -2,8 +2,8 @@ import { Alert, App, Button, Card, Checkbox, Divider, Form, Input, Space, Typogr
 import {
   ArrowLeftOutlined, ArrowRightOutlined, IdcardOutlined, LockOutlined, ReadOutlined, TeamOutlined, UserOutlined,
 } from '@ant-design/icons'
-import { useState } from 'react'
-import { LOGIN_NOTICE_KEY, type LoginResult } from '../api'
+import { useEffect, useState } from 'react'
+import { api, LOGIN_NOTICE_KEY, type LoginResult } from '../api'
 import { loginWithCode, loginWithSecurityKey } from '../mfa'
 import TwoFactorVerify from '../TwoFactorVerify'
 import { useLocation, useNavigate } from 'react-router-dom'
@@ -19,9 +19,30 @@ export default function LoginPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const [loading, setLoading] = useState(false)
+  const [idpLoading, setIdpLoading] = useState(false)
+  const [idpConfig, setIdpConfig] = useState<{ enabled: boolean; registerUrl: string } | null>(null)
   /** 密码对了、还差两步验证时的票据与可用方式。 */
   const [challenge, setChallenge] = useState<{ ticket: string; methods: ('TOTP' | 'WEBAUTHN')[] } | null>(null)
   const [trustDevice, setTrustDevice] = useState(false)
+  useEffect(() => {
+    void api<{ enabled: boolean; registerUrl: string }>({ url: '/auth/idp/config' })
+      .then(setIdpConfig)
+      .catch(() => setIdpConfig(null))
+  }, [])
+  const startIdpLogin = async () => {
+    setIdpLoading(true)
+    try {
+      const res = await api<{ authorizeUrl: string }>({
+        method: 'POST',
+        url: '/auth/idp/start',
+        data: { redirectUri: `${window.location.origin}/auth/callback` },
+      })
+      window.location.assign(res.authorizeUrl)
+    } catch (error) {
+      message.error((error as Error).message)
+      setIdpLoading(false)
+    }
+  }
   // 只读一次：刷新或下次再来登录页就不再显示。
   const [sessionNotice] = useState(() => {
     try {
@@ -108,8 +129,12 @@ export default function LoginPage() {
           <div className="form-between"><Checkbox>记住账号</Checkbox><Typography.Text type="secondary">忘记密码请联系管理员</Typography.Text></div>
           <Button block type="primary" htmlType="submit" loading={loading}>登录 <ArrowRightOutlined /></Button>
         </Form>
+        {idpConfig?.enabled && <Button block size="large" style={{ marginTop: 10 }} loading={idpLoading}
+          onClick={() => void startIdpLogin()}>使用统一认证中心 (PhotolibIdp) 单点登录</Button>}
         <Button block type="link" className="register-entry" icon={<IdcardOutlined />}
-          onClick={() => navigate('/register')}>有注册码？申请注册账号</Button>
+          onClick={() => idpConfig?.registerUrl ? window.location.assign(idpConfig.registerUrl) : navigate('/register')}>
+          有注册码？前往统一认证中心申请注册账号
+        </Button>
         </>}
         <Divider plain>不用登录也能看</Divider>
         <Space.Compact block>
