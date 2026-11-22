@@ -200,6 +200,9 @@ public class PhotoStorageReconciliationService {
         }
 
         if (photo.thumbnailObjectKey() == null) {
+            if (photo.thumbnailSize() == null && !expected.acceptsSourceSize(main.get().size())) {
+                return new Observation(photo, Verdict.HEALTHY);
+            }
             return new Observation(photo, photo.thumbnailSize() == null
                     ? Verdict.PREVIEW_ABSENT : Verdict.PREVIEW_INVALID);
         }

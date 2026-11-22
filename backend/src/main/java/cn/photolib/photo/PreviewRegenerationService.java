@@ -255,7 +255,13 @@ public class PreviewRegenerationService {
     }
 
     private boolean previewObjectHealthy(PreviewPhoto photo, PreviewProfile expected) {
-        if (!hasCompletePreviewMetadata(photo)) return false;
+        if (!hasCompletePreviewMetadata(photo)) {
+            return expected.cloud()
+                    && !StringUtils.hasText(photo.thumbnailObjectKey())
+                    && photo.thumbnailSize() == null
+                    && photo.size() != null
+                    && !expected.acceptsSourceSize(photo.size());
+        }
         Optional<ObjectStorageService.ObjectInfo> object = storage.find(photo.thumbnailObjectKey());
         if (object.isEmpty()) return false;
         // Judge the object by its own MIME, not by photo.content_type. That column
@@ -302,6 +308,14 @@ public class PreviewRegenerationService {
                     stagedDeleted += cleanupGenerated(List.of(generated));
                     log.info("照片已被其他任务修复或不再需要预览，清理本次暂存对象：photoId={}", photo.id());
                 }
+            } catch (PreviewSourceUnusableException unusable) {
+                if (generated != null) {
+                    stagedDeleted += cleanupGenerated(List.of(generated));
+                }
+                failureCount++;
+                if (dropReferenceToDeadPreview(photo, expected)) fallbackCount++;
+                log.warn("定向修复预览图跳过无法处理的来源，该照片将直接使用成品图展示：photoId={}, reason={}",
+                        photo.id(), unusable.getCause() != null ? unusable.getCause().getMessage() : unusable.getMessage());
             } catch (RuntimeException exception) {
                 if (generated != null) {
                     stagedDeleted += cleanupGenerated(List.of(generated));
@@ -720,7 +734,7 @@ public class PreviewRegenerationService {
 
     private List<PreviewPhoto> loadPhotos() {
         return jdbc.sql("""
-                SELECT id, object_key, content_type, thumbnail_object_key, thumbnail_size,
+                SELECT id, object_key, content_type, size, thumbnail_object_key, thumbnail_size,
                        version, status
                 FROM photo
                 WHERE deleted=0
@@ -732,6 +746,7 @@ public class PreviewRegenerationService {
                         rs.getLong("id"),
                         rs.getString("object_key"),
                         rs.getString("content_type"),
+                        rs.getObject("size", Long.class),
                         rs.getString("thumbnail_object_key"),
                         rs.getObject("thumbnail_size", Long.class),
                         rs.getInt("version"),
@@ -745,7 +760,7 @@ public class PreviewRegenerationService {
         for (int offset = 0; offset < uniqueIds.size(); offset += 500) {
             List<Long> chunk = uniqueIds.subList(offset, Math.min(offset + 500, uniqueIds.size()));
             photos.addAll(jdbc.sql("""
-                    SELECT id, object_key, content_type, thumbnail_object_key, thumbnail_size,
+                    SELECT id, object_key, content_type, size, thumbnail_object_key, thumbnail_size,
                            version, status
                     FROM photo
                     WHERE deleted=0
@@ -759,6 +774,7 @@ public class PreviewRegenerationService {
                             rs.getLong("id"),
                             rs.getString("object_key"),
                             rs.getString("content_type"),
+                            rs.getObject("size", Long.class),
                             rs.getString("thumbnail_object_key"),
                             rs.getObject("thumbnail_size", Long.class),
                             rs.getInt("version"),
@@ -770,7 +786,7 @@ public class PreviewRegenerationService {
 
     private PreviewPhoto loadPhoto(long photoId) {
         return jdbc.sql("""
-                SELECT id, object_key, content_type, thumbnail_object_key, thumbnail_size,
+                SELECT id, object_key, content_type, size, thumbnail_object_key, thumbnail_size,
                        version, status
                 FROM photo
                 WHERE id=:id AND deleted=0
@@ -782,6 +798,7 @@ public class PreviewRegenerationService {
                         rs.getLong("id"),
                         rs.getString("object_key"),
                         rs.getString("content_type"),
+                        rs.getObject("size", Long.class),
                         rs.getString("thumbnail_object_key"),
                         rs.getObject("thumbnail_size", Long.class),
                         rs.getInt("version"),
@@ -1288,7 +1305,7 @@ public class PreviewRegenerationService {
         }
     }
 
-    private record PreviewPhoto(Long id, String objectKey, String contentType,
+    private record PreviewPhoto(Long id, String objectKey, String contentType, Long size,
                                 String thumbnailObjectKey, Long thumbnailSize,
                                 int version, PhotoStatus status) {
     }

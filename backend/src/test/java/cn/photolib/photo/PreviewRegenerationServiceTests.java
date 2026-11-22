@@ -126,6 +126,44 @@ class PreviewRegenerationServiceTests {
     }
 
     @Test
+    void ossBootstrapAndReconciliationSkipOversizedFinishedPhotoWithoutPreview() {
+        long id = 93793L;
+        String source = "photos/preview-regeneration/oversized-gif.gif";
+        long oversized = OssAvifPreview.MAX_SOURCE_BYTES + 1024;
+        insertUserAndPhoto(93791L, id, source, oversized, null, null, "preview-avif-oversized-user");
+        ObjectStorageService cloudStorage = mock(ObjectStorageService.class);
+        when(cloudStorage.find(source)).thenReturn(java.util.Optional.of(
+                new ObjectStorageService.ObjectInfo(oversized, "image/gif", Map.of())));
+        StorageProperties cloud = mock(StorageProperties.class);
+        when(cloud.usesOss()).thenReturn(true);
+        ImageCompressor nativeEncoder = mock(ImageCompressor.class);
+        PreviewProfilePolicy policy = new PreviewProfilePolicy(cloud, profileRepository);
+        PreviewRegenerationService service = new PreviewRegenerationService(
+                jdbc, cloudStorage, cloud, nativeEncoder, workspace, transactions,
+                profileRepository, policy, new PreviewMaintenanceLock(),
+                new OssAvifPreview(cloudStorage, workspace, mock(cn.photolib.storage.OssAccessMonitor.class)));
+
+        // 先切到 OSS profile（这轮超大成品图本来就是没有预览，应直接跳过且不计入 fallback/报错）。
+        PreviewRegenerationService.Result initial = service.synchronizeCompressionRatio();
+        assertThat(initial.regeneratedCount()).isZero();
+        assertThat(initial.fallbackCount()).isZero();
+        // 再次启动核对也不再尝试生成或报错。
+        PreviewRegenerationService.Result second = service.synchronizeCompressionRatio();
+        assertThat(second.regeneratedCount()).isZero();
+        assertThat(second.fallbackCount()).isZero();
+        verify(cloudStorage, never()).saveAvifPreview(anyString(), anyString());
+
+        // 对账巡检同样将其视为健康（合法回退成品图），不发出修复事件。
+        org.springframework.context.ApplicationEventPublisher publisher =
+                mock(org.springframework.context.ApplicationEventPublisher.class);
+        cn.photolib.storage.PhotoStorageReconciliationService reconciliation =
+                new cn.photolib.storage.PhotoStorageReconciliationService(
+                        cloudStorage, jdbc, publisher, policy, new PreviewMaintenanceLock());
+        reconciliation.reconcile();
+        verifyNoInteractions(publisher);
+    }
+
+    @Test
     void rejectsAmbientTransactionsBeforeTouchingObjectStorage() {
         ObjectStorageService untouchedStorage = mock(ObjectStorageService.class);
         PreviewRegenerationService isolated = new PreviewRegenerationService(
