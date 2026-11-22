@@ -232,6 +232,7 @@ class PhotoProcessingProfileGuardTests {
     }
 
     private void cleanupRows() {
+        jdbc.sql("DELETE FROM audit_log WHERE operator_id=:id").param("id", USER_ID).update();
         jdbc.sql("DELETE FROM photo WHERE id=:id").param("id", PHOTO_ID).update();
         jdbc.sql("DELETE FROM app_user WHERE id=:id").param("id", USER_ID).update();
     }

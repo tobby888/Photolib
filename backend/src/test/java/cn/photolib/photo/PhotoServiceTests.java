@@ -1407,4 +1407,47 @@ class PhotoServiceTests {
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("校区通讯录");
     }
+
+    @Test
+    void listAndProjectPhotoCountHideFailedProcessingPhotos() {
+        jdbc.sql("""
+                INSERT INTO photo
+                    (id, project_id, title, photographer_student_id, photographer_name,
+                     uploaded_by, campus_id, taken_at, size, content_type, object_key,
+                     sha256, status, failure_reason)
+                VALUES
+                    (1901, :projectId, '正常可用图', '20230001', '张三', 200, :campusId,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/ok.jpg', :shaOk, 'AVAILABLE', NULL),
+                    (1902, :projectId, '处理中图', '20230001', '张三', 200, :campusId,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/proc.jpg', :shaProc, 'PROCESSING', NULL),
+                    (1903, :projectId, '正在上传图', '20230001', '张三', 200, :campusId,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/up.jpg', :shaUp, 'UPLOADING', NULL),
+                    (1904, :projectId, '处理失败图', '20230001', '张三', 200, :campusId,
+                     NOW(), 1000, 'image/jpeg', 'photos/2026/fail.jpg', :shaFail, 'UPLOADING',
+                     '这张图片是分辨率很高的渐进式 JPEG，超出了服务器的解码内存上限。')
+                """)
+                .param("projectId", testProject.getId())
+                .param("campusId", testCampus.getId())
+                .param("shaOk", "a".repeat(63) + "1")
+                .param("shaProc", "a".repeat(63) + "2")
+                .param("shaUp", "a".repeat(63) + "3")
+                .param("shaFail", "a".repeat(63) + "4")
+                .update();
+        linkPhotosToProjects();
+
+        // includeAllStatuses=true（项目相册 / 需求列表）与 status=UPLOADING 均不返回处理失败的图片。
+        var allInProject = photoService.list(1, 20, null, testProject.getId(), null, null, null,
+                null, null, null, true, false, false, List.of(), adminUser);
+        assertThat(allInProject.items()).extracting(PhotoService.PhotoView::id)
+                .containsExactlyInAnyOrder(1901L, 1902L, 1903L);
+
+        var uploadingOnly = photoService.list(1, 20, null, testProject.getId(), null, null, null,
+                null, null, PhotoStatus.UPLOADING, false, false, false, List.of(), adminUser);
+        assertThat(uploadingOnly.items()).extracting(PhotoService.PhotoView::id)
+                .containsExactly(1903L);
+
+        // 项目详情的 photoCount 与相册列表一致，不把处理失败的图片算进去。
+        var detail = projectService.getDetail(testProject.getId(), adminUser);
+        assertThat(detail.photoCount()).isEqualTo(3L);
+    }
 }

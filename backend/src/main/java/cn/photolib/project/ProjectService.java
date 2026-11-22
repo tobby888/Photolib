@@ -212,7 +212,8 @@ public class ProjectService {
                 SELECT
                     (SELECT COUNT(*) FROM photo_request WHERE project_id=:id AND deleted=0) AS request_count,
                     (SELECT COUNT(*) FROM photo p JOIN photo_project pp ON pp.photo_id=p.id
-                        WHERE pp.project_id=:id AND p.deleted=0) AS photo_count,
+                        WHERE pp.project_id=:id AND p.deleted=0
+                          AND NOT (p.status='UPLOADING' AND p.failure_reason IS NOT NULL)) AS photo_count,
                     (SELECT COUNT(*) FROM adoption WHERE project_id=:id AND deleted=0) AS adoption_count
                 """)
                 .param("id", id)
@@ -235,7 +236,8 @@ public class ProjectService {
                                       WHERE rp.request_id=r.id AND rp.user_id=:userId)) AS request_count,
                     (SELECT COUNT(*) FROM photo p JOIN photo_project pp ON pp.photo_id=p.id
                         WHERE pp.project_id=:id AND p.deleted=0 AND p.uploaded_by=:userId
-                          AND p.campus_id IN (:campusIds)) AS photo_count,
+                          AND p.campus_id IN (:campusIds)
+                          AND NOT (p.status='UPLOADING' AND p.failure_reason IS NOT NULL)) AS photo_count,
                     (SELECT COUNT(*) FROM adoption a
                         WHERE a.project_id=:id AND a.deleted=0
                           AND EXISTS (SELECT 1 FROM photo p

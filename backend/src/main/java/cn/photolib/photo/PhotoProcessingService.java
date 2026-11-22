@@ -1,21 +1,27 @@
 package cn.photolib.photo;
 
+import cn.photolib.audit.AuditLogEntity;
+import cn.photolib.audit.AuditLogMapper;
+import cn.photolib.common.upload.UnprocessableImageException;
 import cn.photolib.common.upload.UploadFailureMessage;
 import cn.photolib.photo.mapper.PhotoMapper;
 import cn.photolib.photo.model.PhotoEntity;
 import cn.photolib.photo.model.PhotoStatus;
 import cn.photolib.photo.batch.*;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import cn.photolib.storage.ObjectStorageService;
 import cn.photolib.storage.StorageProperties;
 import cn.photolib.user.mapper.UserMapper;
 import cn.photolib.user.model.UserEntity;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
+import org.springframework.util.StringUtils;
 
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -26,6 +32,7 @@ import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -35,6 +42,12 @@ import java.util.concurrent.ConcurrentHashMap;
 @RequiredArgsConstructor
 @Slf4j
 public class PhotoProcessingService {
+    static final String PROCESSING_FAILED_AUDIT_ACTION = "PHOTO_PROCESSING_FAILED";
+    static final String PROCESSING_FAILED_AUDIT_NAME = "图片处理失败";
+    private static final ObjectMapper AUDIT_JSON = new ObjectMapper();
+    private static final int AUDIT_ERROR_MESSAGE_MAX = 500;
+    private static final int AUDIT_RESOURCE_NAME_MAX = 255;
+
     private final PhotoMapper photoMapper;
     private final UserMapper userMapper;
     private final ObjectStorageService storage;
@@ -46,6 +59,12 @@ public class PhotoProcessingService {
     private final PreviewProfilePolicy previewProfiles;
     private final TransactionTemplate transactions;
     private final OssThumbnailJobs ossThumbnails;
+    private volatile AuditLogMapper auditLogMapper;
+
+    @Autowired(required = false)
+    void setAuditLogMapper(AuditLogMapper auditLogMapper) {
+        this.auditLogMapper = auditLogMapper;
+    }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onRequested(PhotoProcessRequested event) {
@@ -204,7 +223,10 @@ public class PhotoProcessingService {
                 LocalDateTime.now());
         if (failed != 1) return false;
         PhotoEntity photo = photoMapper.selectById(photoId);
-        if (photo != null) updateBatch(photo, findBatchItem(photoId));
+        if (photo != null) {
+            recordProcessingFailureAudit(photo, failureReason, null, "STALLED_PROCESSING");
+            updateBatch(photo, findBatchItem(photoId));
+        }
         return true;
     }
 
@@ -270,12 +292,72 @@ public class PhotoProcessingService {
             photo.setVersion(photo.getVersion() + 1);
             photo.setStatus(PhotoStatus.UPLOADING);
             photo.setFailureReason(failureReason);
+            String errorCode = UploadFailureMessage.isInternal(exception)
+                    ? "INTERNAL_PROCESSING_ERROR" : "UNPROCESSABLE_IMAGE";
+            recordProcessingFailureAudit(photo, failureReason, exception, errorCode);
             return photo;
         }
 
         PhotoEntity current = photoMapper.selectById(photo.getId());
         log.warn("图片处理失败后状态已并发变化，未覆盖当前记录: photoId={}", photo.getId());
         return current == null ? photo : current;
+    }
+
+    /**
+     * 把图片异步处理失败的原因写进管理员面板的「操作日志」（audit_log），
+     * 方便管理员不用翻服务端日志文件就能按「图片处理失败」或关键词直接查到是谁、哪张图、为什么失败。
+     * 写审计日志本身失败只打警告，绝不干扰原有的失败标记流程。
+     */
+    private void recordProcessingFailureAudit(PhotoEntity photo, String failureReason,
+                                              Throwable exception, String errorCode) {
+        AuditLogMapper mapper = this.auditLogMapper;
+        if (mapper == null) return;
+        try {
+            AuditLogEntity entry = new AuditLogEntity();
+            entry.setOperatorId(photo.getUploadedBy());
+            entry.setAction(PROCESSING_FAILED_AUDIT_ACTION);
+            entry.setActionName(PROCESSING_FAILED_AUDIT_NAME);
+            entry.setResourceType("PHOTOS");
+            entry.setResourceId(String.valueOf(photo.getId()));
+            entry.setResourceName(clipText(
+                    StringUtils.hasText(photo.getTitle()) ? photo.getTitle() : photo.getStoredFileName(),
+                    AUDIT_RESOURCE_NAME_MAX));
+            entry.setSuccess(false);
+            entry.setErrorCode(errorCode);
+            entry.setErrorMessage(clipText(failureReason, AUDIT_ERROR_MESSAGE_MAX));
+            Map<String, Object> detail = new LinkedHashMap<>();
+            detail.put("photoId", photo.getId());
+            if (photo.getProjectId() != null) detail.put("projectId", photo.getProjectId());
+            if (photo.getRequestId() != null) detail.put("requestId", photo.getRequestId());
+            if (StringUtils.hasText(photo.getPhotographerName())) {
+                detail.put("photographerName", photo.getPhotographerName());
+            }
+            if (StringUtils.hasText(photo.getContentType())) detail.put("contentType", photo.getContentType());
+            if (photo.getSize() != null) detail.put("size", photo.getSize());
+            detail.put("failureReason", failureReason);
+            if (exception != null) {
+                detail.put("exceptionType", exception.getClass().getSimpleName());
+                if (exception instanceof UnprocessableImageException unprocessable
+                        && StringUtils.hasText(unprocessable.nativeDetail())) {
+                    detail.put("nativeDetail", unprocessable.nativeDetail());
+                } else if (StringUtils.hasText(exception.getMessage())
+                        && !exception.getMessage().equals(failureReason)) {
+                    detail.put("internalReason", clipText(exception.getMessage(), AUDIT_ERROR_MESSAGE_MAX));
+                }
+            }
+            entry.setDetailJson(AUDIT_JSON.writeValueAsString(detail));
+            entry.setCreatedAt(LocalDateTime.now());
+            mapper.insert(entry);
+        } catch (Exception auditFailure) {
+            log.warn("写入图片处理失败审计日志出错: photoId={}", photo.getId(), auditFailure);
+        }
+    }
+
+    private static String clipText(String value, int maxLength) {
+        if (value == null) return null;
+        String trimmed = value.strip();
+        if (trimmed.isEmpty()) return null;
+        return trimmed.length() > maxLength ? trimmed.substring(0, maxLength - 1) + "…" : trimmed;
     }
 
     private PhotoUploadItemEntity findBatchItem(Long photoId) {

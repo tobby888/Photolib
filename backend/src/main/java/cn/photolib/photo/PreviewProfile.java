@@ -75,8 +75,13 @@ public record PreviewProfile(BigDecimal compressionRatio, String generatorFinger
         return new PreviewProfile(BigDecimal.ONE, OSS_GENERATOR);
     }
 
-    boolean cloud() {
+    public boolean cloud() {
         return OSS_GENERATOR.equals(generatorFingerprint);
+    }
+
+    /** 成品对象是否超过云端（OSS IMG）单图处理体积上限（20 MiB），超过则只能回退直接使用成品图。 */
+    public boolean acceptsSourceSize(long sizeBytes) {
+        return !cloud() || (sizeBytes > 0 && sizeBytes <= OssAvifPreview.MAX_SOURCE_BYTES);
     }
 
     public static BigDecimal normalizeRatio(BigDecimal ratio) {

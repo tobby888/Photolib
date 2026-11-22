@@ -109,6 +109,7 @@ class ProjectShareZipUploadTests {
         jdbc.sql("DELETE FROM project_share_link WHERE project_id = :project")
                 .param("project", event.getId()).update();
         jdbc.sql("DELETE FROM project WHERE id = :project").param("project", event.getId()).update();
+        jdbc.sql("DELETE FROM audit_log WHERE operator_id = :user").param("user", MINISTER_ID).update();
         jdbc.sql("DELETE FROM app_user WHERE id = :user").param("user", MINISTER_ID).update();
     }
 

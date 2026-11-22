@@ -11,6 +11,9 @@
 #include <windows.h>
 #include <wchar.h>
 #else
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
 #include <pthread.h>
 #include <sys/stat.h>
 #endif
@@ -37,6 +40,7 @@ extern int vips_image_get_bands(const VipsImage *image);
 extern int vips_image_get_orientation(VipsImage *image);
 extern size_t vips_image_get_typeof(const VipsImage *image, const char *name);
 extern int vips_image_get_int(const VipsImage *image, const char *name, int *output);
+extern int vips_image_get_string(const VipsImage *image, const char *name, const char **output);
 extern int vips_thumbnail(const char *filename, VipsImage **output,
                           int width, ...);
 extern int vips_jpegsave(VipsImage *input, const char *filename, ...);
@@ -62,11 +66,13 @@ enum {
 };
 
 /*
- * 512 MiB: an RGB progressive JPEG up to ~89 MP (or ~179 MP at 4:2:0) fits.
- * Every libvips call runs under vips_mutex, so at most one such buffer exists
- * per process no matter how many photo-processing threads are configured.
+ * 384 MiB: sized for 2 GiB servers while accurately accounting for chroma
+ * subsampling — a 4:2:0 progressive JPEG up to ~134 MP (or ~100 MP at 4:2:2,
+ * ~67 MP at 4:4:4) fits. Every libvips call runs under vips_mutex, so at most
+ * one such buffer exists per process no matter how many photo-processing
+ * threads are configured.
  */
-#define PL_PROGRESSIVE_MAXIMUM_COEFFICIENT_BYTES (UINT64_C(512) * 1024 * 1024)
+#define PL_PROGRESSIVE_MAXIMUM_COEFFICIENT_BYTES (UINT64_C(384) * 1024 * 1024)
 
 /*
  * The Java side maps these exact strings to explanations the uploader can act
@@ -135,17 +141,54 @@ static int dimensions_are_safe(int width, int height,
     return (uint64_t)width * (uint64_t)height <= maximum_pixels;
 }
 
+static void trim_native_heap(void) {
+#if !defined(_WIN32) && defined(__GLIBC__)
+    malloc_trim(0);
+#endif
+}
+
 /*
- * Upper bound of libjpeg's whole-image coefficient buffer for a progressive
- * JPEG: one 64-coefficient block of 16-bit values per 8x8 tile, per component,
- * assuming no chroma subsampling. Real 4:2:0 files need half of this, so the
- * bound is conservative by design.
+ * Actual libjpeg whole-image coefficient buffer size for a progressive JPEG:
+ * each 8x8 block holds 64 16-bit coefficients (128 bytes). Accounting for the
+ * real chroma subsampling (reported by libvips as "jpeg-chroma-subsample",
+ * e.g. "4:2:0" = 1.5x, "4:2:2" / "4:4:0" = 2.0x, "4:4:4" = 3.0x of luma blocks)
+ * avoids over-estimating common camera 4:2:0 exports by 2x while keeping the
+ * budget safe on small-memory servers. Unknown subsampling falls back to the
+ * full un-subsampled component count.
  */
-static uint64_t progressive_coefficient_bytes(int width, int height, int bands) {
-    uint64_t components = bands < 1 ? UINT64_C(1) : (uint64_t)bands;
+static uint64_t progressive_coefficient_bytes(VipsImage *image,
+                                              int width,
+                                              int height,
+                                              int bands) {
     uint64_t blocks_wide = ((uint64_t)width + 7) / 8;
     uint64_t blocks_high = ((uint64_t)height + 7) / 8;
-    return blocks_wide * blocks_high * UINT64_C(64) * UINT64_C(2) * components;
+    uint64_t luma_blocks = blocks_wide * blocks_high;
+    if (bands == 3 && vips_image_get_typeof(image, "jpeg-chroma-subsample") != 0) {
+        const char *subsample = NULL;
+        if (vips_image_get_string(image, "jpeg-chroma-subsample", &subsample) == 0 &&
+            subsample != NULL) {
+            if (strcmp(subsample, "4:2:0") == 0) {
+                uint64_t chroma_blocks = ((blocks_wide + 1) / 2) * ((blocks_high + 1) / 2);
+                return (luma_blocks + 2 * chroma_blocks) * UINT64_C(64) * UINT64_C(2);
+            }
+            if (strcmp(subsample, "4:2:2") == 0) {
+                uint64_t chroma_blocks = ((blocks_wide + 1) / 2) * blocks_high;
+                return (luma_blocks + 2 * chroma_blocks) * UINT64_C(64) * UINT64_C(2);
+            }
+            if (strcmp(subsample, "4:4:0") == 0) {
+                uint64_t chroma_blocks = blocks_wide * ((blocks_high + 1) / 2);
+                return (luma_blocks + 2 * chroma_blocks) * UINT64_C(64) * UINT64_C(2);
+            }
+            if (strcmp(subsample, "4:1:1") == 0) {
+                uint64_t chroma_blocks = ((blocks_wide + 3) / 4) * blocks_high;
+                return (luma_blocks + 2 * chroma_blocks) * UINT64_C(64) * UINT64_C(2);
+            }
+        } else {
+            vips_error_clear();
+        }
+    }
+    uint64_t components = bands < 1 ? UINT64_C(1) : (uint64_t)bands;
+    return luma_blocks * UINT64_C(64) * UINT64_C(2) * components;
 }
 
 static int image_metadata_is_true(VipsImage *image, const char *name) {
@@ -271,7 +314,7 @@ static int dimensions_file_unlocked(const char *input_path,
      */
     if (requires_streaming && format == PL_FORMAT_JPEG &&
         image_metadata_is_true(image, "jpeg-multiscan") &&
-        progressive_coefficient_bytes(image_width, image_height, image_channels) >
+        progressive_coefficient_bytes(image, image_width, image_height, image_channels) >
             PL_PROGRESSIVE_MAXIMUM_COEFFICIENT_BYTES) {
         g_object_unref(image);
         copy_error(error_message, error_capacity, PL_ERROR_PROGRESSIVE_JPEG_TOO_LARGE);
@@ -667,6 +710,7 @@ int pl_vips_process_file(const char *input_path,
         streaming_threshold_pixels, streaming_threshold_decoded_bytes,
         maximum_output_bytes, output_length,
         output_width, output_height, error_message, error_capacity);
+    trim_native_heap();
     unlock_vips();
     return result;
 }
