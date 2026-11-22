@@ -16,13 +16,19 @@ import java.io.IOException;
  */
 public class UnprocessableImageException extends IOException {
     private final String uploaderMessage;
+    private final String nativeDetail;
 
     public UnprocessableImageException(String uploaderMessage, String nativeDetail) {
         super(uploaderMessage + "（原生组件：" + nativeDetail + "）");
         this.uploaderMessage = uploaderMessage;
+        this.nativeDetail = nativeDetail;
     }
 
     public String uploaderMessage() {
         return uploaderMessage;
+    }
+
+    public String nativeDetail() {
+        return nativeDetail;
     }
 }

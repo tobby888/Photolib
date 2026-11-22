@@ -1,5 +1,7 @@
 package cn.photolib.photo;
 
+import cn.photolib.audit.AuditLogMapper;
+import cn.photolib.common.upload.UnprocessableImageException;
 import cn.photolib.photo.batch.PhotoUploadBatchMapper;
 import cn.photolib.photo.batch.PhotoUploadItemMapper;
 import cn.photolib.photo.mapper.PhotoMapper;
@@ -75,6 +77,8 @@ class PhotoProcessingFilePipelineTests {
     private PreviewProfilePolicy previewProfiles;
     @Autowired
     private TransactionTemplate transactions;
+    @Autowired
+    private AuditLogMapper auditLogMapper;
     @Autowired
     @Qualifier("photoProcessingExecutor")
     private ThreadPoolTaskExecutor processingExecutor;
@@ -293,6 +297,69 @@ class PhotoProcessingFilePipelineTests {
             deleteObject(THUMBNAIL_KEY);
             deleteObject(PHOTO_KEY);
             deleteObject(ORIGINAL_KEY);
+            jdbc.sql("DELETE FROM photo_upload_item WHERE batch_id=:id").param("id", BATCH_ID).update();
+            jdbc.sql("DELETE FROM photo_upload_batch WHERE id=:id").param("id", BATCH_ID).update();
+            jdbc.sql("DELETE FROM photo WHERE id=:id").param("id", PHOTO_ID).update();
+            jdbc.sql("DELETE FROM app_user WHERE id=:id").param("id", USER_ID).update();
+            if (Files.exists(source)) workspace.deleteBatchFile(source);
+        }
+    }
+
+    @Test
+    void processingFailureRecordsAuditLogEntryWithFailureReason() throws Exception {
+        Path source = workspace.createBatchFile(BATCH_ID, ".jpg");
+        writeJpeg(source);
+        long sourceSize = Files.size(source);
+        insertRows(source, sourceSize);
+
+        ImageCompressor rejectingCompressor = spy(compressor);
+        doThrow(new UnprocessableImageException(
+                "这张图片是分辨率很高的渐进式 JPEG，超出了服务器的解码内存上限。",
+                "超大渐进式 JPEG 超出解码内存上限"))
+                .when(rejectingCompressor).compress(any(Path.class), any(Path.class),
+                        anyString(), anyLong());
+        PhotoProcessingService isolated = new PhotoProcessingService(
+                photoMapper, userMapper, storage, properties,
+                new NativeImageTaskPool(processingExecutor, rejectingCompressor),
+                workspace, batchItemMapper, batchMapper, previewProfiles, transactions, null);
+        isolated.setAuditLogMapper(auditLogMapper);
+
+        try {
+            isolated.submit(PHOTO_ID).get(30, TimeUnit.SECONDS);
+
+            var audit = jdbc.sql("""
+                    SELECT operator_id, action, action_name, resource_type, resource_id,
+                           resource_name, success, error_code, error_message, detail_json
+                    FROM audit_log
+                    WHERE action = :action AND resource_id = :resourceId
+                    ORDER BY id DESC LIMIT 1
+                    """)
+                    .param("action", PhotoProcessingService.PROCESSING_FAILED_AUDIT_ACTION)
+                    .param("resourceId", String.valueOf(PHOTO_ID))
+                    .query((rs, rowNum) -> new Object[]{
+                            rs.getLong("operator_id"), rs.getString("action"),
+                            rs.getString("action_name"), rs.getString("resource_type"),
+                            rs.getString("resource_id"), rs.getString("resource_name"),
+                            rs.getBoolean("success"), rs.getString("error_code"),
+                            rs.getString("error_message"), rs.getString("detail_json")})
+                    .single();
+            assertThat(audit[0]).isEqualTo(USER_ID);
+            assertThat(audit[1]).isEqualTo(PhotoProcessingService.PROCESSING_FAILED_AUDIT_ACTION);
+            assertThat(audit[2]).isEqualTo(PhotoProcessingService.PROCESSING_FAILED_AUDIT_NAME);
+            assertThat(audit[3]).isEqualTo("PHOTOS");
+            assertThat(audit[4]).isEqualTo(String.valueOf(PHOTO_ID));
+            assertThat(audit[5]).isEqualTo("file pipeline");
+            assertThat(audit[6]).isEqualTo(false);
+            assertThat(audit[7]).isEqualTo("UNPROCESSABLE_IMAGE");
+            assertThat((String) audit[8]).contains("渐进式 JPEG");
+            assertThat((String) audit[9]).contains("超大渐进式 JPEG 超出解码内存上限");
+        } finally {
+            deleteObject(THUMBNAIL_KEY);
+            deleteObject(PHOTO_KEY);
+            deleteObject(ORIGINAL_KEY);
+            jdbc.sql("DELETE FROM audit_log WHERE action=:action AND resource_id=:resourceId")
+                    .param("action", PhotoProcessingService.PROCESSING_FAILED_AUDIT_ACTION)
+                    .param("resourceId", String.valueOf(PHOTO_ID)).update();
             jdbc.sql("DELETE FROM photo_upload_item WHERE batch_id=:id").param("id", BATCH_ID).update();
             jdbc.sql("DELETE FROM photo_upload_batch WHERE id=:id").param("id", BATCH_ID).update();
             jdbc.sql("DELETE FROM photo WHERE id=:id").param("id", PHOTO_ID).update();

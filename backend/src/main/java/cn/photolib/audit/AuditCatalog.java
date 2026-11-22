@@ -90,6 +90,8 @@ public class AuditCatalog {
             options.putIfAbsent(entry.actionName(), new ActionOption(entry.actionName(), entry.resourceType(),
                     AuditResources.label(entry.resourceType())));
         }
+        options.putIfAbsent("图片处理失败", new ActionOption("图片处理失败", "PHOTOS",
+                AuditResources.label("PHOTOS")));
         for (String name : extra) {
             options.putIfAbsent(name, new ActionOption(name, AuditResources.UNKNOWN,
                     AuditResources.label(AuditResources.UNKNOWN)));

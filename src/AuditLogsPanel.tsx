@@ -267,7 +267,7 @@ function AuditLogDetail({ item, onPinOperator, onPinIp }: {
         </Space>
         : '-' },
       { key: 'duration', label: '耗时', children: formatDuration(item.durationMs) },
-      { key: 'request', label: '请求 ID', children: <Typography.Text copyable>{item.requestId}</Typography.Text> },
+      { key: 'request', label: '请求 ID', children: item.requestId ? <Typography.Text copyable>{item.requestId}</Typography.Text> : '-' },
     ]} />
     {sections.length === 0
       ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="这次请求没有带参数" />
