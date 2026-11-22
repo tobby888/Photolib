@@ -349,6 +349,11 @@ public class PhotoService {
                 .inSql(favoritesOnly, PhotoEntity::getId,
                         "SELECT photo_id FROM photo_favorite WHERE user_id = " + user.id())
                 .eq(effectiveStatus != null, PhotoEntity::getStatus, effectiveStatus)
+                // 处理失败的照片（打回 UPLOADING 且带 failure_reason）不在图库/项目/需求列表里占格子，
+                // 失败原因统一记在管理员操作日志与上传界面的实时反馈里。
+                .not(effectiveStatus == null || effectiveStatus == PhotoStatus.UPLOADING, failed -> failed
+                        .eq(PhotoEntity::getStatus, PhotoStatus.UPLOADING)
+                        .isNotNull(PhotoEntity::getFailureReason))
                 // 拍摄日期按整天算，两端都含：结束那天要取到次日零点之前。
                 .ge(library.takenFrom() != null, PhotoEntity::getTakenAt,
                         library.takenFrom() == null ? null : library.takenFrom().atStartOfDay())
