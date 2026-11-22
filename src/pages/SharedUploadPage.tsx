@@ -31,6 +31,7 @@ import type { ShareUploadItem } from '../shareUpload'
 import {
   MAX_WORKLOG_MINUTES, declaredCountOn, describeMinutes, describeWorklogStatus, rejectWorklogReason,
 } from '../shareWorklog'
+import { prepareImageForUpload } from '../prepareUploadImage'
 import { uploadToObjectStorage } from '../storageUpload'
 import { describeBytes } from '../uploadLimits'
 import { useUploadLimits } from '../useUploadLimits'
@@ -372,14 +373,15 @@ export default function SharedUploadPage() {
       photographerName: undefined, photographerStudentId: undefined,
     })
     try {
+      const uploadFile = await prepareImageForUpload(item.file)
       const ticket = await shareUploadApi.ticket(token, guestSession, {
-        fileName: item.file.name,
-        contentType: item.file.type,
-        size: item.file.size,
-        sha256: await sha256Hex(item.file),
+        fileName: uploadFile.name,
+        contentType: uploadFile.type,
+        size: uploadFile.size,
+        sha256: await sha256Hex(uploadFile),
         // 拍摄时间取文件自身的修改时间——访客手上只有一堆相机导出来的文件，
         // 逐张问一次拍摄时间没人会填，而这个值恰恰就是相机写下的那个。
-        takenAt: dayjs(item.file.lastModified).format('YYYY-MM-DDTHH:mm:ss'),
+        takenAt: dayjs(uploadFile.lastModified).format('YYYY-MM-DDTHH:mm:ss'),
       })
       // 拍摄者在签票据这一刻定下来（服务端取会话上的身份），之后切换拍摄者也不会改这一张。
       patch(item.key, {
@@ -395,7 +397,7 @@ export default function SharedUploadPage() {
       if (ticket.uploadUrl) {
         await uploadToObjectStorage(
           { ...ticket, uploadUrl: ticket.uploadUrl, method: ticket.method ?? undefined },
-          item.file, percent => patch(item.key, { percent }),
+          uploadFile, percent => patch(item.key, { percent }),
         )
         patch(item.key, { stage: 'processing', percent: 100 })
         await shareUploadApi.complete(token, guestSession, ticket.photoId, {

@@ -13,6 +13,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { api, emptyPage } from '../api'
 import { AnimatedHoverLayer, useHoverPlayback } from '../AnimatedPhoto'
 import { readTakenAt } from '../exif'
+import { prepareImageForUpload } from '../prepareUploadImage'
 import { uploadToObjectStorage } from '../storageUpload'
 import { describeBytes } from '../uploadLimits'
 import { useUploadLimits } from '../useUploadLimits'
@@ -203,7 +204,7 @@ export default function RequestDeliveryPage() {
     setProgress(0)
     try {
       for (let index = 0; index < files.length; index += 1) {
-        const file = files[index]
+        const file = await prepareImageForUpload(files[index])
         const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer())))
           .map(byte => byte.toString(16).padStart(2, '0')).join('')
         const ticket = await api<{ photoId: string; uploadUrl: string; method: string; contentType: string }>({

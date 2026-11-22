@@ -14,6 +14,7 @@ import dayjs from 'dayjs'
 import { api, emptyPage, qs } from '../api'
 import { AnimatedHoverLayer, useHoverPlayback } from '../AnimatedPhoto'
 import { readTakenAt } from '../exif'
+import { prepareImageForUpload } from '../prepareUploadImage'
 import { uploadToObjectStorage } from '../storageUpload'
 import { describeBytes } from '../uploadLimits'
 import { useUploadLimits } from '../useUploadLimits'
@@ -215,10 +216,11 @@ export default function PhotosPage({ favoritesOnly = false }: { favoritesOnly?: 
   }
   const submitUpload = async () => {
     const values = await uploadForm.validateFields()
-    const file = values.file?.[0]?.originFileObj as File | undefined
-    if (!file) return
+    const rawFile = values.file?.[0]?.originFileObj as File | undefined
+    if (!rawFile) return
     setUploading(true); setUploadPercent(0); setUploadPhase('uploading')
     try {
+      const file = await prepareImageForUpload(rawFile)
       const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer())))
         .map(b => b.toString(16).padStart(2, '0')).join('')
       const ticket = await api<{ photoId: string; uploadUrl: string; method: string; contentType: string }>({
