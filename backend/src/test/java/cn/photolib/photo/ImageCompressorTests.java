@@ -192,7 +192,7 @@ class ImageCompressorTests {
     @Test
     void rejectsProgressiveJpegWhoseCoefficientBufferExceedsTheBudgetBeforeDecode()
             throws Exception {
-        // 30000 x 30000 x 3 分量 x 2 字节 ≈ 5 GiB 的系数缓冲，远超 512 MiB 预算。
+        // 30000 x 30000 即使按 4:2:0 也需 ~2.5 GiB 的系数缓冲，远超 384 MiB 预算。
         byte[] jpeg = encodeProgressiveJpeg(noisyImage(32, 24));
         int frame = findJpegStartOfFrame(jpeg);
         writeUnsignedShort(jpeg, frame + 5, 30_000);
@@ -208,6 +208,46 @@ class ImageCompressorTests {
                         ((UnprocessableImageException) error).uploaderMessage())
                         .contains("渐进式")
                         .doesNotContain("原生组件"));
+    }
+
+    @Test
+    void acceptsOneHundredMegapixel420ProgressiveJpegHeaderWithinSubsampledBudget()
+            throws Exception {
+        // 11648 x 8736 (约 101.8 MP) 在 4:2:0 色度抽样下实际系数缓冲仅 ~291 MiB（< 384 MiB 预算）；
+        // 按旧逻辑的 4:4:4 最坏估算会被算成 ~582 MiB 而误杀。
+        byte[] jpeg = encodeProgressiveJpeg(noisyImage(32, 24));
+        int frame = findJpegStartOfFrame(jpeg);
+        // Java ImageIO 写出的默认渐进式 JPEG 就是 4:2:0（Y 采样因子 2x2，Cb/Cr 为 1x1）；
+        // 这里显式把第一分量的采样字节写为 0x22、其余为 0x11 以防不同 JDK 默认值差异。
+        jpeg[frame + 11] = 0x22;
+        jpeg[frame + 14] = 0x11;
+        jpeg[frame + 17] = 0x11;
+        writeUnsignedShort(jpeg, frame + 5, 8_736);
+        writeUnsignedShort(jpeg, frame + 7, 11_648);
+        Path source = writeSource(jpeg, ".jpg");
+
+        ImageCompressor.ImageInfo info = compressor.validateStructure(source, "image/jpeg");
+
+        assertThat(info.width()).isEqualTo(11_648);
+        assertThat(info.height()).isEqualTo(8_736);
+    }
+
+    @Test
+    void rejectsOneHundredMegapixel444ProgressiveJpegHeaderOverSubsampledBudget()
+            throws Exception {
+        // 同样是 11648 x 8736，如果是 4:4:4（未抽样），实际系数缓冲 ~582 MiB，超过 384 MiB 预算必须拦住。
+        byte[] jpeg = encodeProgressiveJpeg(noisyImage(32, 24));
+        int frame = findJpegStartOfFrame(jpeg);
+        jpeg[frame + 11] = 0x11;
+        jpeg[frame + 14] = 0x11;
+        jpeg[frame + 17] = 0x11;
+        writeUnsignedShort(jpeg, frame + 5, 8_736);
+        writeUnsignedShort(jpeg, frame + 7, 11_648);
+        Path source = writeSource(jpeg, ".jpg");
+
+        assertThatThrownBy(() -> compressor.validateStructure(source, "image/jpeg"))
+                .isInstanceOf(UnprocessableImageException.class)
+                .hasMessageContaining("超大渐进式 JPEG");
     }
 
     @Test
