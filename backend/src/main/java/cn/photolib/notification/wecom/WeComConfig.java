@@ -1,8 +1,12 @@
 package cn.photolib.notification.wecom;
 
+import org.springframework.aot.hint.MemberCategory;
+import org.springframework.aot.hint.RuntimeHints;
+import org.springframework.aot.hint.RuntimeHintsRegistrar;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.ImportRuntimeHints;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
@@ -11,6 +15,7 @@ import java.time.Clock;
 
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(WeComProperties.class)
+@ImportRuntimeHints(WeComConfig.Hints.class)
 public class WeComConfig {
 
     /**
@@ -38,5 +43,15 @@ public class WeComConfig {
         WeComAccessTokenProvider tokens = new WeComAccessTokenProvider(
                 api::fetchToken, properties.tokenRefreshAhead(), Clock.systemUTC());
         return new WeComApiClient(api, properties, tokens);
+    }
+
+    static final class Hints implements RuntimeHintsRegistrar {
+        @Override
+        public void registerHints(RuntimeHints hints, ClassLoader classLoader) {
+            hints.reflection().registerType(WeComApi.ApiResult.class,
+                    MemberCategory.INVOKE_DECLARED_CONSTRUCTORS,
+                    MemberCategory.INVOKE_DECLARED_METHODS,
+                    MemberCategory.ACCESS_DECLARED_FIELDS);
+        }
     }
 }

@@ -15,14 +15,35 @@ import com.webauthn4j.data.PublicKeyCredentialType;
 import com.webauthn4j.data.RegistrationData;
 import com.webauthn4j.data.RegistrationParameters;
 import com.webauthn4j.data.RegistrationRequest;
+import com.webauthn4j.data.attestation.AttestationObject;
+import com.webauthn4j.data.attestation.authenticator.AbstractCOSEKey;
 import com.webauthn4j.data.attestation.authenticator.AttestedCredentialData;
+import com.webauthn4j.data.attestation.authenticator.COSEKey;
+import com.webauthn4j.data.attestation.authenticator.EC2COSEKey;
+import com.webauthn4j.data.attestation.authenticator.EdDSACOSEKey;
+import com.webauthn4j.data.attestation.authenticator.RSACOSEKey;
+import com.webauthn4j.data.attestation.statement.AndroidKeyAttestationStatement;
+import com.webauthn4j.data.attestation.statement.AndroidSafetyNetAttestationStatement;
+import com.webauthn4j.data.attestation.statement.AppleAnonymousAttestationStatement;
+import com.webauthn4j.data.attestation.statement.AttestationStatement;
 import com.webauthn4j.data.attestation.statement.COSEAlgorithmIdentifier;
+import com.webauthn4j.data.attestation.statement.FIDOU2FAttestationStatement;
 import com.webauthn4j.data.attestation.statement.NoneAttestationStatement;
+import com.webauthn4j.data.attestation.statement.PackedAttestationStatement;
+import com.webauthn4j.data.attestation.statement.TPMAttestationStatement;
+import com.webauthn4j.data.client.ClientDataType;
+import com.webauthn4j.data.client.CollectedClientData;
 import com.webauthn4j.data.client.Origin;
+import com.webauthn4j.data.client.TokenBinding;
+import com.webauthn4j.data.client.TokenBindingStatus;
 import com.webauthn4j.data.client.challenge.DefaultChallenge;
 import com.webauthn4j.server.ServerProperty;
 import com.webauthn4j.util.exception.WebAuthnException;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.aot.hint.MemberCategory;
+import org.springframework.aot.hint.RuntimeHints;
+import org.springframework.aot.hint.RuntimeHintsRegistrar;
+import org.springframework.context.annotation.ImportRuntimeHints;
 import org.springframework.stereotype.Component;
 
 import java.net.URI;
@@ -47,6 +68,7 @@ import java.util.stream.Collectors;
  * <p>所有二进制字段在接口上一律用 base64url（不带填充），和浏览器的 JSON 序列化习惯一致。
  */
 @Component
+@ImportRuntimeHints(WebAuthnSupport.Hints.class)
 public class WebAuthnSupport {
     private static final long TIMEOUT_MILLIS = 120_000;
     private static final SecureRandom RANDOM = new SecureRandom();
@@ -229,5 +251,37 @@ public class WebAuthnSupport {
     private static byte[] decode(String value) {
         if (value == null) throw new IllegalArgumentException("missing field");
         return B64D.decode(value);
+    }
+
+    static final class Hints implements RuntimeHintsRegistrar {
+        @Override
+        public void registerHints(RuntimeHints hints, ClassLoader classLoader) {
+            for (Class<?> type : new Class<?>[]{
+                    PublicKeyCredentialType.class,
+                    ClientDataType.class,
+                    CollectedClientData.class,
+                    TokenBinding.class,
+                    TokenBindingStatus.class,
+                    AttestationObject.class,
+                    AbstractCOSEKey.class,
+                    COSEKey.class,
+                    EC2COSEKey.class,
+                    RSACOSEKey.class,
+                    EdDSACOSEKey.class,
+                    AttestationStatement.class,
+                    NoneAttestationStatement.class,
+                    PackedAttestationStatement.class,
+                    FIDOU2FAttestationStatement.class,
+                    AppleAnonymousAttestationStatement.class,
+                    AndroidKeyAttestationStatement.class,
+                    AndroidSafetyNetAttestationStatement.class,
+                    TPMAttestationStatement.class
+            }) {
+                hints.reflection().registerType(type,
+                        MemberCategory.INVOKE_DECLARED_CONSTRUCTORS,
+                        MemberCategory.INVOKE_DECLARED_METHODS,
+                        MemberCategory.ACCESS_DECLARED_FIELDS);
+            }
+        }
     }
 }

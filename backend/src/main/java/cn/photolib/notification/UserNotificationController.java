@@ -7,6 +7,10 @@ import cn.photolib.common.api.ApiResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.aot.hint.MemberCategory;
+import org.springframework.aot.hint.RuntimeHints;
+import org.springframework.aot.hint.RuntimeHintsRegistrar;
+import org.springframework.context.annotation.ImportRuntimeHints;
 import org.springframework.security.access.prepost.PreAuthorize;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -18,6 +22,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/notifications")
 @RequiredArgsConstructor
+@ImportRuntimeHints(UserNotificationController.Hints.class)
 public class UserNotificationController {
     private final NotificationService service;
 
@@ -77,4 +82,14 @@ public class UserNotificationController {
     record SendResult(int recipientCount) {}
 
     record UnreadCount(long count) {}
+
+    /**
+     * Spring AOT 对 record 请求体只注册 component accessor，不会自动注册额外声明的 {@code @AssertTrue} 校验方法。
+     */
+    static final class Hints implements RuntimeHintsRegistrar {
+        @Override
+        public void registerHints(RuntimeHints hints, ClassLoader classLoader) {
+            hints.reflection().registerType(SendMessageRequest.class, MemberCategory.INVOKE_DECLARED_METHODS);
+        }
+    }
 }

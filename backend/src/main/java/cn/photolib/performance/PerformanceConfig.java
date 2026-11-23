@@ -48,6 +48,13 @@ public class PerformanceConfig {
                 hints.proxies().registerJdkProxy(type);
                 hints.reflection().registerType(type, MemberCategory.INVOKE_PUBLIC_METHODS);
             }
+            for (Class<?> rowType : new Class<?>[]{
+                    LatencyStatsStore.Row.class, PerformanceSnapshotService.Row.class}) {
+                hints.reflection().registerType(rowType,
+                        MemberCategory.INVOKE_DECLARED_CONSTRUCTORS,
+                        MemberCategory.INVOKE_DECLARED_METHODS,
+                        MemberCategory.ACCESS_DECLARED_FIELDS);
+            }
         }
     }
 }
