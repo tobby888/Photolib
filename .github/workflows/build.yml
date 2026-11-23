@@ -311,9 +311,9 @@ jobs:
             almalinux:8 \
             bash -euo pipefail -s <<'EOF'
           trap 'chown -R "$OWNER_UID:$OWNER_GID" /work/backend/target /root/.m2 || true' EXIT
-          dnf -y -q install gcc glibc-devel zlib-devel
-          ldd --version | head -n 1
-          ./mvnw --batch-mode --no-transfer-progress -Pnative -DskipTests native:compile-no-fork
+          dnf -y -q install gcc glibc-devel zlib-devel </dev/null
+          ldd --version | sed -n '1p'
+          ./mvnw --batch-mode --no-transfer-progress -Pnative -DskipTests native:compile-no-fork </dev/null
           EOF
 
       - name: 校验并打包原生发布包
