@@ -134,11 +134,11 @@ public class PerformanceSnapshotService {
     public record DownloadLink(String url, String fileName, Instant expiresAt) {
     }
 
-    private record Row(String id, String status, String note, Long startedBy, String startedByName,
-                       LocalDateTime startedAt, LocalDateTime plannedEndAt, LocalDateTime endedAt, String stopReason,
-                       Long stoppedBy, String stoppedByName, int sampleIntervalSeconds, long eventCount,
-                       long sampleCount, long droppedCount, String eventsObjectKey, Long eventsSize,
-                       String samplesObjectKey, Long samplesSize, LocalDateTime exportedAt, String errorMessage) {
+    record Row(String id, String status, String note, Long startedBy, String startedByName,
+               LocalDateTime startedAt, LocalDateTime plannedEndAt, LocalDateTime endedAt, String stopReason,
+               Long stoppedBy, String stoppedByName, int sampleIntervalSeconds, long eventCount,
+               long sampleCount, long droppedCount, String eventsObjectKey, Long eventsSize,
+               String samplesObjectKey, Long samplesSize, LocalDateTime exportedAt, String errorMessage) {
     }
 
     private static final String COLUMNS = """

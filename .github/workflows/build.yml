@@ -197,32 +197,170 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  package-native:
+    name: 构建原生二进制
+    runs-on: ubuntu-latest
+    # GraalVM Native Image 需先完成前端构建与原生图片库编译，再执行 AOT 与静态编译。
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # GraalVM 编译峰值 RSS 约 12~13 GiB；若 runner 总内存+交换空间不足 18 GiB，
+      # 自动补充 6 GiB swap，避免 OOM Killer 中断 native-image。
+      - name: 确保编译交换空间充足
+        run: |
+          set -euo pipefail
+          total_mb=$(free -m | awk '/Mem:|Swap:/ {sum += $2} END {print sum}')
+          echo "当前内存+交换空间合计: ${total_mb} MiB"
+          if (( total_mb < 18432 )); then
+            sudo fallocate -l 6G /mnt/graalvm-swapfile
+            sudo chmod 600 /mnt/graalvm-swapfile
+            sudo mkswap /mnt/graalvm-swapfile
+            sudo swapon /mnt/graalvm-swapfile
+            free -h
+          fi
+
+      - name: 安装 GraalVM 25
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: 'graalvm'
+          cache: 'maven'
+
+      - name: 缓存 npm 下载
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-
+
+      - name: 缓存原生构建工具
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/native-tools
+          key: native-tools-${{ runner.os }}-ninja-${{ env.NINJA_VERSION }}-nasm-${{ env.NASM_VERSION }}
+
+      - name: 安装原生构建工具链
+        run: |
+          set -euo pipefail
+          dir="$HOME/.local/native-tools"
+          if [ ! -x "$dir/ninja" ] || [ ! -x "$dir/nasm" ]; then
+            mkdir -p "$dir"
+            curl -fsSL --retry 5 --retry-all-errors -o "$RUNNER_TEMP/ninja.zip" \
+              "https://github.com/ninja-build/ninja/releases/download/v$NINJA_VERSION/ninja-linux.zip"
+            echo "$NINJA_SHA256  $RUNNER_TEMP/ninja.zip" | sha256sum -c -
+            unzip -o -q "$RUNNER_TEMP/ninja.zip" ninja -d "$dir"
+            curl -fsSL --retry 5 --retry-all-errors -o "$RUNNER_TEMP/nasm.tar.xz" \
+              "https://www.nasm.us/pub/nasm/releasebuilds/$NASM_VERSION/nasm-$NASM_VERSION.tar.xz"
+            echo "$NASM_SHA256  $RUNNER_TEMP/nasm.tar.xz" | sha256sum -c -
+            mkdir -p "$RUNNER_TEMP/nasm-src"
+            tar -xJf "$RUNNER_TEMP/nasm.tar.xz" -C "$RUNNER_TEMP/nasm-src" --strip-components=1
+            (cd "$RUNNER_TEMP/nasm-src" && ./configure --quiet && make -j"$(nproc)" nasm)
+            install -m 755 "$RUNNER_TEMP/nasm-src/nasm" "$dir/nasm"
+          fi
+          echo "$dir" >> "$GITHUB_PATH"
+
+      - name: 缓存 Zig
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/zig
+          key: zig-${{ runner.os }}-${{ env.ZIG_VERSION }}
+
+      - name: 安装 Zig ${{ env.ZIG_VERSION }}
+        run: |
+          set -euo pipefail
+          if [ ! -x "$HOME/.local/zig/zig" ]; then
+            mkdir -p "$HOME/.local/zig"
+            curl -fsSL --retry 5 --retry-all-errors \
+              -o "$RUNNER_TEMP/zig.tar.xz" \
+              "https://ziglang.org/download/$ZIG_VERSION/zig-x86_64-linux-$ZIG_VERSION.tar.xz"
+            echo "$ZIG_SHA256  $RUNNER_TEMP/zig.tar.xz" | sha256sum -c -
+            tar -xJf "$RUNNER_TEMP/zig.tar.xz" -C "$HOME/.local/zig" --strip-components=1
+          fi
+          echo "$HOME/.local/zig" >> "$GITHUB_PATH"
+
+      - name: 校验工具链
+        run: |
+          native-image --version
+          zig version
+          cmake --version | head -n 1
+          ninja --version
+          nasm -v
+
+      # 后端单测已由并行的 package job 全量执行；这里以默认生产 Bean 条件构建 Linux x86-64 原生可执行文件。
+      - name: 编译原生可执行文件
+        working-directory: backend
+        run: ./mvnw --batch-mode --no-transfer-progress -Pnative -DskipTests clean native:compile
+
+      - name: 校验并打包原生发布包
+        run: |
+          set -euo pipefail
+          cd backend/target
+          file photolib | grep -q 'ELF 64-bit.*x86-64' || {
+            echo "photolib 不是有效的 Linux x86-64 ELF 可执行文件" >&2
+            exit 1
+          }
+          for lib in \
+            libawt.so \
+            libawt_headless.so \
+            libfontmanager.so \
+            libjava.so \
+            libjavajpeg.so \
+            libjvm.so \
+            liblcms.so \
+            libmanagement_ext.so; do
+            test -s "$lib" || {
+              echo "原生构建产物缺少伴随动态库: $lib" >&2
+              exit 1
+            }
+          done
+          chmod 755 photolib
+          tar -czf photolib-native-linux-x86_64.tar.gz photolib *.so
+          ls -lh photolib-native-linux-x86_64.tar.gz
+          tar -tzvf photolib-native-linux-x86_64.tar.gz
+
+      - name: 上传原生发布包
+        uses: actions/upload-artifact@v4
+        with:
+          name: photolib-native-bundle
+          path: backend/target/photolib-native-linux-x86_64.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
   release:
     name: 发布 Release
-    # 两个 job 都要过：package 保证附件来自跑通后端测试和产物校验的那次构建，
-    # frontend 覆盖 lint 与前端单测（package 里的 Maven 只构建前端、不跑这两项）。
+    # 三个 job 都要过：package 保证 JAR 与全量后端测试通过，package-native 保证原生构建通过，
+    # frontend 覆盖 lint 与前端单测（Maven 只构建前端、不跑这两项）。
     # 非 tag 的推送里这个 job 不会执行。
-    needs: [frontend, package]
+    needs: [frontend, package, package-native]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: write
     steps:
-      - name: 下载打包产物
+      - name: 下载 JAR 产物
         uses: actions/download-artifact@v4
         with:
           name: photolib-backend-jar
           path: release
 
-      # JAR 里的版本号来自 pom（0.1.0-SNAPSHOT），与 tag 无关。附件按 tag 改名，
-      # 下载的人才能一眼看出对应哪个版本；JAR 内容本身不变。
+      - name: 下载原生发布包
+        uses: actions/download-artifact@v4
+        with:
+          name: photolib-native-bundle
+          path: release
+
+      # 产物里的版本号来自 pom（0.1.0-SNAPSHOT），与 tag 无关。附件按 tag 改名，
+      # 下载的人才能一眼看出对应哪个版本；内容本身不变。
       - name: 按 tag 命名附件
         run: |
           set -euo pipefail
           jar=$(ls release/photolib-backend-*.jar)
           mv "$jar" "release/photolib-backend-$GITHUB_REF_NAME.jar"
-          ls -l release
+          native_bundle=$(ls release/photolib-native-linux-x86_64.tar.gz)
+          mv "$native_bundle" "release/photolib-native-linux-x86_64-$GITHUB_REF_NAME.tar.gz"
+          ls -lh release
 
       - name: 创建 Release
         env:
@@ -239,28 +377,36 @@ jobs:
             --title "$GITHUB_REF_NAME" \
             --generate-notes \
             $prerelease \
-            "release/photolib-backend-$GITHUB_REF_NAME.jar"
+            "release/photolib-backend-$GITHUB_REF_NAME.jar" \
+            "release/photolib-native-linux-x86_64-$GITHUB_REF_NAME.tar.gz"
 
   deploy:
     name: 部署到生产
     # 只有 master 上的推送（或在 master 上手动触发）才部署；PR 和 v* tag 不部署。
-    # 直接用 package job 上传的 JAR，不重新构建，保证上线的就是跑过测试和产物校验的那一个。
-    needs: [frontend, package]
+    # 直接使用 package 和 package-native 上传的产物：先推送并激活 JAR 包，再推送并归档原生包，
+    # 管理员随后可在 Deplyt 控制台在 JAR 部署与原生部署之间随时切换。
+    needs: [frontend, package, package-native]
     if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
     runs-on: ${{ vars.PHOTOLIB_DEPLOY_RUNNER || 'ubuntu-latest' }}
-    timeout-minutes: 65  # 等待中转机完成接收、SSH 上传和重启
+    timeout-minutes: 75  # 等待中转机完成 JAR 部署重启与原生包归档
     # 部署串行执行，且不取消正在进行的部署，避免半途停服。
     concurrency:
       group: deploy-production
       cancel-in-progress: false
     steps:
-      - name: 下载打包产物
+      - name: 下载 JAR 产物
         uses: actions/download-artifact@v4
         with:
           name: photolib-backend-jar
           path: dist-jar
 
-      - name: 通过中转机部署 JAR
+      - name: 下载原生发布包
+        uses: actions/download-artifact@v4
+        with:
+          name: photolib-native-bundle
+          path: dist-native
+
+      - name: 通过中转机部署 JAR 并推送原生归档
         shell: bash
         env:
           PHOTOLIB_DEPLOY_URL: ${{ vars.PHOTOLIB_DEPLOY_URL }}
@@ -275,28 +421,47 @@ jobs:
             echo "::error::期望恰好一个 PhotoLib JAR"
             exit 1
           fi
-          jar="${jars[0]}"
-          digest=$(sha256sum < "$jar")
-          digest="${digest%% *}"
-          response=$(mktemp)
-          trap 'rm -f "$response"' EXIT
-
-          # 中转机完成重启后才返回 200，避免 HTTP 自动重试重复触发重启。
-          status=$(curl --silent --show-error --proto '=https' \
-            --connect-timeout 20 --max-time 3600 \
-            --request POST --upload-file "$jar" \
-            --header @- \
-            --header 'Content-Type: application/java-archive' \
-            --header 'Expect: 100-continue' \
-            --header "X-Artifact-Name: ${jar##*/}" \
-            --header "X-Artifact-SHA256: $digest" \
-            --header "X-Deploy-Commit: $GITHUB_SHA" \
-            --header "X-Deploy-Run-ID: $GITHUB_RUN_ID" \
-            --output "$response" --write-out '%{http_code}' \
-            "${PHOTOLIB_DEPLOY_URL%/}/v1/deploy/photolib" \
-            <<< "Authorization: Bearer $PHOTOLIB_DEPLOY_TOKEN")
-          cat "$response"
-          if [[ "$status" != 200 ]]; then
-            echo "::error::中转部署失败，HTTP $status（run ID $GITHUB_RUN_ID）"
+          natives=(dist-native/photolib-native-*.tar.gz)
+          if (( ${#natives[@]} != 1 )); then
+            echo "::error::期望恰好一个 PhotoLib 原生发布包"
             exit 1
           fi
+
+          upload_artifact() {
+            local file="$1"
+            local format="$2"
+            local content_type="$3"
+            local activate="$4"
+            local digest response status
+            digest=$(sha256sum < "$file")
+            digest="${digest%% *}"
+            response=$(mktemp)
+            trap 'rm -f "$response"' RETURN
+
+            # 中转机完成当前步骤（JAR 重启或原生包归档）后才返回 200，避免自动重试。
+            status=$(curl --silent --show-error --proto '=https' \
+              --connect-timeout 20 --max-time 3600 \
+              --request POST --upload-file "$file" \
+              --header @- \
+              --header "Content-Type: $content_type" \
+              --header 'Expect: 100-continue' \
+              --header "X-Artifact-Name: ${file##*/}" \
+              --header "X-Artifact-Format: $format" \
+              --header "X-Artifact-SHA256: $digest" \
+              --header "X-Deploy-Commit: $GITHUB_SHA" \
+              --header "X-Deploy-Run-ID: $GITHUB_RUN_ID" \
+              --header "X-Deploy-Activate: $activate" \
+              --output "$response" --write-out '%{http_code}' \
+              "${PHOTOLIB_DEPLOY_URL%/}/v1/deploy/photolib" \
+              <<< "Authorization: Bearer $PHOTOLIB_DEPLOY_TOKEN")
+            cat "$response"
+            if [[ "$status" != 200 ]]; then
+              echo "::error::推送 $format 制品失败，HTTP $status（run ID $GITHUB_RUN_ID）"
+              exit 1
+            fi
+          }
+
+          # 第一步：先推送并激活 JAR 包上线。
+          upload_artifact "${jars[0]}" "jar" "application/java-archive" "true"
+          # 第二步：同步推送原生发布包到部署平台归档，供管理员按需切换。
+          upload_artifact "${natives[0]}" "native" "application/gzip" "false"

@@ -4,6 +4,9 @@ import cn.photolib.common.upload.UnprocessableImageException;
 import com.sun.jna.Library;
 import com.sun.jna.Native;
 import com.sun.jna.Structure;
+import org.springframework.aot.hint.MemberCategory;
+import org.springframework.aot.hint.RuntimeHints;
+import org.springframework.aot.hint.RuntimeHintsRegistrar;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -212,5 +215,33 @@ final class NativeImageProcessor {
 
     private static final class Holder {
         private static final NativeImageProcessor INSTANCE = new NativeImageProcessor(loadLibrary());
+    }
+
+    static final class Hints implements RuntimeHintsRegistrar {
+        @Override
+        public void registerHints(RuntimeHints hints, ClassLoader classLoader) {
+            // 只把当前构建目标平台对应的原生库打进 Native Image，避免把另一平台近 20 MiB 的动态库带进镜像堆。
+            String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+            if (os.contains("linux")) {
+                hints.resources()
+                        .registerPattern("native/linux-x86_64/**")
+                        .registerPattern("native/THIRD_PARTY_NOTICES.txt")
+                        .registerPattern("native/licenses/**");
+            } else if (os.contains("win")) {
+                hints.resources()
+                        .registerPattern("native/windows-x86_64/**")
+                        .registerPattern("native/THIRD_PARTY_NOTICES.txt")
+                        .registerPattern("native/licenses/**");
+            } else {
+                hints.resources().registerPattern("native/**");
+            }
+            hints.proxies().registerJdkProxy(NativeLibrary.class);
+            hints.reflection()
+                    .registerType(NativeLibrary.class, MemberCategory.INVOKE_PUBLIC_METHODS)
+                    .registerType(NativeDimensions.class, MemberCategory.INVOKE_PUBLIC_CONSTRUCTORS,
+                            MemberCategory.ACCESS_PUBLIC_FIELDS)
+                    .registerType(NativeFileResult.class, MemberCategory.INVOKE_PUBLIC_CONSTRUCTORS,
+                            MemberCategory.ACCESS_PUBLIC_FIELDS);
+        }
     }
 }
