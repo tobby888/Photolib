@@ -31,7 +31,7 @@ class AliyunObjectStorageServiceIntegrationTests {
     void sendsARealAvifSaveAsRequestAndReadsTheNewObject() throws Exception {
         Properties env = loadDotEnv();
         StorageProperties config = new StorageProperties("aliyun", env.getProperty("OSS_BUCKET"),
-                env.getProperty("OSS_ENDPOINT"), null, env.getProperty("OSS_ACCESS_KEY_ID"),
+                env.getProperty("OSS_ENDPOINT"), null, null, null, null, env.getProperty("OSS_ACCESS_KEY_ID"),
                 env.getProperty("OSS_ACCESS_KEY_SECRET"), null, null, null, java.util.List.of("*"),
                 Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofMinutes(5),
                 Duration.ofDays(30), 10_485_760, 104_857_600, 0.6);
@@ -72,6 +72,9 @@ class AliyunObjectStorageServiceIntegrationTests {
                 "aliyun",
                 dotEnv.getProperty("OSS_BUCKET"),
                 dotEnv.getProperty("OSS_ENDPOINT"),
+                null,
+                null,
+                null,
                 null,
                 dotEnv.getProperty("OSS_ACCESS_KEY_ID"),
                 dotEnv.getProperty("OSS_ACCESS_KEY_SECRET"),

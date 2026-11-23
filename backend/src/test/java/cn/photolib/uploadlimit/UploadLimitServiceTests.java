@@ -179,9 +179,9 @@ class UploadLimitServiceTests {
 
     private UploadLimitService service(long imageMaxBytes, RecruitmentUploadProperties recruitment,
                                        DataSize backupMax) {
-        StorageProperties storage = new StorageProperties("local", null, null, null, null, null, null, null,
-                null, null, Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ZERO, Duration.ofDays(30),
-                10 * MIB, imageMaxBytes, 0.6);
+        StorageProperties storage = new StorageProperties("local", null, null, null, null, null, null,
+                null, null, null, null, null, null, Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ZERO,
+                Duration.ofDays(30), 10 * MIB, imageMaxBytes, 0.6);
         BackupProperties backup = new BackupProperties(false, "0 0 0 * * *", Duration.ofDays(30), 7,
                 backupMax, DataSize.ofGigabytes(2));
         return new UploadLimitService(jdbc, storage, recruitment, backup);

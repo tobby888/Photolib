@@ -235,6 +235,9 @@ curl --fail http://127.0.0.1:8080/api/v1/actuator/health
 | `MFA_STEP_UP_TTL` | 敏感操作验证一次后的信任期，默认 `15m` |
 | `STORAGE_MODE` | 本地开发使用 `local`，生产使用 `oss` |
 | `OSS_BUCKET`、`OSS_ENDPOINT`、`OSS_PUBLIC_ENDPOINT` | 私有 Bucket、服务端 Endpoint 和浏览器访问 Endpoint |
+| `OSS_CDN_DOMAIN` | 可选，阿里云 CDN 加速域名（如 `cdn.example.com` 或 `https://cdn.example.com`），源站挂载在私有 OSS Bucket 上。预览图、大图和常规下载走 CDN；直传（PUT）、数据库备份和性能快照始终直连 OSS |
+| `OSS_CDN_AUTH_KEY` | 阿里云 CDN「URL 鉴权 A 方式」主密钥；启用 `OSS_CDN_DOMAIN` 时必填，防止私有 Bucket 匿名暴露 |
+| `OSS_CDN_AUTH_TTL` | 与阿里云 CDN 控制台 A 方式「鉴权 URL 有效时长」一致的时长，默认 `30m`（1800 秒，对应控制台默认值），至少 `1s` |
 | `OSS_ACCESS_KEY_ID`、`OSS_ACCESS_KEY_SECRET` | 最小权限 RAM 用户凭据 |
 | `OSS_CORS_ALLOWED_ORIGINS` | 允许浏览器直传的站点来源；生产环境应显式配置 |
 | `OSS_SIGNATURE_WINDOW` | 预签名 GET 的签发时刻取整窗口，默认 `5m`，必须小于下载链接 TTL。同一窗口内同一对象签出的 URL 完全相同，浏览器缓存才能命中；设为 `0` 恢复逐次签名 |
@@ -408,6 +411,23 @@ PDF 在浏览器里生成（按 A4 分页截图，正文里的链接保留为可
 - Endpoint 只填写地域地址，不包含 Bucket 名称，并确保 Bucket 与 Endpoint 属于同一地域。
 - CORS 至少允许站点来源发起 `PUT`、`GET`、`HEAD`，并允许上传所需请求头。
 - 浏览器上传的 `Content-Type` 必须与后端生成预签名 URL 时返回的值完全一致。
+
+### 阿里云 CDN 加速配置（可选）
+
+当在私有 OSS Bucket 前挂载阿里云 CDN 时，预览图、选片大图、动图及常规文件下载将通过 CDN 分发；**浏览器直传（PUT）、服务端读写、数据库备份下载和性能快照下载始终直连 OSS，不经过 CDN**。
+
+1. **环境变量**：
+   - `OSS_CDN_DOMAIN`：CDN 加速域名，如 `cdn.photowarehouse.cn` 或 `https://cdn.photowarehouse.cn`（不带路径和查询串）。
+   - `OSS_CDN_AUTH_KEY`：阿里云 CDN「URL 鉴权 A 方式」主密钥（启用 CDN 时必填）。
+   - `OSS_CDN_AUTH_TTL`：与 CDN 控制台「鉴权 URL 有效时长」保持一致（默认 `30m`，即控制台默认值 `1800` 秒）。
+2. **阿里云 CDN 控制台必配项**：
+   - **源站配置**：源站选择对应私有 OSS Bucket 域名（回源 Host 保持为该 Bucket 域名），建议开启 HTTPS 回源。
+   - **回源配置 → 阿里云 OSS 私有 Bucket 回源**：开启并选择同账号授权（CDN 自动代签回源，应用下发的是 CDN A 方式鉴权链接，不会触发 OSS 双重签名冲突）。
+   - **访问控制 → URL 鉴权**：开启 **A 方式**，填入与 `OSS_CDN_AUTH_KEY` 一致的主密钥；有效时长与 `OSS_CDN_AUTH_TTL` 保持一致（默认 1800 秒）。**切勿在未开启 URL 鉴权的情况下开启私有 Bucket 回源**，否则整个私有 Bucket 将对外匿名可读。
+   - **回源配置 → 重写回源参数（或性能优化 → 过滤参数）**：开启忽略参数以提升缓存命中率的同时，**保留参数 `response-content-disposition`**（并勾选保留回源参数），确保单张/文件下载时的中文文件名生效。`auth_key` 由 CDN 边缘鉴权后自动剥离，不影响边缘缓存命中。
+   - **缓存配置 → HTTP 响应头**：添加 `Access-Control-Allow-Origin`（设为站点来源如 `https://photowarehouse.cn`，不要漏配）和 `Access-Control-Allow-Methods: GET, HEAD`。图片详情页的直方图会以 CORS 模式请求预览图，若 CDN 边缘缓存了无 CORS 头的响应，详情页直方图会跨域失败。
+   - **缓存配置 → 缓存过期时间**：建议对 `/thumbnails/` 目录配置较长缓存（如 30 天，缩略图对象 key 含代际和随机 UUID 不可变），`/photos/` 可按需配置 7～30 天；同时可按需通过 HTTP 响应头为 `/thumbnails/` 下发 `Cache-Control: private, max-age=600`（不超过 `download-url-ttl - signature-window`）以控制浏览器本地缓存。
+   - **HTTPS 配置**：为 CDN 加速域名配置 SSL 证书并开启强制 HTTPS 跳转。
 
 OSS 模式使用图片处理持久化生成 AVIF 预览。缩放边界为长边 1600、短边 1200，保持比例，较小的图保留现有尺寸。原对象和转存对象使用同一个私有 Bucket。继续使用 `OSS_ACCESS_KEY_ID` 和 `OSS_ACCESS_KEY_SECRET`。Bucket 所在地域需支持 AVIF，RAM 权限需包含 `oss:PostProcessTask`、目标 Bucket 的 `oss:PutBucket` 和目标对象的 `oss:PutObject`。并行转换会把经过校验的输入暂存到 `temporary/avif-previews/`，该前缀需要读写和删除权限。可给此临时前缀设置生命周期，回收实例异常中止时留下的对象。管理后台会显示凭据异常和 AVIF 转存权限告警。
 
