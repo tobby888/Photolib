@@ -287,10 +287,34 @@ jobs:
           ninja --version
           nasm -v
 
-      # 后端单测已由并行的 package job 全量执行；这里以默认生产 Bean 条件构建 Linux x86-64 原生可执行文件。
-      - name: 编译原生可执行文件
+      # 后端单测已由并行的 package job 全量执行；先在宿主机完成前端、原生图片库（Zig）与 Spring AOT 打包。
+      - name: 构建前端、原生图片库与 Spring AOT 元数据
         working-directory: backend
-        run: ./mvnw --batch-mode --no-transfer-progress -Pnative -DskipTests clean native:compile
+        run: ./mvnw --batch-mode --no-transfer-progress -Pnative -DskipTests clean package
+
+      # ubuntu-latest（Ubuntu 24.04）自带 glibc 2.39，直接链接会引入 GLIBC_2.34 符号，
+      # 导致在 Alibaba Cloud Linux 3（glibc 2.32）或 RHEL 8（glibc 2.28）生产机上无法启动。
+      # 在 AlmaLinux 8（glibc 2.28）容器内复用宿主机 GraalVM 25 与 AOT 产物执行最终链接。
+      - name: 在 AlmaLinux 8（glibc 2.28）容器内编译原生可执行文件
+        run: |
+          set -euo pipefail
+          graalvm_home=$(readlink -f "$JAVA_HOME")
+          docker run --rm -i \
+            -v "$GITHUB_WORKSPACE:/work" \
+            -v "$graalvm_home:/opt/graalvm:ro" \
+            -v "$HOME/.m2:/root/.m2" \
+            -w /work/backend \
+            -e JAVA_HOME=/opt/graalvm \
+            -e PATH=/opt/graalvm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            -e OWNER_UID="$(id -u)" \
+            -e OWNER_GID="$(id -g)" \
+            almalinux:8 \
+            bash -euo pipefail -s <<'EOF'
+          trap 'chown -R "$OWNER_UID:$OWNER_GID" /work/backend/target /root/.m2 || true' EXIT
+          dnf -y -q install gcc glibc-devel zlib-devel
+          ldd --version | head -n 1
+          ./mvnw --batch-mode --no-transfer-progress -Pnative -DskipTests native:compile-no-fork
+          EOF
 
       - name: 校验并打包原生发布包
         run: |
@@ -314,6 +338,13 @@ jobs:
               exit 1
             }
           done
+          glibc_versions=$(objdump -T photolib *.so 2>/dev/null | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -Vu || true)
+          echo "GLIBC 最高依赖版本: $(printf '%s\n' "$glibc_versions" | tail -n 1)"
+          bad_glibc=$(printf '%s\n' "$glibc_versions" | awk -F'[_.]' '$2 > 2 || ($2 == 2 && $3 > 32)')
+          if [ -n "$bad_glibc" ]; then
+            echo "原生发布包依赖高于 GLIBC 2.32 的符号: $bad_glibc" >&2
+            exit 1
+          fi
           chmod 755 photolib
           tar -czf photolib-native-linux-x86_64.tar.gz photolib *.so
           ls -lh photolib-native-linux-x86_64.tar.gz
