@@ -38,6 +38,15 @@ public interface ObjectStorageService {
      */
     SignedUrl presignGet(String objectKey, String downloadName, Duration ttl, String cacheControl);
 
+    /**
+     * Signs a GET URL directly against the backing object store, bypassing any
+     * CDN front-end. Use for sensitive downloads (such as database backups and
+     * performance snapshots) that must never traverse or be cached by a CDN.
+     */
+    default SignedUrl presignDirectGet(String objectKey, String downloadName, Duration ttl) {
+        return presignGet(objectKey, downloadName, ttl, null);
+    }
+
     ObjectInfo stat(String objectKey);
 
     /**

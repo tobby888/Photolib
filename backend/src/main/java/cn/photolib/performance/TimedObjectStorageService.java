@@ -81,6 +81,12 @@ public class TimedObjectStorageService implements ObjectStorageService, AutoClos
     }
 
     @Override
+    public SignedUrl presignDirectGet(String objectKey, String downloadName, Duration ttl) {
+        return timed("presignDirectGet", objectKey, null,
+                () -> delegate.presignDirectGet(objectKey, downloadName, ttl));
+    }
+
+    @Override
     public ObjectInfo stat(String objectKey) {
         return timed("stat", objectKey, null, () -> delegate.stat(objectKey));
     }

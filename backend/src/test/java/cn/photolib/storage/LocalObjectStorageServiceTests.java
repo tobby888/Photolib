@@ -26,7 +26,7 @@ class LocalObjectStorageServiceTests {
     @Test
     void repeatsTheSameSignedGetUrlInsideOneWindowAndCarriesCacheControl() throws Exception {
         StorageProperties properties = new StorageProperties(
-                "local", null, null, null, null, null, directory.toString(),
+                "local", null, null, null, null, null, null, null, null, directory.toString(),
                 "http://localhost:8080/api/v1/local-storage/objects", "test-secret",
                 java.util.List.of("*"),
                 Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofMinutes(5),
@@ -57,7 +57,7 @@ class LocalObjectStorageServiceTests {
     @Test
     void storesReadsSignsAndDeletesObjects() throws Exception {
         StorageProperties properties = new StorageProperties(
-                "local", null, null, null, null, null, directory.toString(),
+                "local", null, null, null, null, null, null, null, null, directory.toString(),
                 "http://localhost:8080/api/v1/local-storage/objects", "test-secret",
                 java.util.List.of("*"),
                 Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofMinutes(5),
@@ -90,7 +90,7 @@ class LocalObjectStorageServiceTests {
     @Test
     void storesNormalizedImmutableUserMetadataAndClearsItOnOverwrite() throws Exception {
         StorageProperties properties = new StorageProperties(
-                "local", null, null, null, null, null, directory.toString(),
+                "local", null, null, null, null, null, null, null, null, directory.toString(),
                 "http://localhost:8080/api/v1/local-storage/objects", "test-secret",
                 java.util.List.of("*"),
                 Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofMinutes(5),
@@ -135,7 +135,7 @@ class LocalObjectStorageServiceTests {
     @Test
     void rejectsPathTraversal() {
         StorageProperties properties = new StorageProperties(
-                "local", null, null, null, null, null, directory.toString(),
+                "local", null, null, null, null, null, null, null, null, directory.toString(),
                 "http://localhost:8080/api/v1/local-storage/objects", "test-secret",
                 java.util.List.of("*"),
                 Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofMinutes(5),
@@ -152,7 +152,7 @@ class LocalObjectStorageServiceTests {
     @Test
     void listsOnlyObjectsUnderTheDeterminablePrefixDirectory() throws Exception {
         StorageProperties properties = new StorageProperties(
-                "local", null, null, null, null, null, directory.toString(),
+                "local", null, null, null, null, null, null, null, null, directory.toString(),
                 "http://localhost:8080/api/v1/local-storage/objects", "test-secret",
                 java.util.List.of("*"),
                 Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofMinutes(5),
@@ -181,7 +181,7 @@ class LocalObjectStorageServiceTests {
     @Test
     void listIgnoresInFlightTemporaryUploads() throws Exception {
         StorageProperties properties = new StorageProperties(
-                "local", null, null, null, null, null, directory.toString(),
+                "local", null, null, null, null, null, null, null, null, directory.toString(),
                 "http://localhost:8080/api/v1/local-storage/objects", "test-secret",
                 java.util.List.of("*"),
                 Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofMinutes(5),
@@ -197,7 +197,7 @@ class LocalObjectStorageServiceTests {
     @Test
     void recoversImageContentTypeFromMagicWhenSidecarIsMissingOrWrong() throws Exception {
         StorageProperties properties = new StorageProperties(
-                "local", null, null, null, null, null, directory.toString(),
+                "local", null, null, null, null, null, null, null, null, directory.toString(),
                 "http://localhost:8080/api/v1/local-storage/objects", "test-secret",
                 java.util.List.of("*"),
                 Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofMinutes(5),
@@ -221,7 +221,7 @@ class LocalObjectStorageServiceTests {
     @Test
     void readsAndDeletesLegacyContentTypeSidecar() throws Exception {
         StorageProperties properties = new StorageProperties(
-                "local", null, null, null, null, null, directory.toString(),
+                "local", null, null, null, null, null, null, null, null, directory.toString(),
                 "http://localhost:8080/api/v1/local-storage/objects", "test-secret",
                 java.util.List.of("*"),
                 Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofMinutes(5),
@@ -258,7 +258,7 @@ class LocalObjectStorageServiceTests {
     @Test
     void configValidatorRejectsRepositoryDevelopmentSecret() {
         StorageProperties properties = new StorageProperties(
-                "local", null, null, null, null, null, directory.toString(),
+                "local", null, null, null, null, null, null, null, null, directory.toString(),
                 "http://localhost:8080/api/v1/local-storage/objects",
                 "photolib-local-development-secret", java.util.List.of("*"),
                 Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofMinutes(5),

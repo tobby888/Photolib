@@ -304,7 +304,7 @@ public class PerformanceSnapshotService {
             throw new BusinessException(ErrorCode.VALIDATION_ERROR, "未知的文件类型");
         }
         String fileName = "performance-" + row.startedAt().format(KEY_TIME) + "-" + file + ".csv";
-        ObjectStorageService.SignedUrl signed = storage.presignGet(key, fileName, storageProperties.downloadUrlTtl());
+        ObjectStorageService.SignedUrl signed = storage.presignDirectGet(key, fileName, storageProperties.downloadUrlTtl());
         return new DownloadLink(signed.url().toString(), fileName, signed.expiresAt());
     }
 

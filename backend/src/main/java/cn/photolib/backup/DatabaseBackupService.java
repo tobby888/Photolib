@@ -504,7 +504,7 @@ public class DatabaseBackupService {
         }
         String fileName = backup.getSourceFileName() != null ? backup.getSourceFileName()
                 : "photolib-backup-" + backup.getId() + ".jsonl.gz";
-        ObjectStorageService.SignedUrl signed = storage.presignGet(
+        ObjectStorageService.SignedUrl signed = storage.presignDirectGet(
                 backup.getObjectKey(), fileName, storageProperties.downloadUrlTtl());
         return new DownloadLink(signed.url().toString(), fileName, signed.expiresAt());
     }

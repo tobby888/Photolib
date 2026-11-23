@@ -171,7 +171,7 @@ class RecruitmentUploadProcessorRaceTests {
 
     private LocalObjectStorageService storage() {
         StorageProperties properties = new StorageProperties(
-                "local", null, null, null, null, null,
+                "local", null, null, null, null, null, null, null, null,
                 temporaryDirectory.resolve("objects").toString(),
                 "http://localhost/objects", "test-signing-secret", List.of(),
                 Duration.ofMinutes(10), Duration.ofMinutes(10), Duration.ofMinutes(5),

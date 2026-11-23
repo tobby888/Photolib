@@ -25,6 +25,7 @@ import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Date;
@@ -41,17 +42,28 @@ public class AliyunObjectStorageService implements ObjectStorageService, AutoClo
     private final StorageProperties properties;
     private final OSS client;
     private final OSS signingClient;
+    private final AliyunCdnUrlSigner cdnUrlSigner;
+    private final Clock clock;
 
     public AliyunObjectStorageService(StorageProperties properties) {
         this(properties, buildClient(properties, properties.endpoint()),
                 properties.endpoint().equals(properties.signingEndpoint()) ? null
-                        : buildClient(properties, properties.signingEndpoint()));
+                        : buildClient(properties, properties.signingEndpoint()),
+                Clock.systemUTC());
     }
 
     AliyunObjectStorageService(StorageProperties properties, OSS client, OSS signingClient) {
+        this(properties, client, signingClient, Clock.systemUTC());
+    }
+
+    AliyunObjectStorageService(StorageProperties properties, OSS client, OSS signingClient, Clock clock) {
         this.properties = properties;
         this.client = client;
         this.signingClient = signingClient == null ? client : signingClient;
+        this.cdnUrlSigner = properties != null && properties.cdnEnabled()
+                ? new AliyunCdnUrlSigner(properties.cdnDomain(), properties.cdnAuthKey(), properties.cdnAuthTtl())
+                : null;
+        this.clock = clock == null ? Clock.systemUTC() : clock;
     }
 
     private static OSS buildClient(StorageProperties properties, String endpoint) {
@@ -160,7 +172,7 @@ public class AliyunObjectStorageService implements ObjectStorageService, AutoClo
 
     @Override
     public SignedUrl presignPut(String objectKey, String contentType, Duration ttl) {
-        Instant expires = Instant.now().plus(ttl);
+        Instant expires = Instant.now(clock).plus(ttl);
         GeneratePresignedUrlRequest request = new GeneratePresignedUrlRequest(
                 properties.bucket(), objectKey, HttpMethod.PUT);
         request.setExpiration(Date.from(expires));
@@ -172,10 +184,27 @@ public class AliyunObjectStorageService implements ObjectStorageService, AutoClo
     @Override
     public SignedUrl presignGet(String objectKey, String downloadName, Duration ttl,
                                 String cacheControl) {
+        if (cdnUrlSigner != null) {
+            Instant expires = SignatureWindow.expiryFor(
+                    Instant.now(clock), ttl, properties.signatureWindow());
+            // CDN edge and browser cache headers are controlled by the CDN rules
+            // (passing response-cache-control=private would block CDN edge caching).
+            return cdnUrlSigner.signGet(objectKey, downloadName, expires);
+        }
+        return presignOssGet(objectKey, downloadName, ttl, cacheControl);
+    }
+
+    @Override
+    public SignedUrl presignDirectGet(String objectKey, String downloadName, Duration ttl) {
+        return presignOssGet(objectKey, downloadName, ttl, null);
+    }
+
+    private SignedUrl presignOssGet(String objectKey, String downloadName, Duration ttl,
+                                    String cacheControl) {
         // Quantised so repeat views of the same object produce the same URL and
         // can be served from the browser cache; see SignatureWindow.
         Instant expires = SignatureWindow.expiryFor(
-                Instant.now(), ttl, properties.signatureWindow());
+                Instant.now(clock), ttl, properties.signatureWindow());
         GeneratePresignedUrlRequest request = new GeneratePresignedUrlRequest(
                 properties.bucket(), objectKey, HttpMethod.GET);
         request.setExpiration(Date.from(expires));
