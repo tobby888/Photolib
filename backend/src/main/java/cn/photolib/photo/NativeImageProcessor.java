@@ -4,6 +4,9 @@ import cn.photolib.common.upload.UnprocessableImageException;
 import com.sun.jna.Library;
 import com.sun.jna.Native;
 import com.sun.jna.Structure;
+import org.springframework.aot.hint.MemberCategory;
+import org.springframework.aot.hint.RuntimeHints;
+import org.springframework.aot.hint.RuntimeHintsRegistrar;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -212,5 +215,19 @@ final class NativeImageProcessor {
 
     private static final class Holder {
         private static final NativeImageProcessor INSTANCE = new NativeImageProcessor(loadLibrary());
+    }
+
+    static final class Hints implements RuntimeHintsRegistrar {
+        @Override
+        public void registerHints(RuntimeHints hints, ClassLoader classLoader) {
+            hints.resources().registerPattern("native/**");
+            hints.proxies().registerJdkProxy(NativeLibrary.class);
+            hints.reflection()
+                    .registerType(NativeLibrary.class, MemberCategory.INVOKE_PUBLIC_METHODS)
+                    .registerType(NativeDimensions.class, MemberCategory.INVOKE_PUBLIC_CONSTRUCTORS,
+                            MemberCategory.ACCESS_PUBLIC_FIELDS)
+                    .registerType(NativeFileResult.class, MemberCategory.INVOKE_PUBLIC_CONSTRUCTORS,
+                            MemberCategory.ACCESS_PUBLIC_FIELDS);
+        }
     }
 }

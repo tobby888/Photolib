@@ -185,15 +185,16 @@ try {
     $request = Invoke-Api "POST" "/requests/$($request.id)/accept" $campusToken
     Assert-That "FLOW-07" ($request.status -eq "ACCEPTED") "QA-A 负责人接受需求"
     Expect-Status "FLOW-08" 409 "POST" "/requests/$($request.id)/accept" $campusToken
-    Expect-Status "FLOW-13" 409 "POST" "/requests/$($request.id)/submit" $campusToken @{ version = $request.version }
 
+    $photographer = Invoke-Api "POST" "/campus-members" $campusToken @{ name = "测试摄影师"; studentId = "QA2026001" }
+    Assert-That "DIR-01" ($photographer.id -and $photographer.studentId -eq "QA2026001") "负责人向校区通讯录添加拍摄者"
     Expect-Status "WORK-02A" 400 "POST" "/requests/$($request.id)/worklogs" $campusToken @{
-        workDate = (Get-Date).ToString("yyyy-MM-dd"); memberName = "测试成员"; memberStudentId = "QA2026001"
+        workDate = (Get-Date).ToString("yyyy-MM-dd"); memberContactId = $photographer.id
         shootingMinutes = 0; retouchingMinutes = 0
         remark = "非法零工时"; status = "DRAFT"
     }
     Expect-Status "WORK-02B" 403 "POST" "/requests/$($request.id)/worklogs" $campusBToken @{
-        workDate = (Get-Date).ToString("yyyy-MM-dd"); memberName = "测试成员"; memberStudentId = "QA2026001"
+        workDate = (Get-Date).ToString("yyyy-MM-dd"); memberContactId = $photographer.id
         shootingMinutes = 10; retouchingMinutes = 0
         remark = "非参与人"; status = "DRAFT"
     }
@@ -201,9 +202,6 @@ try {
     $image = Get-Item $ImagePath
     $sha = (Get-FileHash -Algorithm SHA256 $ImagePath).Hash.ToLowerInvariant()
     $takenAt = (Get-Date).AddDays(-1).ToString("yyyy-MM-ddTHH:mm:ss")
-    # 上传拍摄者强制来自校区通讯录：先由负责人建立通讯录成员，用其 id 作为 photographerContactId
-    $photographer = Invoke-Api "POST" "/campus-members" $campusToken @{ name = "测试摄影师"; studentId = "QA2026001" }
-    Assert-That "DIR-01" ($photographer.id -and $photographer.studentId -eq "QA2026001") "负责人向校区通讯录添加拍摄者"
     $ticket = Invoke-Api "POST" "/photos/upload-tickets" $campusToken @{
         requestId = $request.id; projectId = $project.id; fileName = $image.Name
         contentType = "image/jpeg"; size = $image.Length; sha256 = $sha
@@ -211,8 +209,8 @@ try {
     }
     Assert-That "OSS-01" ($ticket.photoId -and $ticket.uploadUrl -and $ticket.method -eq "PUT") "签发单图上传票据"
     Expect-Status "OSS-04" 415 "POST" "/photos/upload-tickets" $campusToken @{
-        requestId = $request.id; projectId = $project.id; fileName = "bad.gif"
-        contentType = "image/gif"; size = 10; sha256 = ("0" * 64)
+        requestId = $request.id; projectId = $project.id; fileName = "bad.svg"
+        contentType = "image/svg+xml"; size = 10; sha256 = ("0" * 64)
         photographerContactId = $photographer.id; takenAt = $takenAt
     }
     Expect-Status "OSS-05" 403 "POST" "/photos/upload-tickets" $campusBToken @{
@@ -233,7 +231,7 @@ try {
     Assert-That "OSS-08" ($downloadHash -eq $sha) "原图下载成功且 SHA-256 一致"
 
     $worklog = Invoke-Api "POST" "/requests/$($request.id)/worklogs" $campusToken @{
-        workDate = (Get-Date).ToString("yyyy-MM-dd"); memberName = "测试成员"; memberStudentId = "QA2026001"
+        workDate = (Get-Date).ToString("yyyy-MM-dd"); memberContactId = $photographer.id
         shootingMinutes = 60; retouchingMinutes = 30
         remark = "初次填报"; status = "DRAFT"
     }
@@ -243,7 +241,7 @@ try {
     $worklog = Invoke-Api "POST" "/worklogs/$($worklog.id)/submit" $campusToken @{ version = $worklog.version }
     Assert-That "WORK-04" ($worklog.status -eq "SUBMITTED") "工时提交"
     Expect-Status "WORK-05" 409 "PUT" "/worklogs/$($worklog.id)?version=$($worklog.version)" $campusToken @{
-        workDate = $worklog.workDate; memberName = $worklog.memberName; memberStudentId = $worklog.memberStudentId
+        workDate = $worklog.workDate; memberContactId = $photographer.id
         shootingMinutes = 70; retouchingMinutes = 30; remark = "不应成功"; status = "DRAFT"
     }
     $worklog = Invoke-Api "POST" "/worklogs/$($worklog.id)/reject" $ministerToken @{
@@ -251,7 +249,7 @@ try {
     }
     Assert-That "WORK-06" ($worklog.status -eq "REJECTED" -and $worklog.rejectReason) "部长退回工时并记录原因"
     $worklog = Invoke-Api "PUT" "/worklogs/$($worklog.id)?version=$($worklog.version)" $campusToken @{
-        workDate = $worklog.workDate; memberName = $worklog.memberName; memberStudentId = $worklog.memberStudentId
+        workDate = $worklog.workDate; memberContactId = $photographer.id
         shootingMinutes = 75; retouchingMinutes = 45
         remark = "复核后修改"; status = "DRAFT"
     }
@@ -264,6 +262,7 @@ try {
     $request = Invoke-Api "GET" "/requests/$($request.id)" $campusToken
     $request = Invoke-Api "POST" "/requests/$($request.id)/submit" $campusToken @{ version = $request.version }
     Assert-That "FLOW-12" ($request.status -eq "SUBMITTED") "存在可用图片后提交需求"
+    Expect-Status "FLOW-13" 409 "POST" "/requests/$($request.id)/submit" $campusToken @{ version = $request.version }
     $request = Invoke-Api "POST" "/requests/$($request.id)/complete" $ministerToken @{ version = $request.version }
     Assert-That "FLOW-14" ($request.status -eq "COMPLETED") "部长完成需求"
 
@@ -274,7 +273,7 @@ try {
     Expect-Status "ADOPT-03" 409 "POST" "/projects/$($project.id)/adoptions" $ministerToken @{
         photoIds = @($photo.id); remark = "重复采用"
     }
-    Expect-Status "ADOPT-04" 403 "POST" "/projects/$($project.id)/adoptions" $campusToken @{
+    Expect-Status "ADOPT-04" 403 "POST" "/projects/$($project.id)/adoptions" $campusBToken @{
         photoIds = @($photo.id); remark = "越权采用"
     }
     $ranking = Invoke-Api "GET" "/statistics/adoptions/ranking?projectId=$($project.id)" $ministerToken
@@ -284,6 +283,16 @@ try {
         ($photoAfterAdoption.PSObject.Properties.Name -contains "adopted")
     Assert-That "ADOPT-02" $hasAdoptionMarker "图片详情应返回 adopted/adoptionCount 标记"
     Expect-Status "OSS-11" 409 "DELETE" "/photos/$($photo.id)" $campusToken
+
+    $photo = Invoke-Api "POST" "/photos/$($photo.id)/archive" $ministerToken
+    $photo = Invoke-Api "POST" "/photos/$($photo.id)/restore" $ministerToken
+    Assert-That "OSS-10" ($photo.status -eq "AVAILABLE") "图片归档后可恢复"
+
+    $project = Invoke-Api "GET" "/projects/$($project.id)" $ministerToken
+    $project = Invoke-Api "POST" "/projects/$($project.id)/status" $ministerToken @{
+        status = "COMPLETED"; version = $project.version
+    }
+    Assert-That "FLOW-16" ($project.status -eq "COMPLETED") "项目完成并进入锁定状态"
 
     $members = Invoke-Api "GET" "/statistics/members?projectId=$($project.id)&userId=$($campusCreated.user.id)" $ministerToken
     Assert-That "WORK-12" (@($members).Count -eq 1 -and $members[0].shootingMinutes -eq 75 -and $members[0].retouchingMinutes -eq 45 -and $members[0].totalMinutes -eq 120) "统计仅计入已确认工时，总计 120 分钟"
@@ -326,23 +335,14 @@ try {
     Invoke-Api "POST" "/notifications/read-all" $campusToken | Out-Null
     $unreadAfter = Invoke-Api "GET" "/notifications/unread-count" $campusToken
     Assert-That "NOTIFY-05" ($unreadBefore.count -gt 0 -and $unreadAfter.count -eq 0) "单条/全部已读后未读数归零"
-    $mailSettings = Invoke-Api "GET" "/notification-logs/settings" $adminToken
-    Assert-That "NOTIFY-07" ($mailSettings.environmentEnabled -eq $false -and $mailSettings.effectiveEnabled -eq $false) "部署级邮件关闭，站内通知仍正常"
-    Expect-Status "NOTIFY-08" 403 "GET" "/notification-logs/settings" $ministerToken
+    $deliveryLogs = Invoke-Api "GET" "/notification-logs?status=SENT" $adminToken
+    Assert-That "NOTIFY-07" (-not $deliveryLogs) "隔离环境未向外部通道投递通知"
+    Expect-Status "NOTIFY-08" 403 "GET" "/notification-logs" $ministerToken
 
     $audit = Invoke-Api "GET" "/audit-logs" $adminToken
-    Assert-That "AUDIT-01" ($audit.Count -gt 10) "管理员可查看测试期间写操作审计"
+    Assert-That "AUDIT-01" ($audit.total -gt 10 -and $audit.items.Count -gt 0) "管理员可查看测试期间写操作审计"
     Expect-Status "AUDIT-02" 403 "GET" "/audit-logs" $ministerToken
 
-    $photo = Invoke-Api "POST" "/photos/$($photo.id)/archive" $ministerToken
-    $photo = Invoke-Api "POST" "/photos/$($photo.id)/restore" $ministerToken
-    Assert-That "OSS-10" ($photo.status -eq "AVAILABLE") "图片归档后可恢复"
-
-    $project = Invoke-Api "GET" "/projects/$($project.id)" $ministerToken
-    $project = Invoke-Api "POST" "/projects/$($project.id)/status" $ministerToken @{
-        status = "COMPLETED"; version = $project.version
-    }
-    Assert-That "FLOW-16" ($project.status -eq "COMPLETED") "项目完成并进入锁定状态"
     Expect-Status "ADOPT-08" 409 "DELETE" "/projects/$($project.id)/adoptions/$($adoptions[0].id)" $ministerToken
     Expect-Status "FLOW-17A" 403 "POST" "/projects/$($project.id)/reopen" $ministerToken @{
         reason = "部长不应有权限"; version = $project.version

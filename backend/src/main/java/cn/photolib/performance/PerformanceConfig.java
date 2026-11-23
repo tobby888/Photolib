@@ -1,15 +1,24 @@
 package cn.photolib.performance;
 
+import org.springframework.aot.hint.MemberCategory;
+import org.springframework.aot.hint.RuntimeHints;
+import org.springframework.aot.hint.RuntimeHintsRegistrar;
 import org.springframework.beans.factory.config.BeanPostProcessor;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.ImportRuntimeHints;
 import org.springframework.lang.NonNull;
 
 import javax.sql.DataSource;
+import java.sql.CallableStatement;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.Statement;
 
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(PerformanceProperties.class)
+@ImportRuntimeHints(PerformanceConfig.Hints.class)
 public class PerformanceConfig {
 
     /**
@@ -29,5 +38,16 @@ public class PerformanceConfig {
                 return bean;
             }
         };
+    }
+
+    static final class Hints implements RuntimeHintsRegistrar {
+        @Override
+        public void registerHints(RuntimeHints hints, ClassLoader classLoader) {
+            for (Class<?> type : new Class<?>[]{
+                    Connection.class, Statement.class, PreparedStatement.class, CallableStatement.class}) {
+                hints.proxies().registerJdkProxy(type);
+                hints.reflection().registerType(type, MemberCategory.INVOKE_PUBLIC_METHODS);
+            }
+        }
     }
 }

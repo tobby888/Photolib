@@ -2,6 +2,7 @@ package cn.photolib.photo;
 
 import cn.photolib.performance.PerformanceMonitor;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.ImportRuntimeHints;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -10,6 +11,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 
 @Component
+@ImportRuntimeHints(NativeImageProcessor.Hints.class)
 public class ImageCompressor {
     /** Every preview is encoded into this container; see {@link #thumbnail}. */
     public static final String PREVIEW_CONTENT_TYPE = "image/webp";
