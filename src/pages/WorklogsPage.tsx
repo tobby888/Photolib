@@ -9,9 +9,12 @@ import { useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { api, emptyPage, qs } from '../api'
 import { useAuth } from '../auth'
-import type { Campus, CampusMember, EntityId, PageData, PhotoRequest, Project, Worklog } from '../types'
+import type {
+  Campus, CampusMember, EntityId, PageData, PhotoRequest, Project, Worklog, WorklogMemberPair,
+} from '../types'
 import { DataState, formatMinutes, PageTitle, StatusTag } from '../components'
 import { ContentFitTable, TableEllipsisText } from '../ContentFitTable'
+import WorklogMemberAutoComplete from '../WorklogMemberAutoComplete'
 import { useLoad } from '../hooks'
 import { canViewProjects, hasPermission } from '../permissions'
 import {
@@ -135,6 +138,15 @@ export default function WorklogsPage() {
     emptyPage<Worklog>(), [filters.page, filters.pageSize, filters.status, filters.source, filters.keyword,
       filters.campusId, filters.from, filters.to, projectFilter],
   )
+  // 搜索提示展示当前账号可见的全部有工时记录的（学号，姓名）配对。
+  const { data: worklogMembers, reload: reloadMembers } = useLoad(
+    () => api<WorklogMemberPair[]>({ url: '/worklogs/members' }),
+    [] as WorklogMemberPair[], [user?.id],
+  )
+  const reloadWorklogs = async () => {
+    await reload()
+    reloadMembers()
+  }
   useEffect(() => {
     const timer = window.setTimeout(() => setProjectKeyword(projectSearch.trim()), 300)
     return () => window.clearTimeout(timer)
@@ -247,7 +259,7 @@ export default function WorklogsPage() {
       message.success('工时记录已保存')
       setOpen(false)
       form.resetFields()
-      await reload()
+      await reloadWorklogs()
     } catch (e) {
       message.error((e as Error).message)
     } finally {
@@ -304,7 +316,7 @@ export default function WorklogsPage() {
       await Promise.all(items.map(item => api({ method: 'DELETE', url: `/worklogs/${item.id}` })))
       message.success(`已删除 ${items.length} 条工时`)
       setSelectedItems([])
-      await reload()
+      await reloadWorklogs()
     } catch (e) {
       message.error((e as Error).message)
     }
@@ -386,13 +398,19 @@ export default function WorklogsPage() {
     />
     <Card className="filter-card worklog-filter-card">
       <Space wrap>
-        <Input.Search allowClear placeholder="搜索成员姓名、学号、说明或需求" style={{ width: 260 }}
+        <WorklogMemberAutoComplete
+          variant="search"
+          pairs={worklogMembers}
+          placeholder="搜索成员姓名、学号、说明或需求"
+          style={{ width: 260 }}
           value={keywordText}
-          onChange={event => {
-            setKeywordText(event.target.value)
-            if (!event.target.value) updateFilters({ keyword: '' })
+          onChange={next => {
+            setKeywordText(next)
+            if (!next) updateFilters({ keyword: '' })
           }}
-          onSearch={value => updateFilters({ keyword: value.trim() })} />
+          onPick={picked => updateFilters({ keyword: picked })}
+          onSearch={value => updateFilters({ keyword: value })}
+        />
         <Select allowClear placeholder="全部状态" style={{ width: 120 }} value={filters.status || undefined}
           options={STATUS_OPTIONS} onChange={(status?: Worklog['status']) => updateFilters({ status: status ?? '' })} />
         <Select allowClear placeholder="全部来源" style={{ width: 120 }} value={filters.source || undefined}
@@ -598,7 +616,7 @@ export default function WorklogsPage() {
       </Form>
     </Modal>
     {correcting && <WorklogCorrectionModal worklog={correcting} currentUserId={user?.id}
-      onClose={() => setCorrecting(null)} onSaved={reload} />}
+      onClose={() => setCorrecting(null)} onSaved={reloadWorklogs} />}
     <Modal
       title="导出工时"
       open={exportOpen}

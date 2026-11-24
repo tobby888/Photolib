@@ -135,6 +135,24 @@ class WorklogListFilterTests {
                 null, null, null, null, WorklogSource.SHARE_LINK), submitter).items())).isEmpty();
     }
 
+    @Test
+    void memberPairsFollowVisibilityAndCampusScope() {
+        AuthenticatedUser submitter = new AuthenticatedUser(submitterId, "s", "填报人",
+                UserRole.CAMPUS_MANAGER, campusA, false, 88L, "WLF", "填报组", DataScope.CAMPUS,
+                Set.of(PermissionCode.WORKLOG_SUBMIT), Set.of(campusA));
+
+        assertThat(worklogs.memberPairs(reviewer))
+                .contains(
+                        new WorklogService.WorklogMemberPair("2023001", "张三"),
+                        new WorklogService.WorklogMemberPair("2023002", "李四"),
+                        new WorklogService.WorklogMemberPair("2023003", "王五"),
+                        new WorklogService.WorklogMemberPair("2024100", "赵六"));
+        assertThat(worklogs.memberPairs(submitter))
+                .containsExactlyInAnyOrder(
+                        new WorklogService.WorklogMemberPair("2023001", "张三"),
+                        new WorklogService.WorklogMemberPair("2024100", "赵六"));
+    }
+
     private WorklogService.ListFilter keyword(String keyword) {
         return new WorklogService.ListFilter(null, projectId, null, null, null, null, null, keyword, null);
     }

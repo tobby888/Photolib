@@ -1,6 +1,8 @@
 import { Button, Checkbox, DatePicker, Input, InputNumber, Select, Space, Typography } from 'antd'
 import { BranchesOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
+import type { WorklogMemberPair } from './types'
+import WorklogMemberAutoComplete from './WorklogMemberAutoComplete'
 import {
   FIELDS, MAX_UI_DEPTH, MAX_UI_NODES, OPERATOR_LABELS, changeField, changeOperator, countNodes, isComplete,
   isGroup, needsValues, newGroup, newLeaf,
@@ -17,25 +19,27 @@ const FIELD_OPTIONS = (Object.keys(FIELDS) as ConditionField[]).map(field => ({ 
  * 它只负责把树拼出来。取值按字段类型给对应的输入控件（下拉 / 日期 / 分钟数 / 文本），
  * 但这只是体验——真正的校验和防注入都在后端：字段和运算符是枚举白名单，取值一律绑定成参数。
  */
-export default function WorklogConditionBuilder({ value, onChange, options, optionsLoading }: {
+export default function WorklogConditionBuilder({ value, onChange, options, memberPairs = [], optionsLoading }: {
   value: ConditionGroup
   onChange: (next: ConditionGroup) => void
   options: AnalysisOptions
+  memberPairs?: readonly WorklogMemberPair[]
   optionsLoading?: boolean
 }) {
   const full = countNodes(value) >= MAX_UI_NODES
   return <div className="condition-builder">
-    <GroupEditor group={value} depth={1} root full={full} options={options} optionsLoading={optionsLoading}
-      onChange={next => onChange(next as ConditionGroup)} />
+    <GroupEditor group={value} depth={1} root full={full} options={options} memberPairs={memberPairs}
+      optionsLoading={optionsLoading} onChange={next => onChange(next as ConditionGroup)} />
   </div>
 }
 
-function GroupEditor({ group, depth, root, full, options, optionsLoading, onChange, onRemove }: {
+function GroupEditor({ group, depth, root, full, options, memberPairs, optionsLoading, onChange, onRemove }: {
   group: ConditionGroup
   depth: number
   root?: boolean
   full: boolean
   options: AnalysisOptions
+  memberPairs: readonly WorklogMemberPair[]
   optionsLoading?: boolean
   onChange: (next: ConditionNode) => void
   onRemove?: () => void
@@ -59,9 +63,10 @@ function GroupEditor({ group, depth, root, full, options, optionsLoading, onChan
         这一组还没有条件，不起筛选作用。</Typography.Text>}
       {group.children.map((child, index) => isGroup(child)
         ? <GroupEditor key={child.key} group={child} depth={depth + 1} full={full} options={options}
-            optionsLoading={optionsLoading}
+            memberPairs={memberPairs} optionsLoading={optionsLoading}
             onChange={next => replaceChild(index, next)} onRemove={() => removeChild(index)} />
-        : <LeafEditor key={child.key} leaf={child} options={options} optionsLoading={optionsLoading}
+        : <LeafEditor key={child.key} leaf={child} options={options} memberPairs={memberPairs}
+            optionsLoading={optionsLoading}
             onChange={next => replaceChild(index, next)} onRemove={() => removeChild(index)} />)}
       <Space size={4}>
         <Button size="small" type="dashed" icon={<PlusOutlined />} disabled={full}
@@ -75,9 +80,10 @@ function GroupEditor({ group, depth, root, full, options, optionsLoading, onChan
   </div>
 }
 
-function LeafEditor({ leaf, options, optionsLoading, onChange, onRemove }: {
+function LeafEditor({ leaf, options, memberPairs, optionsLoading, onChange, onRemove }: {
   leaf: ConditionLeaf
   options: AnalysisOptions
+  memberPairs: readonly WorklogMemberPair[]
   optionsLoading?: boolean
   onChange: (next: ConditionLeaf) => void
   onRemove: () => void
@@ -90,16 +96,17 @@ function LeafEditor({ leaf, options, optionsLoading, onChange, onRemove }: {
     <Select<ConditionOperator> size="small" value={leaf.operator} style={{ width: 96 }} aria-label="比较方式"
       options={meta.operators.map(operator => ({ value: operator, label: OPERATOR_LABELS[operator] }))}
       onChange={operator => onChange(changeOperator(leaf, operator))} />
-    {need !== 0 && <ValueEditor leaf={leaf} options={options} optionsLoading={optionsLoading}
-      onChange={values => onChange({ ...leaf, values })} />}
+    {need !== 0 && <ValueEditor leaf={leaf} options={options} memberPairs={memberPairs}
+      optionsLoading={optionsLoading} onChange={values => onChange({ ...leaf, values })} />}
     <Button size="small" type="text" icon={<DeleteOutlined />} aria-label="删除这条条件" onClick={onRemove} />
     {!isComplete(leaf) && <Typography.Text type="secondary" className="condition-leaf-hint">未填完，暂不生效</Typography.Text>}
   </div>
 }
 
-function ValueEditor({ leaf, options, optionsLoading, onChange }: {
+function ValueEditor({ leaf, options, memberPairs, optionsLoading, onChange }: {
   leaf: ConditionLeaf
   options: AnalysisOptions
+  memberPairs: readonly WorklogMemberPair[]
   optionsLoading?: boolean
   onChange: (values: string[]) => void
 }) {
@@ -148,6 +155,18 @@ function ValueEditor({ leaf, options, optionsLoading, onChange }: {
     return <Select size="small" mode="tags" style={{ minWidth: 200, flex: 1 }} value={leaf.values}
       tokenSeparators={[',', '，', '\n']} placeholder="输入后回车，可填多个" open={false}
       onChange={(values: string[]) => onChange(values.map(value => value.trim()).filter(Boolean))} />
+  }
+  if (leaf.field === 'MEMBER_NAME') {
+    return <WorklogMemberAutoComplete
+      pairs={memberPairs}
+      pick="displayName"
+      size="small"
+      style={{ width: 220 }}
+      maxLength={100}
+      placeholder="输入姓名或学号筛选"
+      value={leaf.values[0] ?? ''}
+      onChange={val => onChange(val ? [val] : [])}
+    />
   }
   return <Input size="small" style={{ width: 200 }} maxLength={100} value={leaf.values[0] ?? ''}
     placeholder="输入关键词" onChange={event => onChange(event.target.value ? [event.target.value] : [])} />

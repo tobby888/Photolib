@@ -5,11 +5,13 @@ import { DownloadOutlined, FilterOutlined, ReloadOutlined } from '@ant-design/ic
 import { useMemo, useState } from 'react'
 import dayjs from 'dayjs'
 import { api } from './api'
+import type { WorklogMemberPair } from './types'
 import { DataState, StatusTag, formatMinutes } from './components'
 import { ContentFitTable, TableEllipsisText } from './ContentFitTable'
 import { useLoad } from './hooks'
 import { clientTablePagination } from './pagination'
 import WorklogConditionBuilder from './WorklogConditionBuilder'
+import { mergeAnalysisMemberOptions } from './worklogMemberSuggest'
 import { CalendarHeatmap, ChartLegend, ColumnChart, HOUR_SERIES, RankingChart, ShareBar } from './WorklogCharts'
 import type { ChartSeries } from './WorklogCharts'
 import {
@@ -69,6 +71,14 @@ export default function WorklogAnalysisPanel({ initialProjectId }: { initialProj
     () => api<AnalysisOptions>({ url: '/statistics/worklog-analysis/options', params: { from: range[0], to: range[1] } }),
     EMPTY_OPTIONS, [range[0], range[1]],
   )
+  const { data: allWorklogMembers } = useLoad(
+    () => api<WorklogMemberPair[]>({ url: '/statistics/worklog-members' }),
+    [] as WorklogMemberPair[], [],
+  )
+  const mergedOptions = useMemo<AnalysisOptions>(() => ({
+    ...options,
+    members: mergeAnalysisMemberOptions(options.members, allWorklogMembers),
+  }), [options, allWorklogMembers])
   const { data: result, loading, error, reload } = useLoad<AnalysisResult | null>(
     () => api<AnalysisResult>({
       method: 'POST', url: '/statistics/worklog-analysis',
@@ -136,7 +146,8 @@ export default function WorklogAnalysisPanel({ initialProjectId }: { initialProj
             应用条件</Button>
         </Space>
       </div>
-      <WorklogConditionBuilder value={draft} onChange={setDraft} options={options} optionsLoading={optionsLoading} />
+      <WorklogConditionBuilder value={draft} onChange={setDraft} options={mergedOptions}
+        memberPairs={allWorklogMembers} optionsLoading={optionsLoading} />
       <Typography.Text type="secondary" className="analysis-scope-note">
         按工作日期统计（两端都含），草稿不计入；校区范围账号只看授权校区。成员核算页签按选题结束时间统计，
         两边数字不同是口径不同。

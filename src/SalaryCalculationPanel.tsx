@@ -1,10 +1,10 @@
 import {
-  Alert, App, Button, Card, Col, Collapse, DatePicker, Empty, Input, Popconfirm, Row, Segmented, Space, Statistic, Tag,
+  Alert, App, Button, Card, Col, Collapse, DatePicker, Empty, Popconfirm, Row, Segmented, Space, Statistic, Tag,
   Tooltip, Typography,
 } from 'antd'
 import type { TableColumnsType } from 'antd'
 import {
-  ArrowLeftOutlined, CalculatorOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, EyeOutlined, SearchOutlined,
+  ArrowLeftOutlined, CalculatorOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, EyeOutlined,
 } from '@ant-design/icons'
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -12,6 +12,7 @@ import dayjs from 'dayjs'
 import { api, http } from './api'
 import type {
   SalaryCalculationDetail, SalaryCalculationSummary, SalaryFormulaReference, SalaryLine, SalaryMemberTotal,
+  WorklogMemberPair,
 } from './types'
 import { DataState } from './components'
 import { ContentFitTable, TableEllipsisText } from './ContentFitTable'
@@ -21,6 +22,7 @@ import { blobErrorMessage, fileNameFromContentDisposition, saveBlobAs } from './
 import { filterProjects, formatYuan, linesOfMember, minutesToHours, salaryRule } from './salary'
 import SalaryFormulaEditor from './SalaryFormulaEditor'
 import type { FormulaStatus } from './SalaryFormulaEditor'
+import WorklogMemberAutoComplete from './WorklogMemberAutoComplete'
 
 /**
  * 统计面板「工资计算」页签：选题结束时间范围 + 工资公式 → 计算 → 存成一份快照；
@@ -217,6 +219,10 @@ function SalaryDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const { data, loading, error, reload } = useLoad(
     () => api<SalaryCalculationDetail>({ url: `/salary-calculations/${id}` }),
     null as SalaryCalculationDetail | null, [id])
+  const { data: worklogMembers } = useLoad(
+    () => api<WorklogMemberPair[]>({ url: '/statistics/worklog-members' }),
+    [] as WorklogMemberPair[], [],
+  )
   const projects = useMemo(() => filterProjects(data?.projects ?? [], keyword), [data, keyword])
   const members = useMemo(() => {
     const key = keyword.trim().toLowerCase()
@@ -235,8 +241,14 @@ function SalaryDetail({ id, onBack }: { id: string; onBack: () => void }) {
             选题结束时间 {calculation.from} 至 {calculation.to} 的工资明细</Typography.Text>}
         </Space>
         <Space wrap>
-          <Input allowClear prefix={<SearchOutlined />} placeholder="选题、姓名或学号" style={{ width: 200 }}
-            value={keyword} onChange={event => setKeyword(event.target.value)} />
+          <WorklogMemberAutoComplete
+            pairs={worklogMembers}
+            value={keyword}
+            onChange={setKeyword}
+            placeholder="选题、姓名或学号"
+            style={{ width: 220 }}
+            ariaLabel="按选题、姓名或学号搜索"
+          />
           <Segmented<DetailView> value={view} onChange={setView} options={[
             { value: 'projects', label: '按选题' }, { value: 'members', label: '按成员' },
           ]} />

@@ -8,8 +8,11 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 
+import java.text.Collator;
 import java.time.LocalDate;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -384,9 +387,46 @@ public class StatisticsService {
                 .list();
     }
 
+    /**
+     * 统计页搜索提示用的全量成员配对：列出当前账号可见、所有存在非草稿工时记录的（学号，姓名）配对，
+     * 不按当前所选日期范围或选题完成状态截断，方便用户在筛选框里输入姓名即可看到配对学号并快速选中。
+     */
+    public List<WorklogMemberPair> worklogMembers(AuthenticatedUser principal) {
+        return worklogMembers(principal.isCampusScoped(), principal.scopedCampusIds());
+    }
+
+    public List<WorklogMemberPair> worklogMembers(boolean campusScoped, Set<Long> allowedCampusIds) {
+        Set<Long> scopedIds = normalizedCampusIds(allowedCampusIds);
+        Collator collator = Collator.getInstance(Locale.CHINA);
+        return jdbc.sql("""
+                SELECT DISTINCT TRIM(w.member_student_id) AS student_id,
+                       TRIM(w.member_name) AS display_name
+                FROM worklog w
+                LEFT JOIN photo_request r ON r.id = w.request_id
+                LEFT JOIN project_share_link l ON l.id = w.share_link_id
+                LEFT JOIN project p ON p.id = COALESCE(r.project_id, l.project_id) AND w.custom_project_title IS NULL
+                WHERE w.deleted = 0
+                  AND w.status <> 'DRAFT'
+                  AND (w.custom_project_title IS NOT NULL OR p.deleted = 0)
+                  AND (:campusScoped = FALSE OR r.campus_id IN (:campusIds))
+                  AND TRIM(COALESCE(w.member_student_id, '')) <> ''
+                  AND TRIM(COALESCE(w.member_name, '')) <> ''
+                """)
+                .param("campusScoped", campusScoped)
+                .param("campusIds", scopedIds)
+                .query((rs, n) -> new WorklogMemberPair(rs.getString(1), rs.getString(2)))
+                .list().stream()
+                .sorted(Comparator.comparing(WorklogMemberPair::displayName, collator)
+                        .thenComparing(WorklogMemberPair::studentId))
+                .toList();
+    }
+
     private Set<Long> normalizedCampusIds(Set<Long> allowedCampusIds) {
         return allowedCampusIds == null || allowedCampusIds.isEmpty() ? Set.of(-1L) : allowedCampusIds;
     }
+
+    /** 搜索提示用的工时成员配对（学号 + 姓名）。 */
+    public record WorklogMemberPair(String studentId, String displayName) {}
 
     /** {@code campus} 是该成员本期有工时的**全部**校区，跨校区时形如「甲校区、乙校区」。 */
     public record MemberStatistics(Long userId, String studentId, String displayName, String campus,

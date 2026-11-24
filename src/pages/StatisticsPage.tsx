@@ -3,18 +3,19 @@ import {
   Statistic, Tabs, Tag, Typography,
 } from 'antd'
 import {
-  CameraOutlined, ClockCircleOutlined, DownloadOutlined, FolderOutlined, MailOutlined, SearchOutlined, TrophyOutlined,
+  CameraOutlined, ClockCircleOutlined, DownloadOutlined, FolderOutlined, MailOutlined, TrophyOutlined,
 } from '@ant-design/icons'
 import { lazy, Suspense, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { api } from '../api'
-import type { MemberStats, MemberWorklogDetail } from '../types'
+import type { MemberStats, MemberWorklogDetail, WorklogMemberPair } from '../types'
 import { DataState, PageTitle } from '../components'
 import { ContentFitTable, TableEllipsisText } from '../ContentFitTable'
 import { useLoad } from '../hooks'
 import { clientTablePagination } from '../pagination'
 import WorklogAnalysisPanel from '../WorklogAnalysisPanel'
+import WorklogMemberAutoComplete from '../WorklogMemberAutoComplete'
 import AdoptionAnalysisPanel from '../AdoptionAnalysisPanel'
 import MemberAdoptionModal from '../MemberAdoptionModal'
 import type { AdoptionMember } from '../MemberAdoptionModal'
@@ -84,6 +85,11 @@ export default function StatisticsPage() {
     ])
     return { overview, members }
   }, { overview: {} as Record<string, number>, members: [] as MemberStats[] }, [range[0], range[1]])
+  // 搜索提示展示全量有工时记录的（学号，姓名）配对，不随当前日期范围截断。
+  const { data: worklogMembers } = useLoad(
+    () => api<WorklogMemberPair[]>({ url: '/statistics/worklog-members' }),
+    [] as WorklogMemberPair[], [],
+  )
   const campuses = useMemo(() => campusOptions(data.members), [data.members])
   const members = useMemo(() => filterMembers(data.members, filter), [data.members, filter])
   const summary = useMemo(() => summarize(members), [members])
@@ -156,8 +162,14 @@ export default function StatisticsPage() {
           <span>选题结束时间</span>
           <DatePicker.RangePicker allowClear={false} value={[dayjs(range[0]), dayjs(range[1])]}
             onChange={values => values?.[0] && values[1] && setRange([values[0].format('YYYY-MM-DD'), values[1].format('YYYY-MM-DD')])} />
-          <Input allowClear prefix={<SearchOutlined />} placeholder="姓名或学号" style={{ width: 160 }}
-            value={filter.keyword} onChange={event => patchFilter({ keyword: event.target.value })} />
+          <WorklogMemberAutoComplete
+            pairs={worklogMembers}
+            value={filter.keyword}
+            onChange={keyword => patchFilter({ keyword })}
+            placeholder="姓名或学号"
+            style={{ width: 200 }}
+            ariaLabel="按姓名或学号搜索"
+          />
           <Select allowClear placeholder="全部校区" style={{ width: 140 }} value={filter.campus}
             options={campuses.map(name => ({ value: name, label: name }))}
             onChange={campus => patchFilter({ campus })} />
