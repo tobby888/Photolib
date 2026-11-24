@@ -1,5 +1,6 @@
 package cn.photolib.storage;
 
+import com.aliyun.oss.ClientBuilderConfiguration;
 import com.aliyun.oss.HttpMethod;
 import com.aliyun.oss.OSS;
 import com.aliyun.oss.OSSClientBuilder;
@@ -67,7 +68,13 @@ public class AliyunObjectStorageService implements ObjectStorageService, AutoClo
     }
 
     private static OSS buildClient(StorageProperties properties, String endpoint) {
-        return new OSSClientBuilder().build(endpoint, properties.accessKeyId(), properties.accessKeySecret());
+        ClientBuilderConfiguration config = new ClientBuilderConfiguration();
+        // 允许 OSS_ENDPOINT / OSS_PUBLIC_ENDPOINT 使用绑定在 Bucket 上的自定义 CNAME 域名
+        // （如 https://oss.photowarehouse.cn）；阿里云 SDK 内置 aliyuncs.com 等默认排除列表，
+        // 官方地域 Endpoint 仍按 <bucket>.<endpoint> 规则解析，不受影响。
+        config.setSupportCname(true);
+        return new OSSClientBuilder().build(
+                endpoint, properties.accessKeyId(), properties.accessKeySecret(), config);
     }
 
     @Override
