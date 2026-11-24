@@ -34,13 +34,17 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.text.Collator;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -252,6 +256,38 @@ public class WorklogService {
                         .orderByDesc(WorklogEntity::getId));
         populateDisplayNames(result.getRecords());
         return PageResponse.from(result);
+    }
+
+    /**
+     * 工时记录页搜索提示：列出当前账号可见的全部（学号，姓名）配对，可见范围与 {@link #list} 完全一致。
+     */
+    public List<WorklogMemberPair> memberPairs(AuthenticatedUser principal) {
+        boolean reviewer = principal.hasAnyPermission(
+                PermissionCode.WORKLOG_CONFIRM, PermissionCode.WORKLOG_EXPORT);
+        Long effectiveUser = reviewer ? null : principal.id();
+        boolean campusScoped = principal.isCampusScoped();
+        Set<Long> scopedIds = campusScoped && !principal.scopedCampusIds().isEmpty()
+                ? principal.scopedCampusIds() : Set.of(-1L);
+        Collator collator = Collator.getInstance(Locale.CHINA);
+        return jdbc.sql("""
+                SELECT DISTINCT TRIM(w.member_student_id) AS student_id,
+                       TRIM(w.member_name) AS display_name
+                FROM worklog w
+                WHERE w.deleted = 0
+                  AND (:effectiveUser = 0 OR w.user_id = :effectiveUser)
+                  AND (:campusScoped = FALSE OR w.request_id IN (
+                      SELECT id FROM photo_request WHERE deleted = 0 AND campus_id IN (:campusIds)))
+                  AND TRIM(COALESCE(w.member_student_id, '')) <> ''
+                  AND TRIM(COALESCE(w.member_name, '')) <> ''
+                """)
+                .param("effectiveUser", effectiveUser == null ? 0L : effectiveUser)
+                .param("campusScoped", campusScoped)
+                .param("campusIds", scopedIds)
+                .query((rs, n) -> new WorklogMemberPair(rs.getString(1), rs.getString(2)))
+                .list().stream()
+                .sorted(Comparator.comparing(WorklogMemberPair::displayName, collator)
+                        .thenComparing(WorklogMemberPair::studentId))
+                .toList();
     }
 
     @Transactional
@@ -757,6 +793,10 @@ public class WorklogService {
      */
     public record ListFilter(Long requestId, Long projectId, Long campusId, Long userId, WorklogStatus status,
                              LocalDate from, LocalDate to, String keyword, WorklogSource source) {
+    }
+
+    /** 工时页搜索提示用的成员配对（学号 + 姓名）。 */
+    public record WorklogMemberPair(String studentId, String displayName) {
     }
 
     /**

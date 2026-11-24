@@ -18,6 +18,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -59,6 +60,13 @@ public class WorklogController {
             @AuthenticationPrincipal AuthenticatedUser user) {
         return ApiResponse.ok(service.list(page, pageSize, new WorklogService.ListFilter(
                 requestId, projectId, campusId, userId, status, from, to, keyword, source), user));
+    }
+
+    /** 工时记录页搜索提示：列出当前账号可见的全部工时成员（学号 + 姓名）配对。 */
+    @GetMapping("/worklogs/members")
+    @PreAuthorize("hasAnyAuthority('WORKLOG_SUBMIT','WORKLOG_CONFIRM','WORKLOG_EXPORT')")
+    ApiResponse<List<WorklogService.WorklogMemberPair>> members(@AuthenticationPrincipal AuthenticatedUser user) {
+        return ApiResponse.ok(service.memberPairs(user));
     }
 
     @AuditAction("修改工时")

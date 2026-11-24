@@ -183,6 +183,39 @@ class MemberStatisticsTests {
                 .extracting(StatisticsService.MemberStatistics::studentId).containsExactly("20210001");
     }
 
+    @Test
+    void worklogMembersListsAllRecordedPairsAcrossRangesAndRespectsCampusScope() {
+        String prefix = "wm-" + (base % 100000) + "-";
+        // 首尾空格归并成同一条；区间外项目、待确认工时都应出现在提示里；同名不同学号都要保留。
+        insertWorklog(base + 40, requestA, LocalDate.of(2021, 11, 3), "李四", prefix + "01", 60, 0);
+        insertWorklog(base + 41, requestA, LocalDate.of(2021, 11, 4), " 李四 ", prefix + "01", 30, 0);
+        insertWorklog(base + 42, otherRequest, LocalDate.of(2021, 12, 16), "区间外同学", prefix + "02", 45, 0, "SUBMITTED");
+        insertWorklog(base + 43, requestB, LocalDate.of(2021, 11, 5), "同名同学", prefix + "03", 30, 0);
+        insertWorklog(base + 44, requestA, LocalDate.of(2021, 11, 6), "同名同学", prefix + "04", 30, 0);
+        // 草稿和仅被引未报工时的人不应出现在“有工时记录”的配对提示里。
+        insertWorklog(base + 45, requestA, LocalDate.of(2021, 11, 7), "草稿同学", prefix + "05", 30, 0, "DRAFT");
+        long photoOnly = insertPhoto(base + 46, projectId, requestA, campusA, prefix + "06", "仅被引同学");
+        insertAdoption(base + 47, projectId, photoOnly, prefix + "06", "仅被引同学");
+
+        List<StatisticsService.WorklogMemberPair> all = statistics.worklogMembers(false, Set.of()).stream()
+                .filter(pair -> pair.studentId().startsWith(prefix))
+                .toList();
+        assertThat(all).containsExactlyInAnyOrder(
+                new StatisticsService.WorklogMemberPair(prefix + "01", "李四"),
+                new StatisticsService.WorklogMemberPair(prefix + "02", "区间外同学"),
+                new StatisticsService.WorklogMemberPair(prefix + "03", "同名同学"),
+                new StatisticsService.WorklogMemberPair(prefix + "04", "同名同学"));
+
+        // 校区范围账号只能看到授权校区的成员配对。
+        List<StatisticsService.WorklogMemberPair> northOnly = statistics.worklogMembers(true, Set.of(campusA)).stream()
+                .filter(pair -> pair.studentId().startsWith(prefix))
+                .toList();
+        assertThat(northOnly).containsExactlyInAnyOrder(
+                new StatisticsService.WorklogMemberPair(prefix + "01", "李四"),
+                new StatisticsService.WorklogMemberPair(prefix + "02", "区间外同学"),
+                new StatisticsService.WorklogMemberPair(prefix + "04", "同名同学"));
+    }
+
     private void insertProject(long id, String title, LocalDateTime completedAt) {
         jdbc.sql("""
                 INSERT INTO project(id, title, status, created_by, completed_at)

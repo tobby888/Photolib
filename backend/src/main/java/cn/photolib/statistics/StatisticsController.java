@@ -34,6 +34,14 @@ public class StatisticsController {
         return ApiResponse.ok(statistics.members(from, to, projectId, campusId, userId, principal));
     }
 
+    /** 统计页搜索提示：返回全部存在工时记录的（学号，姓名）配对，不随日期范围截断。 */
+    @GetMapping("/statistics/worklog-members")
+    @PreAuthorize("hasAnyAuthority('STATISTICS_DOWNLOAD','SALARY_CALCULATE')")
+    ApiResponse<List<StatisticsService.WorklogMemberPair>> worklogMembers(
+            @AuthenticationPrincipal AuthenticatedUser principal) {
+        return ApiResponse.ok(statistics.worklogMembers(principal));
+    }
+
     /** 统计面板里点开某位成员的工时明细：这条工时来自哪个需求、哪个项目、哪个校区。 */
     @GetMapping("/statistics/members/worklogs")
     @PreAuthorize("hasAuthority('STATISTICS_DOWNLOAD')")
