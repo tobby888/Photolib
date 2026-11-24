@@ -14,6 +14,8 @@ import com.webauthn4j.data.attestation.authenticator.EC2COSEKey;
 import com.webauthn4j.data.attestation.authenticator.EdDSACOSEKey;
 import com.webauthn4j.data.attestation.authenticator.RSACOSEKey;
 import com.webauthn4j.data.client.CollectedClientData;
+import org.apache.ibatis.reflection.MetaObject;
+import org.apache.ibatis.reflection.SystemMetaObject;
 import org.apache.ibatis.type.EnumOrdinalTypeHandler;
 import org.apache.ibatis.type.EnumTypeHandler;
 import org.junit.jupiter.api.Test;
@@ -78,6 +80,12 @@ class NativeRuntimeHintsTests {
                 EnumTypeHandler.class, EnumOrdinalTypeHandler.class}) {
             assertThat(RuntimeHintsPredicates.reflection().onType(handler)
                     .withMemberCategory(MemberCategory.INVOKE_PUBLIC_CONSTRUCTORS)).accepts(mybatisHints);
+        }
+        for (Class<?> ognlType : new Class<?>[]{SystemMetaObject.class, MetaObject.class}) {
+            assertThat(RuntimeHintsPredicates.reflection().onType(ognlType)
+                    .withMemberCategory(MemberCategory.INVOKE_PUBLIC_METHODS)).accepts(mybatisHints);
+            assertThat(RuntimeHintsPredicates.reflection().onType(ognlType)
+                    .withMemberCategory(MemberCategory.INVOKE_DECLARED_METHODS)).accepts(mybatisHints);
         }
 
         RuntimeHints perfHints = collectHints(PerformanceConfig.class);
