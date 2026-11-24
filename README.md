@@ -407,8 +407,8 @@ PDF 在浏览器里生成（按 A4 分页截图，正文里的链接保留为可
 
 - 使用私有 Bucket 和专用 RAM 用户，不使用主账号 AccessKey。
 - RAM 用户需要目标 Bucket 对象的 `PutObject`、`GetObject`、`DeleteObject` 权限；当前巡检按数据库中的精确 key 执行 HEAD，不需要 `ListObjects`。HEAD/GetObjectMeta 读取对象元数据使用 `oss:GetObject`（指定版本时才是 `oss:GetObjectVersion`）。若允许应用自动检查/补充 Bucket 与 CORS，还需相应的 Bucket/CORS 读取或写入权限。生产也可由基础设施预先配置 Bucket/CORS，并让应用只做对象操作。
-- `OSS_ENDPOINT` 可使用后端同地域内网 Endpoint；`OSS_PUBLIC_ENDPOINT` 必须是浏览器可访问的公网 Endpoint。
-- Endpoint 只填写地域地址，不包含 Bucket 名称，并确保 Bucket 与 Endpoint 属于同一地域。
+- `OSS_ENDPOINT` 可使用后端同地域内网 Endpoint；`OSS_PUBLIC_ENDPOINT` 必须是浏览器可访问的公网 Endpoint，既可填阿里云官方地域地址（如 `https://oss-cn-hangzhou.aliyuncs.com`），也可填直接绑定在目标 Bucket 上的自定义 CNAME 域名（如 `https://oss.example.com`，需在 OSS 控制台完成域名绑定并托管 HTTPS 证书；若域名挂载了 CDN 请改填 `OSS_CDN_DOMAIN`）。
+- 使用官方地域 Endpoint 时只填写地域地址，不包含 Bucket 名称，并确保 Bucket 与 Endpoint 属于同一地域。
 - CORS 至少允许站点来源发起 `PUT`、`GET`、`HEAD`，并允许上传所需请求头。
 - 浏览器上传的 `Content-Type` 必须与后端生成预签名 URL 时返回的值完全一致。
 
