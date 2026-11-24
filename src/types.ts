@@ -619,6 +619,12 @@ export interface MemberStats {
   totalMinutes: number
 }
 
+/** 搜索提示用的工时成员（学号 + 姓名）配对。 */
+export interface WorklogMemberPair {
+  studentId: string
+  displayName: string
+}
+
 export interface MemberWorklogDetail {
   worklogId: EntityId
   workDate: string

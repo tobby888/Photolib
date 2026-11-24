@@ -33,8 +33,12 @@ export function campusOptions(members: readonly MemberStats[]): string[] {
 /** 除被引张数以外的条件：分布图用它，点一根柱子改的是被引范围，柱子本身不能跟着变。 */
 function matchesOthers(member: MemberStats, filter: MemberFilter) {
   const keyword = filter.keyword.trim().toLowerCase()
-  if (keyword && !member.displayName.toLowerCase().includes(keyword)
-    && !member.studentId.toLowerCase().includes(keyword)) return false
+  if (keyword) {
+    const name = member.displayName.toLowerCase()
+    const studentId = member.studentId.toLowerCase()
+    const paired = `${name} ${studentId} ${name}（${studentId}）`
+    if (!name.includes(keyword) && !studentId.includes(keyword) && !paired.includes(keyword)) return false
+  }
   if (filter.campus != null && !campusesOf(member).includes(filter.campus)) return false
   if (filter.worklog === 'with' && member.totalMinutes <= 0) return false
   if (filter.worklog === 'without' && member.totalMinutes > 0) return false

@@ -3419,6 +3419,9 @@ body {
   .stat-ranking-row .ant-progress { grid-column: 2 / -1; grid-row: 2; }
 }
 .member-filter-bar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; }
+.member-suggest-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
+.member-suggest-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.member-suggest-id { flex: none; color: #8a8f8c; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: nowrap; }
 .cited-distribution { display: grid; gap: 6px; }
 .cited-bucket { display: grid; grid-template-columns: 84px 1fr 52px; align-items: center; gap: 10px; width: 100%;
   padding: 6px 8px; border: 1px solid transparent; border-radius: 8px; background: none; font: inherit; color: inherit;

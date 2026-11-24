@@ -33,6 +33,7 @@ test('关键词匹配姓名或学号，校区按任一校区算，工时情况�
     filterMembers(members, { ...EMPTY_FILTER, ...filter }).map(row => row.studentId)
   assert.deepEqual(ids({ keyword: ' a3 ' }), ['A3'])
   assert.deepEqual(ids({ keyword: '李' }), ['A2'])
+  assert.deepEqual(ids({ keyword: '李四（A2）' }), ['A2'])
   assert.deepEqual(ids({ campus: '南校区' }), ['A2', 'A3', 'A4'])
   assert.deepEqual(ids({ worklog: 'without' }), ['A4'])
   assert.deepEqual(ids({ worklog: 'with', citedMin: 1 }), ['A2', 'A3'])
