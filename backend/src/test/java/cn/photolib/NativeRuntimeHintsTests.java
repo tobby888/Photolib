@@ -14,6 +14,9 @@ import cn.photolib.featured.FeaturedDeadlineJob;
 import cn.photolib.feedback.model.FeedbackCategory;
 import cn.photolib.feedback.model.FeedbackStatus;
 import cn.photolib.form.FormFileStatus;
+import cn.photolib.mail.SmtpAccountController;
+import cn.photolib.mail.SmtpAccountService;
+import cn.photolib.mail.SmtpMailSender;
 import cn.photolib.notification.UserNotificationController;
 import cn.photolib.notification.wecom.WeComConfig;
 import cn.photolib.notification.wecom.WeComMessageType;
@@ -99,6 +102,11 @@ class NativeRuntimeHintsTests {
         assertThat(RuntimeHintsPredicates.resource().forResource("endpoints.json")).accepts(hints);
         assertThat(RuntimeHintsPredicates.resource().forResource("versioninfo.properties")).accepts(hints);
         assertThat(RuntimeHintsPredicates.resource().forResource("META-INF/services/org.flywaydb.core.extensibility.Plugin")).accepts(hints);
+        assertThat(RuntimeHintsPredicates.resource().forResource("META-INF/services/jakarta.mail.Provider")).accepts(hints);
+        assertThat(RuntimeHintsPredicates.resource().forResource("META-INF/services/jakarta.mail.util.StreamProvider")).accepts(hints);
+        assertThat(RuntimeHintsPredicates.resource().forResource("META-INF/services/jakarta.activation.spi.MailcapRegistryProvider")).accepts(hints);
+        assertThat(RuntimeHintsPredicates.resource().forResource("META-INF/mailcap")).accepts(hints);
+        assertThat(RuntimeHintsPredicates.resource().forResource("META-INF/jakarta.default.providers")).accepts(hints);
         assertThat(RuntimeHintsPredicates.resource().forBundle("oss")).accepts(hints);
         assertThat(RuntimeHintsPredicates.resource().forBundle("common")).accepts(hints);
 
@@ -109,6 +117,22 @@ class NativeRuntimeHintsTests {
                 .withMemberCategory(MemberCategory.INVOKE_PUBLIC_CONSTRUCTORS)).accepts(hints);
         assertThat(RuntimeHintsPredicates.reflection().onType(CompatibleUrlConnClient.class)
                 .withMemberCategory(MemberCategory.INVOKE_PUBLIC_CONSTRUCTORS)).accepts(hints);
+        for (String mailType : List.of(
+                "org.eclipse.angus.mail.smtp.SMTPProvider",
+                "org.eclipse.angus.mail.smtp.SMTPSSLProvider",
+                "org.eclipse.angus.mail.smtp.SMTPTransport",
+                "org.eclipse.angus.mail.smtp.SMTPSSLTransport",
+                "org.eclipse.angus.mail.smtp.SMTPSaslAuthenticator",
+                "org.eclipse.angus.mail.util.MailStreamProvider",
+                "org.eclipse.angus.activation.MailcapRegistryProviderImpl",
+                "org.eclipse.angus.activation.MimeTypeRegistryProviderImpl",
+                "org.eclipse.angus.mail.handlers.text_plain",
+                "org.eclipse.angus.mail.handlers.text_html",
+                "org.eclipse.angus.mail.handlers.multipart_mixed",
+                "org.eclipse.angus.mail.handlers.message_rfc822")) {
+            assertThat(RuntimeHintsPredicates.reflection().onType(TypeReference.of(mailType))
+                    .withMemberCategory(MemberCategory.INVOKE_PUBLIC_CONSTRUCTORS)).accepts(hints);
+        }
         assertThat(RuntimeHintsPredicates.reflection()
                 .onType(TypeReference.of("org.flywaydb.database.mysql.MySQLDatabaseType"))
                 .withMemberCategory(MemberCategory.INVOKE_PUBLIC_CONSTRUCTORS)).accepts(hints);
@@ -220,7 +244,10 @@ class NativeRuntimeHintsTests {
                 StorageConfigValidator.class,
                 DeploymentSecurityValidator.class,
                 AdminBootstrap.class,
-                FeaturedDeadlineJob.class}) {
+                FeaturedDeadlineJob.class,
+                SmtpMailSender.class,
+                SmtpAccountService.class,
+                SmtpAccountController.class}) {
             assertThat(AnnotatedElementUtils.hasAnnotation(beanType, ConditionalOnProperty.class))
                     .as("%s 不应使用 @ConditionalOnProperty（避免 Spring AOT 固化）", beanType.getSimpleName())
                     .isFalse();

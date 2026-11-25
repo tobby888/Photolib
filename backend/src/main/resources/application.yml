@@ -185,12 +185,15 @@ photolib:
     connect-timeout: ${WECOM_CONNECT_TIMEOUT:5s}
     read-timeout: ${WECOM_READ_TIMEOUT:10s}
   smtp:
-    # 邮件清算单的发信邮箱。host / username / password 三项都填上才能发信，否则发送接口直接报"邮件服务未配置"。
+    # 发信邮箱主要在后台「系统管理 → 邮件模板 → 发信邮箱」里配置（可配多个、前序失败依次顺延）。
+    # 这里的 host / username / password 是可选的兜底邮箱，三项都填上才会启用，排在后台邮箱之后。
     # 465 端口用 SSL（ssl=true），587 端口用 STARTTLS（ssl=false、starttls=true）。
     host: ${SMTP_HOST:}
     port: ${SMTP_PORT:465}
     username: ${SMTP_USERNAME:}
     password: ${SMTP_PASSWORD:}
+    # 发件地址（From 头与 MAIL FROM），留空则沿用 SMTP_USERNAME；当服务商的登录名与发件地址分开时单独填写。
+    from-address: ${SMTP_FROM_ADDRESS:}
     # 发件人显示名，留空用面板品牌名称。
     from-name: ${SMTP_FROM_NAME:}
     ssl: ${SMTP_SSL:true}
@@ -203,6 +206,8 @@ photolib:
     send-interval: ${SMTP_SEND_INTERVAL:1s}
     # 清算单邮件里"在系统中查看"的链接地址（不含路径）；留空用 WECOM_SITE_BASE_URL。
     site-base-url: ${SMTP_SITE_BASE_URL:${WECOM_SITE_BASE_URL:}}
+    # 后台配置的发信邮箱密码（授权码）的 AES-GCM 加密密钥（Base64 编码，16/24/32 字节）；留空沿用 MFA_ENCRYPTION_KEY。
+    encryption-key: ${SMTP_ENCRYPTION_KEY:${MFA_ENCRYPTION_KEY:}}
   # V38 起通知外发改走企业微信；DirectMail 仅用于重试 V38 之前遗留的邮件投递记录。
   direct-mail:
     region-id: ${DIRECTMAIL_REGION_ID:cn-hangzhou}

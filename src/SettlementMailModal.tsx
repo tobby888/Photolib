@@ -173,7 +173,7 @@ function SettlementMailContent({ initialRange }: { initialRange: [string, string
   return <div className="settlement-mail">
     {status.data && !configured && <Alert type="info" showIcon className="settlement-mail-alert"
       title="邮件服务还没有配置，现在只能发站内信"
-      description="要同时发邮件，请管理员在服务器的 .env 中填写 SMTP_HOST、SMTP_USERNAME（发信邮箱）和 SMTP_PASSWORD（授权码）后重启服务。" />}
+      description="要同时发邮件，请管理员在「系统管理 → 邮件模板 → 发信邮箱」添加可用的 SMTP 邮箱，或在服务器 .env 中配置 SMTP。" />}
     {status.data && configured && <Typography.Text type="secondary" className="settlement-mail-from">
       发信邮箱：{status.data.fromAddress}
     </Typography.Text>}

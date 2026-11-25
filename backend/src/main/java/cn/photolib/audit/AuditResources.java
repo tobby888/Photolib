@@ -44,6 +44,7 @@ public final class AuditResources {
             Map.entry("SALARY-CALCULATIONS", "工资计算"),
             Map.entry("SHARES", "选题对外链接"),
             Map.entry("SETTLEMENT-MAILS", "清算单"),
+            Map.entry("SMTP-ACCOUNTS", "发信邮箱"),
             Map.entry("STATISTICS", "数据统计"),
             Map.entry("SURVEYS", "问卷"),
             Map.entry("TEACHING", "教学资料"),

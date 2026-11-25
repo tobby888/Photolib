@@ -119,6 +119,7 @@ final class PhotoLibRuntimeHints implements RuntimeHintsRegistrar {
 
         registerPoiAndXmlBeansHints(hints, classLoader);
         registerAliyunSdkHints(hints);
+        registerMailHints(hints);
         registerFlywayHints(hints);
         registerAwtAndImageIoHints(hints);
     }
@@ -195,6 +196,55 @@ final class PhotoLibRuntimeHints implements RuntimeHintsRegistrar {
         hints.reflection().registerType(CompatibleUrlConnClient.class,
                 MemberCategory.INVOKE_PUBLIC_CONSTRUCTORS,
                 MemberCategory.INVOKE_PUBLIC_METHODS);
+    }
+
+    /**
+     * Jakarta Mail / Angus Mail 通过 ServiceLoader、META-INF/mailcap 与 Class.forName 动态加载
+     * SMTP 传输实现、MIME 内容处理器、StreamProvider 与 SASL 认证器。
+     * 显式补齐资源和反射提示，确保原生镜像里动态新建多组 SMTP 连接（SSL / STARTTLS / 明文、内嵌图片）与 JVM 一致。
+     */
+    private static void registerMailHints(RuntimeHints hints) {
+        hints.resources()
+                .registerPattern("META-INF/services/jakarta.mail.*")
+                .registerPattern("META-INF/services/jakarta.mail.util.*")
+                .registerPattern("META-INF/services/jakarta.activation.spi.*")
+                .registerPattern("META-INF/mailcap")
+                .registerPattern("META-INF/mailcap.default")
+                .registerPattern("META-INF/jakarta.mailcap")
+                .registerPattern("META-INF/jakarta.mailcap.default")
+                .registerPattern("META-INF/mime.types")
+                .registerPattern("META-INF/mimetypes.default")
+                .registerPattern("META-INF/jakarta.mime.types")
+                .registerPattern("META-INF/jakarta.mimetypes.default")
+                .registerPattern("META-INF/javamail.providers")
+                .registerPattern("META-INF/javamail.default.providers")
+                .registerPattern("META-INF/jakarta.providers")
+                .registerPattern("META-INF/jakarta.default.providers")
+                .registerPattern("META-INF/javamail.address.map")
+                .registerPattern("META-INF/javamail.default.address.map")
+                .registerPattern("META-INF/jakarta.address.map")
+                .registerPattern("META-INF/jakarta.default.address.map")
+                .registerPattern("META-INF/javamail.charset.map")
+                .registerPattern("META-INF/jakarta.charset.map");
+
+        for (String typeName : List.of(
+                "org.eclipse.angus.mail.smtp.SMTPProvider",
+                "org.eclipse.angus.mail.smtp.SMTPSSLProvider",
+                "org.eclipse.angus.mail.smtp.SMTPTransport",
+                "org.eclipse.angus.mail.smtp.SMTPSSLTransport",
+                "org.eclipse.angus.mail.smtp.SMTPSaslAuthenticator",
+                "org.eclipse.angus.mail.util.MailStreamProvider",
+                "org.eclipse.angus.activation.MailcapRegistryProviderImpl",
+                "org.eclipse.angus.activation.MimeTypeRegistryProviderImpl",
+                "org.eclipse.angus.mail.handlers.text_plain",
+                "org.eclipse.angus.mail.handlers.text_html",
+                "org.eclipse.angus.mail.handlers.text_xml",
+                "org.eclipse.angus.mail.handlers.multipart_mixed",
+                "org.eclipse.angus.mail.handlers.message_rfc822")) {
+            hints.reflection().registerType(TypeReference.of(typeName),
+                    MemberCategory.INVOKE_PUBLIC_CONSTRUCTORS,
+                    MemberCategory.INVOKE_PUBLIC_METHODS);
+        }
     }
 
     /**

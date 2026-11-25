@@ -54,6 +54,7 @@ public class AuditTargets {
             Map.entry("salary-calculations", new Lookup(
                     "SELECT CONCAT(from_date, ' 至 ', to_date) FROM salary_calculation WHERE id = ?", null)),
             Map.entry("shares", new Lookup(null, "SELECT name FROM project_share_link WHERE token = ?")),
+            Map.entry("smtp-accounts", new Lookup("SELECT name FROM smtp_account WHERE id = ?", null)),
             Map.entry("admin-alerts", new Lookup("SELECT message FROM admin_alert WHERE id = ?", null)));
 
     private final JdbcClient jdbc;

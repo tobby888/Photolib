@@ -11,22 +11,22 @@ import type { MailTemplateView, SettlementStatus } from '../../settlementMail'
 type WorklogKind = 'WORKLOG_SUBMITTED' | 'WORKLOG_APPROVED'
 type Preview = { subject: string; html: string }
 
-export default function NotificationMailEditor({ kind, layoutRevision = 0, onLayoutSaved }: {
-  kind?: WorklogKind; layoutRevision?: number; onLayoutSaved?: () => void
+export default function NotificationMailEditor({ kind, layoutRevision = 0, smtpRevision = 0, onLayoutSaved }: {
+  kind?: WorklogKind; layoutRevision?: number; smtpRevision?: number; onLayoutSaved?: () => void
 }) {
   const url = kind ? `/mail-templates/worklog/${kind}` : '/mail-templates/layout'
   const template = useLoad(() => api<MailTemplateView>({ url }), null as MailTemplateView | null, [url])
   return <DataState loading={template.loading} error={template.error} onRetry={template.reload}>
     {template.data && <Editor key={`${template.data.template.version}-${template.data.template.customized}`}
-      view={template.data} kind={kind} url={url} layoutRevision={layoutRevision} onSaved={next => {
+      view={template.data} kind={kind} url={url} layoutRevision={layoutRevision} smtpRevision={smtpRevision} onSaved={next => {
         template.setData(next)
         onLayoutSaved?.()
       }} />}
   </DataState>
 }
 
-function Editor({ view, kind, url, layoutRevision, onSaved }: {
-  view: MailTemplateView; kind?: WorklogKind; url: string; layoutRevision: number; onSaved: (view: MailTemplateView) => void
+function Editor({ view, kind, url, layoutRevision, smtpRevision, onSaved }: {
+  view: MailTemplateView; kind?: WorklogKind; url: string; layoutRevision: number; smtpRevision: number; onSaved: (view: MailTemplateView) => void
 }) {
   const { message } = App.useApp()
   const [subject, setSubject] = useState(view.template.subject)
@@ -36,7 +36,7 @@ function Editor({ view, kind, url, layoutRevision, onSaved }: {
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const editor = useRef<GetRef<typeof Input.TextArea>>(null)
-  const status = useLoad(() => api<SettlementStatus>({ url: '/settlement-mails/status' }), null as SettlementStatus | null, [])
+  const status = useLoad(() => api<SettlementStatus>({ url: '/settlement-mails/status' }), null as SettlementStatus | null, [smtpRevision])
   const sampleUrl = `/mail-templates/worklog/${kind ?? 'WORKLOG_SUBMITTED'}`
   const dirty = subject !== view.template.subject || html !== view.template.html
   const unknown = unknownVariables(`${subject}\n${html}`, view.variables)
@@ -91,7 +91,7 @@ function Editor({ view, kind, url, layoutRevision, onSaved }: {
 
   return <div className="mail-template-page">
     {status.data && !status.data.configured && <Alert type="warning" showIcon className="settlement-mail-alert"
-      title="邮件服务还没有配置" description="可以编辑和预览；配置 SMTP 并重启后才能发信。" />}
+      title="邮件服务还没有配置" description="可以编辑和预览；请切换到「发信邮箱」标签页添加 SMTP 邮箱（支持多邮箱自动顺延），或配置服务器 .env。" />}
     <Row gutter={[16, 16]}>
       <Col xs={24} xl={11}>
         <Card title={kind ? '主题与正文' : '邮件公共版式'} extra={view.template.customized ? <Tag color="blue">自定义</Tag> : <Tag>内置</Tag>}>

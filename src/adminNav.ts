@@ -23,7 +23,7 @@ export const ADMIN_SECTIONS: readonly AdminSection[] = [
   { key: '', label: '数据面板', group: '概览', description: '注册用户、系统流量、QPS 与运行状态，可自行增减小面板。' },
   { key: 'branding', label: '面板品牌', group: '站点外观', description: '品牌名称、Slogan、图标与定时图标。' },
   { key: 'site', label: '页面定制', group: '站点外观', description: '登录页文案、全站页脚与缺图占位图。' },
-  { key: 'mail-template', label: '邮件模板', group: '站点外观', description: '管理公共邮件版式，以及工时通知与清算单的主题和正文。' },
+  { key: 'mail-template', label: '邮件模板', group: '站点外观', description: '管理发信邮箱（支持多邮箱按顺序故障顺延）、公共邮件版式，以及工时通知与清算单的主题和正文。' },
   { key: 'users', label: '账号管理', group: '成员与权限', description: '创建、停用、重置和删除成员账号。' },
   { key: 'registration-codes', label: '注册码', group: '成员与权限', description: '生成注册码，让同学自助申请账号。' },
   { key: 'registration-review', label: '注册审核', group: '成员与权限', description: '审核持注册码提交的注册申请。' },

@@ -1,164 +1,118 @@
 package cn.photolib.mail;
 
-import jakarta.mail.AuthenticationFailedException;
-import jakarta.mail.MessagingException;
-import jakarta.mail.SendFailedException;
-import jakarta.mail.internet.MimeMessage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.core.io.ByteArrayResource;
-import org.springframework.mail.MailAuthenticationException;
-import org.springframework.mail.MailException;
-import org.springframework.mail.MailSendException;
-import org.springframework.mail.javamail.JavaMailSenderImpl;
-import org.springframework.mail.javamail.MimeMessageHelper;
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Component;
 
-import java.io.UnsupportedEncodingException;
-import java.net.ConnectException;
-import java.net.SocketTimeoutException;
-import java.net.UnknownHostException;
-import java.nio.charset.StandardCharsets;
-import java.util.Properties;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
- * 用 {@code .env} 里的 SMTP 邮箱发信。
+ * 发信入口：按顺序尝试所有可用的发信邮箱，前一个失败就顺延到下一个。
  *
- * <p>{@link JavaMailSenderImpl} 刻意不注册成 bean：Spring Boot 看见它就会挂一个连 SMTP 的健康检查，
- * 邮箱服务器一抖整个服务就报 DOWN。它本身线程安全（每次 send 各开一条连接），多个发信线程共用一个。</p>
+ * <p>顺序是后台「邮件模板 → 发信邮箱」里启用的邮箱（{@code smtp_account.sort_order}），最后是
+ * {@code .env} 里的 {@code SMTP_*}（配齐了才有）。每次发信都现查一遍，管理员改完下一封就生效，不用重启。</p>
+ *
+ * <p>什么时候顺延：登录失败、连不上、超时、发件地址被拒、服务商限频或拒收内容等——这个邮箱自己的问题。
+ * 什么时候不顺延：收件地址被拒收（RCPT TO 5xx）、邮件内容生成不了——换哪个邮箱结果都一样，
+ * 见 {@link MailDeliveryException#fallbackAllowed()}。注意读超时可能发生在服务器已经收下邮件之后，
+ * 这时顺延有极小概率让收件人收到两封；比起一封都收不到，这个代价可以接受。</p>
+ *
+ * <p>每个后台邮箱的最近一次成功 / 失败会记回 {@code smtp_account}，管理员在列表里就能看到哪个邮箱坏了。</p>
  */
 @Slf4j
 @Component
 @EnableConfigurationProperties(SmtpProperties.class)
 public class SmtpMailSender implements MailSender {
-    private final SmtpProperties properties;
-    private final JavaMailSenderImpl delegate;
+    static final String NOT_CONFIGURED = "邮件服务未配置：请在「系统管理 → 邮件模板 → 发信邮箱」添加 SMTP 邮箱，"
+            + "或在服务器 .env 中填写 SMTP_HOST、SMTP_USERNAME 和 SMTP_PASSWORD";
 
-    public SmtpMailSender(SmtpProperties properties) {
+    private final SmtpProperties properties;
+    private final SmtpAccountService accounts;
+
+    public SmtpMailSender(SmtpProperties properties, SmtpAccountService accounts) {
         this.properties = properties;
-        this.delegate = properties.configured() ? build(properties) : null;
+        this.accounts = accounts;
     }
 
     @Override
     public boolean configured() {
-        return delegate != null;
+        if (properties.configured()) return true;
+        try {
+            return accounts.enabledCount() > 0;
+        } catch (DataAccessException ex) {
+            log.warn("读取发信邮箱失败：{}", ex.getMessage());
+            return false;
+        }
     }
 
     @Override
     public String fromAddress() {
-        return configured() ? properties.username().trim() : null;
+        List<SmtpServer> routes = routes();
+        return routes.isEmpty() ? null : routes.getFirst().sender();
     }
 
     @Override
     public void send(OutgoingMail mail) {
-        if (!configured()) throw new MailDeliveryException("邮件服务未配置：请在 .env 中填写 SMTP_HOST、SMTP_USERNAME 和 SMTP_PASSWORD");
-        try {
-            MimeMessage message = delegate.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(message,
-                    MimeMessageHelper.MULTIPART_MODE_MIXED_RELATED, StandardCharsets.UTF_8.name());
-            String fromName = properties.fromName() != null && !properties.fromName().isBlank()
-                    ? properties.fromName().trim() : mail.fromName();
-            if (fromName != null && !fromName.isBlank()) helper.setFrom(fromAddress(), fromName);
-            else helper.setFrom(fromAddress());
-            if (mail.toName() != null && !mail.toName().isBlank()) helper.setTo(
-                    new jakarta.mail.internet.InternetAddress(mail.to(), mail.toName(), StandardCharsets.UTF_8.name()));
-            else helper.setTo(mail.to());
-            helper.setSubject(mail.subject());
-            helper.setText(mail.plainText() == null ? "" : mail.plainText(), mail.html());
-            for (OutgoingMail.InlineImage image : mail.inlineImages()) {
-                helper.addInline(image.contentId(), new ByteArrayResource(image.bytes()), image.contentType());
-            }
-            delegate.send(message);
-        } catch (MessagingException | UnsupportedEncodingException ex) {
-            throw new MailDeliveryException("邮件内容无法生成：" + ex.getMessage(), ex);
-        } catch (MailException ex) {
-            throw new MailDeliveryException(describe(ex), ex);
-        }
-    }
-
-    /** 把 JavaMail 的异常翻成管理员看得懂、知道该去改哪的原因。 */
-    static String describe(MailException ex) {
-        if (ex instanceof MailAuthenticationException || hasCause(ex, AuthenticationFailedException.class)) {
-            return "发信邮箱登录失败：请检查 SMTP_USERNAME / SMTP_PASSWORD（QQ、163 等邮箱要填授权码而不是登录密码）";
-        }
-        if (hasCause(ex, UnknownHostException.class)) return "找不到 SMTP 服务器，请检查 SMTP_HOST";
-        if (hasCause(ex, SocketTimeoutException.class)) return "连接 SMTP 服务器超时，请检查 SMTP_HOST / SMTP_PORT 和网络";
-        if (hasCause(ex, ConnectException.class)) return "连不上 SMTP 服务器，请检查 SMTP_HOST / SMTP_PORT，以及 SSL / STARTTLS 设置";
-        if (ex instanceof MailSendException send) {
-            for (Exception failure : send.getFailedMessages().values()) {
-                SendFailedException rejected = findCause(failure, SendFailedException.class);
-                if (rejected != null && rejected.getInvalidAddresses() != null && rejected.getInvalidAddresses().length > 0) {
-                    // 外层只有一句 "Invalid Addresses"，服务器的原话（如 "550 5.1.1 no such user"）挂在 next 链上。
-                    return "收件地址被邮件服务器拒收：" + clip(serverReply(rejected));
+        List<SmtpServer> routes = routes();
+        if (routes.isEmpty()) throw new MailDeliveryException(NOT_CONFIGURED);
+        List<Failure> failures = new ArrayList<>();
+        MailDeliveryException last = null;
+        for (int i = 0; i < routes.size(); i++) {
+            SmtpServer server = routes.get(i);
+            try {
+                SmtpTransport.send(server, properties, mail);
+                accounts.recordSuccess(server.id());
+                if (i > 0) log.warn("前 {} 个发信邮箱发送失败，已改用{}发出", i, server.label());
+                return;
+            } catch (MailDeliveryException ex) {
+                last = ex;
+                failures.add(new Failure(server.label(), ex.getMessage()));
+                if (!ex.fallbackAllowed()) {
+                    // 收件人或内容的问题：不算这个邮箱的错，也不再试后面的邮箱。
+                    throw new MailDeliveryException(summary(routes.size(), failures, false), ex, false);
                 }
+                accounts.recordFailure(server.id(), ex.getMessage());
+                log.warn("发信邮箱{}发送失败（第 {}/{} 个）：{}", server.label(), i + 1, routes.size(), ex.getMessage());
             }
         }
-        Throwable root = ex;
-        while (root.getCause() != null && root.getCause() != root) root = root.getCause();
-        return "邮件发送失败：" + clip(root.getMessage() == null ? root.getClass().getSimpleName() : root.getMessage());
+        throw new MailDeliveryException(summary(routes.size(), failures, true), last, true);
     }
 
-    private static String serverReply(MessagingException ex) {
-        String reply = ex.getMessage();
-        Exception next = ex.getNextException();
-        int depth = 0;
-        while (next != null && depth++ < 5) {
-            if (next.getMessage() != null && !next.getMessage().isBlank()) reply = next.getMessage();
-            next = next instanceof MessagingException messaging ? messaging.getNextException() : null;
+    /** 只用指定的后台邮箱发（测试这个邮箱能不能用），不顺延。返回实际的发件地址。 */
+    public String sendVia(long accountId, OutgoingMail mail) {
+        return accounts.sendVia(accountId, mail);
+    }
+
+    /** 这次发信会依次尝试的邮箱。 */
+    List<SmtpServer> routes() {
+        List<SmtpServer> routes = new ArrayList<>();
+        try {
+            routes.addAll(accounts.enabledServers());
+        } catch (DataAccessException ex) {
+            // 数据库抖一下时 .env 的兜底邮箱照样能发。
+            log.warn("读取发信邮箱失败，只用 .env 配置发信：{}", ex.getMessage());
         }
-        return reply;
+        SmtpServer env = properties.envServer();
+        if (env != null) routes.add(env);
+        return routes;
     }
 
-    private static String clip(String value) {
-        if (value == null) return "";
-        String single = value.replaceAll("\\s+", " ").trim();
-        return single.length() > 300 ? single.substring(0, 300) + "…" : single;
-    }
-
-    private static boolean hasCause(Throwable ex, Class<? extends Throwable> type) {
-        return findCause(ex, type) != null;
-    }
-
-    private static <T extends Throwable> T findCause(Throwable ex, Class<T> type) {
-        Throwable current = ex;
-        int depth = 0;
-        while (current != null && depth++ < 12) {
-            if (type.isInstance(current)) return type.cast(current);
-            if (current instanceof MessagingException messaging && messaging.getNextException() != null
-                    && messaging.getNextException() != current.getCause()) {
-                T nested = findCause(messaging.getNextException(), type);
-                if (nested != null) return nested;
-            }
-            current = current.getCause();
+    /**
+     * 只有一个邮箱时原样返回它的原因（和以前一样）；多个时逐个列出，管理员能看出是哪几个坏了。
+     */
+    static String summary(int total, List<Failure> failures, boolean exhausted) {
+        if (total == 1 && failures.size() == 1) return failures.getFirst().message();
+        StringBuilder text = new StringBuilder(exhausted
+                ? "全部 " + total + " 个发信邮箱都没能发出：" : "邮件未发出：");
+        for (int i = 0; i < failures.size(); i++) {
+            if (i > 0) text.append("；");
+            Failure failure = failures.get(i);
+            text.append(SmtpAccountService.clip(failure.label() + failure.message(), 240));
         }
-        return null;
+        return SmtpAccountService.clip(text.toString(), 900);
     }
 
-    private static JavaMailSenderImpl build(SmtpProperties properties) {
-        JavaMailSenderImpl sender = new JavaMailSenderImpl();
-        sender.setHost(properties.host().trim());
-        sender.setPort(properties.port());
-        sender.setUsername(properties.username().trim());
-        sender.setPassword(properties.password());
-        sender.setDefaultEncoding(StandardCharsets.UTF_8.name());
-        sender.setProtocol(properties.ssl() ? "smtps" : "smtp");
-        Properties javaMail = new Properties();
-        String prefix = properties.ssl() ? "mail.smtps." : "mail.smtp.";
-        javaMail.put(prefix + "auth", "true");
-        javaMail.put(prefix + "connectiontimeout", String.valueOf(properties.connectTimeout().toMillis()));
-        javaMail.put(prefix + "timeout", String.valueOf(properties.readTimeout().toMillis()));
-        javaMail.put(prefix + "writetimeout", String.valueOf(properties.readTimeout().toMillis()));
-        if (properties.ssl()) {
-            javaMail.put("mail.smtps.ssl.enable", "true");
-            javaMail.put("mail.smtps.ssl.checkserveridentity", "true");
-        } else if (properties.starttls()) {
-            javaMail.put("mail.smtp.starttls.enable", "true");
-            javaMail.put("mail.smtp.starttls.required", "true");
-            javaMail.put("mail.smtp.ssl.checkserveridentity", "true");
-        }
-        sender.setJavaMailProperties(javaMail);
-        log.info("SMTP 发信已配置：{}:{}（{}），发件人 {}", properties.host(), properties.port(),
-                properties.ssl() ? "SSL" : properties.starttls() ? "STARTTLS" : "明文", properties.username());
-        return sender;
-    }
+    record Failure(String label, String message) {}
 }
