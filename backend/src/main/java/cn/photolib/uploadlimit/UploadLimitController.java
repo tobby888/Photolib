@@ -9,6 +9,10 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotEmpty;
 import lombok.RequiredArgsConstructor;
+import org.springframework.aot.hint.MemberCategory;
+import org.springframework.aot.hint.RuntimeHints;
+import org.springframework.aot.hint.RuntimeHintsRegistrar;
+import org.springframework.context.annotation.ImportRuntimeHints;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -23,6 +27,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/upload-limits")
 @RequiredArgsConstructor
+@ImportRuntimeHints(UploadLimitController.Hints.class)
 public class UploadLimitController {
     private final UploadLimitService service;
 
@@ -56,5 +61,16 @@ public class UploadLimitController {
     }
 
     record UpdateRequest(@NotEmpty Map<String, Long> values) {
+    }
+
+    /** {@link AuditInterceptor} 使用 Jackson 2 序列化放入请求属性的变更记录。 */
+    static final class Hints implements RuntimeHintsRegistrar {
+        @Override
+        public void registerHints(RuntimeHints hints, ClassLoader classLoader) {
+            hints.reflection().registerType(UploadLimitService.Change.class,
+                    MemberCategory.INVOKE_DECLARED_CONSTRUCTORS,
+                    MemberCategory.INVOKE_DECLARED_METHODS,
+                    MemberCategory.ACCESS_DECLARED_FIELDS);
+        }
     }
 }

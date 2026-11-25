@@ -3,15 +3,16 @@ package cn.photolib.auth;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Profile;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.stereotype.Component;
 
 /** Fails fast when production-like profiles retain unsafe authentication defaults. */
 @Component
-@Profile("!local & !test")
 @RequiredArgsConstructor
 public class DeploymentSecurityValidator {
     private final AuthProperties authProperties;
+    private final Environment environment;
 
     @Value("${photolib.bootstrap.enabled:true}")
     private boolean bootstrapEnabled;
@@ -20,6 +21,11 @@ public class DeploymentSecurityValidator {
 
     @PostConstruct
     void validate() {
+        // 不使用 @Profile，避免 Spring AOT 在构建原生镜像时把 profile 条件写死，
+        // 导致运行时切 --spring.profiles.active=local 仍触发生产安全检查。
+        if (environment.acceptsProfiles(Profiles.of("local | test"))) {
+            return;
+        }
         validate(authProperties.secureCookie(), bootstrapEnabled, adminPassword);
     }
 

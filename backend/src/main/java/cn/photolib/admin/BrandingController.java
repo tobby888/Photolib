@@ -11,6 +11,10 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
+import org.springframework.aot.hint.MemberCategory;
+import org.springframework.aot.hint.RuntimeHints;
+import org.springframework.aot.hint.RuntimeHintsRegistrar;
+import org.springframework.context.annotation.ImportRuntimeHints;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -32,6 +36,7 @@ import java.util.Set;
 
 @RestController
 @RequiredArgsConstructor
+@ImportRuntimeHints(BrandingController.Hints.class)
 public class BrandingController {
     private static final int SETTING_ID = 1;
     private static final Set<String> ICONS = Set.of("camera", "aperture", "picture", "bulb", "star");
@@ -387,4 +392,15 @@ public class BrandingController {
                             List<String> placeholderImageUrls) {}
 
     record ScheduledIconRuleRequest(String id, String cronExpression, Integer fileIndex) {}
+
+    /** 站点页脚链接由控制器内部独立的 Jackson 2 ObjectMapper 持久化为 JSON。 */
+    static final class Hints implements RuntimeHintsRegistrar {
+        @Override
+        public void registerHints(RuntimeHints hints, ClassLoader classLoader) {
+            hints.reflection().registerType(FooterLink.class,
+                    MemberCategory.INVOKE_DECLARED_CONSTRUCTORS,
+                    MemberCategory.INVOKE_DECLARED_METHODS,
+                    MemberCategory.ACCESS_DECLARED_FIELDS);
+        }
+    }
 }

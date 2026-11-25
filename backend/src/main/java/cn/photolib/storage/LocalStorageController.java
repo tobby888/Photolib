@@ -9,7 +9,6 @@ import cn.photolib.uploadlimit.UploadLimit;
 import cn.photolib.uploadlimit.UploadLimitService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
@@ -29,7 +28,6 @@ import java.nio.charset.StandardCharsets;
 @CrossOrigin(origins = "*")
 @RequestMapping("/local-storage/objects")
 @RequiredArgsConstructor
-@ConditionalOnProperty(prefix = "photolib.storage", name = "mode", havingValue = "local")
 public class LocalStorageController {
     private final ObjectStorageService storage;
     private final UploadLimitService uploadLimits;
@@ -93,6 +91,6 @@ public class LocalStorageController {
 
     private LocalObjectStorageService local() {
         if (TimedObjectStorageService.unwrap(storage) instanceof LocalObjectStorageService local) return local;
-        throw new IllegalStateException("本地对象存储未启用");
+        throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "本地对象存储未启用");
     }
 }

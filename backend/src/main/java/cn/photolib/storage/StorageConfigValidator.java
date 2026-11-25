@@ -4,13 +4,11 @@ import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Configuration;
 
 import java.util.Set;
 
 @Configuration
-@ConditionalOnProperty(prefix = "photolib.storage", name = "mode", havingValue = "local")
 @RequiredArgsConstructor
 public class StorageConfigValidator {
     private static final Logger log = LoggerFactory.getLogger(StorageConfigValidator.class);

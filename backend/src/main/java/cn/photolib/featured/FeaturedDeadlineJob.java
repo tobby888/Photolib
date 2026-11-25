@@ -4,7 +4,7 @@ import cn.photolib.featured.mapper.FeaturedCollectionMapper;
 import cn.photolib.featured.model.FeaturedCloseReason;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -22,10 +22,6 @@ import java.util.List;
  */
 @Slf4j
 @Component
-// 共享测试上下文里关掉自动截止，避免定时任务在用例之间改写已提交的精选状态
-// （与每日数据库备份任务同样的处理）。
-@ConditionalOnProperty(name = "photolib.featured.deadline-enabled", havingValue = "true",
-        matchIfMissing = true)
 @RequiredArgsConstructor
 public class FeaturedDeadlineJob {
     /** 一轮最多处理的份数，避免积压时单次占用过久。剩下的下一轮继续。 */
@@ -34,8 +30,20 @@ public class FeaturedDeadlineJob {
     private final FeaturedCollectionMapper mapper;
     private final FeaturedCollectionService service;
 
+    // 共享测试上下文里关掉自动截止，避免定时任务在用例之间改写已提交的精选状态；
+    // 改用运行时开关（而不是 @ConditionalOnProperty），避免 Spring AOT 在构建原生镜像时固化该条件。
+    @Value("${photolib.featured.deadline-enabled:true}")
+    private boolean enabled = true;
+
     @Scheduled(fixedDelayString = "${photolib.featured.deadline-check-delay-ms:60000}",
             initialDelayString = "${photolib.featured.deadline-check-initial-delay-ms:30000}")
+    void closeExpiredScheduled() {
+        if (!enabled) {
+            return;
+        }
+        closeExpired();
+    }
+
     public void closeExpired() {
         List<Long> due;
         try {

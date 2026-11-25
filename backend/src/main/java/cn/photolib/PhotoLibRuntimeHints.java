@@ -1,6 +1,9 @@
 package cn.photolib;
 
+import com.aliyuncs.AcsError;
 import com.aliyuncs.dm.model.v20151123.SingleSendMailResponse;
+import com.aliyuncs.http.clients.ApacheHttpClient;
+import com.aliyuncs.http.clients.CompatibleUrlConnClient;
 import org.openxmlformats.schemas.drawingml.x2006.picture.CTPicture;
 import org.springframework.aot.hint.MemberCategory;
 import org.springframework.aot.hint.RuntimeHints;
@@ -116,6 +119,7 @@ final class PhotoLibRuntimeHints implements RuntimeHintsRegistrar {
 
         registerPoiAndXmlBeansHints(hints, classLoader);
         registerAliyunSdkHints(hints);
+        registerFlywayHints(hints);
         registerAwtAndImageIoHints(hints);
     }
 
@@ -179,6 +183,30 @@ final class PhotoLibRuntimeHints implements RuntimeHintsRegistrar {
                 MemberCategory.INVOKE_PUBLIC_CONSTRUCTORS,
                 MemberCategory.INVOKE_PUBLIC_METHODS,
                 MemberCategory.ACCESS_DECLARED_FIELDS);
+        // DefaultAcsClient 解析非 2xx 错误响应时通过 AcsError.class.newInstance() 与 Gson 反射构造错误对象；
+        // HttpClientFactory.buildClient() 则通过 Class.forName + 反射构造 HTTP 客户端实现。
+        hints.reflection().registerType(AcsError.class,
+                MemberCategory.INVOKE_PUBLIC_CONSTRUCTORS,
+                MemberCategory.INVOKE_PUBLIC_METHODS,
+                MemberCategory.ACCESS_DECLARED_FIELDS);
+        hints.reflection().registerType(ApacheHttpClient.class,
+                MemberCategory.INVOKE_PUBLIC_CONSTRUCTORS,
+                MemberCategory.INVOKE_PUBLIC_METHODS);
+        hints.reflection().registerType(CompatibleUrlConnClient.class,
+                MemberCategory.INVOKE_PUBLIC_CONSTRUCTORS,
+                MemberCategory.INVOKE_PUBLIC_METHODS);
+    }
+
+    /**
+     * GraalVM 官方可达性元数据仓库仅内置 flyway-core / postgresql / sqlserver，不含 flyway-mysql；
+     * 显式注册 MySQL / MariaDB DatabaseType 插件及其 ServiceLoader 声明，防止原生镜像启动迁移时丢失驱动插件。
+     */
+    private static void registerFlywayHints(RuntimeHints hints) {
+        hints.resources().registerPattern("META-INF/services/org.flywaydb.core.extensibility.Plugin");
+        hints.reflection().registerType(TypeReference.of("org.flywaydb.database.mysql.MySQLDatabaseType"),
+                MemberCategory.INVOKE_PUBLIC_CONSTRUCTORS);
+        hints.reflection().registerType(TypeReference.of("org.flywaydb.database.mysql.mariadb.MariaDBDatabaseType"),
+                MemberCategory.INVOKE_PUBLIC_CONSTRUCTORS);
     }
 
     private static void registerAwtAndImageIoHints(RuntimeHints hints) {
