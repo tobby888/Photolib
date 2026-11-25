@@ -63,13 +63,9 @@ final class SmtpTransport {
         try {
             delegate.send(message);
         } catch (MailException ex) {
-            throw new MailDeliveryException(describe(ex, server), ex, !recipientRejected(ex));
+            // 只要当前邮箱未能投递成功，一律允许顺延到下一个发信邮箱继续投递。
+            throw new MailDeliveryException(describe(ex, server), ex, true);
         }
-    }
-
-    /** 收件地址被服务器拒收（RCPT TO 5xx）：收件人的问题，不是这个邮箱的问题。 */
-    static boolean recipientRejected(MailException ex) {
-        return rejectedRecipient(ex) != null;
     }
 
     private static SendFailedException rejectedRecipient(MailException ex) {
@@ -93,7 +89,10 @@ final class SmtpTransport {
     static String describe(MailException ex, SmtpServer server) {
         String address = server.host() + ":" + server.port();
         if (ex instanceof MailAuthenticationException || hasCause(ex, AuthenticationFailedException.class)) {
-            return "邮箱登录失败：请检查 SMTP 登录名和密码（QQ、163 等邮箱要填授权码而不是登录密码）";
+            AuthenticationFailedException auth = findCause(ex, AuthenticationFailedException.class);
+            String reply = auth != null ? clip(serverReply(auth)) : clip(ex.getMessage());
+            String detail = reply.isEmpty() ? "" : "（服务器返回：" + reply + "）";
+            return "邮箱登录失败" + detail + "：请检查 SMTP 登录名、密码/授权码或服务商信任 IP 设置";
         }
         if (hasCause(ex, UnknownHostException.class)) return "找不到 SMTP 服务器 " + server.host() + "，请检查服务器地址";
         if (hasCause(ex, SocketTimeoutException.class)) return "连接 SMTP 服务器 " + address + " 超时，请检查地址、端口和网络";

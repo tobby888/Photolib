@@ -102,7 +102,7 @@ class SmtpMailSenderTests {
             var thirdView = overview.stream().filter(a -> a.id() == third.id()).findFirst().orElseThrow();
 
             assertThat(firstView.lastFailureAt()).isNotNull();
-            assertThat(firstView.lastError()).contains("登录失败");
+            assertThat(firstView.lastError()).contains("登录失败").contains("535");
             assertThat(disabledView.lastSuccessAt()).isNull();
             assertThat(disabledView.lastFailureAt()).isNull();
             assertThat(secondView.lastFailureAt()).isNotNull();
@@ -118,12 +118,12 @@ class SmtpMailSenderTests {
     }
 
     @Test
-    void fallsBackWhenSenderAddressRejectedByFirstServerButStopsOnInvalidRecipient() throws Exception {
+    void fallsBackToNextMailboxWheneverDeliveryFailsIncludingSenderOrRecipientRejection() throws Exception {
         try (FakeSmtpServer rejectSender = FakeSmtpServer.start(FakeSmtpServer.Mode.REJECT_MAIL_FROM);
              FakeSmtpServer rejectRecipient = FakeSmtpServer.start(FakeSmtpServer.Mode.REJECT_RCPT_550);
              FakeSmtpServer healthy = FakeSmtpServer.start(FakeSmtpServer.Mode.ACCEPT)) {
 
-            // 1) MAIL FROM 被拒属于发信通道问题，应当顺延到下一个邮箱。
+            // 1) MAIL FROM 被拒时，投递失败，顺延到下一个邮箱。
             var senderRejectedAcc = accounts.create(new SmtpAccountService.Input(
                     "未验证发件域", "127.0.0.1", rejectSender.port(),
                     "relay-user", "pass", "unverified@studio.cn", null, SmtpServer.NONE, true));
@@ -135,22 +135,21 @@ class SmtpMailSenderTests {
             assertThat(healthy.received()).hasSize(1);
             assertThat(healthy.received().getFirst().mailFrom()).contains("ok@studio.cn");
 
-            // 2) RCPT TO 550 属于收件人无效，不应顺延，且不把发信邮箱记为故障。
+            // 2) RCPT TO 550 拒收同样属于该通道投递失败，应顺延切换到下一个邮箱并投递成功。
             accounts.delete(senderRejectedAcc.id());
             var rcptRejectedAcc = accounts.create(new SmtpAccountService.Input(
                     "先试邮箱", "127.0.0.1", rejectRecipient.port(),
                     "primary@studio.cn", "pass", null, null, SmtpServer.NONE, true));
             accounts.reorder(List.of(rcptRejectedAcc.id(), backupAcc.id()));
 
-            assertThatThrownBy(() -> sender.send(sampleMail("nonexistent@example.cn")))
-                    .isInstanceOf(MailDeliveryException.class)
-                    .hasMessageContaining("收件地址被邮件服务器拒收");
+            sender.send(sampleMail("member@example.cn"));
+            assertThat(healthy.received()).hasSize(2);
+            assertThat(healthy.received().get(1).mailFrom()).contains("ok@studio.cn");
 
-            // 备用邮箱没有被多余调用。
-            assertThat(healthy.received()).hasSize(1);
             var primaryView = accounts.overview().accounts().stream()
                     .filter(a -> a.id() == rcptRejectedAcc.id()).findFirst().orElseThrow();
-            assertThat(primaryView.lastFailureAt()).isNull();
+            assertThat(primaryView.lastFailureAt()).isNotNull();
+            assertThat(primaryView.lastError()).contains("收件地址被邮件服务器拒收");
         }
     }
 
