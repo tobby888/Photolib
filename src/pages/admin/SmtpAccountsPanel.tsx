@@ -303,8 +303,8 @@ export default function SmtpAccountsPanel({ onChanged }: { onChanged?: () => voi
   return <DataState loading={overview.loading} error={overview.error} onRetry={overview.reload}>
     {overview.data && <Space orientation="vertical" size={16} style={{ width: '100%' }}>
       <Alert type="info" showIcon
-        title="多发信邮箱顺序顺延"
-        description="发信时会按列表从上到下依次尝试已启用的邮箱：若前序邮箱出现登录失败、连接超时、发件地址被拒或限频等故障，会自动改用下一个邮箱发送；收件人地址被拒收则直接结束，不会重复尝试。保存后下一封邮件立即生效，无需重启。" />
+        title="多发信邮箱按投递结果顺序顺延"
+        description="发信时会按列表从上到下依次尝试已启用的邮箱：只要前序邮箱投递失败（含登录失败、连接超时、限频或服务器拒收），就会自动切换下一个邮箱继续投递，直到投递成功或全部邮箱尝试完毕。保存后下一封邮件立即生效，无需重启。" />
       {!overview.data.encrypting && <Alert type="warning" showIcon
         title="当前未配置加密密钥"
         description="服务器未设置 SMTP_ENCRYPTION_KEY（且未设置 MFA_ENCRYPTION_KEY），后台保存的邮箱密码目前以未加密形式存储。建议在 .env 中配置 Base64 密钥并重新保存密码。" />}

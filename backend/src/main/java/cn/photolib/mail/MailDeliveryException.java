@@ -3,9 +3,9 @@ package cn.photolib.mail;
 /**
  * 一封邮件没发出去。消息是可以直接给人看的原因。
  *
- * <p>{@link #fallbackAllowed()} 说明换一个发信邮箱有没有意义：邮箱登录失败、连不上服务器、被服务商限频
- * 是这个邮箱自己的问题，换下一个可能就成了；收件地址被拒收、邮件内容生成不了，换哪个邮箱都一样，
- * 再试只会让每个邮箱都去碰一次壁（收件地址被反复拒收还会拉低发信信誉）。</p>
+ * <p>{@link #fallbackAllowed()} 说明是否需要继续顺延尝试下一个发信邮箱：
+ * 只要某个邮箱在投递过程中失败（含登录失败、连不上、超时、限频、发件人或收件人被该服务器拒收等），
+ * 都允许切换到下一个邮箱继续投递；只有在本地连邮件正文/收件人格式都无法构造时才不顺延。</p>
  */
 public class MailDeliveryException extends RuntimeException {
     private final boolean fallbackAllowed;
