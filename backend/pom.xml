@@ -266,6 +266,7 @@
                                 <buildArg>-march=compatibility</buildArg>
                                 <buildArg>--enable-native-access=ALL-UNNAMED</buildArg>
                                 <buildArg>-H:+AddAllCharsets</buildArg>
+                                <buildArg>-H:+IncludeAllLocales</buildArg>
                                 <buildArg>-Djava.awt.headless=true</buildArg>
                             </buildArgs>
                         </configuration>

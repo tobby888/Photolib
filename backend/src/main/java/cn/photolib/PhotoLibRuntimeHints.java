@@ -1,6 +1,9 @@
 package cn.photolib;
 
+import com.aliyuncs.AcsError;
 import com.aliyuncs.dm.model.v20151123.SingleSendMailResponse;
+import com.aliyuncs.http.clients.ApacheHttpClient;
+import com.aliyuncs.http.clients.CompatibleUrlConnClient;
 import org.openxmlformats.schemas.drawingml.x2006.picture.CTPicture;
 import org.springframework.aot.hint.MemberCategory;
 import org.springframework.aot.hint.RuntimeHints;
@@ -116,6 +119,8 @@ final class PhotoLibRuntimeHints implements RuntimeHintsRegistrar {
 
         registerPoiAndXmlBeansHints(hints, classLoader);
         registerAliyunSdkHints(hints);
+        registerMailHints(hints);
+        registerFlywayHints(hints);
         registerAwtAndImageIoHints(hints);
     }
 
@@ -179,6 +184,79 @@ final class PhotoLibRuntimeHints implements RuntimeHintsRegistrar {
                 MemberCategory.INVOKE_PUBLIC_CONSTRUCTORS,
                 MemberCategory.INVOKE_PUBLIC_METHODS,
                 MemberCategory.ACCESS_DECLARED_FIELDS);
+        // DefaultAcsClient 解析非 2xx 错误响应时通过 AcsError.class.newInstance() 与 Gson 反射构造错误对象；
+        // HttpClientFactory.buildClient() 则通过 Class.forName + 反射构造 HTTP 客户端实现。
+        hints.reflection().registerType(AcsError.class,
+                MemberCategory.INVOKE_PUBLIC_CONSTRUCTORS,
+                MemberCategory.INVOKE_PUBLIC_METHODS,
+                MemberCategory.ACCESS_DECLARED_FIELDS);
+        hints.reflection().registerType(ApacheHttpClient.class,
+                MemberCategory.INVOKE_PUBLIC_CONSTRUCTORS,
+                MemberCategory.INVOKE_PUBLIC_METHODS);
+        hints.reflection().registerType(CompatibleUrlConnClient.class,
+                MemberCategory.INVOKE_PUBLIC_CONSTRUCTORS,
+                MemberCategory.INVOKE_PUBLIC_METHODS);
+    }
+
+    /**
+     * Jakarta Mail / Angus Mail 通过 ServiceLoader、META-INF/mailcap 与 Class.forName 动态加载
+     * SMTP 传输实现、MIME 内容处理器、StreamProvider 与 SASL 认证器。
+     * 显式补齐资源和反射提示，确保原生镜像里动态新建多组 SMTP 连接（SSL / STARTTLS / 明文、内嵌图片）与 JVM 一致。
+     */
+    private static void registerMailHints(RuntimeHints hints) {
+        hints.resources()
+                .registerPattern("META-INF/services/jakarta.mail.*")
+                .registerPattern("META-INF/services/jakarta.mail.util.*")
+                .registerPattern("META-INF/services/jakarta.activation.spi.*")
+                .registerPattern("META-INF/mailcap")
+                .registerPattern("META-INF/mailcap.default")
+                .registerPattern("META-INF/jakarta.mailcap")
+                .registerPattern("META-INF/jakarta.mailcap.default")
+                .registerPattern("META-INF/mime.types")
+                .registerPattern("META-INF/mimetypes.default")
+                .registerPattern("META-INF/jakarta.mime.types")
+                .registerPattern("META-INF/jakarta.mimetypes.default")
+                .registerPattern("META-INF/javamail.providers")
+                .registerPattern("META-INF/javamail.default.providers")
+                .registerPattern("META-INF/jakarta.providers")
+                .registerPattern("META-INF/jakarta.default.providers")
+                .registerPattern("META-INF/javamail.address.map")
+                .registerPattern("META-INF/javamail.default.address.map")
+                .registerPattern("META-INF/jakarta.address.map")
+                .registerPattern("META-INF/jakarta.default.address.map")
+                .registerPattern("META-INF/javamail.charset.map")
+                .registerPattern("META-INF/jakarta.charset.map");
+
+        for (String typeName : List.of(
+                "org.eclipse.angus.mail.smtp.SMTPProvider",
+                "org.eclipse.angus.mail.smtp.SMTPSSLProvider",
+                "org.eclipse.angus.mail.smtp.SMTPTransport",
+                "org.eclipse.angus.mail.smtp.SMTPSSLTransport",
+                "org.eclipse.angus.mail.smtp.SMTPSaslAuthenticator",
+                "org.eclipse.angus.mail.util.MailStreamProvider",
+                "org.eclipse.angus.activation.MailcapRegistryProviderImpl",
+                "org.eclipse.angus.activation.MimeTypeRegistryProviderImpl",
+                "org.eclipse.angus.mail.handlers.text_plain",
+                "org.eclipse.angus.mail.handlers.text_html",
+                "org.eclipse.angus.mail.handlers.text_xml",
+                "org.eclipse.angus.mail.handlers.multipart_mixed",
+                "org.eclipse.angus.mail.handlers.message_rfc822")) {
+            hints.reflection().registerType(TypeReference.of(typeName),
+                    MemberCategory.INVOKE_PUBLIC_CONSTRUCTORS,
+                    MemberCategory.INVOKE_PUBLIC_METHODS);
+        }
+    }
+
+    /**
+     * GraalVM 官方可达性元数据仓库仅内置 flyway-core / postgresql / sqlserver，不含 flyway-mysql；
+     * 显式注册 MySQL / MariaDB DatabaseType 插件及其 ServiceLoader 声明，防止原生镜像启动迁移时丢失驱动插件。
+     */
+    private static void registerFlywayHints(RuntimeHints hints) {
+        hints.resources().registerPattern("META-INF/services/org.flywaydb.core.extensibility.Plugin");
+        hints.reflection().registerType(TypeReference.of("org.flywaydb.database.mysql.MySQLDatabaseType"),
+                MemberCategory.INVOKE_PUBLIC_CONSTRUCTORS);
+        hints.reflection().registerType(TypeReference.of("org.flywaydb.database.mysql.mariadb.MariaDBDatabaseType"),
+                MemberCategory.INVOKE_PUBLIC_CONSTRUCTORS);
     }
 
     private static void registerAwtAndImageIoHints(RuntimeHints hints) {

@@ -8,7 +8,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.annotation.Order;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
@@ -17,22 +16,26 @@ import org.springframework.transaction.annotation.Transactional;
 @Component
 @Order(0)
 @RequiredArgsConstructor
-@ConditionalOnProperty(prefix = "photolib.bootstrap", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class AdminBootstrap implements ApplicationRunner {
     private final UserMapper userMapper;
     private final PasswordEncoder passwordEncoder;
     private final PermissionGroupService permissionGroups;
 
-    @Value("${photolib.bootstrap.admin-username}")
+    @Value("${photolib.bootstrap.enabled:true}")
+    private boolean enabled = true;
+    @Value("${photolib.bootstrap.admin-username:}")
     private String username;
-    @Value("${photolib.bootstrap.admin-password}")
+    @Value("${photolib.bootstrap.admin-password:}")
     private String password;
-    @Value("${photolib.bootstrap.admin-display-name}")
+    @Value("${photolib.bootstrap.admin-display-name:}")
     private String displayName;
 
     @Override
     @Transactional
     public void run(ApplicationArguments args) {
+        if (!enabled) {
+            return;
+        }
         if (userMapper.selectCount(null) > 0) {
             return;
         }

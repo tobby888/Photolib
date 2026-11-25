@@ -549,8 +549,8 @@ public class SettlementMailService {
     private void requireConfigured() {
         if (!mailSender.configured()) {
             throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
-                    "邮件服务未配置：请在服务器 .env 中填写 SMTP_HOST、SMTP_USERNAME 和 SMTP_PASSWORD 后重启；"
-                            + "现在可以只发站内信");
+                    "邮件服务未配置：请在「系统管理 → 邮件模板 → 发信邮箱」添加可用的 SMTP 邮箱，"
+                            + "或在服务器 .env 中填写 SMTP_HOST、SMTP_USERNAME 和 SMTP_PASSWORD；现在可以只发站内信");
         }
     }
 

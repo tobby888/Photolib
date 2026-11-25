@@ -18,6 +18,10 @@ import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.aot.hint.MemberCategory;
+import org.springframework.aot.hint.RuntimeHints;
+import org.springframework.aot.hint.RuntimeHintsRegistrar;
+import org.springframework.context.annotation.ImportRuntimeHints;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,6 +40,7 @@ import java.util.Set;
  */
 @Service
 @RequiredArgsConstructor
+@ImportRuntimeHints(DashboardLayoutService.Hints.class)
 public class DashboardLayoutService {
     private static final Logger log = LoggerFactory.getLogger(DashboardLayoutService.class);
     static final Set<Integer> REFRESH_INTERVALS = Set.of(0, 5, 10, 30, 60);
@@ -154,5 +159,18 @@ public class DashboardLayoutService {
     }
 
     public record LayoutView(Layout layout, Integer version, LocalDateTime updatedAt) {
+    }
+
+    /** 服务内部使用独立的 Jackson 2 ObjectMapper 读写 layout_json 列。 */
+    static final class Hints implements RuntimeHintsRegistrar {
+        @Override
+        public void registerHints(RuntimeHints hints, ClassLoader classLoader) {
+            for (Class<?> type : new Class<?>[]{Layout.class, Widget.class}) {
+                hints.reflection().registerType(type,
+                        MemberCategory.INVOKE_DECLARED_CONSTRUCTORS,
+                        MemberCategory.INVOKE_DECLARED_METHODS,
+                        MemberCategory.ACCESS_DECLARED_FIELDS);
+            }
+        }
     }
 }

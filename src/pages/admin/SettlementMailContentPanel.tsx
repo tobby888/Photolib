@@ -23,16 +23,18 @@ const lastMonth = (): [string, string] => [
  * 管理员面板「邮件模板」：自定义清算单的主题和 HTML 正文（邮件、站内信和导出的 PDF 用的是同一份），右边用真实数据实时预览。
  * 没保存过就是内置模板；「恢复默认」删掉自定义，以后内置模板改版会自动跟上。
  */
-export default function SettlementMailContentPanel({ layoutRevision }: { layoutRevision: number }) {
+export default function SettlementMailContentPanel({ layoutRevision, smtpRevision = 0 }: {
+  layoutRevision: number; smtpRevision?: number
+}) {
   const template = useLoad(() => api<MailTemplateView>({ url: '/settlement-mails/template' }), null as MailTemplateView | null, [])
   return <DataState loading={template.loading} error={template.error} onRetry={template.reload}>
     {template.data && <TemplateEditor key={`${template.data.template.version}-${template.data.template.customized}`}
-      view={template.data} layoutRevision={layoutRevision} onSaved={next => template.setData(next)} />}
+      view={template.data} layoutRevision={layoutRevision} smtpRevision={smtpRevision} onSaved={next => template.setData(next)} />}
   </DataState>
 }
 
-function TemplateEditor({ view, layoutRevision, onSaved }: {
-  view: MailTemplateView; layoutRevision: number; onSaved: (next: MailTemplateView) => void
+function TemplateEditor({ view, layoutRevision, smtpRevision, onSaved }: {
+  view: MailTemplateView; layoutRevision: number; smtpRevision: number; onSaved: (next: MailTemplateView) => void
 }) {
   const { message } = App.useApp()
   const [subject, setSubject] = useState(view.template.subject)
@@ -46,7 +48,7 @@ function TemplateEditor({ view, layoutRevision, onSaved }: {
   const editor = useRef<TextAreaRef>(null)
   const dirty = subject !== view.template.subject || html !== view.template.html
 
-  const status = useLoad(() => api<SettlementStatus>({ url: '/settlement-mails/status' }), null as SettlementStatus | null, [])
+  const status = useLoad(() => api<SettlementStatus>({ url: '/settlement-mails/status' }), null as SettlementStatus | null, [smtpRevision])
   const recipients = useLoad(
     () => api<SettlementRecipient[]>({ url: '/settlement-mails/recipients', params: { from: range[0], to: range[1] } }),
     [] as SettlementRecipient[], [range[0], range[1]])
@@ -117,7 +119,7 @@ function TemplateEditor({ view, layoutRevision, onSaved }: {
   return <div className="mail-template-page">
     {status.data && !status.data.configured && <Alert type="warning" showIcon className="settlement-mail-alert"
       title="邮件服务还没有配置"
-      description="在服务器 .env 中填写 SMTP_HOST、SMTP_PORT、SMTP_USERNAME（发信邮箱）和 SMTP_PASSWORD（授权码）并重启后才能发信。模板可以先编辑、预览。" />}
+      description="请在「发信邮箱」标签页添加 SMTP 邮箱（支持多邮箱自动顺延，保存即生效），或在服务器 .env 中配置 SMTP_HOST / SMTP_USERNAME / SMTP_PASSWORD。模板可以先编辑、预览。" />}
     <Row gutter={[16, 16]}>
       <Col xs={24} xl={11}>
         <Card title={<Space><MailOutlined />清算单邮件</Space>} extra={view.template.customized

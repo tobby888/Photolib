@@ -92,7 +92,10 @@ class MailTemplateController {
     @PostMapping("/worklog/{kind}/test")
     ApiResponse<TestResponse> sendTest(@PathVariable Kind kind, @Valid @RequestBody PreviewRequest request,
                                        @AuthenticationPrincipal AuthenticatedUser principal) {
-        if (!sender.configured()) throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT, "邮件服务未配置");
+        if (!sender.configured()) {
+            throw new BusinessException(ErrorCode.RESOURCE_STATE_CONFLICT,
+                    "邮件服务未配置：请先在「发信邮箱」中添加可用的 SMTP 邮箱");
+        }
         String email = jdbc.sql("SELECT email FROM app_user WHERE id=:id AND deleted=0 AND email IS NOT NULL")
                 .param("id", principal.id()).query(String.class).optional().orElse("").strip();
         if (email.isBlank()) throw new BusinessException(ErrorCode.VALIDATION_ERROR, "你的账号没有填写邮箱，收不到测试邮件");

@@ -25,11 +25,13 @@ import com.webauthn4j.data.attestation.authenticator.RSACOSEKey;
 import com.webauthn4j.data.attestation.statement.AndroidKeyAttestationStatement;
 import com.webauthn4j.data.attestation.statement.AndroidSafetyNetAttestationStatement;
 import com.webauthn4j.data.attestation.statement.AppleAnonymousAttestationStatement;
+import com.webauthn4j.data.attestation.statement.AttestationCertificatePath;
 import com.webauthn4j.data.attestation.statement.AttestationStatement;
 import com.webauthn4j.data.attestation.statement.COSEAlgorithmIdentifier;
 import com.webauthn4j.data.attestation.statement.FIDOU2FAttestationStatement;
 import com.webauthn4j.data.attestation.statement.NoneAttestationStatement;
 import com.webauthn4j.data.attestation.statement.PackedAttestationStatement;
+import com.webauthn4j.data.attestation.statement.Response;
 import com.webauthn4j.data.attestation.statement.TPMAttestationStatement;
 import com.webauthn4j.data.client.ClientDataType;
 import com.webauthn4j.data.client.CollectedClientData;
@@ -258,23 +260,29 @@ public class WebAuthnSupport {
         public void registerHints(RuntimeHints hints, ClassLoader classLoader) {
             for (Class<?> type : new Class<?>[]{
                     PublicKeyCredentialType.class,
+                    AuthenticatorTransport.class,
                     ClientDataType.class,
                     CollectedClientData.class,
+                    Origin.class,
+                    DefaultChallenge.class,
                     TokenBinding.class,
                     TokenBindingStatus.class,
                     AttestationObject.class,
                     AbstractCOSEKey.class,
                     COSEKey.class,
+                    COSEAlgorithmIdentifier.class,
                     EC2COSEKey.class,
                     RSACOSEKey.class,
                     EdDSACOSEKey.class,
                     AttestationStatement.class,
+                    AttestationCertificatePath.class,
                     NoneAttestationStatement.class,
                     PackedAttestationStatement.class,
                     FIDOU2FAttestationStatement.class,
                     AppleAnonymousAttestationStatement.class,
                     AndroidKeyAttestationStatement.class,
                     AndroidSafetyNetAttestationStatement.class,
+                    Response.class,
                     TPMAttestationStatement.class
             }) {
                 hints.reflection().registerType(type,
